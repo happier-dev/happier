@@ -74,6 +74,62 @@ Saved remote hosts are synced, so the same host list can follow you across devic
 
 User guide: [Remote hosts (SSH)](/apps/remote-hosts).
 
+#### Local virtual machines (0.3 development)
+
+Lume, Cua local sandboxes and newly created Cua Spaces are under development for 0.3. They are not released managed Machine support. The selected computer must have the native runtime installed and be reachable; a phone or browser controls that computer rather than running the guest itself.
+
+Lume requires a Mac and a qualified image with a private SSH setup path. Storage and the Happier-generated VM name identify the guest together. Cua creation selects the local namespace, runtime and image explicitly; it does not fall back to Fleet. Runtime and image determine supported power operations, disk retention and display capture. Native installation and image licenses must be checked separately; an installed SDK does not grant permission to redistribute every native component.
+
+In 0.3 development source, a custom Lume image can declare its prepared Linux or macOS SSH account explicitly. It must support Lume's native default-password setup path; choosing an operating system does not infer a login or qualify an arbitrary image. Setup checks the observed guest operating system before installing the controller-held public key. CPU, memory, disk size and storage remain reviewed inputs rather than guessed hardware presets.
+
+Installation retry uses the retained guest. An unreachable controller or failed native read does not prove that it has been deleted. For a created Cua Space, removing its registry entry alone is incomplete cleanup: the owned sandbox must also be deleted. Existing VMs and Spaces use ordinary connection setup and do not acquire managed deletion authority.
+
+#### Cloud Machines (0.3 development)
+
+Hetzner, DigitalOcean Droplets and Fly Machines integration is under development
+for 0.3; it is not released managed Machine support. Cloud creation needs a
+reachable controller and a selected cloud account. A native resource becomes a
+Happier Machine only after protected installation and ordinary enrollment.
+
+Stopped [Hetzner servers](https://docs.hetzner.com/cloud/billing/faq/) and
+[DigitalOcean Droplets](https://docs.digitalocean.com/products/droplets/details/pricing/)
+continue to incur compute charges. Native prices keep their currency and billing
+unit; an hourly price is not converted into a guessed monthly cost. Retained
+storage and network attachments can have separate charges.
+
+In 0.3 development source, Fly uses the selected image, defaulting to Ubuntu,
+and keeps Happier and the workspace in a volume-backed home. After installation
+and enrollment, its boot configuration starts the foreground daemon. Stopping
+resets the root filesystem while keeping the volume. Stop and suspension do not
+promise RAM continuity, and a resume may cold-start. Real Fly cold-boot continuity
+still needs qualification against an authorized vendor resource.
+Deleting a Machine does not authorize deleting an existing app or an attached
+pre-existing volume. Cleanup that has not been confirmed remains visible, with
+possible charges; an unavailable controller does not prove deletion.
+
+In 0.3 development source, Cua BYOC selects a cloud-account reference and a Cua
+login separately. Both refer to the same existing native Cua setup on the chosen
+controller; creation checks the selected cloud, region, image, size and native
+lifetime without changing that setup. AWS/GCP no-TTL and finite Modal lifetimes
+are distinct choices, not a shared promise of indefinite compute. Existing
+Spaces use ordinary connection setup, without managed deletion authority.
+
+Cua Fleet uses a selected gateway account and a private resource-specific guest
+token. A pending claim retains its identity while binding; retry and inspection
+do not acquire another claim or renew its lease. Native expiry is independent of
+Happier connectivity. Release deletes only the acquired claim and its private
+Secret, never the shared Fleet pool. Real BYOC and Fleet installation and cleanup
+still need qualification against authorized native resources; this is not
+released managed Machine support.
+
+#### Managed sandbox creation (0.3 development)
+
+Docker Sandboxes, Modal and Crabbox integration is under development for 0.3; it is not released managed Machine support. Native allocation alone does not establish that Happier is installed, connected or ready to run a Session.
+
+- **Docker Sandboxes:** creating a sandbox alone does not keep it running. Docker documents separate foreground sessions and a detached running mode; the selected native version and guest daemon lifetime must be qualified before managed creation is available. This integration is separate from ordinary Docker containers and Devcontainers. See [Docker's sandbox usage guide](https://docs.docker.com/ai/sandboxes/usage/).
+- **Modal:** creation reviews the existing App, image, CPU, memory and finite native duration together. The duration is not an observed expiry timestamp; an unknown deadline stays unknown. Expiry or termination ends that resource; creating another Sandbox from a snapshot creates a new resource and cannot resume the expired Machine. See [Modal's Sandbox guide](https://modal.com/docs/guide/sandboxes).
+- **Crabbox:** recovery must target the retained lease, backend and namespace. Current development source uses the selected coordinator for cloud backends; direct local-container creation uses native warmup from private non-repository staging and temporary host-owned SSH key delivery. Native lease records remain the recovery authority. Retention flags do not remove native expiry, and ending a lease can release its resource. A setup that copies the authoritative workspace or uploads enrollment credentials is unavailable. Uploaded scripts are not a private credential channel. See the [Crabbox v0.71.0 run contract](https://github.com/openclaw/crabbox/blob/v0.71.0/docs/commands/run.md).
+
 ### Local self-hosted Relay runtime
 
 If you are running a self-hosted Relay locally, the app can also manage the local Relay runtime:

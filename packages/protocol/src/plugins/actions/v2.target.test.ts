@@ -10,6 +10,7 @@ import {
   type PluginToolContributionV2,
 } from './v2.js';
 import { PluginCommandContributionV2Schema } from '../contributions/v2.js';
+import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from './protocolComposableSchema.js';
 import type { PluginLocalizedStringV2 } from '../contributions/publicTypes.js';
 import {
   PluginActionExecutionV2Schema as RootPluginActionExecutionV2Schema,
@@ -519,6 +520,115 @@ describe('plugin executable contribution target grammar', () => {
       inputHints: {
         fields: [{ path: 'endpoint', title: localized, widget: 'text' }],
       },
+    }).success).toBe(false);
+  });
+
+  it('matches select fields to real public DSL string literals and unions without admitting mixed primitives', () => {
+    const storage = defineProtocolObject({ kind: defineProtocolLiteral('managed') }, { policy: 'closed' });
+    const action = {
+      id: 'choose-native-variant',
+      title: localized,
+      scopes: ['machine'],
+      surfaces: ['plugin'],
+      execution: daemonExecution,
+      dangerLevel: 'safe',
+      inputSchema: defineProtocolObject({
+        storage,
+        platform: defineProtocolUnion([defineProtocolLiteral('linux'), defineProtocolLiteral('darwin')]),
+      }, { policy: 'closed' }).jsonSchema,
+      inputHints: { fields: [
+        { path: 'storage.kind', title: 'Storage', widget: 'select', options: [{ value: 'managed', label: 'Managed' }] },
+        { path: 'platform', title: 'Platform', widget: 'select', options: [
+          { value: 'linux', label: 'Linux' }, { value: 'darwin', label: 'macOS' },
+        ] },
+      ] },
+    };
+
+    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action,
+      inputSchema: defineProtocolObject({ storage, platform: defineProtocolUnion([
+        defineProtocolLiteral('linux'), defineProtocolLiteral(1),
+      ]) }, { policy: 'closed' }).jsonSchema,
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action,
+      inputSchema: defineProtocolObject({ storage, platform: defineProtocolUnion([
+        defineProtocolLiteral('linux'), defineProtocolLiteral(null),
+      ]) }, { policy: 'closed' }).jsonSchema,
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action,
+      inputHints: { fields: [{ path: 'platform', title: 'Platform', widget: 'boolean' }] },
+    }).success).toBe(false);
+  });
+
+  it('preserves numeric and boolean widget semantics for public DSL primitive literals', () => {
+    for (const { value, widget, accepted } of [
+      { value: 1, widget: 'integer', accepted: true },
+      { value: 1.5, widget: 'number', accepted: true },
+      { value: 1.5, widget: 'integer', accepted: false },
+      { value: true, widget: 'boolean', accepted: true },
+      { value: true, widget: 'text', accepted: false },
+    ] as const) {
+      expect(PluginActionContributionV2Schema.safeParse({
+        id: 'review-native-fact', title: localized, scopes: ['machine'], surfaces: ['plugin'],
+        execution: daemonExecution, dangerLevel: 'safe',
+        inputSchema: defineProtocolObject({ value: defineProtocolLiteral(value) }, { policy: 'closed' }).jsonSchema,
+        inputHints: { fields: [{ path: 'value', title: 'Value', widget }] },
+      }).success).toBe(accepted);
+    }
+  });
+
+  it('admits conditional ordinary fields in their declared closed union branches while rejecting unknown paths and mismatched widgets', () => {
+    const action = {
+      id: 'configure-volume', title: localized, scopes: ['machine'], surfaces: ['plugin'],
+      execution: daemonExecution, dangerLevel: 'safe',
+      inputSchema: defineProtocolObject({ volume: defineProtocolUnion([
+        defineProtocolObject({ kind: defineProtocolLiteral('create'), sizeGb: defineProtocolNumber({ integer: true, minimum: 1 }) }, { policy: 'closed' }),
+        defineProtocolObject({ kind: defineProtocolLiteral('attach'), volumeId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
+      ]) }, { policy: 'closed' }).jsonSchema,
+      inputHints: { fields: [
+        { path: 'volume.sizeGb', title: 'Size', widget: 'integer', visibleWhen: { op: 'eq', path: 'volume.kind', value: 'create' } },
+        { path: 'volume.volumeId', title: 'Existing volume', widget: 'text', visibleWhen: { op: 'eq', path: 'volume.kind', value: 'attach' } },
+      ] },
+    };
+    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action, inputHints: { fields: [{
+        path: 'volume.unknown', title: 'Unknown', widget: 'text',
+        visibleWhen: { op: 'eq', path: 'volume.kind', value: 'create' },
+      }] },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action, inputHints: { fields: [{
+        path: 'volume.sizeGb', title: 'Size', widget: 'text',
+        visibleWhen: { op: 'eq', path: 'volume.kind', value: 'create' },
+      }] },
+    }).success).toBe(false);
+  });
+
+  it('keeps conditional Connected Account fields and purpose bindings proven in every input arm', () => {
+    const credentialRef = defineProtocolObject({
+      service: defineProtocolObject({ pluginId: defineProtocolString(), localId: defineProtocolString() }, { policy: 'closed' }),
+      accountId: defineProtocolString(),
+    }, { policy: 'closed' });
+    const action = {
+      id: 'select-account', title: localized, scopes: ['machine'], surfaces: ['plugin'],
+      execution: daemonExecution, dangerLevel: 'safe',
+      inputSchema: defineProtocolObject({ selection: defineProtocolUnion([
+        defineProtocolObject({ kind: defineProtocolLiteral('account'), credentialRef }, { policy: 'closed' }),
+        defineProtocolObject({ kind: defineProtocolLiteral('none') }, { policy: 'closed' }),
+      ]) }, { policy: 'closed' }).jsonSchema,
+    };
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action, inputHints: { fields: [{
+        path: 'selection.credentialRef', title: 'Account', widget: 'select', connectedAccountOptions: true,
+        visibleWhen: { op: 'eq', path: 'selection.kind', value: 'account' },
+      }] },
+    }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({
+      ...action, connectedAccountPurposeBindings: [{ path: 'selection.credentialRef', purpose: 'selected-account' }],
     }).success).toBe(false);
   });
 

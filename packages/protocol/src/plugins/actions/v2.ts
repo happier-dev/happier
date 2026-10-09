@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -35,6 +36,7 @@ import {
   PluginClientExecutionReferenceV1Schema,
 } from '../contributions/clientExecution.js';
 import { asProtocolZod } from "./internalProtocolZodAdapter.js";
+import { expandDeclaredInputAlternatives, resolveDeclaredInputLeaves } from './inputSchemaTraversal.js';
 export { PluginJsonSchemaV2Schema, type PluginJsonSchemaV2 as PluginJsonSchema } from '../contributions/publicTypes.js';
 export type { PluginJsonValueV2 as PluginJsonValue } from '../contributions/publicTypes.js';
 export {
@@ -44,7 +46,7 @@ export {
   type PluginActionSurfaceV2,
 };
 
-export const PluginActionDefinitionExamplesV1Schema = z
+export const PluginActionDefinitionExamplesV1Schema = lazyZodSchema(() => z
   .object({
     voice: z
       .object({
@@ -65,10 +67,10 @@ export const PluginActionDefinitionExamplesV1Schema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict());
 export type PluginActionDefinitionExamplesV1 = z.infer<typeof PluginActionDefinitionExamplesV1Schema>;
 
-export const PluginActionScopeV2Schema = z.enum([
+export const PluginActionScopeV2Schema = lazyZodSchema(() => z.enum([
   'global',
   'settings',
   'agent',
@@ -79,21 +81,21 @@ export const PluginActionScopeV2Schema = z.enum([
   'toolResult',
   'workspace',
   'machine',
-]);
+]));
 export type PluginActionScopeV2 = z.infer<typeof PluginActionScopeV2Schema>;
 
 /**
  * Tool invocation is intentionally a smaller, independent surface grammar.
  * Adding an Action-only surface must never silently make it available to Tools.
  */
-export const PluginToolSurfaceV2Schema = z.enum(['cli', 'mcp', 'agent']);
+export const PluginToolSurfaceV2Schema = lazyZodSchema(() => z.enum(['cli', 'mcp', 'agent']));
 export type PluginToolSurfaceV2 = z.infer<typeof PluginToolSurfaceV2Schema>;
 
 /**
  * One contributed Action has one explicit execution realm. The client tuple
  * identifies the exact client activation module entitled to register it.
  */
-export const PluginActionExecutionV2Schema = z.discriminatedUnion('target', [
+export const PluginActionExecutionV2Schema = lazyZodSchema(() => z.discriminatedUnion('target', [
   z.object({
     target: z.literal('daemon'),
   }).strict(),
@@ -102,12 +104,12 @@ export const PluginActionExecutionV2Schema = z.discriminatedUnion('target', [
     client: PluginClientExecutionReferenceV1Schema,
     platforms: PluginClientExecutionPlatformsV1Schema,
   }).strict(),
-]);
+]));
 export type PluginActionExecutionV2 = z.infer<typeof PluginActionExecutionV2Schema>;
 
 export const PluginActionDeclaredExecutionV2Schema = PluginActionExecutionV2Schema;
 
-export const PluginActionPlacementV2Schema = z.enum([
+export const PluginActionPlacementV2Schema = lazyZodSchema(() => z.enum([
   'primary',
   'secondary',
   'rowAction',
@@ -119,7 +121,7 @@ export const PluginActionPlacementV2Schema = z.enum([
   'composer.more',
   'composer.slash',
   'message.menu',
-]);
+]));
 export type PluginActionPlacementV2 = z.infer<typeof PluginActionPlacementV2Schema>;
 
 /**
@@ -129,7 +131,7 @@ export type PluginActionPlacementV2 = z.infer<typeof PluginActionPlacementV2Sche
  * authenticated mounted-UI-only reachability; omitting this optional field is
  * no placement decision, and a raw UI declaration that omits it is rejected.
  */
-export const PluginActionPlacementBindingsV2Schema = z.array(
+export const PluginActionPlacementBindingsV2Schema = lazyZodSchema(() => z.array(
   PluginActionPlacementV2Schema,
 ).max(11).superRefine((bindings, context) => {
   const seen = new Set<PluginActionPlacementV2>();
@@ -143,25 +145,25 @@ export const PluginActionPlacementBindingsV2Schema = z.array(
     }
     seen.add(binding);
   });
-});
+}));
 export type PluginActionPlacementBindingsV2 = z.infer<
   typeof PluginActionPlacementBindingsV2Schema
 >;
 
-export const PluginActionIconV2Schema = z.string().trim().regex(/^[a-z][a-z0-9.-]*$/i);
+export const PluginActionIconV2Schema = lazyZodSchema(() => z.string().trim().regex(/^[a-z][a-z0-9.-]*$/i));
 
-const PluginActionSlashTokenV2Schema = z.string()
+const PluginActionSlashTokenV2Schema = lazyZodSchema(() => z.string()
   .trim()
   .min(2)
   .max(128)
-  .regex(/^\/\S+$/u, 'Composer slash tokens must begin with "/" and contain no whitespace.');
+  .regex(/^\/\S+$/u, 'Composer slash tokens must begin with "/" and contain no whitespace.'));
 
 /**
  * Bounded composer-command presentation metadata for a contributed Action.
  * The Action remains the sole execution owner; this only declares slash-picker
  * presentation for UI-mounted actions.
  */
-export const PluginActionSlashV2Schema = z.object({
+export const PluginActionSlashV2Schema = lazyZodSchema(() => z.object({
   tokens: z.array(PluginActionSlashTokenV2Schema).min(1).max(8).superRefine((tokens, ctx) => {
     const seen = new Set<string>();
     tokens.forEach((token, index) => {
@@ -171,7 +173,7 @@ export const PluginActionSlashV2Schema = z.object({
       seen.add(token);
     });
   }),
-}).strict();
+}).strict());
 export type PluginActionSlashV2 = z.infer<typeof PluginActionSlashV2Schema>;
 
 /**
@@ -218,11 +220,11 @@ const PluginActionConfirmationBodyV2Schema = createPluginActionConfirmationPrese
   PLUGIN_ACTION_CONFIRMATION_PRESENTATION_LIMITS_V2.bodyUtf16Units,
 );
 
-export const PluginActionConfirmationV2Schema = z.object({
+export const PluginActionConfirmationV2Schema = lazyZodSchema(() => z.object({
   title: PluginActionConfirmationTitleV2Schema,
   body: PluginActionConfirmationBodyV2Schema.optional(),
   confirmLabel: PluginActionConfirmationTitleV2Schema.optional(),
-}).strict();
+}).strict());
 export type PluginActionConfirmationV2 = z.infer<typeof PluginActionConfirmationV2Schema>;
 
 const PluginActionInputHintsSchemasV2 = createActionInputHintsSchemasWithoutOptionsSource(
@@ -248,26 +250,6 @@ export type PluginActionInputHintsV2 = z.infer<typeof PluginActionInputHintsV2Sc
 export const PluginToolInputHintsV2Schema = PluginToolInputHintsSchemasV2.hintsSchema;
 export type PluginToolInputHintsV2 = z.infer<typeof PluginToolInputHintsV2Schema>;
 
-/**
- * Expands one declared schema position into the exact alternatives an input
- * value can take there. A union contributes every arm, so a path proven across
- * the expansion is proven for every representable input. A schema that already
- * declares its own `type` or `properties` is its own single alternative, which
- * keeps a nullable credential-ref leaf intact rather than splitting it.
- */
-function expandDeclaredInputAlternatives(
-  schema: PluginJsonSchemaV2,
-): readonly PluginJsonSchemaV2[] {
-  const alternatives = schema.oneOf ?? schema.anyOf;
-  if (
-    !alternatives
-    || alternatives.length === 0
-    || schema.type !== undefined
-    || schema.properties !== undefined
-  ) return [schema];
-  return alternatives.flatMap(expandDeclaredInputAlternatives);
-}
-
 /** One declaration is traversable when every representable input arm is an object. */
 function declaresTraversableObjectInput(
   inputSchema: PluginJsonSchemaV2 | undefined,
@@ -275,32 +257,6 @@ function declaresTraversableObjectInput(
   if (!inputSchema) return false;
   const arms = expandDeclaredInputAlternatives(inputSchema);
   return arms.length > 0 && arms.every((arm) => arm.type === 'object');
-}
-
-/**
- * Resolves one declared input path to the leaf each representable input arm
- * would carry there. Returning `null` means at least one arm cannot reach the
- * path, so the declaration proves nothing about it.
- */
-function resolveDeclaredInputLeaves(
-  inputSchema: PluginJsonSchemaV2,
-  path: string,
-): readonly PluginJsonSchemaV2[] | null {
-  let frontier: readonly PluginJsonSchemaV2[] = [inputSchema];
-  for (const segment of path.split('.')) {
-    const next: PluginJsonSchemaV2[] = [];
-    for (const position of frontier) {
-      for (const arm of expandDeclaredInputAlternatives(position)) {
-        if (arm.type !== 'object') return null;
-        const property = arm.properties?.[segment];
-        if (!property) return null;
-        next.push(property);
-      }
-    }
-    if (next.length === 0) return null;
-    frontier = next;
-  }
-  return frontier.length > 0 ? frontier : null;
 }
 
 function canonicalDeclaredSchemaJson(value: unknown): string {
@@ -468,22 +424,36 @@ function widgetMatchesInputLeaf(
   // Typed choices carry schema-admitted JSON, not only the incumbent string dialect.
   // The target's pre-dispatch input admission also enforces the resolved type schema.
   if (field.inputType && field.widget === 'select') return true;
+  // Public DSL unions and literals need not emit an explicit type. Each union
+  // arm must support the widget; this refinement does not change credential
+  // leaf traversal or the exact Connected Account checks above.
+  const alternatives = expandDeclaredInputAlternatives(inputLeaf);
+  if (alternatives.length !== 1 || alternatives[0] !== inputLeaf) {
+    return alternatives.every((alternative) => widgetMatchesInputLeaf(field, alternative));
+  }
+  let type = inputLeaf.type;
+  if (type === undefined) {
+    const literal = inputLeaf.const;
+    if (typeof literal === 'string') type = 'string';
+    else if (typeof literal === 'boolean') type = 'boolean';
+    else if (typeof literal === 'number') type = Number.isInteger(literal) ? 'integer' : 'number';
+  }
   switch (field.widget) {
     case 'text':
     case 'url':
     case 'secret':
     case 'textarea':
     case 'select':
-      return inputLeaf.type === 'string';
+      return type === 'string';
     case 'number':
-      return inputLeaf.type === 'number' || inputLeaf.type === 'integer';
+      return type === 'number' || type === 'integer';
     case 'integer':
-      return inputLeaf.type === 'integer';
+      return type === 'integer';
     case 'text_list':
     case 'multiselect':
       return inputLeaf.type === 'array' && inputLeaf.items?.type === 'string';
     case 'boolean':
-      return inputLeaf.type === 'boolean';
+      return type === 'boolean';
     case 'json':
       return true;
   }
@@ -511,7 +481,7 @@ export function normalizePluginActionSlashV2(
   return slash ? { tokens: [...slash.tokens] } : null;
 }
 
-export const PluginActionContributionV2Schema = z.object({
+export const PluginActionContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
   description: PluginLocalizedStringV2Schema.optional(),
@@ -648,7 +618,8 @@ export const PluginActionContributionV2Schema = z.object({
     return;
   }
   inputHints.fields.forEach((field, index) => {
-    const inputLeaves = resolveDeclaredInputLeaves(traversableInputSchema, field.path);
+    const inputLeaves = resolveDeclaredInputLeaves(traversableInputSchema, field.path,
+      field.visibleWhen !== undefined && field.connectedAccountOptions !== true ? 'conditional-field' : 'every-arm');
     if (!inputLeaves) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -664,15 +635,15 @@ export const PluginActionContributionV2Schema = z.object({
       message: 'Plugin Action input widget does not match its declared inputSchema leaf.',
     });
   });
-});
+}));
 export type PluginActionContributionV2 = z.infer<typeof PluginActionContributionV2Schema>;
 
-const PluginToolJsonObjectSchemaV2Schema = PluginJsonSchemaV2Schema.refine(
+const PluginToolJsonObjectSchemaV2Schema = lazyZodSchema(() => PluginJsonSchemaV2Schema.refine(
   (schema) => schema.type === 'object',
   'Tool schemas must declare type "object" at the root',
-);
+));
 
-export const PluginToolContributionV2Schema = z.object({
+export const PluginToolContributionV2Schema = lazyZodSchema(() => z.object({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   name: z.string().trim().min(1),
   title: PluginLocalizedStringV2Schema,
@@ -692,5 +663,5 @@ export const PluginToolContributionV2Schema = z.object({
   ]),
   availability: PluginActionAvailabilityV2Schema.optional(),
   metadata: z.record(z.string(), PluginJsonValueV2Schema).optional(),
-}).strict();
+}).strict());
 export type PluginToolContributionV2 = z.infer<typeof PluginToolContributionV2Schema>;

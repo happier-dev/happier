@@ -1,11 +1,83 @@
 import { describe, expect, it } from 'vitest';
-import { createProtocolComposableSchema, defineProtocolObject, defineProtocolString } from '../actions/protocolComposableSchema.js';
+import { createProtocolComposableSchema, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '../actions/protocolComposableSchema.js';
 import { defineMachineProvisionerSchemas, MachineProvisionerAcquireResultV1Schema, MachineProvisionerBootstrapCarrierV1Schema } from './machineProvisioners.js';
 import { prepareMachineProvisionerStoredSchemas } from './machineProvisionerStoredSchemas.js';
 import * as provisioners from './machineProvisioners.js';
 import { RetentionCapabilitiesV1Schema } from '../../machines/managed/providerFactsV1.js';
+import { PluginManifestV2Schema } from '../manifest/v2.js';
+
+function nativeDurationManifest() {
+  const timeout = defineProtocolNumber({ integer: true, minimum: 1000, maximum: 86400000, multipleOf: 1000 });
+  const launch = defineProtocolObject({ timeoutMs: timeout }, { policy: 'closed' });
+  const resource = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
+  const roles = defineMachineProvisionerSchemas({ launch, resource });
+  const query = defineProtocolObject({ timeoutMs: timeout.optional(), imageReference: defineProtocolString().optional() }, { policy: 'closed' });
+  const action = { title: 'Native role', scopes: ['machine'], surfaces: ['plugin'], execution: { target: 'daemon' }, dangerLevel: 'safe' };
+  return {
+    schemaVersion: 2, id: 'test.native-duration', version: '1.0.0', displayName: 'Native duration',
+    engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' },
+    hostAccess: { required: [], optional: [] },
+    contributes: {
+      machineProvisioners: [{
+        id: 'guest', title: 'Native guest', icon: 'server', resourceKind: 'sandbox', schemaVersion: 1,
+        launchSchema: launch.jsonSchema, resourceSchema: resource.jsonSchema, platforms: ['linux'], prerequisites: [],
+        billing: { location: 'cloud', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['delete'], finiteOnly: true },
+        actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
+        nativeDurationInput: { path: 'timeoutMs', unit: 'milliseconds' },
+      }],
+      actions: [
+        { ...action, id: 'check', inputSchema: roles.checkInput.jsonSchema, resultSchema: provisioners.MachineProvisionerCheckResultProtocolV1Schema.jsonSchema },
+        { ...action, id: 'options', inputSchema: query.jsonSchema, resultSchema: provisioners.MachineProvisionerOptionsResultProtocolV1Schema.jsonSchema,
+          inputHints: { fields: [{ path: 'timeoutMs', title: 'Native timeout', widget: 'integer' }, { path: 'imageReference', title: 'Image', widget: 'text' }] } },
+        { ...action, id: 'acquire', inputSchema: roles.acquireInput.jsonSchema, resultSchema: roles.acquireResult.jsonSchema },
+        { ...action, id: 'bootstrap', inputSchema: roles.bootstrapInput.jsonSchema, resultSchema: provisioners.MachineProvisionerBootstrapCarrierV1Schema.jsonSchema },
+        { ...action, id: 'inspect', inputSchema: roles.resourceInput.jsonSchema, resultSchema: provisioners.MachineProvisionerObservationV1Schema.jsonSchema },
+        { ...action, id: 'destroy', inputSchema: roles.resourceInput.jsonSchema, resultSchema: provisioners.MachineProvisionerPowerResultV1Schema.jsonSchema },
+      ],
+    },
+  };
+}
 
 describe('public machine provisioner role schemas', () => {
+  it('admits a native duration binding to the real numeric options field in a complete cold manifest', () => {
+    const manifest = nativeDurationManifest();
+    const { nativeDurationInput: _binding, ...unbound } = manifest.contributes.machineProvisioners[0];
+    // Distinguish a missing duration contract from a broken complete-role fixture.
+    expect(PluginManifestV2Schema.safeParse({ ...manifest, contributes: { ...manifest.contributes, machineProvisioners: [unbound] } }).success).toBe(true);
+    const parsed = PluginManifestV2Schema.safeParse(manifest);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error('Declared native duration field was refused');
+    expect(parsed.data.contributes.machineProvisioners[0]).toHaveProperty('nativeDurationInput', { path: 'timeoutMs', unit: 'milliseconds' });
+    expect(parsed.data.contributes.machineProvisioners[0].retention).not.toHaveProperty('nativeExpiry');
+  });
+
+  it('rejects missing, nonnumeric and ambiguous native duration field bindings without relaxing ordinary hints', () => {
+    const manifest = nativeDurationManifest();
+    const descriptor = manifest.contributes.machineProvisioners[0];
+    const withDescriptor = (replacement: unknown) => ({ ...manifest, contributes: { ...manifest.contributes, machineProvisioners: [replacement] } });
+    const { options: _options, ...withoutOptions } = descriptor.actions;
+    expect(PluginManifestV2Schema.safeParse(withDescriptor({ ...descriptor, actions: withoutOptions })).success).toBe(false);
+    for (const path of ['missingTimeout', 'imageReference']) {
+      expect(PluginManifestV2Schema.safeParse(withDescriptor({ ...descriptor, nativeDurationInput: { path, unit: 'milliseconds' } })).success).toBe(false);
+    }
+    const options = manifest.contributes.actions.find(candidate => candidate.id === 'options')!;
+    const withOptions = (replacement: unknown, provisioner: unknown = descriptor) => ({ ...manifest, contributes: {
+      ...manifest.contributes, machineProvisioners: [provisioner], actions: manifest.contributes.actions.map(candidate => candidate.id === 'options' ? replacement : candidate),
+    } });
+    const fields = options.inputHints!.fields;
+    expect(PluginManifestV2Schema.safeParse(withOptions({ ...options, inputHints: { fields: [...fields, fields[0]] } })).success).toBe(false);
+    const ambiguous = defineProtocolUnion([
+      defineProtocolObject({ mode: defineProtocolLiteral('short'), timeoutMs: defineProtocolNumber({ integer: true, minimum: 1000 }) }, { policy: 'closed' }),
+      defineProtocolObject({ mode: defineProtocolLiteral('long'), timeoutMs: defineProtocolNumber({ integer: true, minimum: 60000 }) }, { policy: 'closed' }),
+    ]);
+    const ambiguousOptions = { ...options, inputSchema: ambiguous.jsonSchema, inputHints: { fields: [fields[0]] } };
+    const { nativeDurationInput: _binding, ...unbound } = descriptor;
+    // Ordinary numeric hints may cover different numeric branches. A duration
+    // binding must nevertheless identify one unambiguous declared native field.
+    expect(PluginManifestV2Schema.safeParse(withOptions(ambiguousOptions, unbound)).success).toBe(true);
+    expect(PluginManifestV2Schema.safeParse(withOptions(ambiguousOptions)).success).toBe(false);
+  });
+
   it('admits explicit native guest homes and process configuration without confusing it with process termination', () => {
     const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
     const roles = defineMachineProvisionerSchemas({ launch: native, resource: native });

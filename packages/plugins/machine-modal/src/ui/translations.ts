@@ -1,0 +1,107 @@
+import type { UiTranslationBundle } from '@happier-dev/plugin-sdk/ui';
+
+export const MODAL_CONFIGURATION_LABELS = {
+  en: {
+    appReference: 'Existing App',
+    imageReference: 'Registry image',
+    cpu: 'Physical CPU cores',
+    memoryMb: 'Memory (MiB)',
+    timeoutMs: 'Native lifetime (ms)',
+    timeoutDescription: 'Whole seconds, from 1 second to 24 hours.',
+  },
+  de: {
+    appReference: 'Vorhandene App',
+    imageReference: 'Registry-Image',
+    cpu: 'Physische CPU-Kerne',
+    memoryMb: 'Arbeitsspeicher (MiB)',
+    timeoutMs: 'Native Laufzeit (ms)',
+    timeoutDescription: 'Ganze Sekunden, von 1 Sekunde bis 24 Stunden.',
+  },
+  ru: {
+    appReference: 'Существующее приложение',
+    imageReference: 'Образ из реестра',
+    cpu: 'Физические ядра CPU',
+    memoryMb: 'Память (MiB)',
+    timeoutMs: 'Нативное время жизни (ms)',
+    timeoutDescription: 'Целые секунды, от 1 секунды до 24 часов.',
+  },
+  pl: {
+    appReference: 'Istniejąca aplikacja',
+    imageReference: 'Obraz z rejestru',
+    cpu: 'Fizyczne rdzenie CPU',
+    memoryMb: 'Pamięć (MiB)',
+    timeoutMs: 'Natywny czas życia (ms)',
+    timeoutDescription: 'Pełne sekundy, od 1 sekundy do 24 godzin.',
+  },
+  es: {
+    appReference: 'Aplicación existente',
+    imageReference: 'Imagen del registro',
+    cpu: 'Núcleos físicos de CPU',
+    memoryMb: 'Memoria (MiB)',
+    timeoutMs: 'Duración nativa (ms)',
+    timeoutDescription: 'Segundos enteros, de 1 segundo a 24 horas.',
+  },
+  fr: {
+    appReference: 'Application existante',
+    imageReference: 'Image du registre',
+    cpu: 'Cœurs CPU physiques',
+    memoryMb: 'Mémoire (MiB)',
+    timeoutMs: 'Durée de vie native (ms)',
+    timeoutDescription: 'Secondes entières, de 1 seconde à 24 heures.',
+  },
+  it: {
+    appReference: 'App esistente',
+    imageReference: 'Immagine del registro',
+    cpu: 'Core CPU fisici',
+    memoryMb: 'Memoria (MiB)',
+    timeoutMs: 'Durata nativa (ms)',
+    timeoutDescription: 'Secondi interi, da 1 secondo a 24 ore.',
+  },
+  pt: {
+    appReference: 'Aplicativo existente',
+    imageReference: 'Imagem do registro',
+    cpu: 'Núcleos físicos de CPU',
+    memoryMb: 'Memória (MiB)',
+    timeoutMs: 'Duração nativa (ms)',
+    timeoutDescription: 'Segundos inteiros, de 1 segundo a 24 horas.',
+  },
+  ca: {
+    appReference: 'Aplicació existent',
+    imageReference: 'Imatge del registre',
+    cpu: 'Nuclis físics de CPU',
+    memoryMb: 'Memòria (MiB)',
+    timeoutMs: 'Durada nativa (ms)',
+    timeoutDescription: 'Segons enters, d’1 segon a 24 hores.',
+  },
+  'zh-Hans': {
+    appReference: '现有应用',
+    imageReference: '镜像仓库中的镜像',
+    cpu: '物理 CPU 核心',
+    memoryMb: '内存（MiB）',
+    timeoutMs: '原生运行时长（ms）',
+    timeoutDescription: '以整秒为单位，从 1 秒到 24 小时。',
+  },
+  'zh-Hant': {
+    appReference: '現有應用程式',
+    imageReference: '映像登錄庫中的映像',
+    cpu: '實體 CPU 核心',
+    memoryMb: '記憶體（MiB）',
+    timeoutMs: '原生執行時間（ms）',
+    timeoutDescription: '以整秒為單位，從 1 秒到 24 小時。',
+  },
+  ja: {
+    appReference: '既存の App',
+    imageReference: 'レジストリイメージ',
+    cpu: '物理 CPU コア',
+    memoryMb: 'メモリ（MiB）',
+    timeoutMs: 'ネイティブの有効期間（ms）',
+    timeoutDescription: '1 秒から 24 時間までの整数秒。',
+  },
+} as const;
+
+export const MODAL_UI_TRANSLATION_BUNDLES = Object.freeze(
+  Object.entries(MODAL_CONFIGURATION_LABELS).map(([locale, labels]) => ({
+    locale,
+    messages: Object.fromEntries(Object.entries(labels).map(([id, value]) => [`machineModal.configure.${id}`, value])),
+  })),
+) satisfies readonly UiTranslationBundle[];

@@ -4,9 +4,14 @@ import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../actions/v2.js';
+import { expandDeclaredInputAlternatives, resolveDeclaredInputLeaves } from '../actions/inputSchemaTraversal.js';
+import { InputPathSchema } from '../../inputs/inputPredicates.js';
 import { PluginDeclaredExecutableRefSchema } from './agentAcpTransport.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema, type PluginJsonSchemaV2 } from './publicTypes.js';
 import { PluginJsonValueV2Schema } from './jsonSchema.js';
+import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
+import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
+import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { DevcontainerEffectReviewV1Schema } from '../../machines/managed/devcontainerV1.js';
 import { BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema, ProviderPriceV1Schema,
   ManagedPrerequisiteV1Schema, ManagedLocalResourceFactsV1Schema, ProviderNativeOptionFactsV1Schema } from '../../machines/managed/providerFactsV1.js';
@@ -50,6 +55,9 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.obje
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
   actions: z.object({ check: local(), options: local().optional(), acquire: local(), bootstrap: local(), inspect: local(), power: local().optional(), destroy: local(), rebuild: local().optional() }).strict(),
+  // References the existing options Action editor, not a second duration
+  // schema or an observed resource expiry. The unit belongs to that raw input.
+  nativeDurationInput: z.object({ path: InputPathSchema, unit: z.enum(['milliseconds', 'seconds']) }).strict().optional(),
   bootstrapTransport: z.object({ kind: z.literal('native'), exec: local(), putFile: local() }).strict().optional(),
   bootstrapCredential: z.object({ kind: z.enum(['ssh', 'native-token']) }).strict().optional(),
   reconciliation: z.object({ nativeOperationSchema: strictPortableSchema, action: local() }).strict().optional(),
@@ -105,6 +113,23 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
       if (!isClosedSchema(action.inputSchema)) context.addIssue({ code: 'custom', path, message: 'Provisioner role input schemas must be closed.' });
       if (['check', 'options', 'inspect', 'reconcile'].includes(binding.role) && action.dangerLevel !== 'safe') context.addIssue({ code: 'custom', path, message: 'Read-only provisioner roles must be safe.' });
     }
+    if (descriptor.nativeDurationInput) {
+      const binding = descriptor.nativeDurationInput;
+      const options = value.actions.find(action => action.id === descriptor.actions.options);
+      const fields = options?.inputHints?.fields.filter(field => field.path === binding.path) ?? [];
+      const field = fields.length === 1 ? fields[0] : undefined;
+      const leaves = options?.inputSchema ? resolveDeclaredInputLeaves(options.inputSchema, binding.path) : null;
+      const alternatives = leaves?.flatMap(expandDeclaredInputAlternatives) ?? [];
+      const first = alternatives[0];
+      const valid = field !== undefined && field.connectedAccountOptions !== true && field.inputType === undefined
+        && (field.widget === 'number' || field.widget === 'integer')
+        && first !== undefined && alternatives.every(leaf => (
+          (leaf.type === 'integer' || field.widget === 'number' && leaf.type === 'number')
+          && pluginJsonValuesEqual(first, leaf)
+        ));
+      if (!valid) context.addIssue({ code: 'custom', path: ['machineProvisioners', index, 'nativeDurationInput'],
+        message: 'Native duration input requires one ordinary numeric options field with an identical declared schema in every input arm.' });
+    }
   });
 }
 
@@ -123,10 +148,26 @@ const machineProvisionerOptionsResult = lazyDefinition(() => mini.strictObject({
 }));
 export const MachineProvisionerCheckResultV1Schema = lazyZodSchema(() => z.lazy(() => machineProvisionerCheckResult));
 export const MachineProvisionerOptionsResultV1Schema = lazyZodSchema(() => z.lazy(() => machineProvisionerOptionsResult));
-export const MachineProvisionersListResultV1Schema = lazyZodSchema(() => z.object({ provisioners: z.array(z.object({
+export const MachineProvisionersListResultV1Schema = lazyZodSchema(() => z.object({ controller: mini.optional(ManagedControllerV1Schema), provisioners: z.array(z.object({
   contribution: asProtocolZod(PluginContributionIdentityV1Schema), occurrenceId: z.string().min(1),
   descriptor: MachineProvisionerContributionV1Schema,
-}).strict()) }).strict());
+  credentialPurposes: z.array(z.object({
+    purpose: QualifiedConnectedAccountPurposeV1Schema,
+    options: z.array(z.object({ value: asProtocolZod(QualifiedConnectedAccountRefSchema), label: z.string().min(1) }).strict()),
+  }).strict()).optional(),
+}).strict()) }).strict().superRefine((result, context) => {
+  result.provisioners.forEach((entry, entryIndex) => {
+    if (entry.credentialPurposes === undefined) return;
+    if (!result.controller) context.addIssue({ code: 'custom', path: ['controller'], message: 'Credential choices require their exact controller.' });
+    const seen = new Set<string>();
+    entry.credentialPurposes.forEach(({ purpose }, purposeIndex) => {
+      const path = ['provisioners', entryIndex, 'credentialPurposes', purposeIndex, 'purpose'];
+      if (purpose.consumer.pluginId !== entry.contribution.pluginId || purpose.consumer.localId !== entry.contribution.localId
+        || seen.has(purpose.purpose)) context.addIssue({ code: 'custom', path, message: 'Each provisioner credential purpose is qualified and declared once.' });
+      seen.add(purpose.purpose);
+    });
+  });
+}));
 export type MachineProvisionerCheckResultV1 = mini.infer<typeof MachineProvisionerCheckResultV1Schema>;
 export type MachineProvisionerOptionsResultV1 = mini.infer<typeof MachineProvisionerOptionsResultV1Schema>;
 export type MachineProvisionersListResultV1 = z.infer<typeof MachineProvisionersListResultV1Schema>;
