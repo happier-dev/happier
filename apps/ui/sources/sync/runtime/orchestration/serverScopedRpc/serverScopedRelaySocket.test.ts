@@ -11,6 +11,8 @@ const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRu
 const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
 const { storage } = await import('@/sync/domains/state/storage');
 const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { StaleServerGenerationError } = await import('@/sync/http/client');
 let home: Awaited<ReturnType<typeof boundary.addHome>>;
 let activeConnection = false;
 
@@ -69,6 +71,44 @@ describe('createServerScopedRelaySocket (real scoped network)', () => {
         client.onEnvelope(listener)();
         expect(activeTransport.on).toHaveBeenCalledWith(listener);
         expect(scopedTransport).not.toHaveBeenCalled();
+        await client.disconnect();
+    });
+
+    it('retires retained active relay sends and deliveries with the borrowed Account authority', async () => {
+        await upsertAndActivateServer({ serverUrl: home.serverUrl });
+        await restoreConnectionToActiveServer({ token: home.token });
+        activeConnection = true;
+        storage.getState().activateProfileScope({ serverId: home.id, accountId: home.accountId });
+        storage.getState().applyProfile({ ...profileDefaults, id: home.accountId });
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the connected Home Account authority');
+        const outgoing: string[] = [];
+        const incoming: string[] = [];
+        let deliver: ((payload: string) => void) | undefined;
+        const input = {
+            machineId: 'machine-1', serverId: home.id, accountLifetime,
+            createActiveTransport: {
+                send: (payload: string) => { outgoing.push(payload); },
+                on: (listener: (payload: string) => void) => {
+                    deliver = listener;
+                    return () => { deliver = undefined; };
+                },
+            },
+            createScopedTransport: () => unusedActiveTransport,
+        };
+        await expect(createServerScopedRelaySocket<string>({ ...input, accountLifetime: null })).rejects.toBeInstanceOf(StaleServerGenerationError);
+        const client = await createServerScopedRelaySocket<string>(input);
+        client.onEnvelope(payload => incoming.push(payload));
+        client.sendEnvelope('before-retirement');
+        deliver?.('before-retirement');
+        const retainedDelivery = deliver;
+
+        storage.getState().activateProfileScope({ serverId: home.id, accountId: 'next-relay-account' });
+        expect(accountLifetime.isCurrent()).toBe(false);
+        client.sendEnvelope('after-retirement');
+        retainedDelivery?.('after-retirement');
+        expect(outgoing).toEqual(['before-retirement']);
+        expect(incoming).toEqual(['before-retirement']);
         await client.disconnect();
     });
 

@@ -4,6 +4,10 @@ import { createScopedSocketConnectParams } from './createScopedSocketConnectPara
 import { storage } from '@/sync/domains/state/storage';
 import { parseToken } from '@/utils/auth/parseToken';
 import type { ScopedServerRpcContext } from './serverScopedRpcTypes';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
+import { StaleServerGenerationError } from '@/sync/http/client';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 const DEFAULT_SCOPE_PROFILE_ERROR_MESSAGE = 'Active account profile id is unavailable for server-scoped relay socket';
 
@@ -50,6 +54,8 @@ export type ServerScopedRelaySocket<TPayload> = Readonly<{
 export function createServerScopedRelaySocket<TPayload>(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    /** Borrow the source's admitted authority; never resolve another Account here. */
+    accountLifetime?: ServerAccountScopeLifetime | null;
     timeoutMs?: number;
     missingScopeUserProfileErrorMessage?: string;
     createActiveTransport: ScopedTransportConfig<TPayload>;
@@ -76,6 +82,7 @@ export function createServerScopedRelaySocket<TPayload>(params: Readonly<{
     return resolveServerScopedRelaySocket({
         machineId: params.machineId,
         serverId: params.serverId,
+        accountLifetime: params.accountLifetime,
         timeoutMs: params.timeoutMs,
         missingScopeUserProfileErrorMessage: params.missingScopeUserProfileErrorMessage,
         activeTransport: params.createActiveTransport,
@@ -88,6 +95,7 @@ export function createServerScopedRelaySocket<TPayload>(params: Readonly<{
 export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     timeoutMs?: number;
     missingScopeUserProfileErrorMessage?: string;
     activeTransport: ScopedTransportConfig<TPayload>;
@@ -97,23 +105,31 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
     getActiveSocketId?: () => string;
     getScopedSocketId?: (socket: ScopedSocketClientLike<TPayload>) => string;
 }>): Promise<ServerScopedRelaySocket<TPayload>> {
+    const accountLifetime = params.accountLifetime;
+    const isSourceCurrent = () => accountLifetime === undefined || (accountLifetime !== null
+        && accountLifetime.isCurrent() && selectActiveServerAccountScopeForServer(
+            accountLifetime.scope, params.serverId ?? accountLifetime.scope.serverId,
+        ) !== null);
+    if (!isSourceCurrent()) throw new StaleServerGenerationError();
     const context = await resolveServerScopedContext({
         machineId: params.machineId,
         serverId: params.serverId,
         timeoutMs: params.timeoutMs,
     });
     if (context.scope === 'active') {
+        if (!isSourceCurrent()) throw new StaleServerGenerationError();
         const scopeUserId = readActiveProfileId({
             missingScopeUserProfileErrorMessage: params.missingScopeUserProfileErrorMessage,
         });
-        return {
+        if (accountLifetime && scopeUserId !== accountLifetime.scope.accountId) throw new StaleServerGenerationError();
+        return retainSourceAccountRelay({
             scopeUserId,
             machineId: context.machineId,
             socketId: params.getActiveSocketId?.(),
             sendEnvelope: params.activeTransport.send,
             onEnvelope: params.activeTransport.on,
             disconnect: async () => {},
-        };
+        }, accountLifetime);
     }
 
     let socket: ScopedSocketClientLike<TPayload> | null = null;
@@ -125,6 +141,10 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
     // reused entry does not take this context's redundant release, which remains
     // ours to release below.
     try {
+        const scopeUserId = context.targetAccountId ?? parseToken(context.token);
+        if (!isSourceCurrent() || (accountLifetime && scopeUserId !== accountLifetime.scope.accountId)) {
+            throw new StaleServerGenerationError();
+        }
         socket = await createEphemeralServerSocketClient(
             createScopedSocketConnectParams(context, () => {
                 carrierCustodyTransferred = true;
@@ -135,12 +155,13 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
             await context.release?.();
             redundantCarrierReleased = true;
         }
+        if (!isSourceCurrent()) throw new StaleServerGenerationError();
         const scopedTransport = typeof params.scopedTransport === 'function'
             ? params.scopedTransport(socket, context)
             : params.scopedTransport;
 
         const resolvedSocket: ServerScopedRelaySocket<TPayload> = {
-            scopeUserId: context.targetAccountId ?? parseToken(context.token),
+            scopeUserId,
             machineId: context.machineId,
             socketId: params.getScopedSocketId?.(socket) ?? scopedTransport.socketId ?? socket.getSocketId(),
             sendEnvelope: scopedTransport.send,
@@ -151,7 +172,7 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
             },
         };
         retainedByReturnedSocket = true;
-        return resolvedSocket;
+        return retainSourceAccountRelay(resolvedSocket, accountLifetime);
     } finally {
         if (!retainedByReturnedSocket) {
             socket?.disconnect();
@@ -160,6 +181,44 @@ export async function resolveServerScopedRelaySocket<TPayload>(params: Readonly<
             await context.release?.();
         }
     }
+}
+
+/** Retire this logical reader, not the Account connection, Machine or pooled socket. */
+function retainSourceAccountRelay<TPayload>(socket: ServerScopedRelaySocket<TPayload>, accountLifetime?: ServerAccountScopeLifetime | null): ServerScopedRelaySocket<TPayload> {
+    if (!accountLifetime) return socket;
+    const subscriptions = new Set<() => void>();
+    let retired = false;
+    let closing: Promise<void> | null = null;
+    let retirement: ReturnType<ServerAccountScopeLifetime['onRetire']> | null = null;
+    const isCurrent = () => !retired && accountLifetime.isCurrent();
+    const disconnect = (): Promise<void> => {
+        if (closing) return closing;
+        retired = true;
+        closing = (async () => {
+            retirement?.dispose();
+            for (const unsubscribe of subscriptions) unsubscribe();
+            await socket.disconnect();
+        })();
+        return closing;
+    };
+    retirement = accountLifetime.onRetire(() => {
+        fireAndForget(disconnect(), { tag: 'source-account-relay-retire' });
+    });
+    return {
+        ...socket,
+        sendEnvelope: payload => { if (isCurrent()) socket.sendEnvelope(payload); },
+        onEnvelope: listener => {
+            if (!isCurrent()) return () => {};
+            const unsubscribe = socket.onEnvelope(payload => { if (isCurrent()) listener(payload); });
+            const release = () => {
+                if (!subscriptions.delete(release)) return;
+                unsubscribe();
+            };
+            subscriptions.add(release);
+            return release;
+        },
+        disconnect,
+    };
 }
 
 function readActiveProfileId(
