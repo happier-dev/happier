@@ -1,39 +1,7 @@
 import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
-import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol';
 
-export function bindProviderConnectionSecret(input: Readonly<{
-  settings: ProviderSettingsV1;
-  connectionId: string;
-  machineId?: string | null;
-  slotId: string;
-  savedSecretId: string | null;
-}>): ProviderSettingsV1 {
-  const previous = readOwnRecordValue(input.settings.secretBindingsByConnectionId, input.connectionId) ?? {};
-  const account = { ...(previous.account ?? {}) };
-  const byMachineId = { ...(previous.byMachineId ?? {}) };
-  if (input.machineId) {
-    const machine = { ...(byMachineId[input.machineId] ?? {}) };
-    if (input.savedSecretId === null) delete machine[input.slotId];
-    else machine[input.slotId] = input.savedSecretId;
-    if (Object.keys(machine).length === 0) delete byMachineId[input.machineId];
-    else byMachineId[input.machineId] = machine;
-  } else if (input.savedSecretId === null) {
-    delete account[input.slotId];
-  } else {
-    account[input.slotId] = input.savedSecretId;
-  }
-  const nextBinding = {
-    ...(Object.keys(account).length > 0 ? { account } : {}),
-    ...(Object.keys(byMachineId).length > 0 ? { byMachineId } : {}),
-  };
-  const secretBindingsByConnectionId: Record<string, typeof nextBinding> = {
-    ...input.settings.secretBindingsByConnectionId,
-  };
-  if (Object.keys(nextBinding).length === 0) delete secretBindingsByConnectionId[input.connectionId];
-  else secretBindingsByConnectionId[input.connectionId] = nextBinding;
-  return ProviderSettingsV1Schema.parse({ ...input.settings, secretBindingsByConnectionId });
-}
+export { bindProviderConnectionSecretV1 as bindProviderConnectionSecret } from '@happier-dev/protocol/providers/settings/operationsV1';
 
 export function setProviderConnectionGrant(input: Readonly<{
   settings: ProviderSettingsV1;

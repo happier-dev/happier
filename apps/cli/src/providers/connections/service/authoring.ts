@@ -1,6 +1,5 @@
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
-import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
-import { deleteProviderConnectionV1, ensureDefaultProviderConnectionV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { addProviderConnectionV1, deleteProviderConnectionV1, ensureDefaultProviderConnectionV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import type { CustomProviderTemplateV1, ProviderConnectionV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 
 export function addProviderContributionConnection(input: Readonly<{
@@ -32,10 +31,7 @@ export function addProviderContributionConnection(input: Readonly<{
     updatedAt: input.now,
   });
   return {
-    settings: ProviderSettingsV1Schema.parse({
-      ...input.settings,
-      connections: [...input.settings.connections, connection],
-    }),
+    settings: addProviderConnectionV1(input.settings, connection),
     connection,
     created: true,
   };
@@ -59,10 +55,7 @@ export function addCustomProviderConnection(input: Readonly<{
     updatedAt: input.now,
   });
   return {
-    settings: ProviderSettingsV1Schema.parse({
-      ...input.settings,
-      connections: [...input.settings.connections, connection],
-    }),
+    settings: addProviderConnectionV1(input.settings, connection),
     connection,
   };
 }

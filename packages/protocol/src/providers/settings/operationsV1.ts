@@ -5,6 +5,7 @@ import {
   canonicalizeProviderContributionKeyV1,
 } from '../contributionIdentityV1.js';
 import { readOwnRecordValue } from '../ownRecordValue.js';
+import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '../connections/v1.js';
 import {
   ModelVisibilityRefV1Schema,
   deserializeModelVisibilityRefV1,
@@ -20,6 +21,48 @@ import {
   ProviderExperimentalBindingConfirmationV1Schema,
   type SavedSecretSlotBindingsV1,
 } from './v1.js';
+
+/** Named/custom authoring and imported connections share the same append rules. */
+export function addProviderConnectionV1(settings: ProviderSettingsV1, connection: ProviderConnectionV1): ProviderSettingsV1 {
+  return ProviderSettingsV1Schema.parse({
+    ...settings,
+    connections: [...settings.connections, ProviderConnectionV1Schema.parse(connection)],
+  });
+}
+
+/** Binding mutations belong to the Provider domain, not a client transport. */
+export function bindProviderConnectionSecretV1(input: Readonly<{
+  settings: ProviderSettingsV1;
+  connectionId: string;
+  machineId?: string | null;
+  slotId: string;
+  savedSecretId: string | null;
+}>): ProviderSettingsV1 {
+  const previous = readOwnRecordValue(input.settings.secretBindingsByConnectionId, input.connectionId) ?? {};
+  const account = { ...(previous.account ?? {}) };
+  const byMachineId = { ...(previous.byMachineId ?? {}) };
+  if (input.machineId) {
+    const machine = { ...(byMachineId[input.machineId] ?? {}) };
+    if (input.savedSecretId === null) delete machine[input.slotId];
+    else machine[input.slotId] = input.savedSecretId;
+    if (Object.keys(machine).length === 0) delete byMachineId[input.machineId];
+    else byMachineId[input.machineId] = machine;
+  } else if (input.savedSecretId === null) {
+    delete account[input.slotId];
+  } else {
+    account[input.slotId] = input.savedSecretId;
+  }
+  const nextBinding = {
+    ...(Object.keys(account).length > 0 ? { account } : {}),
+    ...(Object.keys(byMachineId).length > 0 ? { byMachineId } : {}),
+  };
+  const secretBindingsByConnectionId: Record<string, typeof nextBinding> = {
+    ...input.settings.secretBindingsByConnectionId,
+  };
+  if (Object.keys(nextBinding).length === 0) delete secretBindingsByConnectionId[input.connectionId];
+  else secretBindingsByConnectionId[input.connectionId] = nextBinding;
+  return ProviderSettingsV1Schema.parse({ ...input.settings, secretBindingsByConnectionId });
+}
 
 function requireProviderConnection(settings: ProviderSettingsV1, connectionIdInput: string) {
   const connectionId = ProviderConnectionIdSchema.parse(connectionIdInput);
@@ -322,8 +365,6 @@ export function deleteProviderConnectionV1(
   const modelVisibilityByRef = Object.fromEntries(Object.entries(settings.modelVisibilityByRef).filter(([key]) => {
     try { return deserializeModelVisibilityRefV1(key).providerConnectionId !== connectionId; } catch { return false; }
   }));
-  const defaultsByAgentTargetKey = Object.fromEntries(Object.entries(settings.defaultsByAgentTargetKey).filter(([, selection]) =>
-    selection.ref.providerConnectionId !== connectionId));
   const connectionTombstones = [
     ...settings.connectionTombstones,
     {
@@ -348,6 +389,5 @@ export function deleteProviderConnectionV1(
     modelVisibilityByRef,
     experimentalBindingConfirmations: settings.experimentalBindingConfirmations.filter((confirmation) =>
       confirmation.connectionId !== connectionId),
-    defaultsByAgentTargetKey,
   });
 }

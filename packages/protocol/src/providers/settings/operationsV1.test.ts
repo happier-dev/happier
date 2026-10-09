@@ -231,7 +231,7 @@ describe('provider settings operations', () => {
     });
   });
 
-  it('deletes executable state but retains a minimal tombstone and migration provenance', () => {
+  it('deletes executable state but retains selected intent, a minimal tombstone, and migration provenance', () => {
     const next = deleteProviderConnectionV1(baseSettings(), 'pc_a', 5);
     expect(next.connections).toEqual([]);
     expect(next.accountGrants).toEqual([]);
@@ -239,7 +239,7 @@ describe('provider settings operations', () => {
     expect(next.secretBindingsByConnectionId).toEqual({});
     expect(next.manualModelsByConnectionId).toEqual({});
     expect(next.modelVisibilityByRef).toEqual({});
-    expect(next.defaultsByAgentTargetKey).toEqual({});
+    expect(next.defaultsByAgentTargetKey).toEqual(baseSettings().defaultsByAgentTargetKey);
     expect(next.connectionTombstones).toEqual([{
       v: 1, id: 'pc_a', contributionKey: 'plugin/p', lastDisplayName: 'P', deletedAt: 5,
     }]);
