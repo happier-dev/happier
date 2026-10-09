@@ -3,6 +3,7 @@ import { DEFAULT_PROFILES, getBuiltInProfile } from '@/sync/domains/profiles/pro
 import type { AgentId } from '@/agents/catalog/catalog';
 import { getProfileCompatibleAgentIds } from '@/sync/domains/profiles/profileUtils';
 import { isProfileEnabled, type ProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
+export { toggleFavoriteProfileId } from '@happier-dev/protocol/profiles/profileOperations';
 
 export interface ProfileGroups {
     favoriteProfiles: AIBackendProfile[];
@@ -14,22 +15,6 @@ export interface ProfileGroups {
 
 function isProfile(profile: AIBackendProfile | null | undefined): profile is AIBackendProfile {
     return Boolean(profile);
-}
-
-export function toggleFavoriteProfileId(favoriteProfileIds: string[], profileId: string): string[] {
-    const normalized: string[] = [];
-    const seen = new Set<string>();
-    for (const id of favoriteProfileIds) {
-        if (seen.has(id)) continue;
-        seen.add(id);
-        normalized.push(id);
-    }
-
-    if (seen.has(profileId)) {
-        return normalized.filter((id) => id !== profileId);
-    }
-
-    return [profileId, ...normalized];
 }
 
 export function buildProfileGroups({
