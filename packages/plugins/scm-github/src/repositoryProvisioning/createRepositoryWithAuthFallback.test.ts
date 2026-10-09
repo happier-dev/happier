@@ -54,10 +54,73 @@ function createAmbientProcessSpy() {
 }
 
 describe('GitHub repository provisioning authority', () => {
+  it.each(['public', 'private'] as const)('uses the bound account before HTTP for a %s clone', async visibility => {
+    const ambient = createAmbientProcessSpy();
+    const requests: boolean[] = [];
+    const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'bound-token', profileKey: 'github:work' }),
+      fetcher: async (_url, init) => {
+        const authenticated = new Headers(init?.headers).has('Authorization');
+        requests.push(authenticated);
+        const body = authenticated ? { full_name: repository.nameWithOwner, html_url: repository.webUrl,
+          clone_url: repository.cloneUrl, visibility } : { message: 'API rate limit exceeded' };
+        return { ok: authenticated, status: authenticated ? 200 : 403, statusText: 'test',
+          headers: new Headers(authenticated ? {} : { 'x-ratelimit-remaining': '0' }),
+          json: async () => body, text: async () => JSON.stringify(body) };
+      },
+    }) });
+    await expect(adapter.describeCloneTargets({ provider: githubProvider,
+      repository: { nameWithOwner: repository.nameWithOwner }, runtimeServices: ambient.runtimeServices }))
+      .resolves.toMatchObject({ auth: { profileKind: 'connected_account', profileKey: 'github:work' },
+        repository: { visibility } });
+    expect(requests).toEqual([true]);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('refuses unavailable bound credentials without making an anonymous request', async () => {
+    const fetcher = vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK',
+      json: async () => ({ full_name: repository.nameWithOwner, html_url: repository.webUrl,
+        clone_url: repository.cloneUrl, visibility: 'public' }), text: async () => '' }));
+    const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'missing', reason: 'credential_unavailable' }), fetcher,
+    }) });
+    await expect(adapter.describeCloneTargets({ provider: githubProvider,
+      repository: { nameWithOwner: repository.nameWithOwner } }))
+      .rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('does not assume an absent binding when the host token service is unavailable', async () => {
+    const fetcher = vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK',
+      json: async () => ({ full_name: repository.nameWithOwner, html_url: repository.webUrl,
+        clone_url: repository.cloneUrl, visibility: 'public' }), text: async () => '' }));
+    const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({ fetcher }) });
+    await expect(adapter.describeCloneTargets({ provider: githubProvider,
+      repository: { nameWithOwner: repository.nameWithOwner } }))
+      .rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('does not retry anonymously after the bound account is rejected', async () => {
+    const requests: boolean[] = [];
+    const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'bound-token' }),
+      fetcher: async (_url, init) => {
+        requests.push(new Headers(init?.headers).has('Authorization'));
+        return { ok: false, status: 401, statusText: 'Unauthorized',
+          json: async () => ({ message: 'Bad credentials' }), text: async () => '' };
+      },
+    }) });
+    await expect(adapter.describeCloneTargets({ provider: githubProvider,
+      repository: { nameWithOwner: repository.nameWithOwner } }))
+      .rejects.toMatchObject({ errorCode: 'REMOTE_AUTH_REQUIRED' });
+    expect(requests).toEqual([true]);
+  });
   it.each(['public', 'private', 'missing'] as const)('discovers public clone metadata anonymously, retaining bound-account authority for %s', async visibility => {
     const requests: Array<Readonly<{ url: string; authenticated: boolean }>> = [];
     const ambient = createAmbientProcessSpy();
     const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'missing', reason: 'account_unbound' }),
       fetcher: async (url, init) => {
         const authenticated = new Headers(init?.headers).has('Authorization');
         requests.push({ url, authenticated });
@@ -315,7 +378,7 @@ describe('GitHub repository provisioning authority', () => {
         },
       ],
     });
-    expect(calls).toEqual([false, true]);
+    expect(calls).toEqual([true]);
   });
 
   it('refuses Enterprise clone-target description typed without running ambient gh', async () => {

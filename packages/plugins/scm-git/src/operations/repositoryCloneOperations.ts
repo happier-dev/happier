@@ -1,5 +1,6 @@
 import {
   SCM_OPERATION_ERROR_CODES,
+  ScmRepositoryProvisioningFailureResponseSchema,
   normalizeScmOperationOutcome,
   type ScmHostingRepositoryAuthSummary,
   type ScmHostingRepositorySummary,
@@ -308,6 +309,10 @@ async function describeCloneTargets(input: Readonly<{
         const code = typeof error === 'object' && error !== null
             ? (error as { errorCode?: unknown }).errorCode
             : undefined;
+        const details = ScmRepositoryProvisioningFailureResponseSchema.safeParse({
+            ...(typeof error === 'object' && error !== null ? error : {}),
+            success: false, error: message,
+        });
         return {
             ok: false,
             response: errorResponse(
@@ -315,6 +320,9 @@ async function describeCloneTargets(input: Readonly<{
                 typeof code === 'string' && Object.values(SCM_OPERATION_ERROR_CODES).includes(code as ScmOperationErrorCode)
                     ? code as ScmOperationErrorCode
                     : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                details.success && details.data.errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_RATE_LIMITED
+                    ? { retryNotBeforeMs: details.data.retryNotBeforeMs,
+                    remediation: details.data.remediation } : undefined,
             ),
         };
     }

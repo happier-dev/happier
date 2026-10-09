@@ -86,6 +86,7 @@ const ScmHostingProviderRuntimeMaterializationRequestBaseSchema = z.object({
 const ScmHostingProviderRuntimeMaterializationRequestSchema = z.discriminatedUnion('kind', [
     ScmHostingProviderRuntimeMaterializationRequestBaseSchema.extend({
         kind: z.literal('scm_hosting_token'),
+        boundAccountOnly: z.literal(true).optional(),
     }),
     ScmHostingProviderRuntimeMaterializationRequestBaseSchema.extend({
         kind: z.literal('scm_hosting_basic_auth'),
@@ -455,6 +456,8 @@ export function createHostScmHostingProviderRuntimeServices(
             const signal = options?.signal ?? new AbortController().signal;
             const target = await resolveBoundHostingAccount(owner, authorization, requestSnapshot, origin, authority, signal);
             if (!target) return { kind: 'missing', reason: 'credential_unavailable' };
+            if (target.kind === 'unbound' && requestSnapshot.kind === 'scm_hosting_token'
+                && requestSnapshot.boundAccountOnly) return { kind: 'missing', reason: 'account_unbound' };
             const nativeService = target.kind === 'unbound'
                 ? authorization.serviceRefs.find((service) => (
                     (input.contributes.connectedAccountDescriptors ?? []).some((descriptor) => (

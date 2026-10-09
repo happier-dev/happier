@@ -1,17 +1,25 @@
 import {
   SCM_OPERATION_ERROR_CODES,
   type ScmOperationErrorCode,
+  type ScmRepositoryCloneOutput,
 } from '@happier-dev/plugin-sdk/scm';
 
 import { describeGithubRateLimitFailure } from '../observations/githubResponseFailure.js';
 
+type ProvisioningFailure = Extract<ScmRepositoryCloneOutput, { success: false }>;
+
 export class GithubRepositoryProvisioningError extends Error {
   readonly errorCode: ScmOperationErrorCode;
+  readonly retryNotBeforeMs?: number;
+  readonly remediation?: ProvisioningFailure['remediation'];
 
-  constructor(message: string, errorCode: ScmOperationErrorCode) {
+  constructor(message: string, errorCode: ScmOperationErrorCode,
+    details?: Pick<ProvisioningFailure, 'retryNotBeforeMs' | 'remediation'>) {
     super(message);
     this.name = 'GithubRepositoryProvisioningError';
     this.errorCode = errorCode;
+    this.retryNotBeforeMs = details?.retryNotBeforeMs;
+    this.remediation = details?.remediation;
   }
 }
 
@@ -46,16 +54,17 @@ export function createGithubRepositoryAlreadyExistsError(
 }
 
 /**
- * A GitHub throttle is a temporarily unavailable backend, never a credential the
- * owner must repair: `REMOTE_AUTH_REQUIRED` or `REMOTE_REJECTED` would tell them
- * to reconnect or give up on an account and a request that are both fine.
+ * Keep the forge's retry hint distinct from backend availability and auth failure.
  */
 export function createGithubRepositoryRateLimitedError(
   retryNotBeforeMs: number | undefined,
+  anonymous = false,
 ): GithubRepositoryProvisioningError {
   return new GithubRepositoryProvisioningError(
     describeGithubRateLimitFailure(retryNotBeforeMs),
-    SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+    SCM_OPERATION_ERROR_CODES.REMOTE_RATE_LIMITED,
+    { ...(retryNotBeforeMs !== undefined ? { retryNotBeforeMs } : {}),
+      remediation: { kind: 'retry', ...(anonymous ? { action: 'connect_github' } : {}) } },
   );
 }
 

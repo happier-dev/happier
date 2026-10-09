@@ -5,6 +5,7 @@ import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../sessions/autho
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { WorkspaceAddressV1Schema, WorkspaceRefV1WriteSchema, WorkspaceProjectFactsV1Schema } from '../workspaces/workspaceRefV1.js';
 import { ProjectSourceRepositorySelectorV1Schema } from './sources/projectSourceV1.js';
+import { ScmRepositoryProvisioningFailureResponseSchema, ScmRepositoryProvisioningRemediationSchema } from '../scm/repositoryProvisioning.js';
 
 const IdSchema = lazyZodSchema(() => z.string().trim().min(1));
 const PathSchema = lazyZodSchema(() => z.string().trim().min(1).refine(value => !value.includes('\0')));
@@ -62,7 +63,10 @@ export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnio
     facts: WorkspaceProjectFactsV1Schema.optional(),
   }).strict(),
   z.object({ kind: z.literal('ambiguous'), candidates: z.array(WorkspaceRefV1WriteSchema) }).strict(),
-  z.object({ kind: z.literal('refused'), code: IdSchema }).strict(),
+  z.object({ kind: z.literal('refused'), code: IdSchema,
+    retryNotBeforeMs: ScmRepositoryProvisioningFailureResponseSchema.shape.retryNotBeforeMs,
+    remediation: ScmRepositoryProvisioningRemediationSchema.strict().optional(),
+  }).strict(),
   z.object({ kind: z.literal('outcomeUnknown'), operationId: IdSchema.optional() }).strict(),
 ]));
 export type OpenProjectResultV1 = z.infer<typeof OpenProjectResultV1Schema>;

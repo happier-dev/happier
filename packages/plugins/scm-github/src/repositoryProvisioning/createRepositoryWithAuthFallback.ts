@@ -214,18 +214,13 @@ export function createGithubRepositoryProvisioningAdapter(params?: Readonly<{
       const lookup = { provider: input.provider, owner: repositorySelector.owner,
         repositoryName: repositorySelector.repositoryName,
         ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}) };
-      // Public HTTPS repositories do not require a Connected Account. Discover
-      // them through the same REST owner, without probing ambient credentials.
-      const publicRepository = await restAdapter.getRepository?.({ ...lookup, publicOnly: true });
-      if (publicRepository?.visibility === 'public') return describeRepositoryCloneTargets({
-        provider: input.provider, repository: publicRepository, auth: { state: 'authenticated', profileKind: 'no_auth' },
-      });
-      const repository = await restAdapter.getRepository?.(lookup);
-      if (!repository) throw createGithubRepositoryNotFoundError();
+      const lookupResult = await restAdapter.getRepositoryForClone?.(lookup);
+      if (!lookupResult) throw createGithubRepositoryAuthRequiredError();
+      if (!lookupResult.repository) throw createGithubRepositoryNotFoundError();
       return describeRepositoryCloneTargets({
         provider: input.provider,
-        repository,
-        auth: { state: 'authenticated', profileKind: 'connected_account' },
+        repository: lookupResult.repository,
+        auth: lookupResult.auth,
       });
     },
     async createRepository(input: ScmHostingProviderRepositoryCreateInput) {

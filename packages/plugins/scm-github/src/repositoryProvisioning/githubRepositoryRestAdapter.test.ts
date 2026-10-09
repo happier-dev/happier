@@ -307,7 +307,7 @@ describe('GitHub REST repository provisioning adapter', () => {
         statusText: 'Forbidden',
         headers: {
           'X-RateLimit-Remaining': '0',
-          'X-RateLimit-Reset': '1700000000',
+          'X-RateLimit-Reset': '1900000000',
         },
       }),
     });
@@ -319,7 +319,8 @@ describe('GitHub REST repository provisioning adapter', () => {
       repositoryName: 'happier',
       visibility: 'private',
     })).rejects.toMatchObject({
-      errorCode: 'BACKEND_UNAVAILABLE',
+      errorCode: 'REMOTE_RATE_LIMITED',
+      retryNotBeforeMs: 1900000000000,
     });
   });
 
@@ -344,7 +345,8 @@ describe('GitHub REST repository provisioning adapter', () => {
       owner: 'happier-dev',
       repositoryName: 'happier',
     })).rejects.toMatchObject({
-      errorCode: 'BACKEND_UNAVAILABLE',
+      errorCode: 'REMOTE_RATE_LIMITED',
+      retryNotBeforeMs: expect.any(Number),
     });
   });
 

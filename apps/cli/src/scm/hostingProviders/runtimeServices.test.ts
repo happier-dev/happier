@@ -346,6 +346,29 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
     }
   });
 
+  it('distinguishes an absent account binding from unavailable bound credentials', async () => {
+    const owner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }),
+        update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
+      selectTarget: async () => { throw new Error('A read cannot select an account'); },
+      resolveTarget: async () => null,
+      projectTargetAccounts: async () => ({ status: 'complete', accounts: [] }),
+      materializeAccount: async () => { throw new Error('There is no selected account'); },
+      assertTargetAccountMaterializable: async () => undefined,
+    });
+    const request = { kind: 'scm_hosting_token' as const, boundAccountOnly: true as const, providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
+      host: 'github.com', provider: githubProvider };
+    const unbound = createHostScmHostingProviderRuntimeServices({ ...createRuntimeInput(),
+      resolveConnectedAccountPurposeBindingOwner: () => owner });
+    await expect(runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github',
+      () => unbound.resolveScmHostingTokenMaterialization!(request)))
+      .resolves.toEqual({ kind: 'missing', reason: 'account_unbound' });
+    const unavailable = createHostScmHostingProviderRuntimeServices(createRuntimeInput());
+    await expect(runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github',
+      () => unavailable.resolveScmHostingTokenMaterialization!(request)))
+      .resolves.toEqual({ kind: 'missing', reason: 'credential_unavailable' });
+  });
+
   it('does not expose connected-account credentials outside a provider-qualified invocation', async () => {
     const materialize = vi.fn(async () => ({
       kind: 'httpHeaders' as const,

@@ -2,7 +2,7 @@ import { stat, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '@happier-dev/protocol/scm/repositoryClone';
 import { readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
-import type { WorkspaceActivationRequestV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import type { OpenProjectResultV1, WorkspaceActivationRequestV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import type { WorkspaceSyncHandoffAdapter, PrepareWorkspaceSyncHandoffInput } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
@@ -36,8 +36,9 @@ export type MaterializeProjectCheckoutInput = Readonly<{
   }>;
 }>;
 
-function refused(code: string, message = code): never {
-  throw Object.assign(new Error(message), { code });
+function refused(code: string, message = code,
+  details?: Pick<Extract<OpenProjectResultV1, { kind: 'refused' }>, 'retryNotBeforeMs' | 'remediation'>): never {
+  throw Object.assign(new Error(message), { code, ...details });
 }
 
 async function existingDirectory(path: string | undefined): Promise<string> {
@@ -80,7 +81,9 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     }).catch(error => { input.onEffectsIssued?.(); throw error; });
     if (!clone.success) {
       if (!clone.outcome || clone.outcome.kind === 'outcome_unknown' || clone.outcome.kind === 'effect_applied_with_warning') input.onEffectsIssued?.();
-      return refused(clone.errorCode ?? 'checkout_failed', clone.error);
+      return refused(clone.errorCode ?? 'checkout_failed', clone.error,
+        clone.errorCode === 'REMOTE_RATE_LIMITED'
+          ? { retryNotBeforeMs: clone.retryNotBeforeMs, remediation: clone.remediation } : undefined);
     }
     input.onEffectsIssued?.();
     const rootPath = await existingDirectory(clone.destinationPath);

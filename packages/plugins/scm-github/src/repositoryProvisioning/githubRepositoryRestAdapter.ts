@@ -18,7 +18,7 @@ import type {
 import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
-import { readGithubDecodedResponseFacts } from '../observations/githubApiClient.js';
+import { readGithubDecodedResponseFacts, readGithubRetryAfterMs } from '../observations/githubApiClient.js';
 import {
   classifyGithubResponseFacts,
   isGithubInaccessibleResourceFailure,
@@ -66,7 +66,10 @@ export type GithubRepositoryRestAdapter = Readonly<{
     input: ScmHostingProviderRepositoryDescribePublishTargetsInput
   ): Promise<ScmHostingProviderRepositoryDescribePublishTargetsResult>;
   createRepository(input: ScmHostingProviderRepositoryCreateInput): Promise<ScmHostingRepositorySummary>;
-  getRepository(input: ScmHostingProviderRepositoryGetInput & Readonly<{ publicOnly?: true }>): Promise<ScmHostingRepositorySummary | null>;
+  getRepository(input: ScmHostingProviderRepositoryGetInput): Promise<ScmHostingRepositorySummary | null>;
+  getRepositoryForClone(input: ScmHostingProviderRepositoryGetInput): Promise<Readonly<{
+    repository: ScmHostingRepositorySummary | null; auth: ScmHostingRepositoryAuthSummary;
+  }>>;
 }>;
 
 
@@ -80,6 +83,7 @@ async function defaultRuntimeTokenResolver(input: Readonly<{
   if (!resolver) return { kind: 'missing', reason: 'credential_unavailable' };
   const result = await resolver({
     kind: 'scm_hosting_token',
+    boundAccountOnly: true,
     providerId: input.providerId,
     host: input.host,
     provider: input.provider,
@@ -119,18 +123,22 @@ function repoPath(input: Readonly<{ owner: string; repositoryName: string }>): s
  * how a throttled `403` came to be reported as a permanent remote rejection with
  * no retry instruction, even though GitHub had said exactly when to come back.
  */
-function mapGithubRepositoryRestError(context: ScmForgeHttpErrorContext): Error {
+function mapGithubRepositoryRestError(context: ScmForgeHttpErrorContext, anonymous = false): Error {
+  const now = Date.now();
   const failure = classifyGithubResponseFacts(
     readGithubDecodedResponseFacts({
       status: context.status,
       headers: context.response.headers,
       body: context.body,
     }),
-    Date.now(),
+    now,
   );
   switch (failure.class) {
-    case 'rateLimit':
-      throw createGithubRepositoryRateLimitedError(failure.retryNotBeforeMs);
+    case 'rateLimit': {
+      // The classifier's fallback is a retry policy, not a forge-provided instant.
+      const retryAfterMs = readGithubRetryAfterMs(context.response.headers, now);
+      throw createGithubRepositoryRateLimitedError(retryAfterMs === null ? undefined : now + retryAfterMs, anonymous);
+    }
     case 'authentication':
       throw createGithubRepositoryAuthRequiredError('GitHub REST authentication failed');
     case 'permission':
@@ -222,7 +230,8 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
   async function resolveToken(
     provider: ScmHostingProviderRef,
     runtimeServices?: ScmHostingProviderRuntimeServices,
-  ): Promise<Readonly<{ token: string; profileKey?: string }>> {
+    allowAnonymous = false,
+  ): Promise<Readonly<{ token?: string; profileKey?: string }>> {
     const host = resolveGithubRepositoryHost(provider);
     const result = await tokenResolver({
       providerId: provider.id,
@@ -230,6 +239,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
       provider,
       ...(runtimeServices ? { runtimeServices } : {}),
     });
+    if (allowAnonymous && result.kind === 'missing' && result.reason === 'account_unbound') return {};
     if (result.kind !== 'available' || !result.token.trim()) {
       throw createGithubRepositoryAuthRequiredError();
     }
@@ -245,12 +255,12 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     init?: Omit<RequestInit, 'headers'>,
     runtimeServices?: ScmHostingProviderRuntimeServices,
     signal?: AbortSignal,
-    publicOnly?: true,
+    resolvedAuth?: Readonly<{ token?: string; profileKey?: string }>,
   ): Promise<Readonly<{
     raw: unknown;
     profileKey?: string;
   }>> {
-    const auth: Readonly<{ token?: string; profileKey?: string }> = publicOnly ? {} : await resolveToken(provider, runtimeServices);
+    const auth = resolvedAuth ?? await resolveToken(provider, runtimeServices);
     const raw = await requestScmForgeJson({
       url: `${resolveGithubRepositoryApiBaseUrl(provider)}${path}`,
       init: {
@@ -259,12 +269,26 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
         headers: buildHeaders(auth.token),
       },
       fetcher,
-      mapError: mapGithubRepositoryRestError,
+      mapError: context => mapGithubRepositoryRestError(context, !auth.token),
     });
     return {
       raw,
       ...(auth.profileKey ? { profileKey: auth.profileKey } : {}),
     };
+  }
+
+  async function readRepository(input: ScmHostingProviderRepositoryGetInput,
+    auth?: Readonly<{ token?: string; profileKey?: string }>): Promise<ScmHostingRepositorySummary | null> {
+    try {
+      const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}`, { method: 'GET' }, input.runtimeServices, input.signal, auth);
+      const mapped = mapGithubRepositorySummary({ provider: input.provider, raw,
+        fallbackNameWithOwner: `${input.owner}/${input.repositoryName}` });
+      if (!mapped) throw createGithubRepositoryCommandFailedError('GitHub returned an invalid repository payload');
+      return mapped;
+    } catch (error) {
+      if (isGithubRepositoryNotFoundError(error)) return null;
+      throw error;
+    }
   }
 
   return Object.freeze({
@@ -338,21 +362,16 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
       return mapped;
     },
     async getRepository(input) {
-      try {
-        const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}`, { method: 'GET' }, input.runtimeServices, input.signal, input.publicOnly);
-        const mapped = mapGithubRepositorySummary({
-          provider: input.provider,
-          raw,
-          fallbackNameWithOwner: `${input.owner}/${input.repositoryName}`,
-        });
-        if (!mapped) throw createGithubRepositoryCommandFailedError('GitHub returned an invalid repository payload');
-        // Anonymous visibility is an observed GitHub fact, never caller-supplied authority.
-        if (input.publicOnly && mapped.visibility !== 'public') return null;
-        return mapped;
-      } catch (error) {
-        if (isGithubRepositoryNotFoundError(error)) return null;
-        throw error;
-      }
+      return readRepository(input);
+    },
+    async getRepositoryForClone(input) {
+      const auth = await resolveToken(input.provider, input.runtimeServices, true);
+      const repository = await readRepository(input, auth);
+      // Only observed public visibility admits no-auth cloning, not a saved locator.
+      if (!auth.token && repository?.visibility !== 'public') throw createGithubRepositoryAuthRequiredError();
+      const summary: ScmHostingRepositoryAuthSummary = auth.token ? createAuthSummary(auth.profileKey)
+        : { state: 'authenticated', profileKind: 'no_auth' };
+      return { repository, auth: summary };
     },
   });
 }

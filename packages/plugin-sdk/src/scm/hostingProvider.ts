@@ -197,6 +197,8 @@ export type HostingProviderRuntimeServices = Readonly<{
     resolveScmHostingProviderRegistry?: () => Promise<HostingProviderResolvedRegistry>;
     resolveScmHostingTokenMaterialization?: (input: Readonly<{
         kind: 'scm_hosting_token';
+        /** Restrict this request to the durable Connected Account binding; do not try native credentials. */
+        boundAccountOnly?: true;
         providerId: string;
         host: string;
         provider: ScmHostingProviderRef;

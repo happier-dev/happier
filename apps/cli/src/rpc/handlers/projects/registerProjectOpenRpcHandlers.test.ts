@@ -32,13 +32,13 @@ import { promisify } from 'node:util';
 import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
 import { createGithubRepositoryProvisioningAdapter } from '../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/createRepositoryWithAuthFallback';
 import { createGithubRepositoryRestAdapter } from '../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/githubRepositoryRestAdapter';
-import { createHostScmHostingProviderRegistry } from '@/scm/hostingProviders/runtimeServices';
+import { createHostScmHostingProviderRuntimeServices } from '@/scm/hostingProviders/runtimeServices';
 import { githubHostingProviderAdapter } from '../../../../../../packages/plugins/scm-github/src/adapter';
 import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '../../../../../../packages/plugins/scm-github/src/manifest';
 import { createRegisteredScmBackendRegistry } from '@/scm/pluginBackends/registeredScmBackendRegistry';
 import { GIT_PLUGIN, GIT_SCM_BACKEND_CONTRIBUTION } from '../../../../../../packages/plugins/scm-git/src/manifest';
 import { createScmBackendRegistry } from '@/scm/registry';
-import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { logger } from '@/ui/logger';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
@@ -125,22 +125,42 @@ describe('Project Open RPC', () => {
         webUrl: 'https://github.com/octocat/Hello-World', cloneUrl: 'https://github.com/octocat/Hello-World' }, protocol: 'https' } };
     // GitHub HTTP and Git's remote are the system boundaries; discovery, dispatch,
     // clone/publication, Source admission and Account row acceptance remain real.
+    let rateLimited: 'timed' | 'unhinted' | null = null;
+    const retryAt = Math.ceil(Date.now() / 1000) * 1000 + 3600_000;
     const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
       expect(new Headers(init?.headers).has('Authorization')).toBe(false);
+      if (rateLimited) return { ok: false, status: 403, statusText: 'Forbidden',
+        headers: new Headers({ 'x-ratelimit-remaining': '0', ...(rateLimited === 'timed'
+          ? { 'x-ratelimit-reset': String(retryAt / 1000) } : {}) }),
+        json: async () => ({ message: 'API rate limit exceeded' }), text: async () => '' };
       return { ok: true, status: 200, statusText: 'OK', json: async () => ({ full_name: 'octocat/Hello-World',
         html_url: 'https://github.com/octocat/Hello-World', clone_url: 'https://github.com/octocat/Hello-World.git',
         visibility: 'public', default_branch: 'master' }), text: async () => '' };
     });
     const hostingDefinition = GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders?.[0];
     if (!hostingDefinition) throw new Error('GitHub did not declare its hosting provider');
-    // Use the real host producer: getProvider returns a static declaration,
-    // while detectRemote supplies the admitted deployment and URL safety.
-    const hosting = createHostScmHostingProviderRegistry({
+    const bindingOwner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }),
+        update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
+      selectTarget: async () => { throw new Error('Read-only Open cannot select an account'); },
+      resolveTarget: async () => null,
+      projectTargetAccounts: async () => ({ status: 'complete', accounts: [] }),
+      materializeAccount: async () => { throw new Error('An unbound public clone must not materialize credentials'); },
+      assertTargetAccountMaterializable: async () => undefined,
+    });
+    const accountDefinition = GITHUB_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.[0];
+    if (!accountDefinition) throw new Error('GitHub did not declare its Connected Account');
+    // Keep the real registry and auth producer: an absent binding is proved by
+    // the purpose owner, not inferred from an unavailable token service.
+    const hostingRuntimeServices = createHostScmHostingProviderRuntimeServices({
       contributes: { scmHostingProviders: [{ id: provider.id, pluginId: GITHUB_PLUGIN_MANIFEST.id,
-        provenance: 'first_party', source: { kind: 'bundled' }, definition: hostingDefinition }] },
+        provenance: 'first_party', source: { kind: 'bundled' }, definition: hostingDefinition }],
+        connectedAccountDescriptors: [{ pluginId: GITHUB_PLUGIN_MANIFEST.id,
+          provenance: 'first_party', source: { kind: 'bundled' }, definition: accountDefinition }] },
       scmHostingProvidersById: new Map([[provider.id, { pluginId: GITHUB_PLUGIN_MANIFEST.id, occurrenceId: 'github-test',
         registration: { id: 'github', adapter: { routing: githubHostingProviderAdapter,
           repositoryClone: createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({ fetcher }) }) } } }]]),
+      resolveConnectedAccountPurposeBindingOwner: () => bindingOwner,
     });
     const scopeRegistration = createPluginRegistrationScope({ pluginId: 'happier.scm.backend.git',
       target: { realm: 'daemon' }, rights: [{ family: 'scmBackends', localId: 'git', target: { realm: 'daemon' } }] });
@@ -151,7 +171,7 @@ describe('Project Open RPC', () => {
     const activated = createRegisteredScmBackendRegistry({ definitions: [{ pluginId: 'happier.scm.backend.git',
       contributionId: 'git', definition: GIT_SCM_BACKEND_CONTRIBUTION }],
       registrations: [{ pluginId: 'happier.scm.backend.git', registration }],
-      hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(hosting) });
+      hostingProviderRuntimeServices: hostingRuntimeServices });
     expect(activated.diagnostics).toEqual([]);
     const registry = createScmBackendRegistry(activated.backends);
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
@@ -195,6 +215,17 @@ describe('Project Open RPC', () => {
       expect(diagnostic.mock.calls.length).toBeGreaterThan(0);
       const noBackend = register(RPC_METHODS.PROJECTS_OPEN, { ...runtime, registry: createScmBackendRegistry([]) });
       expect(await noBackend(input, context)).toEqual({ kind: 'refused', code: 'FEATURE_UNSUPPORTED' });
+      for (const limit of ['timed', 'unhinted'] as const) {
+        rateLimited = limit;
+        const refusal = await handler(input, context);
+        expect(refusal).toEqual({ kind: 'refused', code: 'REMOTE_RATE_LIMITED',
+          ...(limit === 'timed' ? { retryNotBeforeMs: retryAt } : {}),
+          remediation: { kind: 'retry', action: 'connect_github' } });
+        expect(OpenProjectResultV1Schema.parse(refusal)).toEqual(refusal);
+        await expect(access(join(root, 'checkout'))).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(rows).toEqual([]);
+      }
+      rateLimited = null;
       scope.patch({ GIT_CONFIG_KEY_0: `url.${join(root, 'absent.git')}.insteadOf` });
       expect(await handler(input, context)).toMatchObject({ kind: 'refused' });
       await expect(access(join(root, 'checkout'))).rejects.toMatchObject({ code: 'ENOENT' });
