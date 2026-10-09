@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 
+it('admits configuration-only native account references without inventing a credential field', () => {
+  const descriptor = { id: 'native', title: 'Existing native setup', authentication: {
+    defaultModeId: 'native', modes: [{ id: 'native', kind: 'manual', outcomeReconciliation: 'none', fields: [],
+      configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [{ id: 'nativeHome', title: 'Native home',
+        required: true, secret: false, schema: { type: 'string', minLength: 1 } }] } }],
+  } };
+  expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse(descriptor).success).toBe(true);
+});
+
 it('admits the closed native system-tool declaration without inventing a credential mode', () => {
   const descriptor = {
     id: 'work', title: 'Work',
@@ -19,6 +28,21 @@ it('admits an explicitly supported reset capability while keeping the capability
   };
   expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse(descriptor).success).toBe(true);
   expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({ ...descriptor, recoveryCredits: { supported: true, automatic: true } }).success).toBe(false);
+});
+
+it('admits provider-declared raw authorization codes only in the required-PKCE OAuth mode', () => {
+  const mode = { id: 'oauth', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none', allowRawAuthorizationCode: true };
+  const descriptor = { id: 'work', title: 'Work', authentication: { defaultModeId: 'oauth', modes: [mode] } };
+  expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse(descriptor).success).toBe(true);
+  for (const invalidMode of [
+    { ...mode, pkce: undefined },
+    { ...mode, kind: 'oauthDeviceCode' },
+    { ...mode, allowRawAuthorizationCode: 'true' },
+  ]) {
+    expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({
+      ...descriptor, authentication: { ...descriptor.authentication, modes: [invalidMode] },
+    }).success).toBe(false);
+  }
 });
 
 it('makes direct export an explicit manual-mode contract that OAuth modes cannot claim', () => {
