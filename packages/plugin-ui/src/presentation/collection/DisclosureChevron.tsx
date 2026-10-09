@@ -4,12 +4,14 @@ import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 
 /**
  * The disclosure caret's geometry (lab `.wf-cv`): a 12pt chevron in a 24pt box whose hit area the caller extends
- * to the touch floor.
+ * to the touch floor. The drawn mark is the lab caret's own proportion — a 6-unit run over 12 in a 24-unit glyph,
+ * so each arm is √72/24 ≈ 0.354 of the glyph box — at the lab's 2.2-of-24 stroke (1.1pt at 12pt).
  */
 export const HAPPIER_DISCLOSURE_CHEVRON_METRICS = Object.freeze({
   boxPx: 24,
   glyphPx: 12,
-  strokePx: 1.5,
+  armRatio: Math.SQRT2 / 4,
+  strokePx: 1.1,
 });
 
 export type HappierChevronDirection = 'right' | 'down' | 'up' | 'left';
@@ -48,14 +50,14 @@ export function HappierChevron(
   props: Readonly<{
     direction: HappierChevronDirection;
     color: string;
-    /** The glyph box; the stroke corner is half of it. */
+    /** The glyph box; each stroke of the corner is {@link HAPPIER_DISCLOSURE_CHEVRON_METRICS.armRatio} of it. */
     size?: number;
     reducedMotion?: boolean;
     testID?: string;
   }>,
 ) {
   const size = props.size ?? HAPPIER_DISCLOSURE_CHEVRON_METRICS.glyphPx;
-  const arm = Math.round(size * 0.5);
+  const arm = size * HAPPIER_DISCLOSURE_CHEVRON_METRICS.armRatio;
   const rotation = CHEVRON_ROTATION_DEG[props.direction];
   // A quarter arm back from the point keeps the drawn stroke optically centred in its box.
   const back = arm / 4;

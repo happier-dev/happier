@@ -37,7 +37,7 @@ export function AgentInputStatusBadge(props: AgentInputStatusBadgeProps) {
     const labelColor = theme.colors.text.primary;
     // A badge that opens a popover says so with the same quiet caret the composer's chips carry.
     const caret = props.renderPopover && emphasis !== 'quiet'
-        ? <Icon name="caret-down" size={12} color={theme.colors.text.tertiary} testID={props.testID ? `${props.testID}:caret` : undefined} />
+        ? <Icon name="caret-down" size={11} color={theme.colors.text.tertiary} testID={props.testID ? `${props.testID}:caret` : undefined} />
         : undefined;
 
     const pill = (
@@ -103,13 +103,17 @@ const styles = StyleSheet.create(() => ({
     wrapperPressed: {
         opacity: motionTokens.press.opacity,
     },
-    // Beside the composer's chips the badge keeps their rhythm: a touch more air than a status fact.
+    // Beside the composer's chips the badge keeps their rhythm: a touch more air than a status fact
+    // (lab `.l12-sb`: 24 high on the row-meta line, 8/9 inset, 6 between mark and words).
     pillDensity: {
         paddingVertical: 4,
         paddingLeft: 8,
         paddingRight: 9,
+        gap: 6,
     },
+    // The composer's own status line type (row meta), not the 11pt chrome phrase a status fact uses.
     label: {
+        ...Typography.rowMeta(),
         ...Typography.default('semiBold'),
     },
 }));

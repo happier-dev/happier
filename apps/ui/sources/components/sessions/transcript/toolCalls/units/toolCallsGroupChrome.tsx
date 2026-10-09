@@ -243,9 +243,9 @@ const chromeStyles = StyleSheet.create((theme) => ({
         fontSize: 13,
         ...Typography.default('semiBold'),
     },
-    // The count is a quiet fact after the title: the title's size, not its weight.
+    // The count is a quiet fact after the title: the title's size, not its weight, in the quietest ink (lab `.tt .n`).
     subtitle: {
-        color: theme.colors.message.event.foreground,
+        color: theme.colors.text.tertiary,
         fontSize: 13,
         ...Typography.default('regular'),
     },

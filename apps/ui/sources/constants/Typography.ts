@@ -168,12 +168,14 @@ function readingTypography(): Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fon
     };
 }
 
+// One pill label on every platform (lab `.pill`/`.l12-pill`: 11.5 semibold, barely tracked); with the shared
+// badge's 3pt block padding it draws the lab's 20pt status fact.
 function pillLabelTypography(): Pick<TextStyle, 'fontFamily' | 'fontWeight' | 'fontSize' | 'lineHeight' | 'letterSpacing'> {
     return {
         ...defaultTypography('semiBold'),
-        fontSize: Platform.select({ ios: 11, default: 10 }),
-        lineHeight: Platform.select({ ios: 14, default: 12 }),
-        letterSpacing: 0.2,
+        fontSize: 11,
+        lineHeight: 14,
+        letterSpacing: 0.05,
     };
 }
 

@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
-import { useOptionalHappierUiPalette } from '../../environment/context.js';
+import { useOptionalHappierUiPalette, useOptionalHappierUiTypography } from '../../environment/context.js';
 import { HappierDisclosureChevron } from '../collection/DisclosureChevron.js';
-import { HAPPIER_COLLECTION_LIST_METRICS } from '../collection/CollectionList.js';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT } from '../collection/CollectionList.js';
+import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import {
@@ -157,6 +158,7 @@ export type HappierTreeRowProps = Readonly<{
 export function HappierTreeRow(props: HappierTreeRowProps) {
   const { node, theme } = props;
   const palette = useOptionalHappierUiPalette(theme);
+  const typography = useOptionalHappierUiTypography();
   const branch = node.kind === 'branch';
   const heights =
     props.presentation === 'table'
@@ -232,11 +234,19 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
           {props.mark}
         </View>
       ) : null}
+      {/* One title size for every row (the column row's title step, lab `.ca-row .t`): a branch differs only in weight. */}
       <HappierText
-        variant={branch && props.presentation !== 'table' ? 'label' : 'body'}
         numberOfLines={1}
         ellipsizeMode={branch ? 'middle' : 'tail'}
-        style={{ flex: 1, minWidth: 0, color: theme.colors.text }}
+        style={{
+          ...resolveHappierTextStepStyle(
+            HAPPIER_COLLECTION_LIST_TEXT[branch ? 'rowTitleSelected' : 'rowTitle'],
+            typography,
+          ),
+          flex: 1,
+          minWidth: 0,
+          color: theme.colors.text,
+        }}
       >
         {props.title}
       </HappierText>

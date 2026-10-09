@@ -140,7 +140,8 @@ export function HappierDivider(
 export const HAPPIER_BADGE_METRICS = Object.freeze({
   radius: HAPPIER_RADIUS_V1.sm,
   horizontalPadding: 7,
-  verticalPadding: 2,
+  // With the 14pt caption/pill line this is the lab's 20pt fact (`.l12-pill`).
+  verticalPadding: 3,
   gap: 5,
 });
 

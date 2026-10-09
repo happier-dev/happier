@@ -169,7 +169,7 @@ export function HappierFieldBoxChevron({ open, color, size = 16 }: Readonly<{
       accessibilityElementsHidden
       style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
     >
-      {/* The stroke corner keeps its 0.4-of-the-box arm: the chevron's arm is half its glyph size. */}
+      {/* The shared caret at four fifths of the field's icon box, the lab chip caret's size. */}
       <HappierChevron direction={open ? 'up' : 'down'} color={color} size={Math.round(size * 0.8)} />
     </View>
   );
