@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as processInstance from '@happier-dev/cli-common/processInstance';
+import * as windowsProcessInventory from '../platform/windows/windowsProcessInventory';
 
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '../types';
@@ -39,6 +41,8 @@ describe('Windows Terminal exact Agent custody composition', () => {
     vi.doUnmock(
       '../platform/windows/spawnHappyCliWindowsTerminal',
     );
+    vi.doUnmock('../platform/windows/windowsProcessInventory');
+    vi.doUnmock('@happier-dev/cli-common/processInstance');
     vi.resetModules();
     if (testRoot) {
       rmSync(testRoot, { recursive: true, force: true });
@@ -70,7 +74,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
     }
     testRoot = join(
       tmpdir(),
-      `happier-wt-custody-${Date.now()}-${Math.random()}`,
+      `happier wt custody ${Date.now()}-${Math.random()}`,
     );
     const packageDist = join(testRoot, 'package-dist');
     const binaryPath = join(testRoot, 'happier.exe');
@@ -84,11 +88,6 @@ describe('Windows Terminal exact Agent custody composition', () => {
     process.env.HAPPIER_HOME_DIR = join(testRoot, 'home');
     process.env.HAPPIER_WINDOWS_SESSION_RUNNER_BINARY =
       binaryPath;
-    Object.defineProperty(process, 'platform', {
-      ...originalPlatform,
-      value: 'win32',
-    });
-
     let launcherInput: LauncherInput | null = null;
     const stopDispatcher = vi.fn();
     let settleDispatcher!: (
@@ -119,32 +118,43 @@ describe('Windows Terminal exact Agent custody composition', () => {
           },
       }),
     );
+    // This suite emulates Windows on Linux workers. Keep marker/lock logic
+    // real, but supply the OS inventory fact for this live test process.
+    vi.doMock('../platform/windows/windowsProcessInventory', () => ({
+      ...windowsProcessInventory,
+      readWindowsProcessInventory: async () => new Map([[process.pid, {
+        pid: process.pid, processStartTimeMs: 1, command: process.execPath,
+        executablePath: process.execPath,
+      }]]),
+    }));
+    // The reclaim guard reads the same OS birth witness synchronously.
+    vi.doMock('@happier-dev/cli-common/processInstance', () => ({
+      ...processInstance, readProcessStartTimeMsSync: (pid: number) =>
+        pid === process.pid ? 1 : processInstance.readProcessStartTimeMsSync(pid),
+    }));
     vi.resetModules();
 
-    const [
-      { configuration },
-      { spawnWindowsHostedSessionAndWaitForWebhook },
-      { createOnHappySessionWebhook },
-      { persistAcceptedSpawnMarker },
-      {
-        listSessionMarkers,
-        removeSessionMarkerIfOwned,
-        writeSessionMarker,
-      },
-      {
-        parseWindowsCommandLine,
-        serializeWindowsCommandLine,
-      },
-      { captureExactWindowsTerminalLaunchProcess },
-    ] = await Promise.all([
-      import('@/configuration'),
-      import('./spawnWindowsHostedSessionAndWaitForWebhook'),
-      import('../sessions/onHappySessionWebhook'),
-      import('./persistAcceptedSpawnMarker'),
-      import('../sessionRegistry'),
-      import('../platform/windows/windowsCommandLine'),
-      import('../platform/windows/windowsProcessCustody'),
-    ]);
+    // These cold entry points share modules; initialize them sequentially after
+    // resetModules so Vitest's mocked-module loader can finish each import.
+    const { configuration } = await import('@/configuration');
+    const { spawnWindowsHostedSessionAndWaitForWebhook } =
+      await import('./spawnWindowsHostedSessionAndWaitForWebhook');
+    const { createOnHappySessionWebhook } =
+      await import('../sessions/onHappySessionWebhook');
+    const { persistAcceptedSpawnMarker } =
+      await import('./persistAcceptedSpawnMarker');
+    const { listSessionMarkers, removeSessionMarkerIfOwned, writeSessionMarker } =
+      await import('../sessionRegistry');
+    const { parseWindowsCommandLine, serializeWindowsCommandLine } =
+      await import('../platform/windows/windowsCommandLine');
+    const { captureExactWindowsTerminalLaunchProcess } =
+      await import('../platform/windows/windowsProcessCustody');
+
+    // Emulate the OS for the runtime exercise, not Vitest's module loader.
+    Object.defineProperty(process, 'platform', {
+      ...originalPlatform,
+      value: 'win32',
+    });
 
     const pidToTrackedSession =
       new Map<number, TrackedSession>();
@@ -232,6 +242,8 @@ describe('Windows Terminal exact Agent custody composition', () => {
       cleanupPendingSessionAttach:
         vi.fn(async () => undefined),
     };
+    const nativeRoot = 'C:/native project root\\nested folder';
+    const nativeResumeId = 'native/session with "quotes"\\';
     const spawnPromise =
       spawnWindowsHostedSessionAndWaitForWebhook({
         windowsLaunchMode: 'windows_terminal',
@@ -241,12 +253,14 @@ describe('Windows Terminal exact Agent custody composition', () => {
           'remote',
           '--started-by',
           'daemon',
+          '--resume',
+          nativeResumeId,
         ],
         agentCommand: 'codex',
-        directory: 'C:\\repo',
-        options: { directory: 'C:\\repo' },
+        directory: nativeRoot,
+        options: { directory: nativeRoot },
         trackedSpawnOptions: {
-          directory: 'C:\\repo',
+          directory: nativeRoot,
           backendTarget: {
             kind: 'backend',
             backendId: 'codex',
@@ -283,6 +297,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
       expect(launcherInput).not.toBeNull();
     });
     const launched = launcherInput!;
+    expect(launched.args).toEqual(expect.arrayContaining(['--resume', nativeResumeId]));
     agentExecutablePath = launched.filePath;
     agentCommand = serializeWindowsCommandLine([
       launched.filePath,
@@ -345,7 +360,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
     pidToTrackedSession.set(7_771, unrelatedTracked);
     pidToAwaiter.set(7_771, unrelatedAwaiter);
     const metadata: Metadata = {
-      path: 'C:\\repo',
+      path: nativeRoot,
       host: 'windows-host',
       homeDir: 'C:\\Users\\test',
       happyHomeDir: configuration.happyHomeDir,
