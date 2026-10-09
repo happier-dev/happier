@@ -34,6 +34,14 @@ client can use that instead of falling back to the relay.
 
 ## What uses this
 
+<Callout type="info">
+  In unreleased 0.3 development source, workspace uploads and downloads also use
+  the canonical filesystem Actions. An accepted transfer means it has started,
+  not that the destination has received the file. Progress and cancellation
+  remain attached to that operation until the existing transfer owner confirms
+  completion or reports failure, cancellation or an unknown outcome.
+</Callout>
+
 The same foundation carries prompt assets, message attachments, workspace file
 downloads, session handoff payloads, and folder archives. Route selection,
 progress, cancellation and recovery are shared, so a large transfer behaves the

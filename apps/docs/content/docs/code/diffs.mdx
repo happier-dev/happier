@@ -67,10 +67,18 @@ feature below.
   and review journeys.
 </Callout>
 
-You need a reachable session machine, permission to control its analysis Runs,
+You need a reachable machine, permission to control its analysis Runs,
 and an offered Summary model that supports structured output. An unavailable or
 unverified model cannot start a walkthrough. Chat continuation is a separate
 capability, so a model that can write an explanation may not support discussion.
+
+In the development Project flow, choose an accepted checkout first. Its Files
+and Walkthrough use that checkout's machine without starting a helper session.
+Access to the machine and directory alone does not unlock saved session-private
+explanations; those also require permission for the original session. An
+unavailable or ambiguous checkout stays unavailable rather than selecting one
+for you. Project **Explain** and **Ask** prepare an ordinary editable new-session
+draft; they do not send it automatically.
 
 Choose **Walk me through** on a turn's changes card, or open **Walkthrough** from
 the comparison surface. Pending changes in Git, Companion's Changes glance, the

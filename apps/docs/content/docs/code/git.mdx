@@ -87,6 +87,20 @@ Current scope:
 - GitLab and Bitbucket repository creation are not currently supported from Happier.
 - Publishing is explicit; Happier does not create a repository, remote, commit, or push without a user action.
 
+## Commit-message suggestions in Projects
+
+In the unreleased 0.3 development Project flow, commit-message generation uses
+the selected checkout's machine without creating a helper session. The
+suggestion fills the current editable message only if its checkout, selection
+and draft are still current. Generating a message does not commit anything.
+Local Changes and Git use the same checkout controls.
+
+If the generation wait ends while its Run is still working, the status remains
+pending. Choosing generation again observes the existing Run instead of
+starting a replacement; cancellation requests that Run to stop, but does not
+claim it has already stopped. Package and composed runtime verification of this
+development flow remain open.
+
 ## Commit created, refresh failed
 
 <Callout type="info">

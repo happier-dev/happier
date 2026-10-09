@@ -7,6 +7,45 @@ open; the presentation gaps below must not be documented as completed flows.
 
 ## Owners and data flow
 
+### Demanded entry history (unreleased 0.3)
+
+`scm.history.entries` reads the latest reachable commit touching each demanded
+literal repository-relative path at one captured HEAD. Its strict request and
+result live in `packages/protocol/src/scm/entriesHistoryV1.ts`; the contributed
+`read.historyEntries` operation is optional, and a backend without it reports
+unsupported history rather than borrowing Git behavior.
+
+The Git owner batches the current folder and visible entries into one history
+traversal. Files match their exact path, directories match descendants, and
+renames do not follow an old identity. Subjects and author names are native Git
+facts, not inferred hosting identities. Unborn history is `none`; a shallow
+boundary or failed/truncated read is `unavailable`, not proof of no commits.
+
+`useWorkspaceEntryHistory` captures Home, Machine, root, folder, demanded paths
+and HEAD. Retired or mismatched responses cannot replace the current view.
+For a workspace below the repository root, it consumes that root from the same
+SCM snapshot, prefixes outgoing demands and maps only demanded facts back to
+workspace-relative rows. Root-folder history therefore excludes outside sibling
+commits. Missing or incompatible repository-root evidence is unavailable, not
+proof of no history; literal filename spelling is preserved through the existing
+contained-relative-path owner.
+On Windows, qualified root identities can lose directory casing. The Git batch
+recovers its actual folder spelling through native filesystem resolution before
+the existing literal Git filter and path matching; it keeps the original demand
+keys in its response. It refuses physical alias/junction remapping rather than
+following a different Git identity. POSIX case-sensitive names remain distinct.
+History is transient and independent of the directory read: failed refreshes
+retain known facts with a freshness notice, and valid files remain browsable.
+This is not a persisted history index or a replacement for paged `scm.log.list`.
+
+Cross-machine commit counts require actual common Git objects at the comparison
+owner. A remote tip not present locally cannot supply a merge base; unrelated
+histories cannot supply one either. Per-checkout upstream ahead/behind counters
+are not cross-machine comparisons and must not be subtracted or combined to
+invent them. The existing comparison owner reports unavailable evidence when
+it cannot resolve the required local objects; entry history does not fetch or
+introduce a second comparison engine.
+
 Capture comparison evidence first, then optionally ask one analysis Run for
 `summary`, `walkthrough`, `commitPlan`, or a combination. Capture requires no
 model. Opening a Walkthrough destination does not start generation; Start does.
@@ -32,6 +71,11 @@ model. Opening a Walkthrough destination does not start generation; Start does.
 - [`SessionScmReviewDetailsView.tsx`](../apps/ui/sources/components/sessions/files/views/SessionScmReviewDetailsView.tsx)
   projects Files, Walkthrough and pending-only Commits through `scmReview`.
   The shared comparison binding restores saved results without generation.
+- [`WorkspaceScmReviewBody.tsx`](../apps/ui/sources/components/projects/scm/WorkspaceScmReviewBody.tsx)
+  owns the shared comparison body for Project, live Session and captured Session
+  hosts. Hosts supply their admitted authority; a Project presentation key is
+  not a workspace permission id. Missing or ambiguous accepted workspace refs
+  leave Project analysis unavailable rather than manufacturing a Session.
 - [`walkthroughReading.ts`](../apps/ui/sources/components/sessions/files/walkthrough/walkthroughReading.ts)
   projects each stop's first Explain occurrence per file once per reading.
   Hunk annotations look up those notes directly; they do not rebuild the reading.
@@ -41,6 +85,51 @@ entry points. See [Actions](actions.md) and the generated
 [host Action reference](../apps/docs/content/docs/plugins/api/host-actions.mdx)
 for current inputs, outputs, placements and confirmation policies. There is no
 second walkthrough generator, publisher, result registry or Git writer.
+
+Saved-result admission is enforced by `executeScmActionOperation` before
+inventory metadata, prose, provenance or effects are returned. Workspace-native
+results require the authenticated Home/Machine and filesystem root. A retained
+Session namespace or Session-derived source additionally requires separately
+verified Session authority through the existing `session.write` RPC proof;
+caller-supplied Session and root selectors never grant access. The fixed Run
+profile scope enforces the same rule: detached intent input cannot open a
+private capture or saved result by naming its Session.
+Local retained reads also bind explicit Home overrides to the active Home's
+canonical public/API URL identity; an alternate Home with the same Session ID
+does not open this Home's files. Native profile capture applies the incumbent
+Machine filesystem policy to an intent's directory, without narrowing an
+existing OS-user-wide grant to string equality with the launch directory.
+
+Workspace generation and discussion reuse detached execution Runs with
+`sessionId: null`. A successful generation returns its actual initial `inputId`,
+also retained in the existing generation receipt. Clients can await that exact
+input through Run Get's `waitForInputId`, then reread the saved-result owner;
+they do not wait for a resumable Run's lifetime to end. Later discussion and
+refinement return their actual admitted input identity through the same owner.
+Personal reviewed marks use the requester's Account material, never a Machine
+custodian's material on behalf of another actor. Missing requester material
+returns `reviewed_marks_unavailable`; result deletion reports personal-mark
+cleanup separately without changing that authority.
+
+Stored comparison, result and personal-mark readers use the canonical recursive
+stored-read normalizer: unknown fields are removed at known nested schema
+boundaries, while malformed known fields still fail. Request/model schemas stay
+strict and writes produce the canonical current shape.
+
+The Project Git pane and Local Changes widget share the workspace SCM operation
+owner. A commit-message suggestion uses the existing bounded, ephemeral,
+request-response `scm_commit_message.v1` Run with no tools, null Session and the
+accepted Home/Machine/root. It changes only the matching current editable draft;
+it does not commit or send. A wait timeout is pending observation, not Run
+failure: the accepted handle is retained for Get or explicit Stop on its original
+target, and Stop acknowledgement is not a terminal fact. Session suggestions
+consume the same operation and observation owner.
+
+Project Explain and Ask seed the ordinary editable New Session draft with its
+captured checkout origin and authorized displayed evidence. They do not create a
+helper Session, send automatically, or dispatch another analysis Run. Local
+Changes promotion selects working-tree Files through the existing comparison
+destination and qualified focus request, not a competing File Details tab.
 
 Omitting `outputs` preserves summary-only generation. Its value contains the
 existing `summaryMarkdown`, optional risks, test impact and suggested PR body.
