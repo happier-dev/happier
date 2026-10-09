@@ -9,7 +9,12 @@ import {
 import { activityCache } from "@/app/presence/sessionCache";
 import { afterTx, type Tx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { readMachineAccessKeySessionIdsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
+import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
+import { serializeMachineKeyBasis } from "./machineSerialization";
+import { readMachineDevcontainerChildInTx } from './managed/managedRows';
+import { linkManagedEnrollmentInTx } from './managed/managedMutations';
+import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol';
+import { resolveMachineAccessInTx } from './machineAccess';
 
 import {
     applyVerifiedMachineRegistrationReplacement,
@@ -37,6 +42,7 @@ export async function createMachineWithInstallationIdentityInTx(
         installationIdentity: VerifiedMachineInstallationIdentity | null;
         contentPublicKeyFingerprint: string | null;
         replacementReason: string;
+        managedEnrollment?: ManagedEnrollmentCorrelationV1;
     }>,
 ): Promise<Readonly<{
     machine: Awaited<ReturnType<Tx["machine"]["create"]>>;
@@ -81,6 +87,10 @@ export async function createMachineWithInstallationIdentityInTx(
         })
         : null;
 
+    if (params.managedEnrollment) await linkManagedEnrollmentInTx(tx, params.managedEnrollment, params.accountId, machine.id);
+    const child = await readMachineDevcontainerChildInTx(tx, machine.id);
+    const access = await resolveMachineAccessInTx(tx, { actorAccountId: params.accountId, machineId: machine.id });
+    const devcontainerChild = access?.accessState === 'ready' ? child : null;
     const cursor = await markAccountChanged(tx, {
         accountId: params.accountId,
         kind: "machine",
@@ -90,7 +100,7 @@ export async function createMachineWithInstallationIdentityInTx(
     afterTx(tx, () => {
         // Legacy inventory subscribers cannot distinguish temporary Machines.
         if (isPersistentMachine(machine)) {
-            const newMachinePayload = buildNewMachineUpdate(machine, cursor, randomKeyNaked(12));
+            const newMachinePayload = buildNewMachineUpdate({ ...machine, devcontainerChild }, cursor, randomKeyNaked(12));
             eventRouter.emitUpdate({
                 userId: params.accountId,
                 payload: newMachinePayload,
@@ -103,6 +113,8 @@ export async function createMachineWithInstallationIdentityInTx(
             cursor,
             randomKeyNaked(12),
             { version: 1, value: params.metadata },
+            undefined,
+            { keyBasis: serializeMachineKeyBasis(machine), devcontainerChild },
         );
         eventRouter.emitUpdate({
             userId: params.accountId,
@@ -133,7 +145,7 @@ export async function revokeMachineInTx(
 
     const revokedAt = machine.revokedAt ?? new Date();
     let updated = machine;
-    let invalidatedSessionIds: string[] = [];
+    let invalidatedSessionBindings: Readonly<{ accountId: string; sessionId: string }>[] = [];
     let deletedAccessKeys = 0;
 
     // Automation owns assignment removal and stranded-Run settlement. Its
@@ -143,7 +155,7 @@ export async function revokeMachineInTx(
         accountId: params.accountId,
         machineId: params.machineId,
         markMachineUnavailableTx: async (fencedTx) => {
-            invalidatedSessionIds = await readMachineAccessKeySessionIdsInTx(fencedTx, {
+            invalidatedSessionBindings = await readMachineAccessKeySessionBindingsInTx(fencedTx, {
                 accountId: params.accountId,
                 machineId: params.machineId,
             });
@@ -158,7 +170,6 @@ export async function revokeMachineInTx(
             });
             const deleted = await fencedTx.accessKey.deleteMany({
                 where: {
-                    accountId: params.accountId,
                     machineId: params.machineId,
                 },
             });
@@ -176,7 +187,7 @@ export async function revokeMachineInTx(
         eventRouter.disconnectMachineAndSessionSockets({
             accountId: params.accountId,
             machineId: params.machineId,
-            sessionIds: invalidatedSessionIds,
+            sessionBindings: invalidatedSessionBindings,
         });
         eventRouter.emitUpdate({
             userId: params.accountId,
@@ -186,7 +197,7 @@ export async function revokeMachineInTx(
                 randomKeyNaked(12),
                 undefined,
                 undefined,
-                { active: false, revokedAt: revokedAt.getTime() },
+                { active: false, revokedAt: revokedAt.getTime(), devcontainerChild: null },
             ),
             recipientFilter: isPersistentMachine(updated)
                 ? { type: "user-scoped-only" }

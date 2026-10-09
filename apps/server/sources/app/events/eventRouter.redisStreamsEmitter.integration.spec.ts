@@ -194,7 +194,7 @@ describe("eventRouter redis streams emitter integration", () => {
         expect(other.connected).toBe(true);
     });
 
-    it("disconnects one exact Machine and its bound Session socket across replicas without evicting another same-Session profile", async () => {
+    it("disconnects one exact Machine and requester-bound Session sockets across replicas without evicting history profiles", async () => {
         const cluster = await startCluster();
         startedClusters.push(cluster);
         const machine = await connectClient(cluster.portB, "machine-scoped", "user-1", {
@@ -207,10 +207,21 @@ describe("eventRouter redis streams emitter integration", () => {
         const ownerSession = await connectClient(cluster.portB, "session-scoped", "user-1", {
             sessionId: "session-1",
         });
-        startedClients.push(machine, boundSession, ownerSession);
+        const requesterSession = await connectClient(cluster.portA, "session-scoped", "user-2", {
+            sessionId: "session-2",
+            machineId: "machine-1",
+        });
+        const requesterHistory = await connectClient(cluster.portA, "session-scoped", "user-2", {
+            sessionId: "session-2",
+        });
+        const requesterOtherMachine = await connectClient(cluster.portB, "session-scoped", "user-2", {
+            sessionId: "session-2",
+            machineId: "machine-2",
+        });
+        startedClients.push(machine, boundSession, ownerSession, requesterSession, requesterHistory, requesterOtherMachine);
         eventRouter.setIo(cluster.emitter);
 
-        const disconnected = [machine, boundSession].map((socket) => new Promise<void>((resolve, reject) => {
+        const disconnected = [machine, boundSession, requesterSession].map((socket) => new Promise<void>((resolve, reject) => {
             const timer = setTimeout(() => reject(new Error("Exact resource socket stayed connected")), 5_000);
             socket.once("disconnect", () => {
                 clearTimeout(timer);
@@ -220,11 +231,16 @@ describe("eventRouter redis streams emitter integration", () => {
         eventRouter.disconnectMachineAndSessionSockets({
             accountId: "user-1",
             machineId: "machine-1",
-            sessionIds: ["session-1"],
+            sessionBindings: [
+                { accountId: "user-1", sessionId: "session-1" },
+                { accountId: "user-2", sessionId: "session-2" },
+            ],
         });
 
         await Promise.all(disconnected);
         expect(ownerSession.connected).toBe(true);
+        expect(requesterHistory.connected).toBe(true);
+        expect(requesterOtherMachine.connected).toBe(true);
     });
 
     it("delivers room-targeted updates from an external emitter process to connected api sockets", async () => {

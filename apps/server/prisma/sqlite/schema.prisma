@@ -23,6 +23,14 @@ datasource db {
 //
 
 model Account {
+    managedMachines ManagedMachine[]
+    managedMachinePresets ManagedMachinePreset[]
+    projectSources ProjectSource[]
+    machineAccountGrants MachineAccountGrant[] @relation("MachineAccountGrantRecipient")
+    createdMachineAccountGrants MachineAccountGrant[] @relation("MachineAccountGrantCreator")
+    createdMachineTeamGrants MachineTeamGrant[] @relation("MachineTeamGrantCreator")
+    createdMachineGroupGrants MachineGroupGrant[] @relation("MachineGroupGrantCreator")
+    machineKeyEnvelopes MachineKeyEnvelope[] @relation("MachineKeyEnvelopeRecipient")
     artifactAccountGrants ArtifactAccountGrant[] @relation("ArtifactAccountGrantRecipient")
     createdArtifactAccountGrants ArtifactAccountGrant[] @relation("ArtifactAccountGrantCreator")
     createdArtifactTeamGrants ArtifactTeamGrant[] @relation("ArtifactTeamGrantCreator")
@@ -267,6 +275,8 @@ enum TeamAdmissionMode {
 }
 
 model Team {
+    managedMachinePresets ManagedMachinePreset[]
+    machineGrants MachineTeamGrant[]
     artifactGrants ArtifactTeamGrant[]
     credentialActivityEvents TeamCredentialActivityEvent[]
     credentialResources TeamCredentialResource[]
@@ -584,6 +594,7 @@ model TeamDirectoryGroupMember {
 }
 
 model TeamGroup {
+    machineGrants MachineGroupGrant[]
     artifactGrants ArtifactGroupGrant[]
     credentialGrants TeamCredentialGroupGrant[]
     id               String   @id @default(cuid())
@@ -1453,6 +1464,7 @@ model Session {
     pendingActivationRequestedAt DateTime?
     pendingActivationStatus      String?
     pendingActivationFailureCode String?
+    pendingActivationManagedTarget Json?
     pendingPermissionRequestCount   Int                 @default(0)
     pendingUserActionRequestCount   Int                 @default(0)
     pendingRequestObservedAt        DateTime?
@@ -1473,6 +1485,8 @@ model Session {
     lastActiveAt      DateTime            @default(now())
     publisherGeneration BigInt             @default(0)
     publisherGenerationLastActiveAt DateTime?
+    /// Exact nonsecret placement committed by the admitted runtime publisher; retained when it closes.
+    runtimeMachineTarget Json?
     meaningfulActivityAt DateTime?
     /// Released compatibility storage only. Current viewer state is owned by AccountSessionReadState.
     unreadSince       DateTime?
@@ -1608,6 +1622,8 @@ model SessionPin {
     sessionId String
     sortKey   String?
     pinnedAt  DateTime @default(now())
+    listPinned Boolean @default(true)
+    railPinned Boolean @default(false)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
@@ -2276,6 +2292,11 @@ enum MachineKind {
 }
 
 model Machine {
+    accountGrants MachineAccountGrant[]
+    teamGrants MachineTeamGrant[]
+    groupGrants MachineGroupGrant[]
+    keyEnvelopes MachineKeyEnvelope[]
+    managedResource ManagedMachine?
     brokeredTeamCredentialResources TeamCredentialResource[]
     id                 String      @id
     kind               MachineKind @default(persistent)
@@ -2324,6 +2345,69 @@ model Machine {
     @@index([accountId, revokedAt])
 }
 
+// Durable compute custody exists before ordinary Machine enrollment. The
+// optional enrolledMachineId is the only stored association to a Machine.
+model ManagedMachine {
+    id String @id @default(cuid())
+    homeId String
+    custodianAccountId String
+    custodian Account @relation(fields: [custodianAccountId], references: [id], onDelete: Restrict)
+    controllerMachineId String
+    controllerInstallationId String
+    admittedActionRequestId String
+    admittedInput Json
+    presetId String?
+    presetRevision Int?
+    launch Json
+    reviewedFacts Json?
+    allocation String @default("unsubmitted")
+    creationState String @default("active")
+    resource Json?
+    nativeOperationRef Json?
+    recovery Json?
+    bootstrapCredentialRef Json?
+    enrolledMachineId String? @unique
+    enrolledMachine Machine? @relation(fields: [enrolledMachineId], references: [id], onDelete: SetNull)
+    desired String @default("start")
+    desiredWhen String @default("now")
+    desiredAfterMs Float?
+    intentRevision Int @default(0)
+    archivedAt DateTime?
+    retention Json
+    wakeOnAcceptedMessage Boolean
+    observation Json?
+    cleanup Json?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([homeId, admittedActionRequestId])
+    @@index([homeId, custodianAccountId, archivedAt, createdAt])
+    @@index([controllerMachineId, controllerInstallationId])
+}
+
+model ManagedMachinePreset {
+    id String @id @default(cuid())
+    homeId String
+    custodianAccountId String?
+    custodian Account? @relation(fields: [custodianAccountId], references: [id], onDelete: Cascade)
+    teamId String?
+    team Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    name String
+    revision Int @default(0)
+    launch Json
+    controllerMachineId String
+    controllerInstallationId String
+    retentionOverride Json?
+    wakeOnAcceptedMessage Boolean?
+    simultaneousMaximum Int?
+    archivedAt DateTime?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([homeId, custodianAccountId])
+    @@index([homeId, teamId])
+}
+
 //
 // Machine Pools
 //
@@ -2333,6 +2417,73 @@ model Machine {
 // authenticated database and the Machine foreign key, so there is no persisted serverId, homeId,
 // principal union or generic resource owner here. No candidate list, request key, score or
 // selection result is ever persisted.
+
+/// Machines expose Use and Manage, never the Session/Artifact Edit role.
+enum MachineShareAccessLevel {
+    view
+    admin
+}
+
+model MachineAccountGrant {
+    machineId String
+    accountId String
+    accessLevel MachineShareAccessLevel
+    createdByAccountId String
+    createdAt DateTime @default(now())
+
+    machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+    account Account @relation("MachineAccountGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("MachineAccountGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+
+    @@id([machineId, accountId])
+    @@index([accountId, machineId])
+}
+
+model MachineTeamGrant {
+    machineId String
+    teamId String
+    accessLevel MachineShareAccessLevel
+    createdByAccountId String
+    createdAt DateTime @default(now())
+
+    machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+    team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("MachineTeamGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+
+    @@id([machineId, teamId])
+    @@index([teamId, machineId])
+}
+
+model MachineGroupGrant {
+    machineId String
+    teamGroupId String
+    accessLevel MachineShareAccessLevel
+    createdByAccountId String
+    createdAt DateTime @default(now())
+
+    machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+    teamGroup TeamGroup @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("MachineGroupGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+
+    @@id([machineId, teamGroupId])
+    @@index([teamGroupId, machineId])
+}
+
+model MachineKeyEnvelope {
+    machineId String
+    recipientAccountId String
+    encryptedDataKey Bytes
+    machineOwnerEnvelopeFingerprint String
+    recipientContentPublicKeyFingerprint String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+    recipient Account @relation("MachineKeyEnvelopeRecipient", fields: [recipientAccountId], references: [id], onDelete: Cascade)
+
+    @@id([machineId, recipientAccountId])
+    @@index([recipientAccountId, machineId])
+}
 
 model MachinePool {
     id          String   @id
@@ -3038,6 +3189,24 @@ model ConnectedServiceAuthGroupMember {
 // Artifacts
 //
 
+/// Disclosed, credential-free Source metadata; independent of private Project rows and Artifact grants.
+model ProjectSource {
+    id String @id @default(cuid())
+    createdByAccountId String
+    createdByAccount Account @relation(fields: [createdByAccountId], references: [id], onDelete: Cascade)
+    revision Int @default(1)
+    name String
+    repository Json
+    defaultRef String?
+    subdir String?
+    audience Json
+    attachments Json
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([createdByAccountId, id])
+}
+
 model Artifact {
     publicShare PublicSessionShare?
     revisions ArtifactRevision[]
@@ -3448,7 +3617,7 @@ model AccessKey {
     accountId   String
     account     Account  @relation(fields: [accountId], references: [id])
     machineId   String
-    machine     Machine  @relation(fields: [accountId, machineId], references: [accountId, id])
+    machine     Machine  @relation(fields: [machineId], references: [id])
     sessionId   String
     session     Session  @relation(fields: [sessionId], references: [id])
     data        String // Encrypted data

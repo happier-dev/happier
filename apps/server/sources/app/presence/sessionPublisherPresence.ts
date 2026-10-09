@@ -11,6 +11,8 @@ import {
     type SessionActivityBadgeInputs,
 } from "@/app/activity/accountActivityBadge";
 import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
+import { readCurrentSessionInputMachineTargetInTx } from "@/app/session/messages/sessionInputAdmission";
+import { getActivePrismaRuntime } from "@/storage/db";
 import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import {
     updateSessionRuntimeActivityProjection,
@@ -392,6 +394,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         if (activity.status === "rejected") return activity;
 
         const committedFence = new Date(Math.max((observedAt ?? now()).getTime(), session.lastActiveAt.getTime() + 1));
+        const runtimeMachineTarget = await readCurrentSessionInputMachineTargetInTx(tx, binding);
         const publisherGeneration = session.publisherGeneration + 1n;
         const updated = await tx.session.updateMany({
             where: {
@@ -405,6 +408,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 lastActiveAt: committedFence,
                 publisherGeneration,
                 publisherGenerationLastActiveAt: committedFence,
+                runtimeMachineTarget: runtimeMachineTarget ?? getActivePrismaRuntime().DbNull,
                 ...clearPendingActivationAuthorizationForPublisherActivityData(),
             },
         });

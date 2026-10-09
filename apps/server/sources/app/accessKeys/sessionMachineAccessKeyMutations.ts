@@ -1,4 +1,5 @@
 import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
+import { resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
 import { isPrismaErrorCode } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 
@@ -53,13 +54,19 @@ export async function readSessionMachineBindingStateInTx(
             where: { id: binding.sessionId, accountId: binding.accountId },
             select: { id: true },
         }),
-        readMachineAvailabilityStateInTx({
-            tx,
-            accountId: binding.accountId,
-            machineId: binding.machineId,
-        }),
+        readRequesterMachineAvailabilityInTx(tx, binding),
     ]);
     return session !== null && machine === "available" ? "available" : "missing";
+}
+
+/** Only the uninstalled owned predecessor tuple predates C41 installation admission. */
+async function readRequesterMachineAvailabilityInTx(tx: Tx, binding: SessionMachineAccessKeyBinding): Promise<SessionMachineBindingState> {
+    const machine = await tx.machine.findUnique({ where: { id: binding.machineId }, select: { accountId: true, installationId: true } });
+    if (machine?.accountId === binding.accountId && machine.installationId === null) {
+        return await readMachineAvailabilityStateInTx({ tx, accountId: binding.accountId, machineId: binding.machineId }) === "available" ? "available" : "missing";
+    }
+    const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId, machineId: binding.machineId });
+    return admission.kind === "admitted" ? "available" : "missing";
 }
 
 export async function readSessionMachineAccessKeyInTx(
@@ -82,19 +89,20 @@ export async function readSessionMachineAccessKeyInTx(
  * Machine's AccessKey tuples. Machine revoke/replacement uses this projection
  * before invalidating the Machine so the existing socket-room owner can evict
  * both established profiles after commit, including across server replicas.
+ * The input Account is the Machine custodian; each returned Account is the
+ * requester owning that Session's exact AccessKey tuple.
  */
-export async function readMachineAccessKeySessionIdsInTx(
+export async function readMachineAccessKeySessionBindingsInTx(
     tx: Tx,
     binding: Readonly<{ accountId: string; machineId: string }>,
-): Promise<string[]> {
-    const rows = await tx.accessKey.findMany({
+): Promise<Readonly<{ accountId: string; sessionId: string }>[]> {
+    return tx.accessKey.findMany({
         where: {
-            accountId: binding.accountId,
             machineId: binding.machineId,
+            machine: { accountId: binding.accountId },
         },
-        select: { sessionId: true },
+        select: { accountId: true, sessionId: true },
     });
-    return [...new Set(rows.map((row) => row.sessionId))];
 }
 
 export async function createSessionMachineAccessKeyInTx(
@@ -153,11 +161,7 @@ export async function updateSessionMachineAccessKeyDataInTx(
 
     // The tuple already proves Session correspondence, so currentness here is
     // the Machine's availability.
-    const machineState = await readMachineAvailabilityStateInTx({
-        tx,
-        accountId: binding.accountId,
-        machineId: binding.machineId,
-    });
+    const machineState = await readSessionMachineBindingStateInTx(tx, binding);
     if (machineState !== "available") {
         return { ok: false, reason: "not-found" };
     }

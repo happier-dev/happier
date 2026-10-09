@@ -52,10 +52,13 @@ vi.mock("@/app/automations/automationMachineAssignmentRemoval", () => ({
 
 const dbMocks = createDbMocks({
     account: ["findUnique", "updateMany"],
+    homeSettings: ["findUnique"],
+    homeGovernancePolicy: ["findUnique"],
     machine: ["findFirst", "findMany", "findUnique"],
 } as const);
 const txDbMocks = createDbMocks({
     accessKey: ["deleteMany", "findMany"],
+    automationTrigger: ["findMany"],
     machine: ["create", "findFirst", "update", "updateMany"],
 } as const);
 
@@ -67,6 +70,7 @@ installDbModuleMock(() => ({
 
 const harness = createInTxHarness(() => ({
     accessKey: txDbMocks.db.accessKey,
+    automationTrigger: txDbMocks.db.automationTrigger,
     machine: txDbMocks.db.machine,
 }));
 
@@ -169,6 +173,8 @@ describe("machinesRoutes machine replacement", () => {
         dbMocks.reset();
         txDbMocks.reset();
         getConnections.mockReturnValue(new Set());
+        dbMocks.db.homeSettings.findUnique.mockResolvedValue(null);
+        dbMocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
         const accountContentBinding = createSignedAccountContentBinding();
         dbMocks.db.account.findUnique.mockResolvedValue({
             ...accountContentBinding,
@@ -178,12 +184,14 @@ describe("machinesRoutes machine replacement", () => {
         dbMocks.db.machine.findFirst.mockResolvedValue(null);
         dbMocks.db.machine.findUnique.mockResolvedValue(null);
         txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
+        txDbMocks.db.automationTrigger.findMany.mockResolvedValue([]);
         txDbMocks.db.accessKey.findMany.mockResolvedValue([
-            { sessionId: "session-on-replaced-machine" },
+            { accountId: "u1", sessionId: "session-on-replaced-machine" },
         ]);
         txDbMocks.db.machine.create.mockImplementation(async (args: MachineCreateMockArgs) => ({
             ...baseMachine,
             ...args.data,
+            dataEncryptionKey: args.data.dataEncryptionKey ?? baseMachine.dataEncryptionKey,
             id: args.data.id,
             seq: 0,
             lastActiveAt: new Date(10),
@@ -301,7 +309,7 @@ describe("machinesRoutes machine replacement", () => {
         expect(disconnectMachineAndSessionSockets).toHaveBeenCalledWith({
             accountId: "u1",
             machineId: "m1",
-            sessionIds: ["session-on-replaced-machine"],
+            sessionBindings: [{ accountId: "u1", sessionId: "session-on-replaced-machine" }],
         });
         // Replacement is reversible. It marks the old machine unavailable but
         // preserves Automation definitions and admitted Runs so undo can make

@@ -5,6 +5,7 @@ import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGua
 import { observeSessionScopedBindingStage } from "@/app/monitoring/metrics/sessionBindingMetrics";
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
+import { readSessionMachineBindingStateInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 
 export type SessionScopedBindingProof = "owner-session" | "machine-access-key";
 
@@ -29,31 +30,18 @@ type SessionScopedBindingResolution =
     | Readonly<{ ok: true; binding: SessionScopedSocketBinding; cacheWarmState: SessionScopedSocketBindingCacheWarmState }>
     | Readonly<{ ok: false; statusCode: number; error: "invalid-session" | "invalid-session-access-key" }>;
 
-type MachineAccessKeyAvailability = Readonly<{
-    machineId: string;
-    machine: Readonly<{
-        revokedAt: Date | null;
-        replacedByMachineId: string | null;
-    }>;
-}> | null;
-
 /**
- * Session-level form of the same machine access correspondence: proves that at
- * least one available Account machine currently holds the session access
- * relationship without a caller-nominated machine. Sessions may retain keys
- * from several machines (including revoked/replaced ones), so the incumbent
- * availability predicate (`revokedAt: null AND replacedByMachineId: null` —
- * the exact predicate behind classifyMachineAvailabilityState) is expressed in
- * the query itself: every candidate row is an available machine and whichever
- * row the unordered read returns proves the correspondence. The classification
- * below is the same-owner re-check, and the opaque payload is never read.
+ * Proves at least one currently usable requester tuple without a nominated
+ * Machine. Retained keys are not grants: the canonical binding owner rechecks
+ * C41 for each foreign candidate. An unavailable first candidate cannot hide a
+ * usable second Machine. The opaque key payload is never read.
  */
 export async function hasCurrentMachineAccessForSessionInTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     sessionId: string;
 }>): Promise<boolean> {
-    const accessKey = await params.tx.accessKey.findFirst({
+    const accessKeys = await params.tx.accessKey.findMany({
         where: {
             accountId: params.accountId,
             sessionId: params.sessionId,
@@ -61,13 +49,17 @@ export async function hasCurrentMachineAccessForSessionInTx(params: Readonly<{
             session: { accountId: params.accountId },
         },
         select: {
+            machineId: true,
             machine: { select: { revokedAt: true, replacedByMachineId: true } },
             session: { select: { accountId: true } },
         },
     });
-    return accessKey !== null
-        && accessKey.session.accountId === params.accountId
-        && classifyMachineAvailabilityState(accessKey.machine) === "available";
+    for (const key of accessKeys) {
+        if (key.session.accountId === params.accountId && await readSessionMachineBindingStateInTx(params.tx, {
+            accountId: params.accountId, sessionId: params.sessionId, machineId: key.machineId,
+        }) === "available") return true;
+    }
+    return false;
 }
 
 /** Revalidates the exact machine/session access relationship inside the caller's transaction. */
@@ -92,7 +84,44 @@ export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<
     });
     return accessKey !== null
         && accessKey.session.accountId === params.accountId
-        && classifyMachineAvailabilityState(accessKey.machine) === "available";
+        && classifyMachineAvailabilityState(accessKey.machine) === "available"
+        && await readSessionMachineBindingStateInTx(params.tx, params) === "available";
+}
+
+type SessionActionRpcSourceBinding = Readonly<{
+    accountId: string;
+    machineId: string;
+    installationId: string;
+    sourceSessionId: string;
+    targetSessionId?: string;
+}>;
+
+/** Current persisted half of the already-admitted publisher source proof. */
+export async function hasCurrentSessionActionRpcSourceBindingInTx(tx: Tx, params: SessionActionRpcSourceBinding): Promise<boolean> {
+    const machine = await tx.machine.findUnique({ where: { id: params.machineId }, select: {
+        installationId: true, kind: true, revokedAt: true, replacedByMachineId: true,
+    } });
+    if (classifyMachineAvailabilityState(machine) !== 'available'
+        || machine?.kind === 'ephemeral_session_runner' || machine?.installationId !== params.installationId
+        || !await hasCurrentSessionScopedMachineAccessInTx({ tx, accountId: params.accountId,
+            machineId: params.machineId, sessionId: params.sourceSessionId })) return false;
+    if (params.targetSessionId && params.targetSessionId !== params.sourceSessionId) {
+        const target = await tx.session.findUnique({ where: { id: params.targetSessionId }, select: { accountId: true } });
+        if (target?.accountId !== params.accountId) return false;
+    }
+    return true;
+}
+
+/** The installed daemon may attest original Session facts only while it hosts that Account's Session. */
+export async function hasCurrentSessionActionRpcSourceBinding(params: SessionActionRpcSourceBinding & Readonly<{
+    resolveCurrentSessionMachine?: (input: Readonly<{ accountId: string; sessionId: string }>) => Promise<string | null>;
+}>): Promise<boolean> {
+    if (!params.resolveCurrentSessionMachine) return false;
+    if (!await hasCurrentSessionActionRpcSourceBindingInTx(db, params)) return false;
+    try {
+        return await params.resolveCurrentSessionMachine({ accountId: params.accountId, sessionId: params.sourceSessionId }) === params.machineId
+            && await hasCurrentSessionActionRpcSourceBindingInTx(db, params);
+    } catch { return false; }
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -178,6 +207,7 @@ export async function resolveSessionScopedSocketBinding(params: Readonly<{
     if (
         !accessKey
         || classifyMachineAvailabilityState(accessKey.machine) !== "available"
+        || await readSessionMachineBindingStateInTx(db, { accountId: params.userId, sessionId, machineId }) !== "available"
     ) {
         observeSessionScopedBindingStage({
             stage: "machine_access_key_lookup",
@@ -230,33 +260,6 @@ export function readSessionScopedSocketBinding(socket: Socket): SessionScopedSoc
     };
 }
 
-async function readMachineAccessKeyAvailability(params: Readonly<{
-    accountId: string;
-    sessionId: string;
-    machineId: string;
-}>): Promise<MachineAccessKeyAvailability> {
-    return await db.accessKey.findUnique({
-        where: {
-            accountId_machineId_sessionId: {
-                accountId: params.accountId,
-                machineId: params.machineId,
-                sessionId: params.sessionId,
-            },
-        },
-        select: {
-            machineId: true,
-            machine: { select: { revokedAt: true, replacedByMachineId: true } },
-        },
-    });
-}
-
-function isAvailableMachineAccessKey(accessKey: MachineAccessKeyAvailability): boolean {
-    return Boolean(
-        accessKey
-        && classifyMachineAvailabilityState(accessKey.machine) === "available",
-    );
-}
-
 function readSessionScopedRpcMethodSessionId(method: string): string | null {
     const lastColon = method.lastIndexOf(":");
     if (lastColon <= 0) {
@@ -285,11 +288,12 @@ async function canUseSessionScopedRpcMethodWithMachineAccessKey(params: Readonly
         return false;
     }
 
-    return isAvailableMachineAccessKey(await readMachineAccessKeyAvailability({
+    return hasCurrentSessionScopedMachineAccessInTx({
+        tx: db,
         accountId: params.accountId,
         sessionId: binding.sessionId,
         machineId,
-    }));
+    });
 }
 
 export async function canRegisterSessionScopedRpcMethod(params: Readonly<{
@@ -366,11 +370,12 @@ export async function canReadAccessKeyFromSessionScopedSocket(params: Readonly<{
         return false;
     }
 
-    return isAvailableMachineAccessKey(await readMachineAccessKeyAvailability({
+    return hasCurrentSessionScopedMachineAccessInTx({
+        tx: db,
         accountId: params.connection.userId,
         machineId,
         sessionId: binding.sessionId,
-    }));
+    });
 }
 
 export async function canPublishFromSessionScopedSocket(params: Readonly<{
@@ -399,12 +404,13 @@ export async function canPublishFromSessionScopedSocket(params: Readonly<{
             return false;
         }
 
-        const accessKey = await readMachineAccessKeyAvailability({
+        const available = await hasCurrentSessionScopedMachineAccessInTx({
+            tx: db,
             accountId: params.connection.userId,
             machineId,
             sessionId: binding.sessionId,
         });
-        if (!isAvailableMachineAccessKey(accessKey)) {
+        if (!available) {
             return false;
         }
     }

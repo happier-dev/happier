@@ -6,6 +6,8 @@ import {
     projectWorkflowBigIntV1,
     readKeysetCursorIdV1,
     readKeysetCursorTextV1,
+    createCanonicalJsonSigningInput,
+    toAutomationRunExecutionInputV1Origin,
     projectAutomationAccountCurrentnessWitnessV1,
     sameAutomationAccountContentIdentityV1,
     type AutomationAccountCurrentnessWitnessV1,
@@ -22,13 +24,14 @@ import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContex
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { markAccountChangesForSessionAccounts } from "@/app/session/changeTracking/markAccountChangesForSessionAccounts";
 import { emitAutomationRunUpdatedToMachineOnly } from "@/app/automations/automationChangePublisher";
+import { publishManagedRunWakeInTx, publishManagedContextWakeInTx } from '@/app/machines/managed/managedWake';
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
-import { automationRunCustodyTerminalWhere } from "@/app/automations/automationCrudService";
+import { automationRunCustodyTerminalWhere, readAutomationLiveCauseRunIdsTx } from "@/app/automations/automationCrudService";
 import { AUTOMATION_RUN_TERMINAL_STATES } from "@/app/automations/automationTypes";
-import { automationRunCauseSelect } from "@/app/automations/automationPersistenceSelect";
+import { automationRunCauseSelect, automationRunWithoutExecutionWhere } from "@/app/automations/automationPersistenceSelect";
 import { decodeAutomationRunCause } from "@/app/automations/automationRunCauseCodec";
 import { applyAutomationRunTerminalEffectsTx } from "@/app/automations/automationRunSucceeded";
-import { validateAutomationStoredContentEnvelopeOuterForMode } from "@/app/automations/automationStoredContentRead";
+import { readRetainedAutomationRunExecutionInputForWorkflowAdmission, validateAutomationStoredContentEnvelopeOuterForMode } from "@/app/automations/automationStoredContentRead";
 import { db } from "@/storage/db";
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode, prismaRuntime } from "@/storage/prisma";
@@ -258,6 +261,9 @@ async function reconcileWorkflowRunAttentionAndHintTx(tx: Tx, accountId: string,
     if (!inputDeliverable && !(after.originDeliveryAckRevision !== null && (becameTerminal || attentionChanged))) return;
     await markAccountChangesForSessionAccounts({ tx, sessionId: after.originSessionId, accountIds: [accountId],
         hint: { kind: "workflow-run-delivery", runId, revision: after.revision } });
+    if (inputDeliverable || (after.originDeliveryAckRevision !== null && becameTerminal)) {
+        await publishManagedContextWakeInTx(tx, { runId, originSessionId: after.originSessionId });
+    }
 }
 
 async function markWorkflowRunChangedTx(tx: Tx, accountId: string, runId: string, deliveryBefore?: OriginDeliverySignal | null, inputDeliverable = false): Promise<number> {
@@ -386,7 +392,8 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
             actorAccountId: params.accountId, runId: params.runId, sourceArtifactId: params.sourceArtifactId ?? null,
             visibleTeamId, encryptionMode: mode, recipientKeyEnvelopes: params.recipientKeyEnvelopes ?? [],
         }));
-        await markWorkflowRunChangedTx(tx, params.accountId, params.runId);
+        const cursor = await markWorkflowRunChangedTx(tx, params.accountId, params.runId);
+        await publishManagedRunWakeInTx(tx, { accountId: params.accountId, runId: params.runId, cursor });
         return { kind: "created", run: projectRun(row as WorkflowRunRow) };
 }
 
@@ -443,8 +450,14 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
     if (!Number.isSafeInteger(params.expectedAttempt) || params.expectedAttempt < 0) throw new WorkflowRunServiceError("invalid_input");
     return await inTx(async (tx) => {
         const mode = await loadCurrentWorkflowAccountModeTx(tx, params.accountId, params.accountCurrentness);
-        const definitionOuter = validateAutomationStoredContentEnvelopeOuterForMode({ raw: params.definitionEnvelope, mode });
-        if (definitionOuter.kind !== "available") throw new WorkflowRunServiceError(definitionOuter.kind === "modeMismatch" ? "content_unavailable" : "invalid_input");
+        const predecessor = readRetainedAutomationRunExecutionInputForWorkflowAdmission({ raw: params.definitionEnvelope, mode });
+        if (predecessor === null) {
+            const definitionOuter = validateAutomationStoredContentEnvelopeOuterForMode({ raw: params.definitionEnvelope, mode });
+            if (definitionOuter.kind !== "available") throw new WorkflowRunServiceError(definitionOuter.kind === "modeMismatch" ? "content_unavailable" : "invalid_input");
+        } else if (params.originSessionId !== undefined || params.resultDelivery !== undefined
+            || params.sourceArtifactId != null || params.visibleTeamId != null) {
+            throw new WorkflowRunServiceError("invalid_input");
+        }
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.acceptedEnvelope, mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId } });
         const current = await tx.automationRun.findFirst({ where: {
             id: params.runId,
@@ -453,11 +466,21 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
             automationId: params.automationId,
             claimedByMachineId: params.machineId,
             attempt: params.expectedAttempt,
-            workflowCustodyState: "pending",
+            ...(predecessor ? { OR: [
+                { workflowCustodyState: "pending" },
+                { workflowCustodyState: null, ...automationRunWithoutExecutionWhere, state: "claimed" },
+            ] } : { workflowCustodyState: "pending" }),
             workflowCheckpointEnvelope: null,
             assignments: { some: { machineId: params.machineId } },
         }, select: workflowRunSelect });
         if (!current || current.executionInputEnvelope !== params.definitionEnvelope) throw new WorkflowRunServiceError("currentness_conflict");
+        if (predecessor) {
+            const cause = decodeAutomationRunCause(current);
+            const origin = cause === null ? null : toAutomationRunExecutionInputV1Origin(cause);
+            if (origin === null || createCanonicalJsonSigningInput(origin) !== createCanonicalJsonSigningInput(predecessor.origin)) {
+                throw new WorkflowRunServiceError("currentness_conflict");
+            }
+        }
         const originSessionId = params.originSessionId ?? null;
         if (current.workflowAcceptedSnapshotEnvelope !== null) {
             if (current.revision === params.expectedRevision + 1 && current.sourceArtifactId === (params.sourceArtifactId ?? null)
@@ -476,7 +499,7 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
         }
         const automation = await tx.automation.findFirst({ where: { id: params.automationId, accountId: params.accountId },
             select: { scopeSessionId: true } });
-        if (!automation || automation.scopeSessionId !== originSessionId) throw new WorkflowRunServiceError("currentness_conflict");
+        if (!automation || (!predecessor && automation.scopeSessionId !== originSessionId)) throw new WorkflowRunServiceError("currentness_conflict");
         if (originSessionId !== null) {
             const session = await tx.session.findFirst({ where: { id: originSessionId, accountId: params.accountId }, select: { id: true } });
             if (!session) throw new WorkflowRunServiceError("invalid_input");
@@ -494,15 +517,15 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
             revision: params.expectedRevision,
             originKind: "automation",
             automationId: params.automationId,
-            automation: { is: { accountId: params.accountId, scopeSessionId: originSessionId } },
+            automation: { is: { accountId: params.accountId, ...(predecessor ? {} : { scopeSessionId: originSessionId }) } },
             claimedByMachineId: params.machineId,
             attempt: params.expectedAttempt,
-            workflowCustodyState: "pending",
+            ...(predecessor ? { ...automationRunWithoutExecutionWhere, state: "claimed", workflowCustodyState: null } : { workflowCustodyState: "pending" }),
             workflowAcceptedSnapshotEnvelope: null,
             workflowCheckpointEnvelope: null,
             executionInputEnvelope: params.definitionEnvelope,
             assignments: { some: { machineId: params.machineId } },
-        }, data: { workflowAcceptedSnapshotEnvelope: params.acceptedEnvelope, originSessionId,
+        }, data: { workflowAcceptedSnapshotEnvelope: params.acceptedEnvelope, workflowCustodyState: "pending", originSessionId,
             originDeliveryAckRevision: params.resultDelivery ? 0 : null,
             sourceArtifactId: params.sourceArtifactId ?? null, visibleTeamId, revision: { increment: 1 } } });
         if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
@@ -865,6 +888,8 @@ async function workflowRunCallerScopeWhereTx(tx: Tx, scope: WorkflowRunCallerSco
 
 export async function listWorkflowRuns(params: PageOptions & Readonly<{
     accountId: string; runId?: string; origin?: "automation" | "direct"; states?: readonly WorkflowRunState[]; attention?: "required";
+    runIds?: readonly string[];
+    invocationProvenance?: readonly Readonly<{ runId: string; invocationRecordIds: readonly string[] }>[];
     originSessionId?: string; targetSessionId?: string; automationId?: string; machineId?: string; sourceArtifactId?: string;
 }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
@@ -875,7 +900,9 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
     // pagination, and no child content or usage reads.
     // Destinations remain private; the Action owner filters opened snapshots.
     // Bind its selection to the same storage cursor to reject cross-filter replay.
-    const queryKey = JSON.stringify({ accountId: params.accountId, sourceArtifactId: params.sourceArtifactId ?? null, runId: params.runId ?? null, origin: params.origin ?? null, states: [...(params.states ?? [])].sort(), attention: params.attention ?? null, originSessionId: params.originSessionId ?? null, targetSessionId: params.targetSessionId ?? null, automationId: params.automationId ?? null, machineId: params.machineId ?? null });
+    const queryKey = JSON.stringify({ accountId: params.accountId, sourceArtifactId: params.sourceArtifactId ?? null, runId: params.runId ?? null,
+        runIds: params.runIds ? [...params.runIds].sort() : null, invocationProvenance: params.invocationProvenance ?? null,
+        origin: params.origin ?? null, states: [...(params.states ?? [])].sort(), attention: params.attention ?? null, originSessionId: params.originSessionId ?? null, targetSessionId: params.targetSessionId ?? null, automationId: params.automationId ?? null, machineId: params.machineId ?? null });
     const decoded = params.cursor ? decodeKeysetCursorV1(params.cursor, queryKey) : null;
     const afterDate = decoded?.status === "ok" ? readKeysetCursorTextV1(decoded.parts[0]) : null;
     const afterId = decoded?.status === "ok" ? readKeysetCursorIdV1(decoded.parts[1]) : null;
@@ -886,11 +913,13 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         let pageAfterDate = afterDate;
         let pageAfterId = afterId;
         let collected: Array<WorkflowRunListRow & { keyCensus: WorkflowRunRecipientCensusResponseV1;
+            invocationProgress: Array<{ index: ReturnType<typeof projectInvocation>; contentEnvelope: string }>;
             rootProgress: { index: ReturnType<typeof projectInvocation>; contentEnvelope: string } | null }> = [];
         let collectedBytes = 2;
         for (;;) {
             const batchSize = Math.min(wanted - collected.length, WORKFLOW_PAGE_DATABASE_BATCH_ROWS);
             const additionalWhere: Prisma.AutomationRunWhereInput[] = [];
+            if (params.runIds) additionalWhere.push({ id: { in: [...params.runIds] } });
             if (params.attention === "required") {
                 additionalWhere.push(workflowRunAttentionWhere());
             }
@@ -922,6 +951,14 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                     sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect,
             });
             const rootsByRunId = new Map(roots.map((row) => [row.runId, row]));
+            const candidateIds = new Set(candidateRows.map(row => row.id));
+            const selectedReferences = params.invocationProvenance?.filter(ref => candidateIds.has(ref.runId)
+                && ref.invocationRecordIds.length > 0) ?? [];
+            // This is one exact-index query over visible page members, never a history traversal.
+            const selectedInvocations = selectedReferences.length === 0 ? [] : await tx.workflowRunInvocation.findMany({
+                where: { OR: selectedReferences.map(ref => ({ runId: ref.runId, id: { in: [...ref.invocationRecordIds] } })) },
+                select: invocationSelect,
+            });
             // Cards read this lean fact, never child invocation content. Reuse the
             // membership already selected by an attention-filtered query;
             // otherwise batch the same predicate over this page's exact ids.
@@ -945,7 +982,19 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                         if (!(error instanceof WorkflowStoredContentError)) throw error;
                     }
                 }
-                const row = { ...candidate, attentionRequired: attentionIds.has(candidate.id), keyCensus, rootProgress };
+                const invocationProgress = selectedInvocations.filter(row => row.runId === candidate.id).flatMap(row => {
+                    try {
+                        assertWorkflowStoredEnvelopeOuterForMode({ raw: row.contentEnvelope, mode: keyCensus.encryptionMode,
+                            binding: { v: 1, purpose: "invocation_progress", accountId: keyCensus.ownerAccountId, runId: row.runId,
+                                recordId: row.id, sequence: row.sequence.toString(), parentRecordId: row.parentRecordId,
+                                memberOrdinal: row.memberOrdinal.toString(), attempt: row.attempt.toString() } });
+                        return [{ index: projectInvocation(row), contentEnvelope: row.contentEnvelope }];
+                    } catch (error) {
+                        if (!(error instanceof WorkflowStoredContentError)) throw error;
+                        return [];
+                    }
+                });
+                const row = { ...candidate, attentionRequired: attentionIds.has(candidate.id), keyCensus, rootProgress, invocationProgress };
                 if (row.workflowAcceptedSnapshotEnvelope === null) return row;
                 try {
                     assertWorkflowStoredEnvelopeOuterForMode({
@@ -972,8 +1021,10 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                     `${JSON.stringify(row.id)}:${JSON.stringify(row.workflowAcceptedSnapshotEnvelope)}`,
                     `${JSON.stringify(row.id)}:${JSON.stringify(row.keyCensus)}`,
                     `${JSON.stringify(row.id)}:${JSON.stringify(row.rootProgress)}`,
+                    ...(params.invocationProvenance ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.invocationProgress)}`] : []),
                 ],
-                emptyPage: (nextCursor) => ({ runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {}, rootProgressByRunId: {}, ...(nextCursor ? { nextCursor } : {}) }),
+                emptyPage: (nextCursor) => ({ runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {}, rootProgressByRunId: {},
+                    ...(params.invocationProvenance ? { invocationProgressByRunId: {} } : {}), ...(nextCursor ? { nextCursor } : {}) }),
                 nextCursorFor: (row) => encodeKeysetCursorV1({ queryKey, parts: [row.createdAt.toISOString(), row.id] }),
                 hasMoreAfter: (candidateIndex) => candidateIndex < candidates.length - 1 || batchHasMore,
             });
@@ -993,6 +1044,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         acceptedEnvelopesByRunId: Object.fromEntries(page.rows.map((row) => [row.id, row.workflowAcceptedSnapshotEnvelope])),
         keyCensusByRunId: Object.fromEntries(page.rows.map((row) => [row.id, row.keyCensus])),
         rootProgressByRunId: Object.fromEntries(page.rows.map((row) => [row.id, row.rootProgress])),
+        ...(params.invocationProvenance ? { invocationProgressByRunId: Object.fromEntries(page.rows.map(row => [row.id, row.invocationProgress])) } : {}),
         ...(page.hasMore && last ? { nextCursor: encodeKeysetCursorV1({ queryKey, parts: [last.createdAt.toISOString(), last.id] }) } : {}),
     };
 }
@@ -1284,6 +1336,7 @@ export async function completeWorkflowInvocationReview(input: WorkflowReviewMuta
             tx.automationRun.findUniqueOrThrow({ where: { id: input.runId }, select: workflowRunSelect }),
         ]);
         const cursor = await markWorkflowRunChangedTx(tx, current.ownerAccountId, input.runId, current.deliveryBefore);
+        if (wake) await publishManagedRunWakeInTx(tx, { accountId: current.ownerAccountId, runId: input.runId, cursor });
         const live = current.run.state === "claimed" || current.run.state === "running" || current.run.state === "pause_requested";
         const machineId = run.assignments[0]?.machineId;
         if (machineId && (wake || live)) afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({
@@ -1865,6 +1918,7 @@ async function controlWorkflowRun(params: Readonly<{
         const row = await tx.automationRun.findUniqueOrThrow({ where: { id: params.runId }, select: workflowRunSelect });
         const cursor = await markWorkflowRunChangedTx(tx, ownerAccountId, params.runId, deliveryBefore);
         if (row.state === "queued") {
+            await publishManagedRunWakeInTx(tx, { accountId: ownerAccountId, runId: params.runId, cursor });
             const machineId = row.assignments[0]?.machineId;
             if (machineId) afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({ accountId: ownerAccountId,
                 machineId, run: row as WorkflowRunFullRow, cursor }));
@@ -2230,6 +2284,15 @@ export async function recoverWorkflowInvocations(params: Readonly<{
 export async function deleteWorkflowRun(params: Readonly<{ accountId: string; runId: string; expectedRevision: number }>) {
     return await inTx(async (tx) => {
         await loadAccountModeTx(tx, params.accountId);
+        // A settled ancestor still supplies causality to actual live Run/turn
+        // publishers. The same retained-history owner governs clear and delete.
+        const candidate = await tx.automationRun.findFirst({ where: {
+            id: params.runId, accountId: params.accountId,
+            ...automationRunCustodyTerminalWhere(), workflowCustodyState: "settled",
+        }, select: { id: true } });
+        if (candidate && (await readAutomationLiveCauseRunIdsTx(tx, params.accountId)).has(candidate.id)) {
+            throw new WorkflowRunServiceError("custody_pending");
+        }
         const deleted = await tx.automationRun.deleteMany({
             where: {
                 id: params.runId,

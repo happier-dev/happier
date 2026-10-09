@@ -23,6 +23,9 @@ import { inTx } from "@/storage/inTx";
 import { db } from "@/storage/db";
 import type { SessionBroadcastContainer } from "@happier-dev/protocol";
 import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
+import type { forwardRpcCall, RpcForwardResult } from '@/app/api/socket/rpc/forwardRpcCall';
+import { cancelRpcTarget } from '@/app/api/socket/rpc/cancelRpcTarget';
+
 import {
     getAccountRevocationSocketRoom,
     getApiTokenRevocationSocketRoom,
@@ -31,6 +34,9 @@ import {
     getMachineBoundSessionSocketRoom,
     getMachineSocketRoom,
 } from "@/app/api/socketRooms";
+
+export type ServerOwnedRpcForwardRequest = Omit<Parameters<typeof forwardRpcCall>[0], 'io'>;
+type ServerOwnedRpcForwarder = (request: ServerOwnedRpcForwardRequest) => Promise<RpcForwardResult>;
 
 const MAX_EVENT_FANOUT_METRIC_LABEL_LENGTH = 80;
 const SAFE_EVENT_FANOUT_METRIC_LABEL_PATTERN = /^[a-zA-Z0-9_.:-]+$/;
@@ -78,6 +84,8 @@ function projectPayloadForSocket(data: Readonly<{ authTokenKind?: unknown }>, pa
 class EventRouter {
     private userConnections = new Map<string, Set<ClientConnection>>();
     private io: SocketRoomEmitter | null = null;
+    private serverOwnedRpcForwarder: ServerOwnedRpcForwarder | null = null;
+    private machineAccessLossListeners = new Set<(input: Readonly<{ accountId: string; machineId: string }>) => void>();
     private warnedNoIo = false;
 
     // === CONNECTION MANAGEMENT ===
@@ -132,12 +140,28 @@ class EventRouter {
 
     // === SOCKET.IO ADAPTER (ROOM-BASED FANOUT) ===
 
-    setIo(io: SocketRoomEmitter): void {
+    setIo(io: SocketRoomEmitter, options: Readonly<{ forwardRpc?: ServerOwnedRpcForwarder }> = {}): void {
         this.io = io;
+        this.serverOwnedRpcForwarder = options.forwardRpc ?? null;
     }
 
     clearIo(): void {
         this.io = null;
+        this.serverOwnedRpcForwarder = null;
+    }
+
+    /** The live Socket.IO adapter only; domain owners supply their currentness guard. */
+    async forwardServerOwnedRpc(request: ServerOwnedRpcForwardRequest): Promise<RpcForwardResult | null> {
+        return this.serverOwnedRpcForwarder ? this.serverOwnedRpcForwarder(request) : null;
+    }
+
+    cancelServerOwnedRpc(input: Readonly<{ targetSocketId: string; targetRequestId: string }>): void {
+        if (this.io && this.serverOwnedRpcForwarder) cancelRpcTarget({ io: this.io, ...input });
+    }
+
+    onMachineAccessLoss(listener: (input: Readonly<{ accountId: string; machineId: string }>) => void): () => void {
+        this.machineAccessLossListeners.add(listener);
+        return () => { this.machineAccessLossListeners.delete(listener); };
     }
 
     disconnectAccountSockets(accountId: string): void {
@@ -183,30 +207,38 @@ class EventRouter {
     disconnectMachineAndSessionSockets(params: Readonly<{
         accountId: string;
         machineId: string;
-        sessionIds: readonly string[];
+        sessionBindings: readonly Readonly<{ accountId: string; sessionId: string }>[];
     }>): void {
-        const sessionIds = [...new Set(params.sessionIds)];
+        for (const listener of this.machineAccessLossListeners) listener({ accountId: params.accountId, machineId: params.machineId });
         if (this.io) {
-            this.io.to([
+            this.io.to([...new Set([
                 getMachineSocketRoom(params.accountId, params.machineId),
-                ...sessionIds.map((sessionId) => getMachineBoundSessionSocketRoom(
-                    params.accountId,
-                    sessionId,
+                ...params.sessionBindings.map((binding) => getMachineBoundSessionSocketRoom(
+                    binding.accountId,
+                    binding.sessionId,
                     params.machineId,
                 )),
-            ]).disconnectSockets(true);
+            ])]).disconnectSockets(true);
             return;
         }
-        for (const connection of this.userConnections.get(params.accountId) ?? []) {
-            if (
-                (connection.connectionType === "machine-scoped" && connection.machineId === params.machineId)
-                || (
-                    connection.connectionType === "session-scoped"
-                    && connection.machineId === params.machineId
-                    && sessionIds.includes(connection.sessionId)
-                )
-            ) {
-                connection.socket.disconnect(true);
+        const sessionsByAccount = new Map<string, Set<string>>();
+        for (const binding of params.sessionBindings) {
+            const sessions = sessionsByAccount.get(binding.accountId) ?? new Set<string>();
+            sessions.add(binding.sessionId);
+            sessionsByAccount.set(binding.accountId, sessions);
+        }
+        for (const accountId of new Set([params.accountId, ...sessionsByAccount.keys()])) {
+            for (const connection of this.userConnections.get(accountId) ?? []) {
+                if (
+                    (accountId === params.accountId && connection.connectionType === "machine-scoped" && connection.machineId === params.machineId)
+                    || (
+                        connection.connectionType === "session-scoped"
+                        && connection.machineId === params.machineId
+                        && sessionsByAccount.get(accountId)?.has(connection.sessionId)
+                    )
+                ) {
+                    connection.socket.disconnect(true);
+                }
             }
         }
     }

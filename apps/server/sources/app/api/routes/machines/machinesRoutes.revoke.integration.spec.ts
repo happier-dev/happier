@@ -97,7 +97,7 @@ describe("machinesRoutes (revoke machine)", () => {
             updatedAt: new Date(),
         }));
         txDbMocks.db.accessKey.findMany.mockResolvedValue([
-            { sessionId: "runner-session" },
+            { accountId: "u1", sessionId: "runner-session" },
         ]);
         txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 2 });
         const route = createRouteTestBuilder({
@@ -116,7 +116,7 @@ describe("machinesRoutes (revoke machine)", () => {
         );
 
         expect(txDbMocks.db.accessKey.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({ accountId: "u1", machineId: "m1" }),
+            where: { machineId: "m1" },
         }));
         // Definition assignments are removed through the canonical
         // Automation-owned machine-assignment removal composition.
@@ -147,7 +147,7 @@ describe("machinesRoutes (revoke machine)", () => {
         expect(disconnectMachineAndSessionSockets).toHaveBeenCalledWith({
             accountId: "u1",
             machineId: "m1",
-            sessionIds: ["runner-session"],
+            sessionBindings: [{ accountId: "u1", sessionId: "runner-session" }],
         });
 
         expect(reply.send).toHaveBeenCalled();

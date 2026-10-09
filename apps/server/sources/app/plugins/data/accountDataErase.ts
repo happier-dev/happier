@@ -1,8 +1,11 @@
 import { recordHomeAdministrationEventInTx } from "@/app/home/audit/homeAdministrationEvents";
-import { PluginIdSchema } from "@happier-dev/protocol";
+import { PluginIdSchema, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from "@happier-dev/protocol";
+import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from "@/app/machines/managed/managedRead";
 import { buildPluginDomainAccountChangeEntityId } from "@happier-dev/protocol/changes";
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
+import { eventRouter } from "@/app/events/eventRouter";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import {
     assertHomeOwnershipSurvivesTransitionInTx,
@@ -29,7 +32,7 @@ import {
 import { applyUserKvMutationsInTx, type KVMutation } from "@/app/kv/kvMutate";
 import { deletePublicFile, deletePrivateFile } from "@/storage/blob/files";
 import { hasPendingArtifactBlobUploadInTx, isPrivateArtifactBlobUpload } from "@/app/artifacts/artifactBlobService";
-import { inTx, type Tx } from "@/storage/inTx";
+import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/prisma";
 
 import { retirePluginCollectionCandidatePreparationStagesTx } from "./collections/candidatePreparationLifecycle";
@@ -43,6 +46,7 @@ type PluginAccountDataEraseTombstoneResult = Readonly<{
 export type PluginAccountDataEraseResult =
     | Readonly<{ status: "account-not-found" }>
     | Readonly<{ status: "transition-cleanup-pending" }>
+    | Readonly<{ status: "managed-resources-review-required"; resources: readonly ManagedResourceDependencyV1[] }>
     | Readonly<{
         status: "erased";
         accountStorage: PluginAccountDataEraseTombstoneResult;
@@ -170,8 +174,22 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
     pluginId: string;
+    managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
 }>): Promise<PluginAccountDataEraseResult> {
     const pluginId = PluginIdSchema.parse(input.pluginId);
+    const fence = await acquireAccountEncryptionTransitionFenceInTx(input.tx, input.accountId);
+    if (fence.status === "account_not_found") return { status: "account-not-found" };
+    if (fence.status === "account_inconsistent") {
+        throw new Error("Plugin Account data erase requires a consistent Account encryption mode.");
+    }
+    // Review retained native custody before transition cancellation or any
+    // selected Data destination is mutated. Manual acceptance is not cleanup.
+    const resources = await readManagedResourceDependenciesInTx(input.tx, {
+        kind: "plugin", accountId: input.accountId, pluginId,
+    });
+    if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) {
+        return { status: "managed-resources-review-required", resources };
+    }
     // The Account-owned coordinator takes the shared serialization fence and
     // asks the active lifecycle to cancel before this Data owner reads or
     // mutates anything. A single call may only drain its bounded cleanup
@@ -425,6 +443,7 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
 export async function erasePluginAccountData(input: Readonly<{
     accountId: string;
     pluginId: string;
+    managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
 }>): Promise<PluginAccountDataEraseResult> {
     return await inTx(async (tx) => await erasePluginAccountDataInTx({ tx, ...input }));
 }
@@ -432,6 +451,7 @@ export async function erasePluginAccountData(input: Readonly<{
 export type DeleteAccountForErasureResult =
     | Readonly<{ status: "deleted" }>
     | Readonly<{ status: "already-deleted" }>
+    | Readonly<{ status: "failed"; code: "account_erasure_managed_resources_review_required"; resources: readonly ManagedResourceDependencyV1[] }>
     | Readonly<{
         status: "failed";
         code:
@@ -586,6 +606,7 @@ export async function deleteAccountForErasure(input: Readonly<{
     now?: Date;
     /** Defaults to the released present-user erasure of one's own Account. */
     actor?: AccountErasureActor;
+    managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
 }>): Promise<DeleteAccountForErasureResult> {
     const actor: AccountErasureActor = input.actor ?? { kind: "self" };
     const preflight = await inTx(async (tx) => {
@@ -626,6 +647,11 @@ export async function deleteAccountForErasure(input: Readonly<{
         });
         if (teamOwnership.status === "rejected") {
             return { status: "rejected" as const, code: teamOwnership.code };
+        }
+
+        const resources = await readManagedResourceDependenciesInTx(tx, { kind: "account", accountId: input.accountId });
+        if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) {
+            return { status: "rejected" as const, code: "account_erasure_managed_resources_review_required" as const, resources };
         }
 
         // Reuse the transition owner's bounded cancellation before revoking
@@ -687,7 +713,10 @@ export async function deleteAccountForErasure(input: Readonly<{
         };
     });
     if (preflight.status === "already-deleted") return { status: "already-deleted" };
-    if (preflight.status === "rejected") return { status: "failed", code: preflight.code };
+    if (preflight.status === "rejected") {
+        if (preflight.code === "account_erasure_managed_resources_review_required") return { status: "failed", code: preflight.code, resources: preflight.resources };
+        return { status: "failed", code: preflight.code };
+    }
     const capturedLocators = preflight.locators;
     // Initial administrative admission has succeeded. Only this invocation's
     // exact self-target may now continue through its own deliberate revocation;
@@ -755,11 +784,23 @@ export async function deleteAccountForErasure(input: Readonly<{
         if (teamOwnership.status === "rejected") {
             return { status: "failed", code: teamOwnership.code };
         }
+        const resources = await readManagedResourceDependenciesInTx(tx, { kind: "account", accountId: input.accountId });
+        if (!acceptsManagedResourceDispositions(resources, input.managedResourceDispositions)) {
+            return { status: "failed", code: "account_erasure_managed_resources_review_required", resources };
+        }
         const currentLocators = await captureAccountErasureBlobLocatorsInTx(tx, input.accountId);
         if (!sameAccountErasureBlobLocators(capturedLocators, currentLocators)) {
             return { status: "failed", code: "account_erasure_locator_mismatch" };
         }
 
+        const machines = await tx.machine.findMany({ where: { accountId: input.accountId }, select: { id: true } });
+        const erasedMachineBindings = await Promise.all(machines.map(async (machine) => ({
+            machineId: machine.id,
+            sessionBindings: await readMachineAccessKeySessionBindingsInTx(tx, {
+                accountId: input.accountId,
+                machineId: machine.id,
+            }),
+        })));
         const sessions = await tx.session.findMany({ where: { accountId: input.accountId }, select: { id: true }, orderBy: { id: "asc" } });
         await tx.sessionShareAccessLog.deleteMany({ where: { userId: input.accountId } });
         await tx.publicShareAccessLog.deleteMany({ where: { userId: input.accountId } });
@@ -777,14 +818,31 @@ export async function deleteAccountForErasure(input: Readonly<{
             creatorAccountId: input.accountId,
         });
         await clearSessionResponsibilitiesForAccountRemovalInTx(tx, { accountId: input.accountId });
-        await tx.accessKey.deleteMany({ where: { accountId: input.accountId } });
+        // Requester erasure removes its tuples, never a foreign Machine.
+        // Custodian erasure also removes every tuple referencing its Machines,
+        // but foreign requester Sessions and their retained history survive.
+        await tx.accessKey.deleteMany({ where: { OR: [
+            { accountId: input.accountId },
+            { machineId: { in: machines.map((machine) => machine.id) } },
+        ] } });
         await tx.usageReport.deleteMany({ where: { accountId: input.accountId } });
         await tx.accountPushToken.deleteMany({ where: { accountId: input.accountId } });
         await tx.accountPluginUiArtifact.deleteMany({ where: { release: { accountId: input.accountId } } });
         await tx.accountPluginRelease.deleteMany({ where: { accountId: input.accountId } });
         await tx.artifact.deleteMany({ where: { accountId: input.accountId } });
         await tx.uploadedFile.deleteMany({ where: { accountId: input.accountId } });
+        // Manual responsibility destroys Account custody, not the native resource.
+        // The exact recovery facts were reviewed before retirement; no secret escrow survives erasure.
+        await tx.managedMachine.deleteMany({ where: { custodianAccountId: input.accountId } });
         await tx.machine.deleteMany({ where: { accountId: input.accountId } });
+        afterTx(tx, () => {
+            for (const binding of erasedMachineBindings) {
+                eventRouter.disconnectMachineAndSessionSockets({
+                    accountId: input.accountId,
+                    ...binding,
+                });
+            }
+        });
         await cleanupPluginWebhooksForAccountDeletionTxV1(tx, {
             accountId: input.accountId,
             ...(input.now ? { now: input.now } : {}),
