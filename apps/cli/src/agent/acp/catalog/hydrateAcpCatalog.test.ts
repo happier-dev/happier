@@ -2,7 +2,7 @@ import '@happier-dev/protocol';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { AcpCatalogRecordV1Schema, AcpCatalogRowMutationV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot, subscribeActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -227,6 +227,9 @@ describe('ACP Account catalog hydration', () => {
     const credentials = account();
     const retained = { neighboringRoot: { keep: true }, acpCatalogSettingsV1: { v: 2, backends: [] } };
     let acknowledged = false;
+    let rowRevision = -1;
+    let authoritativeRecord: ReturnType<typeof record> = { v: 1, definitions: [] };
+    const catalogWrites: unknown[] = [];
     const historyWrites: unknown[] = [];
     vi.spyOn(axios, 'get').mockImplementation(async input => {
       const path = new URL(String(input)).pathname;
@@ -235,7 +238,7 @@ describe('ACP Account catalog hydration', () => {
       } };
       if (path === '/v2/account/settings') return { status: 200, data: { version: 7, content: { t: 'plain', v: retained } } };
       if (path === '/v1/account/entity-rows/acp') return { status: 200, data: acknowledged
-        ? { status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, definitions: [] } } }
+        ? { status: 'present', revision: rowRevision, content: { t: 'plain', v: authoritativeRecord } }
         : { status: 'absent' } };
       if (path === '/v1/account/entity-rows/prompt-library') return { status: 404, data: {} };
       if (path.startsWith('/v1/account/entity-rows/')) return { status: 200, data: { status: 'absent' } };
@@ -250,15 +253,20 @@ describe('ACP Account catalog hydration', () => {
     vi.spyOn(axios, 'post').mockImplementation(async (input, body) => {
       const path = new URL(String(input)).pathname;
       if (path === '/v1/account/entity-rows/acp') {
-        expect(body).toMatchObject({ expectedRevision: 'absent', source: 'fresh', sourceSettingsVersion: 7,
-          settingsCleanup: { expectedSettingsVersion: 7, nextSettings: { t: 'plain', v: { neighboringRoot: { keep: true } } } },
-        });
+        const mutation = AcpCatalogRowMutationV1Schema.parse(body);
+        if (!acknowledged) expect(mutation).toMatchObject({ expectedRevision: 'absent', source: 'fresh', sourceSettingsVersion: 7,
+          settingsCleanup: { expectedSettingsVersion: 7, nextSettings: { t: 'plain', v: { neighboringRoot: { keep: true } } } } });
+        else expect(mutation).toMatchObject({ expectedRevision: rowRevision });
+        if (mutation.content.t !== 'plain') throw new Error('Expected plain ACP test row');
+        authoritativeRecord = AcpCatalogRecordV1Schema.parse(mutation.content.v);
+        catalogWrites.push(mutation);
         acknowledged = true;
-        return { status: 200, data: { status: 'updated', revision: 0, cursor: 12 } };
+        rowRevision += 1;
+        return { status: 200, data: { status: 'updated', revision: rowRevision, cursor: 12 + rowRevision } };
       }
       if (path === '/v2/account/settings/history/7/mutate') {
         historyWrites.push(body);
-        return historyUnavailable ? { status: 503, data: {} } : { status: 200, data: { status: 'applied' } };
+        return historyUnavailable && historyWrites.length === 1 ? { status: 503, data: {} } : { status: 200, data: { status: 'applied' } };
       }
       throw new Error(`Unexpected ACP history mutation: ${path}`);
     });
@@ -271,6 +279,17 @@ describe('ACP Account catalog hydration', () => {
       }),
     })]);
     expect(getActiveAccountSettingsSnapshot()?.acpCatalog).toMatchObject({ status: 'ready', revision: 0, record: { definitions: [] } });
+    if (historyUnavailable) {
+      const retry = await createCliAcpCatalogStore({ credentials }).updateCatalog(() => ({ v: 2, backends: record('retry').definitions }));
+      expect(retry).toMatchObject({ status: 'updated', revision: 1, cleanup: { status: 'complete' } });
+      expect(catalogWrites).toHaveLength(2);
+      expect(catalogWrites[1]).not.toHaveProperty('source');
+      expect(catalogWrites[1]).not.toHaveProperty('sourceSettingsVersion');
+      expect(catalogWrites[1]).not.toHaveProperty('settingsCleanup');
+      expect(historyWrites).toHaveLength(2);
+      expect(historyWrites[1]).toMatchObject({ operation: { transferredPrivateCatalogRevisions: { acp: 1 } } });
+      expect(getActiveAccountSettingsSnapshot()?.acpCatalog).toMatchObject({ status: 'ready', revision: 1, record: { definitions: [{ command: 'retry' }] } });
+    }
     expect(retained).toEqual({ neighboringRoot: { keep: true }, acpCatalogSettingsV1: { v: 2, backends: [] } });
   });
 
