@@ -3,7 +3,7 @@ import { SURFACE_AUTHORITY_AGENT_FLOOR } from '@happier-dev/protocol/actions/act
 import type { ActionExecutorContext, ComputerTargetV1, RuntimeActionExecute, RuntimeActionIdV1 } from '@happier-dev/protocol';
 import type { MachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { computerTargetKey, createComputerCaptureSource } from './source';
-import { createManagedComputerDriver } from './driver/managedComputerDriver';
+import { createManagedComputerDriver, resolveComputerDisplayId } from './driver/managedComputerDriver';
 import { createSessionImageMediaWriter } from '@/session/media/createSessionImageMediaWriter';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { configuration } from '@/configuration';
@@ -21,6 +21,8 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
   const writer = createSessionImageMediaWriter({ workingDirectory: configuration.happyHomeDir, storage: 'daemon',
     pathAllowanceRegistry: createTransferPathAllowanceRegistry() });
   const failure = (code: string) => ({ ok: false, errorCode: code, error: code } as const);
+  const nativeFailure = (error: unknown) => failure(error && typeof error === 'object' && 'code' in error
+    && typeof error.code === 'string' ? error.code : 'native_capture_failed');
   const selected = (sessionId: string) => input.registry.list().find(entry => entry.computer?.sessionId === sessionId)?.computer;
   const conflictingSelection = (sessionId: string, target: ComputerTargetV1) => input.registry.list()
     .some(entry => entry.computer && entry.computer.sessionId !== sessionId && computerTargetKey(entry.computer.target) === computerTargetKey(target));
@@ -36,9 +38,9 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
   };
   const closeSession = async (sessionId?: string) => {
     await Promise.all(input.registry.list().filter(entry => entry.computer && (!sessionId || entry.computer.sessionId === sessionId)).map(async entry => {
-      const completion = await entry.computer!.close();
-      // Keep physical ownership while draining, and quarantine an unconfirmed close.
-      if (completion.completion === 'known' && input.registry.list().some(current => current.computer === entry.computer)) {
+      await entry.computer!.close();
+      // Source close proves process retirement; prior input remains historically unknown.
+      if (input.registry.list().some(current => current.computer === entry.computer)) {
         input.registry.unregister(entry.sourceId);
       }
     }));
@@ -66,43 +68,54 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       if (!sessionId) return failure('computer_session_required');
       if (actionId === 'computer.target.get') {
         const source = selected(sessionId);
-        if (source && !await source.resolveTarget()) {
-          const drain = await source.interrupt();
-          if (drain.completion === 'unknown') return failure('control_not_drained');
-          if (selected(sessionId) === source) input.registry.unregister(source.sourceId);
-          await source.close();
-        }
-        return selection(sessionId);
+        try {
+          if (source && !await source.resolveTarget()) {
+            await source.close();
+            if (selected(sessionId) === source) input.registry.unregister(source.sourceId);
+          }
+          return selection(sessionId);
+        } catch (error) { return nativeFailure(error); }
       }
       if (list) {
         const request = ComputerTargetsListRequestV1Schema.parse(parsed.data);
-        const displayId = request.displayId ?? input.defaultDisplayId?.trim();
+        const displayId = resolveComputerDisplayId(request.displayId, input.defaultDisplayId);
         if (!displayId) return failure('computer_display_unavailable');
         let driver: Awaited<ReturnType<typeof createManagedComputerDriver>>;
         try {
           driver = await createManagedComputerDriver({ displayId, executablePath: input.executablePath });
         } catch (error) {
           // An unsupported desktop or a missing driver is the picker's typed explanation, not a thrown RPC.
-          return failure(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'native_capture_failed');
+          return nativeFailure(error);
         }
         try {
           const targets = await driver.listTargets({ includeThumbnails: context.authority === 'present_user' });
           const grants = await driver.checkPermissions();
-          return { targets: targets.map(({ target, title, appName, thumbnail }) => ({ target, ...(title ? { title } : {}),
+          return { targets: targets.map(({ target, title, appName, label, width, height, thumbnail }) => ({ target, ...(title ? { title } : {}),
+            ...(label ? { label } : {}), ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}),
             ...(appName ? { appName } : {}), ...(context.authority === 'present_user' && thumbnail ? { thumbnail } : {}) })),
-            displays: { status: 'unavailable', code: 'display_enumeration_unsupported' },
+            displays: targets.some(entry => entry.target.kind === 'display') ? { status: 'available' }
+              : { status: 'unavailable', code: 'display_enumeration_unsupported' },
             grants: { capture: grants.capture, input: grants.input } };
-        } finally { await driver.close(); }
+        } catch (error) { return nativeFailure(error); }
+        finally { await driver.close(); }
       }
       if (actionId === 'computer.target.select') {
         const request = ComputerTargetSelectRequestV1Schema.parse(parsed.data);
         const access = request.access ?? 'use';
-        const existing = selected(sessionId);
+        let existing = selected(sessionId);
         if (request.target && conflictingSelection(sessionId, request.target)) return failure('computer_target_in_use');
+        if (existing && (existing.status().uncertain || existing.isClosed())) {
+          try { await existing.close(); } catch (error) { return nativeFailure(error); }
+          if (selected(sessionId) !== existing) return failure('computer_target_selection_changed');
+          input.registry.unregister(existing.sourceId);
+          existing = undefined;
+        }
         if (request.target && existing && access === existing.access && computerTargetKey(request.target) === computerTargetKey(existing.target)) return selection(sessionId);
-        const displayId = request.target?.displayId ?? input.defaultDisplayId?.trim();
+        const displayId = resolveComputerDisplayId(request.target?.displayId, input.defaultDisplayId);
         if (!displayId) return failure('computer_display_unavailable');
-        const driver = await createManagedComputerDriver({ displayId, executablePath: input.executablePath });
+        let driver: Awaited<ReturnType<typeof createManagedComputerDriver>>;
+        try { driver = await createManagedComputerDriver({ displayId, executablePath: input.executablePath }); }
+        catch (error) { return nativeFailure(error); }
         let target: ComputerTargetV1;
         let title: string | undefined;
         let appName: string | undefined;
@@ -118,17 +131,17 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           target = match.target;
           title = match.title;
           appName = match.appName;
-        } finally { await driver.close(); }
+        } catch (error) { return nativeFailure(error); }
+        finally { await driver.close(); }
         context.signal?.throwIfAborted();
         if (conflictingSelection(sessionId, target)) return failure('computer_target_in_use');
         if (selected(sessionId) !== existing) return failure('computer_target_selection_changed');
-        if (existing && access === existing.access && computerTargetKey(target) === computerTargetKey(existing.target)) return selection(sessionId);
+        if (existing && !existing.isClosed() && !existing.status().uncertain
+          && access === existing.access && computerTargetKey(target) === computerTargetKey(existing.target)) return selection(sessionId);
         if (existing) {
-          const drain = await existing.interrupt();
-          if (drain.completion === 'unknown') return failure('control_not_drained');
+          try { await existing.close(); } catch (error) { return nativeFailure(error); }
           if (selected(sessionId) !== existing) return failure('computer_target_selection_changed');
           input.registry.unregister(existing.sourceId);
-          await existing.close();
         }
         // Native enumeration may await: recheck the single owning registry before replacement.
         if (selected(sessionId)) return failure('computer_target_selection_changed');
@@ -183,19 +196,18 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           ? { ...identity, status: 'dispatched' } : { ...identity, status: 'failed', code: 'control_not_drained' };
         if (actionId === 'computer.target.close') {
           const drain = await source.interrupt();
-          if (drain.completion === 'unknown') return { ...identity, status: 'interrupted', completion: 'unknown' };
+          const result = await source.close();
           if (selected(sessionId) !== source) return failure('computer_target_selection_changed');
           input.registry.unregister(sourceId);
-          const result = await source.close();
-          return result.completion === 'unknown' ? { ...identity, status: 'interrupted', completion: 'unknown' }
+          return drain.completion === 'unknown' || result.completion === 'unknown' ? { ...identity, status: 'interrupted', completion: 'unknown' }
             : { ...identity, status: 'dispatched' };
         }
         return failure('unsupported_action');
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'native_capture_failed';
         if (code === 'target_not_found' || code === 'target_mismatch') {
-          input.registry.unregister(sourceId);
           await source.close();
+          if (selected(sessionId) === source) input.registry.unregister(sourceId);
         }
         return { ...identity, status: 'failed', code };
       }

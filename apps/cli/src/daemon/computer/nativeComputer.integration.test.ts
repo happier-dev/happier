@@ -26,6 +26,58 @@ async function stop(child: ChildProcess): Promise<void> {
 const executablePath = process.env.HAPPIER_TEST_NATIVE_EXECUTABLE;
 const fixturePath = process.env.HAPPIER_TEST_NATIVE_FIXTURE;
 describe.skipIf(!executablePath || !fixturePath || process.platform !== 'linux')('isolated native computer journey', () => {
+  it('selects the actual X11 primary display and dispatches one capture-bound click', async () => {
+    const xvfb = spawn('Xvfb', ['-displayfd', '3', '-screen', '0', '1024x768x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe'] });
+    let fixture: ChildProcess | undefined;
+    const registry = createMachineLiveStreamCaptureRegistry();
+    let routes: ReturnType<typeof createComputerRoutes> | undefined;
+    try {
+      const displayId = `:${await line(xvfb.stdio[3] as Readable)}`;
+      fixture = spawn(fixturePath!, [], { env: { ...process.env, DISPLAY: displayId }, stdio: ['ignore', 'pipe', 'pipe'] });
+      await line(fixture.stdout!);
+      routes = createComputerRoutes({ machineId: 'native-machine', registry, defaultDisplayId: displayId, executablePath });
+      const machine = { machineId: 'native-machine' };
+      const human = { authority: 'present_user' as const, defaultSessionId: 'native-session' };
+      const agent = { authority: 'account_automation' as const, defaultSessionId: 'native-session', bypassApprovals: true };
+      const target = { kind: 'display' as const, displayId };
+      expect(await routes.dispatch('computer.targets.list', machine, human)).toMatchObject({
+        displays: { status: 'available' }, targets: expect.arrayContaining([expect.objectContaining({ target })]),
+      });
+      expect(registry.list()).toHaveLength(0);
+      expect(await routes.dispatch('computer.target.select', { ...machine, target, access: 'see' }, human))
+        .toMatchObject({ consentGranted: false, access: 'see', approvalDisplay: { target: { kind: 'display' } } });
+      const viewed = ComputerCaptureResponseV1Schema.parse(await routes.dispatch('computer.capture', machine, human));
+      expect(viewed).toMatchObject({ status: 'captured', geometry: { captureWidth: 1024, captureHeight: 768,
+        nativeWidth: 1024, nativeHeight: 768, originX: 0, originY: 0, scaleX: 1, scaleY: 1 } });
+      if (viewed.status !== 'captured') throw new Error(viewed.status);
+      expect(await routes.dispatch('computer.input', { ...machine, captureId: viewed.captureId,
+        operation: { kind: 'click', x: 70, y: 70 } }, agent)).toMatchObject({ status: 'failed', code: 'computer_access_read_only' });
+      await routes.dispatch('computer.target.select', { ...machine, target, access: 'use' }, human);
+      const capture = ComputerCaptureResponseV1Schema.parse(await routes.dispatch('computer.capture', machine, agent));
+      if (capture.status !== 'captured') throw new Error(capture.status);
+      const clicked = line(fixture.stdout!);
+      expect(await routes.dispatch('computer.input', { ...machine, captureId: capture.captureId,
+        operation: { kind: 'click', x: 70, y: 70 } }, agent)).toMatchObject({ status: 'dispatched' });
+      expect(await clicked).toBe('clicks:1');
+      expect(await routes.dispatch('computer.input', { ...machine, captureId: capture.captureId,
+        operation: { kind: 'click', x: 70, y: 70 } }, agent)).toMatchObject({ status: 'failed', code: 'stale_capture' });
+      expect(await routes.dispatch('computer.control.interrupt', machine, human))
+        .toMatchObject({ status: 'interrupted', completion: 'known' });
+      expect(await routes.dispatch('computer.control.status', machine, human))
+        .toMatchObject({ controller: 'human', stopping: false, uncertain: false });
+      const humanCapture = ComputerCaptureResponseV1Schema.parse(await routes.dispatch('computer.capture', machine, human));
+      if (humanCapture.status !== 'captured') throw new Error(humanCapture.status);
+      const humanClicked = line(fixture.stdout!);
+      expect(await routes.dispatch('computer.input', { ...machine, captureId: humanCapture.captureId,
+        operation: { kind: 'click', x: 70, y: 70 } }, human)).toMatchObject({ status: 'dispatched' });
+      expect(await humanClicked).toBe('clicks:2');
+      expect(await routes.dispatch('computer.control.handBack', machine, human)).toMatchObject({ status: 'dispatched' });
+      expect(await routes.dispatch('computer.input', { ...machine, captureId: humanCapture.captureId,
+        operation: { kind: 'click', x: 70, y: 70 } }, agent)).toMatchObject({ status: 'failed', code: 'observation_required' });
+      expect(await routes.dispatch('computer.target.close', machine, human)).toMatchObject({ status: 'dispatched' });
+      expect(registry.list()).toHaveLength(0);
+    } finally { await routes?.dispose(); if (fixture) await stop(fixture); await stop(xvfb); }
+  });
   it('admits exact Session consent, observes actual pixels through MCP, streams and hands control back', async () => {
     const xvfb = spawn('Xvfb', ['-displayfd', '3', '-screen', '0', '1024x768x24', '-nolisten', 'tcp'], { stdio: ['ignore', 'ignore', 'pipe', 'pipe'] });
     let fixture: ChildProcess | null = null;
@@ -102,7 +154,7 @@ describe.skipIf(!executablePath || !fixturePath || process.platform !== 'linux')
       expect(await routes.dispatch('computer.target.get', input, context)).toMatchObject({ consentGranted: true,
         approvalDisplay: { requiresTargetSelection: false, target: { kind: 'window', title: 'Happier native computer fixture' },
           captureMedia: observation.media } });
-      expect(await routes.dispatch('computer.targets.list', { ...input, displayId }, context)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      expect(await routes.dispatch('computer.targets.list', { ...input, displayId }, context)).toMatchObject({ ok: false, errorCode: 'approval_required' });
       const frames: MachineLiveStreamFrameV1[] = [];
       const now = Date.now();
       const caps = { maxBitrateBps: 1_000_000, maxFramesPerSecond: 10, maxFrameBytes: 100_000, maxDurationMs: 60_000 };

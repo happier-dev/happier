@@ -1,37 +1,5 @@
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-const native = vi.hoisted(() => ({ instances: [] as Array<{
-  onmessage?: (message: JSONRPCMessage) => void;
-  onclose?: () => void;
-  send: ReturnType<typeof vi.fn>;
-  close: ReturnType<typeof vi.fn>;
-  parameters: { command: string; args?: string[]; env?: Record<string, string> };
-}>, tools: [] as Array<{ name: string; arguments: Record<string, unknown> }>, call: vi.fn() }));
-
-// The subprocess/MCP transport is the system boundary; adapter parsing and admission stay real.
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  getDefaultEnvironment: () => ({ PATH: '/fixture/bin' }),
-  StdioClientTransport: class {
-    onmessage?: (message: JSONRPCMessage) => void;
-    onclose?: () => void;
-    close = vi.fn(async () => { this.onclose?.(); });
-    start = vi.fn(async () => {});
-    send = vi.fn(async (message: JSONRPCMessage) => {
-      if (!('id' in message) || !('method' in message)) return;
-      if (message.method === 'initialize') {
-        this.onmessage?.({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'cua-driver', version: '0.31.0' } } });
-        return;
-      }
-      if (message.method !== 'tools/call') return;
-      const call = message.params as { name: string; arguments: Record<string, unknown> };
-      native.tools.push(call);
-      const result = await native.call(call, this);
-      this.onmessage?.({ jsonrpc: '2.0', id: message.id, result });
-    });
-    constructor(readonly parameters: { command: string; args?: string[]; env?: Record<string, string> }) { native.instances.push(this); }
-  },
-}));
+import { describe, expect, it, vi } from 'vitest';
+import { native, target, png, captureResult } from './nativeComputerBoundary.testkit';
 
 import { createManagedComputerDriver } from './managedComputerDriver';
 import { createComputerCaptureSource } from '../source';
@@ -39,22 +7,139 @@ import { createComputerRoutes } from '../routes';
 import { createMachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
 import { startMachineLiveStreamFramePump } from '../../peer/mediation/stream/framePump';
 import { createMachineLiveStreamRelayTerminator } from '../../peer/mediation/stream/relay';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createDaemonRuntimeActionExecutor } from '../../runtimeActionExecutor';
 import type { MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
 import { ActionsSettingsV1Schema, FeaturesResponseSchema, decideApprovalRequestTransition, type ApprovalRequest } from '@happier-dev/protocol';
 
-const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
-const png = 'iVBORw0KGgoAAAANSUhEUgAAAMgAAABk';
-function captureResult() {
-  return { content: [{ type: 'image', mimeType: 'image/png', data: png }], structuredContent: {
-    pid: 42, window_id: 123, capture_id: 'capture-1', screenshot_width: 200, screenshot_height: 100,
-    window_bounds: { x: -20, y: 30, width: 400, height: 300 }, screenshot_frame_valid: true,
-    elements_complete: false, degraded_reason: 'x11_property_fallback_partial',
-    elements: [{ element_index: 0, role: 'button', label: 'Apply', frame: { x: 2, y: 3, w: 20, h: 10 } }],
-  } };
-}
 
-beforeEach(() => { native.instances.length = 0; native.tools.length = 0; native.call.mockReset(); });
-afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
+describe('native primary-display and macOS contract', () => {
+  function desktopResult(platform: 'linux' | 'macos' = 'linux') {
+    return { content: [{ type: 'image', mimeType: 'image/png', data: png }], structuredContent: {
+      platform, display: 'primary', capture_id: 'desktop-capture', screenshot_width: 200, screenshot_height: 100,
+      screen_width: platform === 'macos' ? 100 : 200, screen_height: platform === 'macos' ? 50 : 100,
+      ...(platform === 'macos' ? { scale_factor: 2 } : { frame_scale: 1 }),
+    } };
+  }
+
+  it('enumerates the native primary display through the actual targets route without selecting it', async () => {
+    native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: { windows: [] } }
+      : name === 'get_screen_size' ? { structuredContent: { width: 200, height: 100, scale_factor: 1 } }
+        : name === 'get_desktop_state' ? desktopResult() : { structuredContent: { x11: true, xsend_event: false } });
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/native-driver', defaultDisplayId: ':73' });
+    try {
+      expect(await routes.dispatch('computer.targets.list', { machineId: 'machine' },
+        { authority: 'account_automation', defaultSessionId: 'session', bypassApprovals: true }))
+        .toMatchObject({ targets: [{ target: { kind: 'display', displayId: ':73' }, width: 200, height: 100 }],
+          displays: { status: 'available' }, grants: { capture: 'granted', input: 'denied' } });
+      expect(registry.list()).toHaveLength(0);
+      expect(native.tools.some(tool => tool.name === 'get_desktop_state')).toBe(false);
+    } finally { await routes.dispose(); }
+  });
+
+  it('uses a one-shot native desktop capture and refuses replay and changed geometry', async () => {
+    const display = { kind: 'display', displayId: ':73' } as const;
+    let width = 200;
+    let scale = 1;
+    native.call.mockImplementation(async ({ name, arguments: args }) => name === 'get_desktop_state' ? desktopResult()
+      : name === 'get_screen_size' ? { structuredContent: { width, height: 100, scale_factor: scale } }
+        : name === 'check_permissions' ? { structuredContent: { x11: true, xsend_event: true } }
+          : args.delivery_mode === 'background' ? { isError: true, structuredContent: { effect: 'refused', code: 'background_unavailable' } }
+            : { structuredContent: { effect: 'unverifiable' } });
+    const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/native-driver' });
+    try {
+      const capture = await driver.capture(display);
+      expect(capture.geometry).toMatchObject({ captureWidth: 200, captureHeight: 100, nativeWidth: 200,
+        nativeHeight: 100, originX: 0, originY: 0, scaleX: 1, scaleY: 1 });
+      expect(capture.accessibility).toMatchObject({ nodes: [], complete: false });
+      expect(await driver.input(display, capture.captureId, { kind: 'click', x: 50, y: 25 })).toEqual({ status: 'dispatched' });
+      expect(native.tools.find(tool => tool.name === 'click')?.arguments).toMatchObject({
+        target: { kind: 'desktop', display_id: 'primary' }, capture_id: capture.captureId, x: 50, y: 25,
+      });
+      expect(await driver.input(display, capture.captureId, { kind: 'click', x: 50, y: 25 }))
+        .toEqual({ status: 'failed', code: 'stale_capture' });
+      const fresh = await driver.capture(display);
+      width = 400;
+      expect(await driver.input(display, fresh.captureId, { kind: 'click', x: 50, y: 25 }))
+        .toEqual({ status: 'failed', code: 'stale_capture' });
+      width = 200;
+      const rescaled = await driver.capture(display);
+      scale = 2;
+      expect(await driver.input(display, rescaled.captureId, { kind: 'click', x: 50, y: 25 }))
+        .toEqual({ status: 'failed', code: 'stale_capture' });
+      expect(native.tools.filter(tool => tool.name === 'click')).toHaveLength(1);
+    } finally { await driver.close(); }
+  });
+
+  it('keeps macOS capture and input grants independent and does not inject Linux desktop variables', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'darwin' });
+    vi.stubEnv('DISPLAY', ':inherited-linux-display');
+    vi.stubEnv('XAUTHORITY', '/inherited-linux-auth');
+    native.call.mockImplementation(async ({ name }) => name === 'check_permissions'
+      ? { structuredContent: { screen_recording: true, accessibility: false } }
+      : name === 'list_windows' ? { structuredContent: { windows: [{ pid: 42, window_id: 123, title: 'Editor' }] } }
+        : name === 'get_screen_size' ? { structuredContent: { width: 100, height: 50, scale_factor: 2 } }
+          : name === 'get_window_state' ? { ...captureResult(), structuredContent: { ...captureResult().structuredContent,
+            window_bounds: { x: -20, y: 30, width: 100, height: 50 }, elements: [] } }
+          : desktopResult('macos'));
+    const driver = await createManagedComputerDriver({ displayId: 'primary', executablePath: '/managed/native-driver' });
+    try {
+      expect(await driver.checkPermissions()).toEqual({ capture: 'granted', input: 'denied' });
+      expect(await driver.listTargets()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ target: { kind: 'window', displayId: 'primary', pid: 42, windowId: 123 } }),
+        expect.objectContaining({ target: { kind: 'display', displayId: 'primary' } }),
+      ]));
+      const capture = await driver.capture({ kind: 'display', displayId: 'primary' });
+      expect(capture.geometry).toMatchObject({ captureWidth: 200, captureHeight: 100, nativeWidth: 100,
+        nativeHeight: 50, scaleX: 0.5, scaleY: 0.5 });
+      expect(await driver.input({ kind: 'display', displayId: 'primary' }, capture.captureId, { kind: 'click', x: 1, y: 1 }))
+        .toEqual({ status: 'failed', code: 'input_permission_denied' });
+      expect(native.tools.some(tool => tool.name === 'click')).toBe(false);
+      expect(native.instances[0]?.parameters.env).not.toHaveProperty('DISPLAY');
+      expect(native.instances[0]?.parameters.env).not.toHaveProperty('XAUTHORITY');
+      const window = await driver.capture({ ...target, displayId: 'primary' });
+      expect(window.geometry).toMatchObject({ originX: -20, originY: 30, scaleX: 0.5, scaleY: 0.5 });
+      expect(native.tools.find(tool => tool.name === 'get_window_state')?.arguments)
+        .toMatchObject({ include_accessibility_tree: false });
+      const routes = createComputerRoutes({ machineId: 'machine', registry: createMachineLiveStreamCaptureRegistry(),
+        executablePath: '/managed/native-driver', defaultDisplayId: process.env.DISPLAY });
+      try {
+        expect(await routes.dispatch('computer.targets.list', { machineId: 'machine' },
+          { authority: 'account_automation', defaultSessionId: 'session', bypassApprovals: true }))
+          .toMatchObject({ displays: { status: 'available' }, grants: { capture: 'granted', input: 'denied' },
+            targets: expect.arrayContaining([expect.objectContaining({ target: { kind: 'display', displayId: 'primary' } })]) });
+        // An explicit source selector is never silently redirected to the primary desktop.
+        expect(await routes.dispatch('computer.targets.list', { machineId: 'machine', displayId: ':73' },
+          { authority: 'present_user', defaultSessionId: 'session' }))
+          .toMatchObject({ ok: false, errorCode: 'target_unsupported' });
+        expect(await routes.dispatch('computer.target.select', { machineId: 'machine', requestedTarget: 'Editor', access: 'see' },
+          { authority: 'present_user', defaultSessionId: 'session' }))
+          .toMatchObject({ access: 'see', selectedTarget: { kind: 'window', displayId: 'primary', pid: 42, windowId: 123 } });
+      } finally { await routes.dispose(); }
+    } finally { await driver.close(); }
+  });
+
+  it('refuses unknown capture permission and malformed desktop identity or PNG geometry', async () => {
+    const display = { kind: 'display', displayId: ':73' } as const;
+    let permission: unknown;
+    let result = desktopResult();
+    native.call.mockImplementation(async ({ name }) => name === 'check_permissions'
+      ? { structuredContent: { x11: permission, xsend_event: true } } : result);
+    const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/native-driver' });
+    try {
+      expect(await driver.checkPermissions()).toEqual({ capture: 'unknown', input: 'granted' });
+      await expect(driver.capture(display)).rejects.toMatchObject({ code: 'capture_permission_unknown' });
+      expect(native.tools.some(tool => tool.name === 'get_desktop_state')).toBe(false);
+      permission = true;
+      result = { ...desktopResult(), structuredContent: { ...desktopResult().structuredContent, display: 'another-display' } };
+      await expect(driver.capture(display)).rejects.toMatchObject({ code: 'driver_result_invalid' });
+      result = { ...desktopResult(), structuredContent: { ...desktopResult().structuredContent, screenshot_width: 201 } };
+      await expect(driver.capture(display)).rejects.toMatchObject({ code: 'driver_result_invalid' });
+      expect(native.tools.some(tool => tool.name === 'click')).toBe(false);
+    } finally { await driver.close(); }
+  });
+});
 
 describe.skipIf(process.platform !== 'linux')('managed native computer driver (X11)', () => {
   it('lists native app names with person-only preview pixels and an honest display refusal', async () => {
@@ -121,8 +206,9 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
   it('publishes in-flight capture and a normalized clicked accessibility name, then clears activity', async () => {
     let finishCapture: ((value: unknown) => void) | undefined;
     let finishInput: ((value: unknown) => void) | undefined;
-    native.call.mockImplementation(({ name }) => name === 'get_window_state'
-      ? new Promise(resolve => { finishCapture = resolve; }) : new Promise(resolve => { finishInput = resolve; }));
+    native.call.mockImplementation(({ name, arguments: args }) => name === 'get_window_state'
+      ? args.include_screenshot === false ? Promise.resolve(captureResult()) : new Promise(resolve => { finishCapture = resolve; })
+        : new Promise(resolve => { finishInput = resolve; }));
     const source = createComputerCaptureSource({ sessionId: 'session', target, executablePath: '/managed/native-driver' });
     let observing: ReturnType<typeof source.observe> | undefined;
     try {
@@ -198,9 +284,8 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     } finally { finishInput?.({ structuredContent: { effect: 'unverifiable' } }); await source.close(); }
   });
   it('uses host display facts for an explicitly created agent selection approval', async () => {
-    const [{ createCliActionExecutorHarness }, { createDaemonRuntimeActionExecutor }] = await Promise.all([
-      import('@/session/actions/createCliActionExecutorHarness'), import('../../runtimeActionExecutor'),
-    ]);
+    native.call.mockImplementation(async ({ name }) => name === 'list_windows'
+      ? { structuredContent: { windows: [] } } : { structuredContent: {} });
     const routes = createComputerRoutes({ machineId: 'machine', machineDisplayName: 'Workstation',
       registry: createMachineLiveStreamCaptureRegistry(), executablePath: '/managed/native-driver', defaultDisplayId: ':73' });
     let stored: ApprovalRequest | undefined;
@@ -226,9 +311,6 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     { name: 'with downgraded access', windowId: 123, access: 'see' as const },
     { name: 'outside the user-side target list', windowId: 999, access: 'use' as const },
   ])('stores the human selection $name from the blocking approval, preserving the agent origin and suggestion', async ({ windowId, access }) => {
-    const [{ createCliActionExecutorHarness }, { createDaemonRuntimeActionExecutor }] = await Promise.all([
-      import('@/session/actions/createCliActionExecutorHarness'), import('../../runtimeActionExecutor'),
-    ]);
     const chosen = { ...target, windowId };
     native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: {
       windows: [{ pid: target.pid, window_id: target.windowId, title: 'Requested app' },
@@ -298,9 +380,6 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
   });
   it.each(['computer.targets.list', 'computer.target.select', 'computer.control.interrupt', 'computer.control.handBack'] as const)(
     'routes agent %s through approval and the real native owner without human authority', async actionId => {
-      const [{ createCliActionExecutorHarness }, { createDaemonRuntimeActionExecutor }] = await Promise.all([
-        import('@/session/actions/createCliActionExecutorHarness'), import('../../runtimeActionExecutor'),
-      ]);
       native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: {
         windows: [{ pid: target.pid, window_id: target.windowId, title: 'Fixture' }],
       } } : name === 'get_window_state' ? captureResult() : { structuredContent: {} });
@@ -362,7 +441,8 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     let closing: Promise<void> | undefined;
     native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: {
       windows: [{ pid: target.pid, window_id: target.windowId, title: 'Fixture' }],
-    } } : name === 'get_window_state' ? captureResult() : new Promise(resolve => {
+    } } : name === 'get_window_state' ? captureResult() : name === 'get_screen_size'
+      ? { structuredContent: {} } : new Promise(resolve => {
       releaseInput = () => resolve({ structuredContent: { effect: 'unverifiable' } });
     }));
     const registry = createMachineLiveStreamCaptureRegistry();
@@ -402,7 +482,8 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     const now = Date.now();
     const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_source', captureAdapter: source.adapter,
       nowMs: () => Date.now(), emitEnvelope: envelope => envelopes.push(envelope) });
-    const receivedFrames = () => envelopes.filter(envelope => envelope.message.kind === 'frame');
+    const receivedFrames = () => envelopes.filter(envelope => envelope.message.kind === 'frame'
+      && envelope.message.frame.payloadKind === 'image_keyframe');
     try {
       const started = await relay.start({ v: 1, streamId: 'stream', streamFamily: 'screen', routeKind: 'server_relay',
         sourceMachineId: 'machine_source', targetMachineId: 'machine_target', codecId: 'image.frame.v1',
@@ -415,7 +496,7 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       await vi.advanceTimersByTimeAsync(25);
       expect(receivedFrames()).toHaveLength(1);
       expect(relay.applyControl({ v: 1, sourceMachineId: 'machine_source', targetMachineId: 'machine_target',
-        message: { kind: 'control', control: { v: 1, streamId: 'stream', kind: 'ack', nextSequence: 2, windowFrames: 1 } } }))
+        message: { kind: 'control', control: { v: 1, streamId: 'stream', kind: 'ack', nextSequence: 3, windowFrames: 1 } } }))
         .toEqual({ ok: true });
       await vi.advanceTimersByTimeAsync(25);
       expect(receivedFrames()).toHaveLength(2);
@@ -499,17 +580,6 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     } finally { await driver.close(); }
   });
 
-  it('reports unknown completion for an input failure that does not prove refusal before dispatch', async () => {
-    native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? captureResult() : {
-      isError: true, content: [], structuredContent: { effect: 'refused', error: { code: 'tool_error' } },
-    });
-    const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/cua-driver' });
-    try {
-      const capture = await driver.capture(target);
-      expect(await driver.input(target, capture.captureId, { kind: 'click', x: 1, y: 1 })).toEqual({ status: 'interrupted', completion: 'unknown' });
-      expect(await driver.input(target, capture.captureId, { kind: 'click', x: 1, y: 1 })).toEqual({ status: 'failed', code: 'driver_unavailable' });
-    } finally { await driver.close(); }
-  });
 
   it('keeps model capture actionable while viewer frames use a read-only process and closes both', async () => {
     const processTokens = new Map<object, string[]>();
@@ -559,12 +629,12 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     } finally { await driver.close(); }
   });
 
-  it('refuses foreign displays, unsupported desktop targets and changed capture identities', async () => {
+  it('refuses foreign displays, unknown desktop capture permission and changed capture identities', async () => {
     native.call.mockResolvedValue(captureResult());
     const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/cua-driver' });
     try {
       await expect(driver.capture({ ...target, displayId: ':74' })).rejects.toMatchObject({ code: 'target_mismatch' });
-      await expect(driver.capture({ kind: 'display', displayId: ':73' })).rejects.toMatchObject({ code: 'target_unsupported' });
+      await expect(driver.capture({ kind: 'display', displayId: ':73' })).rejects.toMatchObject({ code: 'capture_permission_unknown' });
       const capture = await driver.capture(target);
       expect(await driver.input({ ...target, windowId: 124 }, capture.captureId, { kind: 'click', x: 1, y: 1 })).toEqual({ status: 'failed', code: 'stale_capture' });
       expect(native.tools.filter(x => x.name === 'click')).toHaveLength(0);

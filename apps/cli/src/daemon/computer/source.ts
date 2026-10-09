@@ -205,9 +205,11 @@ export function createComputerCaptureSource(input: Readonly<{
     },
   };
   return { sessionId: input.sessionId, target: input.target, sourceId, adapter, access,
+    isClosed: () => closed,
     get title() { return title; },
     get appName() { return appName; },
     async resolveTarget() {
+      if (closed) throw new Error('capture_source_unavailable');
       const target = (await (await getDriver()).listTargets()).find(entry =>
         computerTargetKey(entry.target) === computerTargetKey(input.target));
       if (target) { title = target.title ?? ''; appName = target.appName; }
@@ -229,10 +231,13 @@ export function createComputerCaptureSource(input: Readonly<{
       for (const viewer of viewers) viewer.fail('capture_stopped');
       viewers.clear();
       const outcome = await control.close();
-      await framePending;
       // Failed initialization already closes its transport in the native boundary.
       const native = driver ? await driver.catch(() => null) : null;
       await native?.close();
+      // Process retirement also settles a viewer read with a lost reply.
+      await framePending;
+      modelCaptureId = null;
+      modelCapture = null;
       return { completion: outcome };
     },
   };
