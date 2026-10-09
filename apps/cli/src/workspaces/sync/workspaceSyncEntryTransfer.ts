@@ -11,6 +11,8 @@ import {
   createBufferTransferPayloadSource,
   createFileTransferPayloadSource,
   type TransferPayloadSource,
+  resolveTransferPayloadManifestHash,
+  resolveTransferPayloadSizeBytes,
 } from '@/machines/transfer/transferPayloadSource';
 import { observeWorkspaceSyncEntryAtRoot } from './workspaceSyncFileRead';
 
@@ -98,7 +100,9 @@ export async function createWorkspaceSyncEntryExport(input: Readonly<{
   operationId: string;
   expectation: WorkspaceSyncEntryExpectationV1;
   materialPath: string | null;
-}>): Promise<Readonly<{ payloadSource: TransferPayloadSource; onDemandScope: DirectPeerOnDemandTransferScope }>> {
+  assertEntryAllowed?: (entry: WorkspaceManifestEntry) => void;
+}>): Promise<Readonly<{ payloadSource: TransferPayloadSource; onDemandScope: DirectPeerOnDemandTransferScope;
+  blobs: readonly Readonly<{ transferId: string; sizeBytes: number; manifestHash: string }>[] }>> {
   const expectation = WorkspaceSyncEntryExpectationV1Schema.parse(input.expectation);
   if ((expectation.kind === 'missing') !== (input.materialPath === null)) {
     throw changed('Captured resolution material does not match its observation');
@@ -107,11 +111,19 @@ export async function createWorkspaceSyncEntryExport(input: Readonly<{
   const scanned = input.materialPath === null
     ? { entries: [] as readonly WorkspaceManifestEntry[], blobPathByDigest: new Map<string, string>() }
     : await scanCapturedMaterial(input.materialPath);
+  for (const entry of scanned.entries) input.assertEntryAllowed?.(entry);
   if (input.materialPath !== null) await assertMaterialMatchesExpectation(input.materialPath, expectation);
   const blobTransferIds = Object.fromEntries([...scanned.blobPathByDigest].map(([digest]) => [digest, blobTransferId(input.operationId, digest)]));
   const digestByTransferId = new Map(Object.entries(blobTransferIds).map(([digest, transferId]) => [transferId, digest]));
   const envelope: WorkspaceSyncEntryTransferEnvelopeV1 = { v: 1, expectation, entries: scanned.entries, blobTransferIds };
+  const blobs: Array<Readonly<{ transferId: string; sizeBytes: number; manifestHash: string }>> = [];
+  for (const [digest, filePath] of scanned.blobPathByDigest) {
+    const source = createFileTransferPayloadSource({ filePath });
+    blobs.push({ transferId: blobTransferIds[digest]!, sizeBytes: await resolveTransferPayloadSizeBytes(source),
+      manifestHash: await resolveTransferPayloadManifestHash(source) });
+  }
   return {
+    blobs,
     payloadSource: createBufferTransferPayloadSource(Buffer.from(JSON.stringify(envelope), 'utf8')),
     onDemandScope: {
       allowTransferId: (transferId) => digestByTransferId.has(transferId),

@@ -53,6 +53,8 @@ describe('workspace sync captured entry transfer', () => {
     const prepared = await createWorkspaceSyncEntryExport({
       operationId: 'resolution-transfer', expectation, materialPath: captured,
     });
+    expect(prepared.blobs).toEqual([{ transferId: expect.stringContaining('resolution-transfer:entry-blob:'), sizeBytes: bytes.length,
+      manifestHash: `sha256:${createHash('sha256').update(bytes).digest('hex')}` }]);
     const published = new Map([["resolution-transfer", prepared.payloadSource]]);
     const materialPath = await stageWorkspaceSyncEntryExport({
       operationId: 'resolution-transfer', stagingDirectory: staged, expectation,

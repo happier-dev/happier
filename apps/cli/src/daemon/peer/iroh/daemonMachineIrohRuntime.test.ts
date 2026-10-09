@@ -19,7 +19,7 @@ const WORKSPACE_SYNC_HANDSHAKE = { v: 1, flow: 'workspace_sync', operationId: 'o
 
 function nativeHarness(overrides: Record<string, unknown> = {}) {
   return {
-    createEndpoint: vi.fn(async () => ({ endpointHandle: 'endpoint-1', endpointId: 'a'.repeat(64) })),
+    createEndpoint: vi.fn(async (_request: unknown) => ({ endpointHandle: 'endpoint-1', endpointId: 'a'.repeat(64) })),
     getEndpointStatus: vi.fn(async () => ({
       endpointHandle: 'endpoint-1', endpointId: 'a'.repeat(64), relayMode: 'custom', relayUrls: ['https://relay.test/'],
       capProfile: 'machineBulk', directAddresses: ['127.0.0.1:7777'], active: true,
@@ -63,6 +63,14 @@ async function createHarness(nativeOverrides: Record<string, unknown> = {}, conn
 }
 
 describe('createDaemonMachineIrohRuntime', () => {
+  it('uses an ephemeral native identity for an Account client without touching the daemon endpoint key', async () => {
+    const native = nativeHarness();
+    const runtime = await createDaemonMachineIrohRuntime({ happyHomeDir: '/daemon-home', identity: 'ephemeral',
+      relayConfig: { relayPolicy: 'disabled', relayUrls: [] }, native: native as never });
+    if (!runtime.available) throw new Error('Expected native Account client endpoint');
+    expect(native.createEndpoint.mock.calls[0]?.[0]).not.toHaveProperty('keyPath');
+    await runtime.shutdown();
+  });
   it('keeps the daemon endpoint and acceptor active when an in-process auth helper closes', async () => {
     const { native, runtime } = await createHarness();
     if (!runtime.available) throw new Error('expected daemon endpoint');
