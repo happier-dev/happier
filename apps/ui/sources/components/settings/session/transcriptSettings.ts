@@ -29,6 +29,8 @@ export const TRANSCRIPT_SETTINGS = defineSettingsPage({
         toolRendering: {
             titleKey: 'settingsSessionPages.transcript.toolsSection',
             settings: {
+                showToolCalls: { storage: { scope: 'account', key: 'transcriptShowToolCalls', access: 'read_write' },
+                    titleKey: 'settingsSession.transcript.showToolCallsTitle', descriptionKey: 'settingsSession.transcript.showToolCallsSubtitle' },
                 timelineChrome: { storage: { scope: 'account', key: 'toolViewTimelineChromeMode', access: 'read_write' },
                     titleKey: 'settingsSession.toolRendering.timelineChrome.title',
                     keywordKeys: ['settingsSession.toolRendering.timelineChrome.cardsTitle', 'settingsSession.toolRendering.timelineChrome.activityFeedTitle'],

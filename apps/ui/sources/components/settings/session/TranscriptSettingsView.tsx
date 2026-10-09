@@ -57,6 +57,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const popoverBoundaryRef = React.useRef<any>(null);
 
     const [transcriptGroupingMode, setTranscriptGroupingMode] = useSettingMutable('transcriptGroupingMode');
+    const [transcriptShowToolCalls, setTranscriptShowToolCalls] = useSettingMutable('transcriptShowToolCalls');
     const [transcriptGroupToolCalls, setTranscriptGroupToolCalls] = useSettingMutable('transcriptGroupToolCalls');
     const [transcriptTurnToolCallsGroupStrategy, setTranscriptTurnToolCallsGroupStrategy] = useSettingMutable('transcriptTurnToolCallsGroupStrategy');
     const [transcriptToolCallsCollapsedPreviewCount, setTranscriptToolCallsCollapsedPreviewCount] = useSettingMutable('transcriptToolCallsCollapsedPreviewCount');
@@ -310,6 +311,20 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
 
             <SettingSection section={TRANSCRIPT_SETTINGS.sectionRefs.toolRendering}>
                 <ItemGroup title={t('settingsSessionPages.transcript.toolsSection')} description={t('settingsSession.toolRendering.footer')}>
+                    {/* The Account default for Sessions without their own choice; Bots hide tool calls unless chosen (60s4). */}
+                    <SettingRow
+                        setting={TRANSCRIPT_SETTINGS.settings.showToolCalls}
+                        testID="settings-session-transcript-show-tool-calls"
+                        rightElement={
+                            <Switch
+                                value={transcriptShowToolCalls !== false}
+                                onValueChange={(v) => setTranscriptShowToolCalls(Boolean(v))}
+                            />
+                        }
+                        showChevron={false}
+                        onPress={() => setTranscriptShowToolCalls(transcriptShowToolCalls === false)}
+                    />
+
                     <SettingAnchor setting={TRANSCRIPT_SETTINGS.settings.timelineChrome}>
                         <Item
                             testID="settings-session-tool-style"

@@ -8,6 +8,7 @@ import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/stora
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setTranscriptMessageTimestampDisplayMode = vi.fn();
+const setTranscriptShowToolCalls = vi.fn();
 const setSessionThinkingDisplayMode = vi.fn();
 const setSessionThinkingInlinePresentation = vi.fn();
 const accountSettingsWrites = vi.hoisted(() => [] as unknown[]);
@@ -24,6 +25,9 @@ installSessionSettingsCommonModuleMocks({
             importOriginal,
             overrides: {
                 useSettingMutable: createUseSettingMutableMockFromReader((name) => {
+                    if (name === 'transcriptShowToolCalls') {
+                        return [undefined, setTranscriptShowToolCalls];
+                    }
                     if (name === 'transcriptGroupingMode') {
                         return ['turns', vi.fn()];
                     }
@@ -83,9 +87,24 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
+// Prepare the real component after the shared mock options are installed, outside behavior deadlines.
+const { TranscriptSettingsView } = await import('./TranscriptSettingsView');
+
 describe('TranscriptSettingsView', () => {
+    it('renders the Account Show tool calls default as on until chosen and writes the explicit choice', async () => {
+        const screen = await renderSettingsView(React.createElement(TranscriptSettingsView));
+
+        const row = screen.findAll((node) => node.props?.testID === 'settings-session-transcript-show-tool-calls'
+            && (node.type as unknown) === 'Item')[0];
+        expect(row).toBeTruthy();
+        expect(row?.props?.title).toBe('settingsSession.transcript.showToolCallsTitle');
+        expect(row?.props?.rightElement?.props?.value).toBe(true);
+
+        row?.props?.rightElement?.props?.onValueChange(false);
+        expect(setTranscriptShowToolCalls).toHaveBeenLastCalledWith(false);
+    });
+
     it('defaults the tool calls collapsed preview dropdown to three when the setting is unavailable', async () => {
-        const { TranscriptSettingsView } = await import('./TranscriptSettingsView');
         const screen = await renderSettingsView(React.createElement(TranscriptSettingsView));
 
         const dropdown = screen.findAll((node) =>
@@ -96,7 +115,6 @@ describe('TranscriptSettingsView', () => {
     });
 
     it('renders the message timestamp display dropdown in transcript layout settings', async () => {
-        const { TranscriptSettingsView } = await import('./TranscriptSettingsView');
         const screen = await renderSettingsView(React.createElement(TranscriptSettingsView));
 
         const dropdown = screen.findAll((node) =>
@@ -128,7 +146,6 @@ describe('TranscriptSettingsView', () => {
     });
 
     it('shows thinking as picture choices and writes both settings behind the full inline choice in one write', async () => {
-        const { TranscriptSettingsView } = await import('./TranscriptSettingsView');
         const screen = await renderSettingsView(React.createElement(TranscriptSettingsView));
 
         const tiles = (screen.findRow('settings-session-thinking-display')?.props.rightElement as React.ReactElement<any> | undefined);
