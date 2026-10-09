@@ -58,9 +58,8 @@ export async function publishAppStoreVersion({ request, ascAppId, appVersion, bu
     await request({ method: 'PATCH', url: `${versionUrl}/relationships/build`, body: { data: { type: 'builds', id: buildId } } });
   }
   const localizations = await ascListAll({ request, url: `${versionUrl}/appStoreVersionLocalizations` });
-  const localization = localizations.find((row) => row.attributes?.locale === locale);
-  if (!localization && !editable) throw new Error(`App Store version ${versionId} has no ${locale} release notes.`);
-  if (localization && localization.attributes?.whatsNew !== whatsNew && !editable) {
+  if (!localizations.length && !editable) throw new Error(`App Store version ${versionId} has no release notes.`);
+  if (!editable && localizations.some((row) => row.attributes?.whatsNew !== whatsNew)) {
     throw new Error(`App Store version ${versionId} release notes differ from the bound projection.`);
   }
   if ((!released && version.attributes?.releaseType !== 'AFTER_APPROVAL') || (editable && version.attributes?.reviewType === 'NOTARIZATION')) {
@@ -68,15 +67,19 @@ export async function publishAppStoreVersion({ request, ascAppId, appVersion, bu
       releaseType: 'AFTER_APPROVAL', ...(editable && version.attributes?.reviewType === 'NOTARIZATION' ? { reviewType: 'APP_STORE' } : {}),
     } } } });
   }
-  if (!localization) {
+  if (!localizations.length) {
     await request({ method: 'POST', url: buildAscBaseUrl('/v1/appStoreVersionLocalizations'), body: { data: {
       type: 'appStoreVersionLocalizations', attributes: { locale, whatsNew },
       relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: versionId } } },
     } } });
-  } else if (localization.attributes?.whatsNew !== whatsNew) {
-    await request({ method: 'PATCH', url: buildAscBaseUrl(`/v1/appStoreVersionLocalizations/${encodeURIComponent(localization.id)}`), body: { data: {
-      type: 'appStoreVersionLocalizations', id: localization.id, attributes: { whatsNew },
-    } } });
+  } else {
+    // Apple validates What's New on every existing localization, including later pages.
+    for (const localization of localizations) {
+      if (localization.attributes?.whatsNew === whatsNew) continue;
+      await request({ method: 'PATCH', url: buildAscBaseUrl(`/v1/appStoreVersionLocalizations/${encodeURIComponent(localization.id)}`), body: { data: {
+        type: 'appStoreVersionLocalizations', id: localization.id, attributes: { whatsNew },
+      } } });
+    }
   }
   let phased;
   try {
@@ -97,7 +100,7 @@ export async function publishAppStoreVersion({ request, ascAppId, appVersion, bu
     }
     version = (await request({ url: `${versionUrl}?include=build` })).data;
     if (version?.relationships?.build?.data?.id !== buildId) throw new Error(`App Store version ${versionId} no longer references build ${buildId}.`);
-    return { status: stateOf(version) === 'PENDING_DEVELOPER_RELEASE' ? 'pending_release' : statusOf(version), appStoreState: stateOf(version), versionId, buildId };
+    return { status: stateOf(version) === 'PENDING_DEVELOPER_RELEASE' ? 'pending_release' : statusOf(version), appStoreState: stateOf(version), releaseType: version?.attributes?.releaseType, versionId, buildId };
   }
 
   const submissionsUrl = new URL(buildAscBaseUrl('/v1/reviewSubmissions'));
@@ -136,5 +139,5 @@ export async function publishAppStoreVersion({ request, ascAppId, appVersion, bu
   if (version?.relationships?.build?.data?.id !== buildId) throw new Error(`App Store version ${versionId} no longer references build ${buildId}.`);
   const status = statusOf(version);
   return { status: status === 'action_required' && submission?.attributes?.state === 'WAITING_FOR_REVIEW' ? 'waiting_for_review' : status,
-    appStoreState: stateOf(version), versionId, buildId, reviewSubmissionId: submission?.id, reviewState: submission?.attributes?.state };
+    appStoreState: stateOf(version), releaseType: version?.attributes?.releaseType, versionId, buildId, reviewSubmissionId: submission?.id, reviewState: submission?.attributes?.state };
 }

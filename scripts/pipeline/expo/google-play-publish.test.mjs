@@ -22,7 +22,14 @@ function boundary({ releases = [previous, target], failAt, invalidUpdate = false
     if (url.endsWith('/edits')) return Response.json({ id: 'edit-1', expiryTimeSeconds: '123' });
     if (init.method === 'DELETE') return new Response(null, { status: 204 });
     if (url.endsWith(':commit')) return Response.json({ id: 'edit-1' });
-    if (init.method === 'PUT') return Response.json(invalidUpdate ? { track: 'production', releases } : JSON.parse(init.body));
+    if (init.method === 'PUT') {
+      const update = JSON.parse(init.body);
+      // Publisher v3 rejects a second completed release, as in production job 113992849435.
+      if (update.releases.filter((release) => release.status === 'completed').length > 1) {
+        return Response.json({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'Only one completed release is allowed.' } }, { status: 400 });
+      }
+      return Response.json(invalidUpdate ? { track: 'production', releases } : update);
+    }
     return Response.json({ track: 'production', releases });
   };
   return { calls, fetchImpl };
@@ -30,7 +37,7 @@ function boundary({ releases = [previous, target], failAt, invalidUpdate = false
 
 const input = { packageName: 'dev.happier.app', versionCode: '42', whatsNew: 'Exact approved notes.\nWith authored spacing.', credentialJson };
 
-test('Play edit binds exact notes and full rollout, preserves neighboring releases and verifies JWT', async () => {
+test('Play edit supersedes the previous completed release with exact notes and full rollout and verifies JWT', async () => {
   const { calls, fetchImpl } = boundary();
   const result = await publishGooglePlayProduction({ ...input, fetchImpl });
   assert.equal(result.status, 'publication_submitted');
@@ -45,17 +52,18 @@ test('Play edit binds exact notes and full rollout, preserves neighboring releas
   assert.equal(claims.exp - claims.iat, 3600);
   assert.equal(verify('RSA-SHA256', Buffer.from(`${header}.${payload}`), publicKey, Buffer.from(signature, 'base64url')), true);
   const update = JSON.parse(calls.find((call) => call.method === 'PUT').body);
-  assert.deepEqual(update.releases[0], previous);
-  assert.equal(update.releases[1].status, 'completed');
-  assert.equal(Object.hasOwn(update.releases[1], 'userFraction'), false);
-  assert.equal(Object.hasOwn(update.releases[1], 'countryTargeting'), false);
-  assert.deepEqual(update.releases[1].releaseNotes, [{ language: 'fr-FR', text: 'Conserver' }, { language: 'en-US', text: input.whatsNew }]);
-  assert.equal(update.releases[1].inAppUpdatePriority, 2);
+  assert.equal(update.releases.length, 1);
+  assert.deepEqual(update.releases[0].versionCodes, ['42']);
+  assert.equal(update.releases[0].status, 'completed');
+  assert.equal(Object.hasOwn(update.releases[0], 'userFraction'), false);
+  assert.equal(Object.hasOwn(update.releases[0], 'countryTargeting'), false);
+  assert.deepEqual(update.releases[0].releaseNotes, [{ language: 'fr-FR', text: 'Conserver' }, { language: 'en-US', text: input.whatsNew }]);
+  assert.equal(update.releases[0].inAppUpdatePriority, 2);
   assert.equal(calls.at(-1).url.endsWith('/edit-1:commit'), true);
 });
 
 test('store retry observes an already completed exact release and makes no update or commit', async () => {
-  const releases = [previous, { ...target, status: 'completed', userFraction: undefined, countryTargeting: undefined, releaseNotes: [{ language: 'en-US', text: input.whatsNew }] }];
+  const releases = [{ ...target, status: 'completed', userFraction: undefined, countryTargeting: undefined, releaseNotes: [{ language: 'en-US', text: input.whatsNew }] }];
   const { calls, fetchImpl } = boundary({ releases });
   const result = await publishGooglePlayProduction({ ...input, fetchImpl });
   assert.equal(result.status, 'publication_already_submitted');
@@ -69,8 +77,8 @@ test('a completed release with forbidden country targeting is repaired instead o
   const result = await publishGooglePlayProduction({ ...input, fetchImpl });
   assert.equal(result.status, 'publication_submitted');
   const update = JSON.parse(calls.find((call) => call.method === 'PUT').body);
-  assert.equal(Object.hasOwn(update.releases[1], 'countryTargeting'), false);
-  assert.deepEqual(update.releases[0], previous);
+  assert.equal(Object.hasOwn(update.releases[0], 'countryTargeting'), false);
+  assert.equal(update.releases.length, 1);
   assert.equal(calls.at(-1).url.endsWith(':commit'), true);
 });
 

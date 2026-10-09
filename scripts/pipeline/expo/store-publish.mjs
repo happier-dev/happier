@@ -76,6 +76,7 @@ export async function main(argv = process.argv.slice(2)) {
       ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
       ...(error.operation !== undefined ? { operation: error.operation } : {}),
       ...(error.apiStatus !== undefined ? { apiStatus: error.apiStatus } : {}),
+      ...(error.associatedErrors !== undefined ? { associatedErrors: error.associatedErrors } : {}),
       ...(error.apiMessage !== undefined ? { apiMessage: error.apiMessage, apiReasons: error.apiReasons } : {}),
     };
     process.exitCode = 1;

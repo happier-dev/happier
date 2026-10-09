@@ -129,10 +129,11 @@ export async function publishGooglePlayProduction(options) {
     await request('discard_edit', editUrl, { method: 'DELETE', headers });
   } else {
     const { userFraction: _userFraction, countryTargeting: _countryTargeting, ...release } = target;
-    const releases = track.releases.map((entry) => entry === target ? {
+    // A full rollout replaces the track's prior releases; Play allows only one completed release.
+    const releases = [{
       ...release, status: 'completed',
       releaseNotes: [...currentNotes.filter((note) => note.language !== 'en-US'), { language: 'en-US', text: options.whatsNew }],
-    } : entry);
+    }];
     const updated = await request('update_track', trackUrl, { method: 'PUT', headers, body: JSON.stringify({ track: 'production', releases }) });
     const actual = updated?.releases?.find((entry) => entry.versionCodes?.includes(versionCode));
     if (updated?.track !== 'production' || actual?.status !== 'completed' || actual.userFraction !== undefined || actual.countryTargeting !== undefined
