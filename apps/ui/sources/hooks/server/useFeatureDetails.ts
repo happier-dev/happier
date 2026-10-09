@@ -30,6 +30,7 @@ export function useFeatureDetails<T>(params: FeatureDetailsParams<T>): T {
         settings,
         scopeKind,
         hasMainSelectionServerIds: selection.serverIds.length > 0,
+        snapshotDemand: 'details',
     });
 
     const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({

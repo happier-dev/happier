@@ -14,10 +14,13 @@ export type FeatureDecisionSnapshotStrategy = Readonly<{
     mainSelectionEnabled: boolean;
 }>;
 
-export function resolveFeatureDecisionProbesEnabled(featureId: FeatureId, settings: FeatureLocalPolicySettings): boolean {
+export function resolveFeatureDecisionProbesEnabled(featureId: FeatureId, settings: FeatureLocalPolicySettings,
+    snapshotDemand: 'decision' | 'details' = 'decision'): boolean {
     const buildPolicy = getFeatureBuildPolicyDecision(featureId);
     const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, settings);
-    return featureRequiresServerSnapshot(featureId) && buildPolicy !== 'deny' && localPolicyEnabled;
+    // Client-only admission needs no Home, but selecting its Home diagnostics does.
+    const requiresSnapshot = snapshotDemand === 'details' || featureRequiresServerSnapshot(featureId);
+    return requiresSnapshot && buildPolicy !== 'deny' && localPolicyEnabled;
 }
 
 export function resolveFeatureDecisionSnapshotStrategy(params: Readonly<{
@@ -25,8 +28,9 @@ export function resolveFeatureDecisionSnapshotStrategy(params: Readonly<{
     settings: FeatureLocalPolicySettings;
     scopeKind: FeatureDecisionSnapshotScopeKind;
     hasMainSelectionServerIds: boolean;
+    snapshotDemand?: 'decision' | 'details';
 }>): FeatureDecisionSnapshotStrategy {
-    const probesEnabled = resolveFeatureDecisionProbesEnabled(params.featureId, params.settings);
+    const probesEnabled = resolveFeatureDecisionProbesEnabled(params.featureId, params.settings, params.snapshotDemand);
     return {
         probesEnabled,
         runtimeEnabled: probesEnabled && (params.scopeKind === 'runtime' || (params.scopeKind === 'main_selection' && !params.hasMainSelectionServerIds)),

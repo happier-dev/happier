@@ -8,6 +8,8 @@ import { createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanc
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS } from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
 
 installDisconnectedServerSocketBoundary();
 beforeAll(loadSyncSingletonForTests);
@@ -40,6 +42,53 @@ afterEach(() => {
 });
 
 describe('useFeatureDetails', () => {
+    it('observes authoritative Home diagnostics for a client-only feature without adding HTTP to ordinary admission', async () => {
+        const serverId = await homes.addHome({ name: 'Live diagnostics',
+            serverUrl: 'https://client-only-feature-details.example.test', accountId: 'feature-details-account' });
+        const diagnostics = {
+            ...DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+            modes: {
+                ...DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS.modes,
+                background_wake_best_effort: { available: true, reasons: [] },
+            },
+        };
+        const features = createRootLayoutFeaturesResponse({ capabilities: { liveActivities: { remoteUpdates: diagnostics } } });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        vi.stubGlobal('fetch', homes.request);
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { 'app.ui.liveActivities': true } });
+        const { useFeatureEnabled } = await import('./useFeatureEnabled');
+        const admission = await renderHook(() => useFeatureEnabled('app.ui.liveActivities', { scopeKind: 'spawn', serverId }));
+        expect(admission.getCurrent()).toBe(true);
+        expect(homes.requests).toEqual([]);
+
+        const { useFeatureDetails } = await import('./useFeatureDetails');
+        const details = await renderHook(() => useFeatureDetails({
+            featureId: 'app.ui.liveActivities',
+            fallback: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
+            select: snapshot => snapshot.capabilities.liveActivities.remoteUpdates,
+            scope: { scopeKind: 'spawn', serverId },
+        }));
+        try {
+            // Publish a genuine updated HTTP answer while the selector is mounted.
+            // The Home fixture's earlier default snapshot is not the new diagnostics.
+            const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+            await act(async () => {
+                const published = await getServerFeaturesSnapshot({ serverId, force: true });
+                expect(published).toMatchObject({ status: 'ready', features: { capabilities: { liveActivities: {
+                    remoteUpdates: { modes: { background_wake_best_effort: { available: true } } },
+                } } } });
+            });
+            expect(homes.requests.some(request => request.path === '/v1/features' || request.path === '/v1/features/authenticated')).toBe(true);
+            await vi.waitFor(() => { expect(details.getCurrent().modes.background_wake_best_effort.available).toBe(true); });
+            expect(admission.getCurrent()).toBe(true);
+        } finally {
+            await details.unmount();
+            await admission.unmount();
+        }
+    });
+
     it('returns selected server details when features are ready', async () => {
         await stubServerFeaturesFetch({ automationsEnabled: true });
 
