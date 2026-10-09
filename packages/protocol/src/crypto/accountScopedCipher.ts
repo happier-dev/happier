@@ -14,7 +14,7 @@ import { decodeBase64, encodeBase64 } from './base64.js';
 import { computeCanonicalDomainSeparatedDigest, encodeCanonicalLengthDelimited } from './canonicalDigest.js';
 import { deriveKey } from './keyDerivation.js';
 import { parseSerializedJsonValue } from './serializedJsonValue.js';
-import { computeContentPublicKeyFingerprint } from '../machines/identity/installationIdentity.js';
+import { computeContentPublicKeyFingerprint } from '../machines/identity/contentPublicKeyFingerprint.js';
 
 export {
   getAccountScopedBlobCiphertextBase64LengthV1,
