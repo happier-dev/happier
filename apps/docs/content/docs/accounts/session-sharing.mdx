@@ -11,7 +11,7 @@ gives them an independent document.
 
 The unified sharing sheet described here is **0.3 development behavior**, not
 stable-release availability. It serves sessions, workflows, roles, Launch
-Profiles and Saved Secret audiences. Use a current 0.3 client and Home with the
+Profiles, Saved Secrets and Source audiences. Use a current 0.3 client and Home with the
 relevant feature enabled; workflows also require the Home's Workflows feature.
 Session access requires session sharing, and session public links require public
 sharing. Missing server support does not grant access.
@@ -26,6 +26,26 @@ and **Groups**. It is part of the normal session-sharing feature, so it is
 available wherever session sharing is on, and a Home with session sharing turned
 off closes it too. It uses the same access authority as direct sharing. This is development-channel behavior, not a stable-release
 availability claim.
+
+Machine sharing is separate, incomplete 0.3 development work and has not shipped.
+A Session share does not grant general access to its computer, and Machine access
+alone does not share somebody else's Sessions or credentials. Removing Machine access
+must not be taken as confirmation that running processes have stopped; that cleanup
+journey is still under development.
+
+Requester-owned launches on another person's Machine are also under development.
+The current preparation uses the requester's ordinary sign-in, not a
+Session-only credential. The launch disclosure explains that the Machine receives
+Account-wide sign-in material and that its operating-system administrator can
+see material used by the process. Removing access cannot retract a copy already
+made by that administrator. The Session still belongs to the person who starts
+it; the Machine owner does not gain access to its transcript through Machine
+management alone.
+
+The development Machine work summary is a separate, content-free view for the
+owner or someone with current Manage access. It shows people and active-work
+counts, not Session links, messages, prompts or terminal output. Unavailable or
+stale information is not evidence that the Machine is idle.
 
 ## Share reusable work (0.3 development)
 
@@ -48,6 +68,7 @@ owner can assign **Admin**. The roster can be read without permission to edit it
 | Role | **Can use**: use it, with personal overrides in your own Settings | **Can edit**: change it for everyone it is shared with | Edit and manage document grants |
 | Launch Profile | **Can use**: start sessions with it | **Can edit**: change the shared original | Edit and manage document grants |
 | Saved Secret | **Can use**: use the referenced secret in supported launches | No edit level in the audience sheet | No Admin level in the audience sheet |
+| Project Source | **Can use**: read repository metadata | No edit level in the audience sheet | Creator or current Team administration manages the Source separately |
 
 A workflow shared personally can be run on the recipient's machines. Its runs
 and triggers stay with the person who starts them; sharing the definition does
@@ -62,6 +83,28 @@ public link. The recipient must already have access on that Home. For workflows,
 roles and published profiles, **Send a copy instead** exports the readable
 document through the device's save/share flow. Later edits to the original do not
 update that copy, and removing a grant cannot withdraw a copy already sent.
+
+### Project Sources and attached documents (0.3 development)
+
+A Source shares repository metadata, not the repository itself. Its name,
+repository address, default revision and folder are readable by the Home and
+its admitted audience, including for E2EE Accounts. Each person opens the
+repository with their own Git credential and separately admitted Machine access.
+Source audience grants only **Can use**; it does not make a viewer a Source editor.
+
+Attaching a context document or dashboard stores a reference, not a copy or a
+grant. Sharing that document with a person or Team is a separate, explicit
+Artifact operation. A person can therefore see the Source while an attached
+document remains unavailable to them. Removing their last document grant stops
+document reads and edits without removing their Source visibility; removing
+their last Source grant stops new Source reads without revoking independent
+document access.
+
+Detaching one document leaves other attachments, document contents and grants
+intact. Deleting a Source removes its metadata for its audience but leaves
+checkout files and attached documents alone. Source and document sharing can
+succeed or fail independently; an attachment is not evidence that an audience
+grant succeeded. See [Artifacts](/organize/artifacts) for document access.
 
 ### Launch Profiles and Saved Secret references
 
@@ -287,6 +330,14 @@ are still validation gates, not stable-release availability claims.
 Public links are for **view-only** access.
 
 They are useful when you want to share the session with someone who does not need a normal collaborative share.
+
+In 0.3 development, public links for Sessions and documents need an isolated
+HTTPS host and a configured rate limiter on the Home. A public-sharing feature
+switch alone does not supply them. Self-hosters should follow the
+[public-link prerequisites](/self-hosting/local-service-previews#stored-content-public-links-in-03-development).
+If this Home cannot provide them, creating a link is refused and the link stays
+Off. Ask the Home administrator to configure public-link hosting before trying
+again.
 
 ### Public-link options
 
