@@ -18,6 +18,10 @@ import type { ResolvedProviderContribution } from '@/plugins/projection/registry
 import { readProviderSettingsForCli } from '../settings/read';
 import { createProviderOperationLifetime } from '../operationLifetime';
 import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createProviderProbeHttpClient, type ProviderProbeTransport } from '../probe/client';
+import { ProviderProbeDestinationAuthorizationError } from '../probe/authorization';
 
 import {
   createRuntimeProviderModelLoadAuthorizationPort,
@@ -123,7 +127,7 @@ function privateGrantedSnapshot() {
   const resolution = resolveProviderConnectionForMachine({
     connectionId: privateConnectionId,
     machineId: 'machine-a',
-    accountSettings: { providerSettingsV1: providerSettings },
+    providerSettings,
     registry: privateRegistry,
     dnsEvidenceByEndpointUrl: new Map([[privateEndpointUrl, ['10.0.0.1']]]),
   });
@@ -141,7 +145,8 @@ function privateGrantedSnapshot() {
   });
   return {
     source: 'cache' as const,
-    settings: AccountSettingsSchema.parse({ providerSettingsV1: granted }),
+    settings: AccountSettingsSchema.parse({}),
+    providerConnectionsCatalog: { status: 'ready' as const, revision: 1, catalog: splitProviderSettingsV1(granted).catalog },
     settingsVersion: 1,
     loadedAtMs: 1,
     settingsSecretsReadKeys: [],
@@ -210,7 +215,7 @@ function privateModelLoadGrantedSnapshot() {
   const resolution = resolveProviderConnectionForMachine({
     connectionId: privateModelLoadConnectionId,
     machineId: 'machine-a',
-    accountSettings: { providerSettingsV1: providerSettings },
+    providerSettings,
     registry: privateModelLoadRegistry,
     dnsEvidenceByEndpointUrl: new Map([[privateModelLoadEndpointUrl, ['10.0.0.1']]]),
   });
@@ -228,7 +233,8 @@ function privateModelLoadGrantedSnapshot() {
   });
   return {
     source: 'cache' as const,
-    settings: AccountSettingsSchema.parse({ providerSettingsV1: granted }),
+    settings: AccountSettingsSchema.parse({}),
+    providerConnectionsCatalog: { status: 'ready' as const, revision: 1, catalog: splitProviderSettingsV1(granted).catalog },
     settingsVersion: 1,
     loadedAtMs: 1,
     settingsSecretsReadKeys: [],
@@ -305,8 +311,9 @@ describe('provider probe authorization port', () => {
       accountSettingsBasis: {
         scopeKey: admitted.scopeKey,
         settingsVersion: admitted.settingsVersion,
+        providerConnectionsCatalog: admitted.providerConnectionsCatalog,
         accountSettings: admitted.settings,
-        settingsRead: readProviderSettingsForCli(admitted.settings),
+        settingsRead: readProviderSettingsForCli(admitted),
       },
       dnsEvidenceByConnectionId: new Map([[
         privateConnectionId,
@@ -329,9 +336,9 @@ describe('provider probe authorization port', () => {
 
     current = {
       ...admitted,
-      settings: AccountSettingsSchema.parse({
-        providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1,
-      }),
+      settings: AccountSettingsSchema.parse({}),
+      providerConnectionsCatalog: { status: 'ready' as const, revision: 2,
+        catalog: splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog },
       settingsVersion: admitted.settingsVersion + 2,
     };
     await expect(port.authorize(request, scope)).resolves.toMatchObject({
@@ -543,6 +550,8 @@ describe('provider probe authorization port', () => {
       getAccountSettingsSnapshot: () => ({
         source: 'network',
         settings: scopeKey === 'account-b' ? accountBSettings : accountSettingsParse({}),
+        providerConnectionsCatalog: { status: 'ready', revision: 1,
+          catalog: splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog },
         settingsVersion: 1,
         loadedAtMs: 1,
         settingsSecretsReadKeys: scopeKey === 'account-b' ? [key] : [],
@@ -585,6 +594,69 @@ describe('provider probe authorization port', () => {
 });
 
 describe('provider model-load authorization port', () => {
+  it.each(['retained', 'grant_revoked', 'account_withdrawn'] as const)(
+    'checks current authority after held destination DNS before a credential-free model POST (%s)',
+    async (transition) => {
+      const admitted = privateModelLoadGrantedSnapshot();
+      let current: ActiveAccountSettingsSnapshot | null = admitted;
+      let holdDestinationDns = false;
+      let enterHeldDns!: () => void;
+      const heldDnsEntered = new Promise<void>((resolve) => { enterHeldDns = resolve; });
+      let releaseHeldDns!: () => void;
+      const heldDns = new Promise<readonly string[]>((resolve) => {
+        releaseHeldDns = () => resolve(['10.0.0.1']);
+      });
+      const port = createRuntimeProviderModelLoadAuthorizationPort({
+        registry: privateModelLoadRegistry,
+        getAccountSettingsSnapshot: () => current,
+        resolveAddresses: async () => {
+          if (!holdDestinationDns) return ['10.0.0.1'];
+          enterHeldDns();
+          return heldDns;
+        },
+      });
+      const request = { connectionId: privateModelLoadConnectionId, machineId: 'machine-a', modelId: 'model-a' };
+      const authorized = await port.authorize(request);
+      if (authorized.status !== 'authorized') throw new Error('Expected initial model-load authorization');
+      expect(authorized.authorization.credentialRef).toBeNull();
+      // DNS and the HTTP transport are genuine external boundaries; the
+      // destination callback below runs the canonical authorization owner.
+      const transport = vi.fn<ProviderProbeTransport>(async () => ({
+        status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from('{}'),
+      }));
+      const client = createProviderProbeHttpClient({ resolveAddresses: async () => ['10.0.0.1'], transport });
+      holdDestinationDns = true;
+      const outcome = client.postModelLoad({
+        endpointUrl: authorized.authorization.endpoint.endpointUrl,
+        path: authorized.authorization.descriptor.path,
+        modelId: request.modelId,
+        publicHeaders: authorized.authorization.endpoint.publicHeaders,
+        authorizeDestination: async (destination) => {
+          const checked = await port.authorizeDestination(authorized.authorization.ticket, request, destination);
+          if (!checked.ok) throw new ProviderProbeDestinationAuthorizationError(checked.error);
+        },
+      }).then((result) => ({ result }), (error: unknown) => ({ error }));
+      await heldDnsEntered;
+      if (transition === 'grant_revoked') {
+        current = { ...admitted, providerConnectionsCatalog: { status: 'ready', revision: 2,
+          catalog: { ...admitted.providerConnectionsCatalog.catalog, machineGrants: [] } } };
+      } else if (transition === 'account_withdrawn') {
+        current = null;
+      }
+      releaseHeldDns();
+      if (transition === 'retained') {
+        expect(await outcome).toEqual({ result: { statusCode: 200 } });
+        expect(transport).toHaveBeenCalledOnce();
+        expect(transport.mock.calls[0]?.[0]).toMatchObject({ method: 'POST', url: `${privateModelLoadEndpointUrl}models/load` });
+      } else {
+        const result = await outcome;
+        expect(transport).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ error: { error: { code: transition === 'grant_revoked'
+          ? 'provider_not_enabled_on_machine' : 'provider_authorization_changed' } } });
+      }
+    },
+  );
+
   const loadTicket: ProviderModelLoadHostAuthorizationTicket = {
     connectionId: ProviderConnectionIdSchema.parse('pc_local'),
     connectionRevision: 3,
@@ -689,6 +761,8 @@ describe('provider model-load authorization port', () => {
       getAccountSettingsSnapshot: () => ({
         source: 'network',
         settings: scopeKey === 'account-b' ? accountBSettings : accountSettingsParse({}),
+        providerConnectionsCatalog: { status: 'ready', revision: 1,
+          catalog: splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog },
         settingsVersion: 1,
         loadedAtMs: 1,
         settingsSecretsReadKeys: scopeKey === 'account-b' ? [key] : [],

@@ -224,7 +224,7 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
     }
     if (!registry) throw new TypeError('Provider probe authorization requires a contribution registry');
     const snapshot = getAccountSettingsSnapshot();
-    if (!snapshot) {
+    if (snapshot?.providerConnectionsCatalog?.status !== 'ready') {
       return {
         ok: false,
         error: createProviderErrorV1('provider_connection_not_found', {
@@ -236,7 +236,8 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
     const admittedSettingsBasis = operationScope.accountSettingsBasis;
     const settingsBasisIsCurrent = admittedSettingsBasis !== undefined
       && admittedSettingsBasis.scopeKey === snapshot.scopeKey
-      && admittedSettingsBasis.settingsVersion === snapshot.settingsVersion;
+      && admittedSettingsBasis.settingsVersion === snapshot.settingsVersion
+      && admittedSettingsBasis.providerConnectionsCatalog === snapshot.providerConnectionsCatalog;
     if (admittedSettingsBasis && !settingsBasisIsCurrent) {
       return {
         ok: false,
@@ -246,12 +247,9 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         }),
       };
     }
-    const accountSettings = settingsBasisIsCurrent
-      ? admittedSettingsBasis.accountSettings
-      : snapshot.settings;
     const settingsRead = settingsBasisIsCurrent
       ? admittedSettingsBasis.settingsRead
-      : readProviderSettingsForCli(snapshot.settings);
+      : readProviderSettingsForCli(snapshot);
     const providerSettings = settingsRead.settings;
     if (
       settingsBasisIsCurrent
@@ -361,12 +359,30 @@ export function createRuntimeProviderProbeAuthorizationPort(input: Readonly<{
         };
       }
     }
+    const currentSnapshot = getAccountSettingsSnapshot();
+    if (currentSnapshot?.providerConnectionsCatalog?.status !== 'ready'
+      || admittedSettingsBasis && (
+        admittedSettingsBasis.scopeKey !== currentSnapshot.scopeKey
+        || admittedSettingsBasis.settingsVersion !== currentSnapshot.settingsVersion
+        || admittedSettingsBasis.providerConnectionsCatalog !== currentSnapshot.providerConnectionsCatalog
+      )) {
+      return {
+        ok: false,
+        error: createProviderErrorV1('provider_authorization_changed', {
+          connectionId: request.connectionId,
+          machineId: request.machineId,
+        }),
+      };
+    }
+    const currentSettingsRead = admittedSettingsBasis
+      ? settingsRead
+      : readProviderSettingsForCli(currentSnapshot);
     return resolveProviderProbeAuthorization({
       request,
-      accountSettings,
-      savedSecretResources: snapshot.savedSecretResources,
-      providerSettings,
-      settingsRead,
+      accountSettings: admittedSettingsBasis ? admittedSettingsBasis.accountSettings : currentSnapshot.settings,
+      savedSecretResources: currentSnapshot.savedSecretResources,
+      providerSettings: currentSettingsRead.settings,
+      settingsRead: currentSettingsRead,
       registry,
       dnsEvidenceByEndpointUrl,
       ...(managedPurposeBindingResolution
@@ -468,7 +484,7 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
     }
     if (!registry) throw new TypeError('Provider model-load authorization requires a contribution registry');
     const snapshot = getAccountSettingsSnapshot();
-    if (!snapshot) {
+    if (snapshot?.providerConnectionsCatalog?.status !== 'ready') {
       return {
         status: 'error',
         error: createProviderErrorV1('provider_connection_not_found', {
@@ -477,7 +493,7 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
         }),
       };
     }
-    const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
+    const providerSettings = readProviderSettingsForCli(snapshot).settings;
     let dnsEvidenceByEndpointUrl;
     try {
       dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({
@@ -506,18 +522,27 @@ export function createRuntimeProviderModelLoadAuthorizationPort(input: Readonly<
         destination,
       );
     }
-    const resolved = await resolveProviderModelLoadAuthorization({
+    const currentSnapshot = getAccountSettingsSnapshot();
+    if (currentSnapshot?.providerConnectionsCatalog?.status !== 'ready') {
+      return {
+        status: 'error',
+        error: createProviderErrorV1('provider_authorization_changed', {
+          connectionId: request.connectionId,
+          machineId: request.machineId,
+        }),
+      };
+    }
+    return resolveProviderModelLoadAuthorization({
       request,
-      accountSettings: snapshot.settings,
-      savedSecretResources: snapshot.savedSecretResources,
-      providerSettings,
+      accountSettings: currentSnapshot.settings,
+      savedSecretResources: currentSnapshot.savedSecretResources,
+      providerSettings: readProviderSettingsForCli(currentSnapshot).settings,
       registry,
       dnsEvidenceByEndpointUrl,
       ...(input.localCandidateUrlsByConnectionId
         ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
         : {}),
     });
-    return resolved;
   };
   const authorize = (
     request: ProviderModelLoadHostRequest,
