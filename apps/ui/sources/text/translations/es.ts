@@ -16394,7 +16394,6 @@ settingsSession: {
         accessShared: 'Compartida',
         writesWithoutAsking: 'se guarda sin preguntar',
         writesAskFirst: 'los agentes preguntan antes de añadir',
-        writesRule: 'se guarda sin preguntar mientras solo tú puedas verla',
         usedWithMemoryOn: 'usada por bots y sesiones con memoria activada',
       },
       session: {
@@ -16402,7 +16401,6 @@ settingsSession: {
         onDescription: 'Recuerda lo importante y lee tu memoria',
         onForBots: 'Activada desde el inicio para los bots',
         offDescription: 'No se carga. El agente no puede recordar ni recuperar datos aquí.',
-        memoryInfo: 'Lo que esta sesión recuerda entre conversaciones. Los datos se guardan en su propia memoria, la del proyecto o la tuya.',
         emptyOn: 'Todavía no hay nada en memoria. Pídele que recuerde algo o añade un dato tú mismo.',
         contextTitle: 'Contexto',
         contextOnCount: ({ count }: { count: number }) => `${count} activos`,

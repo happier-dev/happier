@@ -357,7 +357,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
               </Text>
               {topics.length > 0 ? (
                 <>
-                  {`  ·  ${t('memoryContext.memory.topicsLabel')} `}
+                  {` · ${t('memoryContext.memory.topicsLabel')} `}
                   <Text style={styles.summaryValue}>
                     {String(topics.length)}
                   </Text>
@@ -537,7 +537,7 @@ const MemoryFactRow = React.memo(function MemoryFactRow(
     sourceName ?? (source ? null : t('memoryContext.memory.addedByYou')),
   ]
     .filter((part): part is string => Boolean(part))
-    .join('  ·  ');
+    .join(' · ');
   const actions = React.useMemo((): ItemAction[] => {
     const list: ItemAction[] = [];
     if (props.writable) {

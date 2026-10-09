@@ -13388,7 +13388,6 @@ settingsSession: {
         accessShared: '已分享',
         writesWithoutAsking: '無需詢問即儲存',
         writesAskFirst: '代理新增前會先詢問',
-        writesRule: '僅你可見時無需詢問即儲存',
         usedWithMemoryOn: '供開啟記憶的機器人和工作階段使用',
       },
       session: {
@@ -13396,7 +13395,6 @@ settingsSession: {
         onDescription: '記住重要的事並讀取你的記憶',
         onForBots: '機器人從一開始就開啟',
         offDescription: '未載入。代理無法在這裡記住或回想事實。',
-        memoryInfo: '此工作階段在對話之間記住的內容。事實儲存在它自己的記憶、專案的記憶或你的記憶中。',
         emptyOn: '還沒有記住任何內容。請它記住點什麼,或者自己新增一則事實。',
         contextTitle: '脈絡',
         contextOnCount: ({ count }: { count: number }) => `${count} 項開啟`,

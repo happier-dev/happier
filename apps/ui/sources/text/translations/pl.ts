@@ -16233,7 +16233,6 @@ settingsSession: {
         accessShared: 'Udostępniona',
         writesWithoutAsking: 'zapisywane bez pytania',
         writesAskFirst: 'agenci pytają, zanim coś dodadzą',
-        writesRule: 'zapisywane bez pytania, dopóki tylko ty ją widzisz',
         usedWithMemoryOn: 'używana przez boty i sesje z włączoną pamięcią',
       },
       session: {
@@ -16241,7 +16240,6 @@ settingsSession: {
         onDescription: 'Zapamiętuje to, co ważne, i czyta twoją pamięć',
         onForBots: 'Dla botów włączona od początku',
         offDescription: 'Nie załadowana. Agent nie może tu zapamiętywać ani przywoływać faktów.',
-        memoryInfo: 'To, co ta sesja pamięta między rozmowami. Fakty trafiają do jej własnej pamięci, pamięci projektu lub twojej.',
         emptyOn: 'Nic jeszcze nie zapamiętano. Poproś, by coś zapamiętała, albo dodaj fakt samodzielnie.',
         contextTitle: 'Kontekst',
         contextOnCount: ({ count }: { count: number }) => `${count} wł.`,

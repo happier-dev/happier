@@ -16441,7 +16441,6 @@ settingsSession: {
         accessShared: 'Geteilt',
         writesWithoutAsking: 'ohne Nachfrage gespeichert',
         writesAskFirst: 'Agenten fragen, bevor sie etwas hinzufügen',
-        writesRule: 'ohne Nachfrage gespeichert, solange nur du es sehen kannst',
         usedWithMemoryOn: 'genutzt von Bots und Sitzungen mit aktiviertem Gedächtnis',
       },
       session: {
@@ -16449,7 +16448,6 @@ settingsSession: {
         onDescription: 'Merkt sich Wichtiges und liest dein Gedächtnis',
         onForBots: 'Für Bots von Anfang an aktiv',
         offDescription: 'Nicht geladen. Der Agent kann sich hier nichts merken oder abrufen.',
-        memoryInfo: 'Was sich diese Sitzung zwischen Gesprächen merkt. Fakten landen in ihrem eigenen Gedächtnis, dem des Projekts oder deinem.',
         emptyOn: 'Noch nichts gemerkt. Bitte sie, sich etwas zu merken, oder füge selbst einen Fakt hinzu.',
         contextTitle: 'Kontext',
         contextOnCount: ({ count }: { count: number }) => `${count} aktiv`,

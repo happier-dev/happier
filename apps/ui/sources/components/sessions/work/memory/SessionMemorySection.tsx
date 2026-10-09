@@ -122,7 +122,7 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
         ? `${t('memoryContext.memory.accessShared')} · ${t('memoryContext.memory.writesAskFirst')}`
         : `${selection.scope === 'project' ? t('memoryContext.session.projectMemory')
             : selection.scope === 'account' ? t('memoryContext.session.yourMemory') : t('memoryContext.memory.accessPrivate')
-        } · ${t('memoryContext.memory.writesRule')}`;
+        } · ${t('memoryContext.memory.writesWithoutAsking')}`;
     const loading = enabled && (selection.resolving || source.status === 'loading');
     return (
         <WorkSection
@@ -130,7 +130,6 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
             anatomy="page"
             title={t('memoryContext.memory.title')}
             count=""
-            info={t('memoryContext.session.memoryInfo')}
             nativeID="memory"
             loading={loading}
             action={enabled ? (

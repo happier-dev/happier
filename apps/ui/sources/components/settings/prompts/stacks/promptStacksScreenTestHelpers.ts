@@ -115,6 +115,9 @@ export function installPromptStacksCommonModuleMocks(
         return createTextModuleMock({ translate: (key) => key });
     });
 
+    // Session navigation is the app-shell boundary (it needs the auth provider); these screens only pass it down.
+    vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => async () => {} }));
+
     vi.mock('@/modal', async () => {
         const activeOptions = promptStacksModuleState.options;
         if (activeOptions.modal) {

@@ -15984,7 +15984,6 @@ settingsSession: {
         accessShared: '已共享',
         writesWithoutAsking: '无需询问即保存',
         writesAskFirst: '智能体添加前会先询问',
-        writesRule: '仅你可见时无需询问即保存',
         usedWithMemoryOn: '供开启记忆的机器人和会话使用',
       },
       session: {
@@ -15992,7 +15991,6 @@ settingsSession: {
         onDescription: '记住重要的事并读取你的记忆',
         onForBots: '机器人从一开始就开启',
         offDescription: '未加载。智能体无法在这里记住或回忆事实。',
-        memoryInfo: '此会话在对话之间记住的内容。事实保存在它自己的记忆、项目的记忆或你的记忆中。',
         emptyOn: '还没有记住任何内容。让它记住点什么,或者自己添加一条事实。',
         contextTitle: '上下文',
         contextOnCount: ({ count }: { count: number }) => `${count} 项开启`,

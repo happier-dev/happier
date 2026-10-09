@@ -16268,7 +16268,6 @@ settingsSession: {
         accessShared: 'Partagée',
         writesWithoutAsking: 'enregistré sans demander',
         writesAskFirst: 'les agents demandent avant d’y ajouter',
-        writesRule: 'enregistré sans demander tant que vous seul la voyez',
         usedWithMemoryOn: 'utilisée par les bots et les sessions avec mémoire activée',
       },
       session: {
@@ -16276,7 +16275,6 @@ settingsSession: {
         onDescription: 'Retient l’essentiel et lit votre mémoire',
         onForBots: 'Activée d’emblée pour les bots',
         offDescription: 'Non chargée. L’agent ne peut ni mémoriser ni rappeler des faits ici.',
-        memoryInfo: 'Ce que cette session retient d’une conversation à l’autre. Les faits sont enregistrés dans sa propre mémoire, celle du projet ou la vôtre.',
         emptyOn: 'Rien en mémoire pour l’instant. Demandez-lui de retenir quelque chose, ou ajoutez un fait vous-même.',
         contextTitle: 'Contexte',
         contextOnCount: ({ count }: { count: number }) => `${count} actifs`,

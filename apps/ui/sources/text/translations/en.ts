@@ -1707,7 +1707,6 @@ const enMemoryContext = {
     accessShared: 'Shared',
     writesWithoutAsking: 'saved without asking',
     writesAskFirst: 'agents ask before adding to it',
-    writesRule: 'saved without asking while only you can see it',
     usedWithMemoryOn: 'used by bots and sessions with memory on',
   },
   session: {
@@ -1715,7 +1714,6 @@ const enMemoryContext = {
     onDescription: 'Remembers what matters and reads your memory',
     onForBots: 'On for bots from the start',
     offDescription: 'Not loaded. The agent can’t remember or recall facts here.',
-    memoryInfo: 'What this session remembers between conversations. Facts are saved to its own memory, the project’s, or yours.',
     emptyOn: 'Nothing remembered yet. Ask it to remember something, or add a fact yourself.',
     contextTitle: 'Context',
     contextOnCount: ({ count }: { count: number }) => `${count} on`,

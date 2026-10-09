@@ -16395,7 +16395,6 @@ settingsSession: {
         accessShared: 'Condivisa',
         writesWithoutAsking: 'salvato senza chiedere',
         writesAskFirst: 'gli agenti chiedono prima di aggiungere',
-        writesRule: 'salvato senza chiedere finché solo tu puoi vederla',
         usedWithMemoryOn: 'usata da bot e sessioni con memoria attiva',
       },
       session: {
@@ -16403,7 +16402,6 @@ settingsSession: {
         onDescription: 'Ricorda ciò che conta e legge la tua memoria',
         onForBots: 'Attiva fin dall’inizio per i bot',
         offDescription: 'Non caricata. Qui l’agente non può ricordare né richiamare fatti.',
-        memoryInfo: 'Ciò che questa sessione ricorda tra una conversazione e l’altra. I fatti vengono salvati nella sua memoria, in quella del progetto o nella tua.',
         emptyOn: 'Ancora niente in memoria. Chiedile di ricordare qualcosa o aggiungi tu un fatto.',
         contextTitle: 'Contesto',
         contextOnCount: ({ count }: { count: number }) => `${count} attivi`,

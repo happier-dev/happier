@@ -16297,7 +16297,6 @@ settingsSession: {
         accessShared: '共有中',
         writesWithoutAsking: '確認なしで保存',
         writesAskFirst: 'エージェントは追加前に確認します',
-        writesRule: 'あなただけが見られる間は確認なしで保存',
         usedWithMemoryOn: 'メモリがオンのボットとセッションが使用',
       },
       session: {
@@ -16305,7 +16304,6 @@ settingsSession: {
         onDescription: '大事なことを覚え、あなたのメモリを読みます',
         onForBots: 'ボットでは最初からオン',
         offDescription: '読み込まれません。エージェントはここで事実を覚えたり思い出したりできません。',
-        memoryInfo: 'このセッションが会話をまたいで覚えていること。事実は自身のメモリ、プロジェクトのメモリ、またはあなたのメモリに保存されます。',
         emptyOn: 'まだ何も記憶していません。何か覚えるよう頼むか、自分で事実を追加してください。',
         contextTitle: 'コンテキスト',
         contextOnCount: ({ count }: { count: number }) => `${count} 件オン`,

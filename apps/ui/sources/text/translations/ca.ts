@@ -15137,7 +15137,6 @@ settingsSession: {
         accessShared: 'Compartida',
         writesWithoutAsking: 'es desa sense preguntar',
         writesAskFirst: 'els agents pregunten abans d’afegir-hi',
-        writesRule: 'es desa sense preguntar mentre només tu la puguis veure',
         usedWithMemoryOn: 'usada per bots i sessions amb memòria activada',
       },
       session: {
@@ -15145,7 +15144,6 @@ settingsSession: {
         onDescription: 'Recorda el que importa i llegeix la teva memòria',
         onForBots: 'Activada des de l’inici per als bots',
         offDescription: 'No es carrega. L’agent no pot recordar ni recuperar fets aquí.',
-        memoryInfo: 'El que aquesta sessió recorda entre converses. Els fets es desen a la seva memòria, la del projecte o la teva.',
         emptyOn: 'Encara no hi ha res en memòria. Demana-li que recordi alguna cosa o afegeix un fet tu mateix.',
         contextTitle: 'Context',
         contextOnCount: ({ count }: { count: number }) => `${count} actius`,
