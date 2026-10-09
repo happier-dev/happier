@@ -9,6 +9,8 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { ToolFindText, useToolFindState } from '../core/ToolFindText';
+import { readTranscriptProjectCommandCall } from '@/components/sessions/transcript/references/transcriptProjectCommandReference';
+import { ProjectCommandToolBody } from './ProjectCommandToolBody';
 
 
 /**
@@ -131,14 +133,15 @@ export const projectMCPDisplayText: ToolDisplayTextProjector = (tool) => {
     ];
 };
 
-export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId }) => {
+export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId, serverId }) => {
     const find = useToolFindState(messageId);
     if (detailLevel === 'title') return null;
 
     const { title, subtitle, resultText, input, output } = getMCPDisplay(tool);
+    const projectCommandCall = readTranscriptProjectCommandCall(tool);
 
     if (detailLevel === 'summary' && !find.active) {
-        return (
+        const summary = (
             <ToolSectionView>
                 <View style={styles.container}>
                     {subtitle ? (
@@ -152,6 +155,10 @@ export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messa
                 </View>
             </ToolSectionView>
         );
+        // An agent's finite Project command shows its run's output, not the acknowledgement JSON.
+        return projectCommandCall
+            ? <ProjectCommandToolBody tool={tool} call={projectCommandCall} serverId={serverId} fallback={summary} />
+            : summary;
     }
 
     // Full view: show raw-ish input + output (ToolFullView already provides debug toggles).

@@ -21,6 +21,9 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { readTranscriptProjectCommandCall } from '@/components/sessions/transcript/references/transcriptProjectCommandReference';
+import { ProjectCommandToolTimelineRowHeader } from './ProjectCommandToolTimelineRowHeader';
 
 export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow(props: {
     toolMessage: ToolCallMessage;
@@ -95,6 +98,12 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
         }).icon;
     }, [historicalAgentId, iconSize, model.icon, props.metadata, props.toolMessage.tool, theme.colors.text.primary, theme.colors.text.secondary]);
 
+    // Optional: a Run page renders tool previews without a transcript source.
+    const transcriptSource = useOptionalSessionTranscriptSource();
+    const projectCommandCall = React.useMemo(
+        () => readTranscriptProjectCommandCall(model.toolForRendering),
+        [model.toolForRendering],
+    );
     const statusKind = resolveToolStatusIndicatorKind(model.toolForRendering);
     const terminalStatusSummary =
         statusKind === 'error'
@@ -129,19 +138,26 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
             </View>
         ) : null;
 
-    return (
-        <ToolTimelineRowHeader
-            density={density}
-            icon={icon}
-            title={model.title}
-            subtitle={headerSubtitle}
-            statusText={headerStatusText}
-            onPress={props.onPress ?? null}
-            canOpen={false}
-            onOpen={null}
-            rightElement={rightElement}
+    const header: React.ComponentProps<typeof ToolTimelineRowHeader> = {
+        density,
+        icon,
+        title: model.title,
+        subtitle: headerSubtitle,
+        statusText: headerStatusText,
+        onPress: props.onPress ?? null,
+        canOpen: false,
+        onOpen: null,
+        rightElement,
+    };
+    // The collapsed group's last lines read an agent's Project command the same way its full rows do.
+    return projectCommandCall ? (
+        <ProjectCommandToolTimelineRowHeader
+            header={header}
+            call={projectCommandCall}
+            tool={model.toolForRendering}
+            serverId={transcriptSource?.serverId ?? null}
         />
-    );
+    ) : <ToolTimelineRowHeader {...header} />;
 });
 
 const styles = StyleSheet.create((theme) => ({

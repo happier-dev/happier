@@ -58,6 +58,8 @@ import {
 } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { SessionBoardActionResultReference } from '@/components/sessions/transcript/references/SessionBoardActionResultReference';
 import { WorkflowRunActionResultReference } from '@/components/sessions/transcript/references/WorkflowRunActionResultReference';
+import { readTranscriptProjectCommandCall } from '@/components/sessions/transcript/references/transcriptProjectCommandReference';
+import { ProjectCommandToolTimelineRowHeader } from './timeline/ProjectCommandToolTimelineRowHeader';
 import { WorkflowDefinitionActionResultReference } from '@/components/sessions/transcript/references/WorkflowDefinitionActionResultReference';
 import { BrowserActionResultReference } from '@/components/sessions/transcript/references/BrowserActionResultReference';
 import { ComputerActionResultReference } from '@/components/sessions/transcript/references/ComputerActionResultReference';
@@ -446,6 +448,30 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
         toolForRendering,
     ]);
 
+    // An agent's finite Project command or its wait reads its live operation (plan 21 §8); other rows subscribe to nothing.
+    const projectCommandCall = React.useMemo(
+        () => readTranscriptProjectCommandCall(toolForRendering),
+        [toolForRendering],
+    );
+    const headerProps: React.ComponentProps<typeof ToolTimelineRowHeader> = {
+        testID: "tool-timeline-row",
+        openActionTestID: "tool-timeline-row-open",
+        density: density,
+        icon: icon,
+        title: title,
+        findBlocks: find?.blocks,
+        findRevealBlockId: find?.reveal?.blockId,
+        subtitle: headerSubtitle,
+        statusText: headerStatusText,
+        onPress: onPress,
+        canOpen: canOpen,
+        onOpen: handleOpen,
+        rightElement: headerRightElement,
+        revealAction: props.headerAction?.node ?? null,
+        revealActionSticky: props.headerAction?.pinned === true,
+        disclosure: disclosure,
+    };
+
     return (
         <TranscriptRowSeqProvider value={transcriptSeq}>
         <TranscriptJumpAttention
@@ -455,24 +481,14 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             radius={TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS}
             style={styles.container}
         >
-            <ToolTimelineRowHeader
-                testID="tool-timeline-row"
-                openActionTestID="tool-timeline-row-open"
-                density={density}
-                icon={icon}
-                title={title}
-                findBlocks={find?.blocks}
-                findRevealBlockId={find?.reveal?.blockId}
-                subtitle={headerSubtitle}
-                statusText={headerStatusText}
-                onPress={onPress}
-                canOpen={canOpen}
-                onOpen={handleOpen}
-                rightElement={headerRightElement}
-                revealAction={props.headerAction?.node ?? null}
-                revealActionSticky={props.headerAction?.pinned === true}
-                disclosure={disclosure}
-            />
+            {projectCommandCall ? (
+                <ProjectCommandToolTimelineRowHeader
+                    header={headerProps}
+                    call={projectCommandCall}
+                    tool={toolForRendering}
+                    serverId={props.serverId}
+                />
+            ) : <ToolTimelineRowHeader {...headerProps} />}
 
             {shouldHideBodyPermanently ? null : (
                 <TranscriptCollapsible id={collapsibleId} createdAt={toolForRendering.createdAt} expanded={isBodyVisible}>

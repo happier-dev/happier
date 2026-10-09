@@ -1,0 +1,264 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+
+import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
+import {
+  createTestSessionTranscriptSource,
+  renderWithSessionTranscriptSource,
+  standardCleanup,
+} from '@/dev/testkit';
+import {
+  installDisconnectedServerSocketBoundary,
+  restoreServerAccountForTest,
+} from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+
+vi.mock('expo-router', async () => {
+  const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+  return createExpoRouterMock().module;
+});
+
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+// Genuine platform/text boundaries; credential scope, operation store, selectors and the Trust client stay real.
+installSessionSubagentCommonModuleMocks({
+  storage: () =>
+    vi.importActual<typeof import('@/sync/domains/state/storage')>(
+      '@/sync/domains/state/storage',
+    ),
+});
+installDisconnectedServerSocketBoundary();
+const { storage } = await import('@/sync/domains/state/storage');
+const { resolveServerProfileScopeIdForIdentifier } =
+  await import('@/sync/domains/server/serverProfiles');
+const { ProjectSetupSessionReviews } =
+  await import('./ProjectSetupSessionReview');
+
+afterEach(() => {
+  standardCleanup();
+  actionOperationStore.reset();
+});
+
+const DIGEST = 'effect-digest-1';
+
+function heldScript(
+  serverId: string,
+  sessionId: string,
+  workspace: {
+    serverId: string;
+    machineId: string;
+    workspaceId: string;
+    rootPath: string;
+  },
+): ActionOperationSnapshotV1 {
+  return {
+    version: 1,
+    operationId: 'held-test',
+    revision: 1,
+    actionId: 'projects.script.run',
+    state: 'accepted',
+    scope: { accountId: 'account', machineId: 'devbox', sessionId },
+    title: 'test',
+    createdAt: 100,
+    cancellation: 'supported',
+    domainRef: {
+      kind: 'projectCommand',
+      purpose: 'script',
+      serverId,
+      machineId: 'devbox',
+      workspaceRefId: workspace.workspaceId,
+      cwd: workspace.rootPath,
+      sourceWorkspace: workspace,
+      script: {
+        name: 'test',
+        source: { kind: 'command', command: 'yarn test' },
+      },
+    },
+    setupReview: {
+      kind: 'pendingApproval',
+      code: 'project_setup_consent_required',
+      reviewedEffectDigest: DIGEST,
+      reviewedEffect: {
+        v: 1,
+        purpose: 'setup',
+        commands: [
+          {
+            source: { kind: 'command', command: 'mise install' },
+            executable: 'mise',
+            args: ['install'],
+          },
+          {
+            source: { kind: 'command', command: 'yarn install' },
+            executable: 'yarn',
+            args: ['install', '--immutable'],
+          },
+        ],
+      },
+    },
+  } as ActionOperationSnapshotV1;
+}
+
+describe('Project setup review inside a Session', () => {
+  it('asks for the held invocation with its exact effect and remembers the reviewed effect for this Project only', async () => {
+    const mutations: unknown[] = [];
+    const connection = await restoreServerAccountForTest({
+      serverUrl: 'https://setup-session-review.test',
+      serverIdentityId: 'srv_setup_session_review',
+      accountId: 'account',
+      request: async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/account/encryption')
+          return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness')
+          return Response.json(
+            createPlainAccountEncryptionCurrentnessFixture(),
+          );
+        if (path === '/v2/account/settings')
+          return Response.json({ content: null, version: 0 });
+        if (path === '/v1/account/project-trust/read')
+          return Response.json({ status: 'absent' });
+        if (path === '/v1/account/project-trust/mutate') {
+          mutations.push(JSON.parse(String(init?.body)));
+          return Response.json({ status: 'updated', revision: 1, cursor: 1 });
+        }
+        return Response.json({}, { status: 404 });
+      },
+    });
+    try {
+      const serverId = resolveServerProfileScopeIdForIdentifier(
+        connection.home.id,
+      );
+      const workspace = {
+        serverId,
+        machineId: 'devbox',
+        workspaceId: 'checkout',
+        rootPath: '/src/happier',
+      };
+      const scope = { serverId, accountId: 'account' };
+      storage.setState({
+        profileScope: scope,
+        projectAccountRows: {
+          scope,
+          status: 'ready',
+          coverage: 'complete',
+          relationships: [],
+          organizations: [],
+          revisionsByPhysicalKey: {},
+          workspaceRefs: [
+            {
+              id: 'checkout',
+              serverId,
+              machineId: 'devbox',
+              rootPath: '/src/happier',
+              createdAtMs: 1,
+              projectKey: 'project-happier',
+            },
+          ],
+        },
+      } as never);
+      actionOperationStore.mergeSnapshots({
+        serverId,
+        snapshots: [
+          heldScript(serverId, 'session-1', workspace),
+          // Another Session's held run is not asked here.
+          {
+            ...heldScript(serverId, 'session-2', workspace),
+            operationId: 'other-session',
+          },
+        ],
+      });
+      const source = createTestSessionTranscriptSource({
+        sessionId: 'session-1',
+        serverId,
+        interaction: { canApprovePermissions: true } as never,
+      });
+      const screen = await renderWithSessionTranscriptSource(
+        <ProjectSetupSessionReviews
+          sessionId="session-1"
+          serverId={serverId}
+        />,
+        source,
+      );
+      await vi.waitFor(() =>
+        expect(
+          screen.findByTestId('project-setup-session-review:held-test'),
+        ).not.toBeNull(),
+      );
+      expect(
+        screen.findByTestId('project-setup-session-review:other-session'),
+      ).toBeNull();
+      expect(screen.getTextContent()).toContain(
+        'mise install · yarn install --immutable',
+      );
+
+      await act(async () => {
+        screen.pressByTestId('project-setup-session-review:held-test-approve');
+      });
+      await vi.waitFor(() =>
+        expect(
+          screen.findByTestId('project-setup-session-review:held-test.settled'),
+        ).not.toBeNull(),
+      );
+      expect(mutations).toEqual([
+        {
+          project: { serverId, projectId: 'project-happier' },
+          expectedRevision: 'absent',
+          content: {
+            t: 'plain',
+            v: {
+              project: { serverId, projectId: 'project-happier' },
+              reviewedEffectDigest: DIGEST,
+              approvedAtMs: expect.any(Number),
+            },
+          },
+        },
+      ]);
+      await screen.unmount();
+    } finally {
+      await connection.dispose();
+    }
+  });
+
+  it('draws nothing for a Session whose live operations carry no setup review', async () => {
+    const connection = await restoreServerAccountForTest({
+      serverUrl: 'https://setup-session-none.test',
+      serverIdentityId: 'srv_setup_session_none',
+      accountId: 'account',
+      request: async () => Response.json({}, { status: 404 }),
+    });
+    try {
+      const serverId = resolveServerProfileScopeIdForIdentifier(
+        connection.home.id,
+      );
+      const workspace = {
+        serverId,
+        machineId: 'devbox',
+        workspaceId: 'checkout',
+        rootPath: '/src/happier',
+      };
+      const { setupReview: _omit, ...running } = heldScript(
+        serverId,
+        'session-1',
+        workspace,
+      );
+      actionOperationStore.mergeSnapshots({
+        serverId,
+        snapshots: [running as ActionOperationSnapshotV1],
+      });
+      const screen = await renderWithSessionTranscriptSource(
+        <ProjectSetupSessionReviews
+          sessionId="session-1"
+          serverId={serverId}
+        />,
+        createTestSessionTranscriptSource({ sessionId: 'session-1', serverId }),
+      );
+      expect(
+        screen.findByTestId('project-setup-session-review:held-test'),
+      ).toBeNull();
+      await screen.unmount();
+    } finally {
+      await connection.dispose();
+    }
+  });
+});
