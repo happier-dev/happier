@@ -77,9 +77,15 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
           failure: { reason: 'voice_provider_credential_unavailable' },
         };
       }
-      const configurationCurrent = await isElevenLabsAgentConfigurationCurrent({
-        accountOperations: input.credentials.mediated, agentId, signal: input.signal,
-      });
+      let configurationCurrent: boolean;
+      try {
+        configurationCurrent = await isElevenLabsAgentConfigurationCurrent({
+          accountOperations: input.credentials.mediated, agentId, signal: input.signal,
+        });
+      } catch (error) {
+        if (input.signal.aborted) return { kind: 'aborted' };
+        throw error;
+      }
       if (input.signal.aborted) return { kind: 'aborted' };
       if (!configurationCurrent) {
         return { kind: 'declined', failure: { reason: 'realtime_agent_update_required' } };
@@ -99,6 +105,7 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
             ...(initialContext ? { initialContext } : {}),
             ...(auth.kind === 'token' ? { token: auth.value } : { signedUrl: auth.value }),
             textOnly: input.textOnly,
+            ...(providerSettings ? { voiceId: providerSettings.tts.voiceId } : {}),
           }),
           sessionState: { billingMode: 'byo', expiresAtMs: null, leaseId: null },
           ...(input.attemptPolicy ? { attemptPolicy: input.attemptPolicy } : {}),
@@ -134,6 +141,7 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
             bindingNonce: response.bindingNonce,
             token: response.token,
             textOnly: input.textOnly,
+            ...(providerSettings ? { voiceId: providerSettings.tts.voiceId } : {}),
           }),
           sessionState: {
             billingMode: 'happier',
@@ -197,6 +205,7 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
       dynamicVariables,
       overrides: {
         conversation: { textOnly },
+        ...(typeof config.voiceId === 'string' ? { tts: { voiceId: config.voiceId } } : {}),
         agent: {
           ...(language ? { language } : {}),
           ...(policy ? { firstMessage: policy.welcome.enabled && policy.welcome.mode === 'immediate'

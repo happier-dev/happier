@@ -20,6 +20,7 @@ const ELEVENLABS_AGENT_PLATFORM_SETTINGS = {
   overrides: { conversation_config_override: {
     agent: { first_message: true, language: true, prompt: { prompt: true } },
     conversation: { text_only: true },
+    tts: { voice_id: true },
   } },
 } satisfies VoiceRealtimeJsonValue;
 
@@ -28,6 +29,7 @@ function providerError(
     | 'invalid_parameters'
     | 'credential_unavailable'
     | 'provider_response_invalid'
+    | 'voice_account_operation_cancelled'
     | 'voice_not_found',
   stage?: ElevenLabsProvisionStage,
 ): Error {
@@ -507,6 +509,9 @@ async function runElevenLabsProvision(
       );
       const agentId = stringValue(created.agent_id, 256);
       if (!agentId) throw providerError('provider_response_invalid', 'create_agent');
+      if (!hasCurrentElevenLabsAgentConfiguration(await readElevenLabsSelectedAgent(call, agentId))) {
+        throw providerError('provider_response_invalid', 'read_agent');
+      }
       return { ok: true, agentId };
     }
     finalAgentWriteStarted = true;
@@ -522,6 +527,9 @@ async function runElevenLabsProvision(
         },
       },
     );
+    if (!hasCurrentElevenLabsAgentConfiguration(await readElevenLabsSelectedAgent(call, request.agentId))) {
+      throw providerError('provider_response_invalid', 'read_agent');
+    }
     return { ok: true, updated: true };
   } catch (error) {
     const hasCreatedTools = createdToolIds.length > 0;
@@ -565,10 +573,12 @@ async function requestElevenLabsAccountOperationJson(input: Readonly<{
   parameters: Readonly<Record<string, VoiceRealtimeJsonValue>>;
   signal: AbortSignal;
 }>): Promise<Record<string, unknown>> {
+  if (input.signal.aborted) throw providerError('voice_account_operation_cancelled');
   const response = await input.accountOperations.request({
     operationId: input.operationId, parameters: input.parameters, signal: input.signal,
   });
   assertProviderHttpSuccess(response.status);
+  if (input.signal.aborted) throw providerError('voice_account_operation_cancelled');
   try {
     const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -596,6 +606,10 @@ export async function isElevenLabsAgentConfigurationCurrent(input: Readonly<{
     (operationId, parameters) => requestElevenLabsAccountOperationJson({ ...input, operationId, parameters }),
     input.agentId,
   );
+  return hasCurrentElevenLabsAgentConfiguration(agent);
+}
+
+function hasCurrentElevenLabsAgentConfiguration(agent: Readonly<Record<string, unknown>>): boolean {
   const platform = objectValue(agent.platform_settings);
   const overrides = objectValue(objectValue(platform.overrides).conversation_config_override);
   const agentOverrides = objectValue(overrides.agent);
@@ -604,7 +618,8 @@ export async function isElevenLabsAgentConfigurationCurrent(input: Readonly<{
     && agentOverrides.first_message === true
     && agentOverrides.language === true
     && objectValue(agentOverrides.prompt).prompt === true
-    && objectValue(overrides.conversation).text_only === true;
+    && objectValue(overrides.conversation).text_only === true
+    && objectValue(overrides.tts).voice_id === true;
 }
 
 export async function provisionElevenLabsWithAccountOperations(input: Readonly<{

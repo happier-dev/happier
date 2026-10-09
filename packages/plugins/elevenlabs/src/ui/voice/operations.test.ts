@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getActionSpec, zodSchemaToJsonSchemaObject } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 
 import {
+  isElevenLabsAgentConfigurationCurrent,
   listElevenLabsVoicesWithAccountOperations,
   mintElevenLabsConversationAuthWithAccountOperations,
   provisionElevenLabsWithAccountOperations,
@@ -68,7 +70,96 @@ const PREMADE_ACCOUNT_VOICE_CATALOG = Object.freeze({
   ],
 });
 
+/** Model provider persistence so the existing write fixtures also support read-after-write verification. */
+function provisionAccountRequest<T extends Readonly<{ operationId: string; parameters?: unknown }>>(
+  respond: (input: T) => Promise<Readonly<{ status: number; finalUrl: string; headers: Readonly<Record<string, string>>; body: Uint8Array }>>,
+) {
+  const agents = new Map<string, Record<string, unknown>>();
+  return vi.fn(async (input: T) => {
+    const response = await respond(input);
+    if (response.status !== 200) return response;
+    const parameters = input.parameters as Readonly<{ agentId?: string; body?: Record<string, unknown> }> | undefined;
+    if (input.operationId === 'create-agent' || input.operationId === 'update-agent') {
+      let result: Readonly<{ agent_id?: string }>;
+      try {
+        result = JSON.parse(new TextDecoder().decode(response.body)) as Readonly<{ agent_id?: string }>;
+      } catch {
+        return response;
+      }
+      const agentId = input.operationId === 'create-agent' ? result.agent_id : parameters?.agentId;
+      if (agentId && parameters?.body) agents.set(agentId, { ...parameters.body, agent_id: agentId });
+    }
+    if (input.operationId === 'agent' && parameters?.agentId) {
+      const agent = agents.get(parameters.agentId);
+      if (agent) return { ...response, body: new TextEncoder().encode(JSON.stringify(agent)) };
+    }
+    return response;
+  });
+}
+
 describe('ElevenLabs public account operations', () => {
+  it.each([undefined, false, true])('requires actual voice override permission despite the current tag (%s)', async (voicePermission) => {
+    const request = vi.fn(async () => ({
+      status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/agents/agent_1', headers: {},
+      body: new TextEncoder().encode(JSON.stringify({
+        agent_id: 'agent_1', tags: ['happier_voice_config_v1'],
+        platform_settings: {
+          auth: { enable_auth: true }, overrides: { conversation_config_override: {
+            agent: { first_message: true, language: true, prompt: { prompt: true } },
+            conversation: { text_only: true }, tts: { voice_id: voicePermission },
+          } },
+        },
+      })),
+    }));
+    await expect(isElevenLabsAgentConfigurationCurrent({
+      accountOperations: { request }, agentId: 'agent_1', signal: new AbortController().signal,
+    })).resolves.toBe(voicePermission === true);
+  });
+
+  it.each(['create', 'update'] as const)('verifies %s voice permission before reporting provisioning success', async (kind) => {
+    let remoteAgent: Record<string, unknown> = { agent_id: 'agent_1', tags: ['happier_voice_config_v1'] };
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string; parameters: unknown }>) => {
+      const parameters = input.parameters as Readonly<{ body?: Record<string, unknown> }>;
+      let body: unknown = {};
+      if (input.operationId === 'voices') body = ACCOUNT_VOICE_CATALOG;
+      if (input.operationId === 'agent') body = remoteAgent;
+      if (input.operationId === 'tools') body = { tools: [] };
+      if (input.operationId === 'create-agent' || input.operationId === 'update-agent') {
+        remoteAgent = { ...parameters.body, agent_id: 'agent_1' };
+        body = { agent_id: 'agent_1' };
+      }
+      return { status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/agents/agent_1', headers: {},
+        body: new TextEncoder().encode(JSON.stringify(body)) };
+    });
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: { request },
+      request: { kind, ...(kind === 'update' ? { agentId: 'agent_1' } : {}), prompt: 'Current prompt', tools: [], tts: createProvisionTtsSettings() },
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ ok: true });
+    expect(remoteAgent).toMatchObject({ platform_settings: { overrides: { conversation_config_override: { tts: { voice_id: true } } } } });
+    expect(request.mock.calls.at(-1)?.[0].operationId).toBe('agent');
+  });
+
+  it.each(['refused', 'cancelled'] as const)('does not report a %s voice-permission repair as current', async (outcome) => {
+    const controller = new AbortController();
+    let written = false;
+    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+      if (input.operationId === 'update-agent') {
+        written = true;
+        if (outcome === 'cancelled') controller.abort();
+      }
+      const body = input.operationId === 'voices' ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'tools' ? { tools: [] }
+        : { agent_id: 'agent_1', tags: ['happier_voice_config_v1'] };
+      return { status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/agents/agent_1', headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+    });
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: { request }, request: { kind: 'update', agentId: 'agent_1', prompt: 'Current prompt', tools: [], tts: createProvisionTtsSettings() },
+      signal: controller.signal,
+    })).rejects.toMatchObject(outcome === 'cancelled' ? { code: 'voice_account_operation_cancelled' } : { code: 'provider_response_invalid', stage: 'read_agent' });
+    expect(written).toBe(true);
+  });
+
   it('provisions and exactly reuses generated session.spawn_new tool metadata', async () => {
     const spec = getActionSpec('session.spawn_new');
     const tool = {
@@ -78,7 +169,7 @@ describe('ElevenLabs public account operations', () => {
     };
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
     let createdToolConfig: unknown;
-    const request = vi.fn(async (input: Readonly<{ operationId: string; parameters: unknown }>) => {
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string; parameters: unknown }>) => {
       calls.push(input);
       if (input.operationId === 'create-tool') {
         // The provider-operation boundary captures the exact authored HTTP body.
@@ -122,9 +213,9 @@ describe('ElevenLabs public account operations', () => {
       signal: new AbortController().signal,
     })).resolves.toEqual({ ok: true, updated: true });
     expect(calls.map((call) => call.operationId)).toEqual([
-      'voices', 'create-tool', 'create-agent', 'voices', 'agent', 'tools', 'update-agent',
+      'voices', 'create-tool', 'create-agent', 'agent', 'voices', 'agent', 'tools', 'update-agent', 'agent',
     ]);
-    expect(calls.at(-1)?.parameters).toMatchObject({
+    expect(calls.find((call) => call.operationId === 'update-agent')?.parameters).toMatchObject({
       agentId: 'agent_spawn',
       body: { conversation_config: { agent: { prompt: { tool_ids: ['tool_spawn'] } } } },
     });
@@ -132,7 +223,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('finds an existing Happier Voice agent on a later catalog page', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -182,7 +273,7 @@ describe('ElevenLabs public account operations', () => {
     }), 2],
   ] as const)('rejects %s before exposing an incomplete agent catalog', async (_label, page, expectedCalls) => {
     let callCount = 0;
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => {
       const body = page(callCount);
       callCount += 1;
       return Object.freeze({
@@ -206,7 +297,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('rejects an unbounded paginated agent catalog after the shared page ceiling', async () => {
     let callCount = 0;
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => {
       const body = {
         agents: [],
         has_more: true,
@@ -233,7 +324,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('provisions through the public bounded GET, POST, and PATCH account operations', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -277,6 +368,7 @@ describe('ElevenLabs public account operations', () => {
       'create-tool',
       'create-tool',
       'create-agent',
+      'agent',
     ]);
     expect(calls[1]?.parameters).toMatchObject({
       body: {
@@ -304,6 +396,7 @@ describe('ElevenLabs public account operations', () => {
             conversation_config_override: {
               agent: { first_message: true, language: true, prompt: { prompt: true } },
               conversation: { text_only: true },
+              tts: { voice_id: true },
             },
           },
         },
@@ -341,7 +434,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('creates isolated tools instead of patching matching workspace tools for a new agent', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -384,6 +477,7 @@ describe('ElevenLabs public account operations', () => {
       'voices',
       'create-tool',
       'create-agent',
+      'agent',
     ]);
     expect(calls[2]?.parameters).toMatchObject({
       body: {
@@ -396,7 +490,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('copy-on-writes a changed selected-agent dependency without mutating either shared tool', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -454,6 +548,7 @@ describe('ElevenLabs public account operations', () => {
       'tools',
       'create-tool',
       'update-agent',
+      'agent',
     ]);
     expect(calls[3]?.parameters).toMatchObject({
       body: { tool_config: { name: 'sendMessage', description: 'Send a message.' } },
@@ -466,7 +561,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('reuses an exact selected-agent dependency and only updates the agent', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters?: unknown }>> = [];
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters?: unknown;
     }>) => {
@@ -512,6 +607,7 @@ describe('ElevenLabs public account operations', () => {
       'agent',
       'tools',
       'update-agent',
+      'agent',
     ]);
     expect(calls.some((call) => call.operationId === 'create-tool')).toBe(false);
     const updateAgentParameters = calls[3]?.parameters as Readonly<{
@@ -531,6 +627,7 @@ describe('ElevenLabs public account operations', () => {
           conversation_config_override: {
             agent: { first_message: true, language: true, prompt: { prompt: true } },
             conversation: { text_only: true },
+            tts: { voice_id: true },
           },
         },
       },
@@ -542,7 +639,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('reuses an existing Happier client tool from a later tools page', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -615,6 +712,7 @@ describe('ElevenLabs public account operations', () => {
       'tools',
       'tools',
       'update-agent',
+      'agent',
     ]);
     expect(calls[2]?.parameters).toEqual({});
     expect(calls[3]?.parameters).toEqual({ cursor: 'tools_page_2' });
@@ -622,7 +720,7 @@ describe('ElevenLabs public account operations', () => {
   });
 
   it('rejects malformed tool pagination before mutating provider objects', async () => {
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => ({
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => ({
       status: 200,
       finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
       headers: { 'content-type': 'application/json' },
@@ -673,7 +771,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('uses the current preferred ElevenLabs client-tool DTO', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -739,7 +837,7 @@ describe('ElevenLabs public account operations', () => {
   });
 
   it('attributes provider failures to a bounded provisioning stage', async () => {
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => ({
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => ({
       status: input.operationId === 'update-agent' ? 422 : 200,
       finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
       headers: { 'content-type': 'application/json' },
@@ -798,7 +896,7 @@ describe('ElevenLabs public account operations', () => {
   it('retains created tools when create-agent may have committed before returning a malformed success', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
     let createdToolCount = 0;
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -853,7 +951,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('marks cleanup incomplete without deleting after a 2xx tool create returns no usable id', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -896,7 +994,7 @@ describe('ElevenLabs public account operations', () => {
   it('retains copy-on-write tools when update-agent may have committed before returning a malformed success', async () => {
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
     let createdToolCount = 0;
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -975,7 +1073,7 @@ describe('ElevenLabs public account operations', () => {
   it('marks cleanup incomplete without deleting when the account-operation authority is already cancelled', async () => {
     const controller = new AbortController();
     const calls: string[] = [];
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => {
       calls.push(input.operationId);
       if (input.operationId === 'create-agent') controller.abort();
       const body = input.operationId === 'voices'
@@ -1015,7 +1113,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('marks cleanup incomplete without deleting when the account-operation authority retires without aborting its signal', async () => {
     const calls: string[] = [];
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => {
       calls.push(input.operationId);
       if (input.operationId === 'create-agent') {
         throw Object.assign(new Error('voice_account_operation_cancelled'), {
@@ -1061,7 +1159,7 @@ describe('ElevenLabs public account operations', () => {
     const controller = new AbortController();
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
     let createdToolCount = 0;
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -1125,7 +1223,7 @@ describe('ElevenLabs public account operations', () => {
     const controller = new AbortController();
     const calls: Array<Readonly<{ operationId: string; parameters: unknown }>> = [];
     let createdToolCount = 0;
-    const request = vi.fn(async (input: Readonly<{
+    const request = provisionAccountRequest(async (input: Readonly<{
       operationId: string;
       parameters: unknown;
     }>) => {
@@ -1190,7 +1288,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('refuses to provision a voice the bound account does not own, before any provider write', async () => {
     const calls: string[] = [];
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => {
       calls.push(input.operationId);
       const body = input.operationId === 'voices'
         ? { voices: [{ voice_id: 'SAz9YHcvj6GT2YYXdXww', name: 'Present in this account' }] }
@@ -1233,7 +1331,7 @@ describe('ElevenLabs public account operations', () => {
 
   it('provisions with the shipped default voice against the standard premade catalog', async () => {
     const calls: string[] = [];
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => {
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => {
       calls.push(input.operationId);
       const bodies: Readonly<Record<string, unknown>> = {
         voices: PREMADE_ACCOUNT_VOICE_CATALOG,
@@ -1265,7 +1363,7 @@ describe('ElevenLabs public account operations', () => {
       },
       signal: new AbortController().signal,
     })).resolves.toEqual({ ok: true, agentId: 'agent_1' });
-    expect(calls).toEqual(['voices', 'create-tool', 'create-agent']);
+    expect(calls).toEqual(['voices', 'create-tool', 'create-agent', 'agent']);
   });
 
   it('keeps the shipped default voice distinct from the not-owned fixture', () => {
@@ -1278,7 +1376,7 @@ describe('ElevenLabs public account operations', () => {
   });
 
   it('reports an unreadable voice catalog as an invalid provider response, not a missing voice', async () => {
-    const request = vi.fn(async (input: Readonly<{ operationId: string }>) => ({
+    const request = provisionAccountRequest(async (input: Readonly<{ operationId: string }>) => ({
       status: 200,
       finalUrl: `https://api.elevenlabs.io/${input.operationId}`,
       headers: { 'content-type': 'application/json' },

@@ -3,6 +3,9 @@ import type { Callbacks } from '@elevenlabs/client';
 import type { ElevenLabsConversationHandleEvent } from './conversationHandle.js';
 
 import { createElevenLabsSdkConnection } from './sdkConnection.js';
+import { createElevenLabsConversationHandle } from './conversationHandle.js';
+import { createElevenLabsSessionPreparationService } from './sessionPreparation.js';
+import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../protocol/voice/index.js';
 import type { VoiceRealtimeConnection } from '@happier-dev/plugin-sdk/voice/client';
 
 function createTestConnection(input: Readonly<{ driver: Readonly<{
@@ -71,6 +74,63 @@ function createTestConnection(input: Readonly<{ driver: Readonly<{
 }
 
 describe('createElevenLabsSdkConnection', () => {
+  it.each(['inherited-voice', 'selected-voice'])('sends the effective %s through the real SDK native override encoder', async (voiceId) => {
+    const sent: unknown[] = [];
+    class ProviderSocket extends EventTarget {
+      constructor() { super(); queueMicrotask(() => this.dispatchEvent(new Event('open'))); }
+      send(data: string) {
+        const event: unknown = JSON.parse(data);
+        sent.push(event);
+        if ((event as Readonly<{ type?: unknown }>).type === 'conversation_initiation_client_data') {
+          queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
+            type: 'conversation_initiation_metadata', conversation_initiation_metadata_event: {
+              conversation_id: 'voice-override', agent_output_audio_format: 'pcm_16000',
+            },
+          }) })));
+        }
+      }
+      close() {}
+    }
+    // Only the vendor WebSocket is replaced. Preparation, handle lifecycle,
+    // SDK startup and the vendor's camelCase → native wire encoder remain real.
+    const settings = {
+      ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+      tts: { ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS.tts, voiceId, modelId: 'inherited-model',
+        voiceSettings: { stability: 0.4, similarityBoost: 0.8, speed: 1.1 } },
+    };
+    const preparation = createElevenLabsSessionPreparationService({
+      providerId: 'elevenlabs', alert() {},
+      projectVoiceSettings: (providerConfig) => ({ providerId: 'elevenlabs', assistantLanguage: null, providerConfig }),
+    });
+    const prepared = await preparation.prepare({
+      controlSessionId: 'voice-control', requestedTargetSessionId: null, settings,
+      credentials: { phase: 'prepare', mediated: null, raw: null },
+      hostedConversation: {
+        start: async () => ({ allowed: true, token: 'hosted-token', leaseId: 'lease', bindingNonce: 'nonce', expiresAtMs: 1000 }),
+        abort: async () => {}, complete: async () => {},
+      },
+      signal: new AbortController().signal, platform: 'web', textOnly: true,
+    });
+    if (prepared.kind !== 'prepared') throw new Error('expected prepared');
+    const config = preparation.buildStartConfig({ prepared: prepared.session, settings });
+    const connection = createElevenLabsSdkConnection({
+      createSdkHandleConnection: createTestConnection, handle: createElevenLabsConversationHandle({ tools: [] }),
+      startConfig: { ...(config as Record<string, unknown>), connectionType: 'websocket', signedUrl: 'wss://provider.test/voice' },
+      duckGain: 0.18,
+    });
+    vi.stubGlobal('WebSocket', ProviderSocket);
+    try {
+      await connection.connect(new AbortController().signal);
+      expect(sent[0]).toMatchObject({ conversation_config_override: { tts: { voice_id: voiceId } } });
+      expect(sent[0]).not.toHaveProperty('conversation_config_override.tts.speed');
+      expect(sent[0]).not.toHaveProperty('conversation_config_override.tts.model_id');
+      expect(connection.currentProviderSessionId()).toBe('voice-override');
+    } finally {
+      await connection.close({ code: 'user_stop' });
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each([undefined, { clientToolName: 'readSession', toolCallId: 'provider-call' }])(
     'keeps recoverable client-tool errors alive while terminal errors still close the session (%j)', async (terminalContext) => {
     let publish!: (event: ElevenLabsConversationHandleEvent) => void;

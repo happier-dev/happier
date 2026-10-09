@@ -21,6 +21,27 @@ const ACCOUNT_VOICE_CATALOG = Object.freeze({
   }],
 });
 
+/** Persist provider writes at the HTTP boundary so setup verifies the actual remote configuration. */
+function provisionAccountRequest<T extends Readonly<{ operationId: string; parameters?: unknown }>>(
+  respond: (input: T) => Promise<Readonly<{ status: number; finalUrl: string; headers: Readonly<Record<string, string>>; body: Uint8Array }>>,
+) {
+  let writtenAgent: Record<string, unknown> | null = null;
+  return vi.fn(async (input: T) => {
+    const response = await respond(input);
+    if (response.status !== 200) return response;
+    const parameters = input.parameters as Readonly<{ agentId?: string; body?: Record<string, unknown> }> | undefined;
+    if (input.operationId === 'create-agent' || input.operationId === 'update-agent') {
+      const result = JSON.parse(new TextDecoder().decode(response.body)) as Readonly<{ agent_id?: string }>;
+      const agentId = input.operationId === 'create-agent' ? result.agent_id : parameters?.agentId;
+      if (agentId && parameters?.body) writtenAgent = { ...parameters.body, agent_id: agentId };
+    }
+    if (input.operationId === 'agent' && writtenAgent?.agent_id === parameters?.agentId) {
+      return { ...response, body: new TextEncoder().encode(JSON.stringify(writtenAgent)) };
+    }
+    return response;
+  });
+}
+
 const HOST_NORMALIZED_TOOLS: readonly VoiceClientToolDefinition[] = Object.freeze([Object.freeze({
   name: 'hostListMachines',
   description: 'Host-normalized machine inventory',
@@ -173,7 +194,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
   it('executes declared Create Agent through settings-phase credential access and returns only its settings patch', async () => {
     const runtime = createElevenLabsVoiceProviderRuntime();
     let toolSequence = 0;
-    const request = vi.fn(async (call: Readonly<{
+    const request = provisionAccountRequest(async (call: Readonly<{
       operationId: string;
       parameters?: Readonly<Record<string, unknown>>;
     }>) => {
@@ -256,7 +277,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
   it('lists multiple existing agents and updates the one explicitly selected by the user', async () => {
     const runtime = createElevenLabsVoiceProviderRuntime();
     let toolSequence = 0;
-    const request = vi.fn(async (call: Readonly<{
+    const request = provisionAccountRequest(async (call: Readonly<{
       operationId: string;
       parameters?: Readonly<Record<string, unknown>>;
     }>) => {
@@ -336,7 +357,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
   it('creates a new agent when the user explicitly selects Create new', async () => {
     const runtime = createElevenLabsVoiceProviderRuntime();
     let toolSequence = 0;
-    const request = vi.fn(async (call: Readonly<{ operationId: string }>) => {
+    const request = provisionAccountRequest(async (call: Readonly<{ operationId: string }>) => {
       const body = call.operationId === 'voices'
         ? ACCOUNT_VOICE_CATALOG
         : call.operationId === 'agents'
@@ -431,7 +452,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
   it('keeps Update agent direct without listing or presenting a reuse question', async () => {
     const runtime = createElevenLabsVoiceProviderRuntime();
     let toolSequence = 0;
-    const request = vi.fn(async (call: Readonly<{ operationId: string }>) => {
+    const request = provisionAccountRequest(async (call: Readonly<{ operationId: string }>) => {
       const body = call.operationId === 'voices'
         ? ACCOUNT_VOICE_CATALOG
         : call.operationId === 'agent'
@@ -637,6 +658,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
               overrides: { conversation_config_override: {
                 agent: { first_message: true, language: true, prompt: { prompt: true } },
                 conversation: { text_only: true },
+                tts: { voice_id: true },
               } },
             },
           } : { token: 'short-lived-token' })),

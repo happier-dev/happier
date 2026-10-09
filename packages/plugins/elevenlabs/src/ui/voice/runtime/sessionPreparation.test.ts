@@ -33,7 +33,7 @@ function settings(input: Readonly<{
 }
 
 function createService(
-  project = vi.fn((_raw: unknown) => settings({ billingMode: 'byo', agentId: 'agent-1' })),
+  project: Parameters<typeof createElevenLabsSessionPreparationService>[0]['projectVoiceSettings'] = () => settings({ billingMode: 'byo', agentId: 'agent-1' }),
 ) {
   return createElevenLabsSessionPreparationService({
     providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
@@ -73,6 +73,7 @@ function agentResponse(agentId = 'agent-1') {
         overrides: { conversation_config_override: {
           agent: { first_message: true, language: true, prompt: { prompt: true } },
           conversation: { text_only: true },
+          tts: { voice_id: true },
         } },
       },
     })),
@@ -99,6 +100,13 @@ describe('createElevenLabsSessionPreparationService', () => {
     { agent_id: 'agent-1', tags: ['happier_voice_config_v1'], platform_settings: {
       auth: { enable_auth: true }, overrides: { conversation_config_override: {
         agent: { language: true, prompt: { prompt: true } }, conversation: { text_only: true },
+      } },
+    } },
+    // The previous configuration tag did not grant per-conversation voice selection.
+    { agent_id: 'agent-1', tags: ['happier_voice_config_v1'], platform_settings: {
+      auth: { enable_auth: true }, overrides: { conversation_config_override: {
+        agent: { first_message: true, language: true, prompt: { prompt: true } },
+        conversation: { text_only: true },
       } },
     } },
   ])('signals agent update before minting for obsolete or insecure remote config', async (agent) => {
@@ -223,11 +231,53 @@ describe('createElevenLabsSessionPreparationService', () => {
     expect(service.buildStartConfig({ prepared: prepared.session, settings: {} })).toMatchObject({
       connectionType: 'webrtc', conversationToken: 'ephemeral-token',
       dynamicVariables: { sessionId: 'control-byo', initialConversationContext: 'context' },
+      overrides: { tts: { voiceId: projected.providerConfig.tts.voiceId } },
     });
     expect(mocks.requestAccountOperation).toHaveBeenCalledWith(expect.objectContaining({
       operationId: 'conversation-token',
       parameters: { agentId: 'agent-1' },
     }));
+  });
+
+  it('captures the effective selected voice at preparation without overriding inherited speed or model', async () => {
+    const projected = settings({ billingMode: 'byo', agentId: 'agent-1' });
+    projected.providerConfig = ElevenLabsVoiceProviderSettingsSchema.parse({
+      ...projected.providerConfig,
+      tts: { voiceId: 'selected-voice', modelId: 'inherited-model', voiceSettings: {
+        stability: 0.4, similarityBoost: 0.8, speed: 1.1,
+      } },
+    });
+    const service = createService(() => projected);
+    const prepared = await service.prepare({
+      controlSessionId: 'selected', requestedTargetSessionId: null,
+      settings: {}, credentials: credentials(), hostedConversation: null,
+      signal: new AbortController().signal, platform: 'web', textOnly: false,
+    });
+    if (prepared.kind !== 'prepared') throw new Error('expected prepared');
+    projected.providerConfig = ElevenLabsVoiceProviderSettingsSchema.parse({
+      ...projected.providerConfig, tts: { ...projected.providerConfig.tts, voiceId: 'later-voice' },
+    });
+    const config = service.buildStartConfig({ prepared: prepared.session, settings: {} });
+    expect(config).toMatchObject({ conversationToken: 'ephemeral-token', overrides: { tts: { voiceId: 'selected-voice' } } });
+    expect(config).not.toHaveProperty('overrides.tts.speed');
+    expect(config).not.toHaveProperty('overrides.tts.modelId');
+    expect(mocks.requestAccountOperation.mock.calls.map(([request]) => request.operationId)).toEqual(['agent', 'conversation-token']);
+  });
+
+  it.each(['agent', 'conversation-token'])('retires BYO preparation cancelled during %s instead of claiming an applied voice', async (operationId) => {
+    const controller = new AbortController();
+    mocks.requestAccountOperation.mockImplementation(async (request: Readonly<{ operationId: string }>) => {
+      if (request.operationId === operationId) controller.abort();
+      return request.operationId === 'agent' ? agentResponse() : {
+        status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/conversation/token', headers: {},
+        body: new TextEncoder().encode(JSON.stringify({ token: 'retired-token' })),
+      };
+    });
+    await expect(createService().prepare({
+      controlSessionId: 'cancelled', requestedTargetSessionId: null,
+      settings: {}, credentials: credentials(), hostedConversation: null,
+      signal: controller.signal, platform: 'web', textOnly: false,
+    })).resolves.toEqual({ kind: 'aborted' });
   });
 
   it('uses signed websocket auth for text-only BYO without composing a second welcome policy', async () => {
