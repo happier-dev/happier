@@ -18,6 +18,16 @@ function readProtocolSchema<TValue = unknown>(name: string, entrypoint: object =
 }
 
 describe('SCM repository clone protocol contracts', () => {
+  it('admits a saved Source locator without pretending its visibility has been discovered', () => {
+    const selector = scm.ScmCredentialFreeRepositorySelectorV1Schema.parse({
+      provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'octocat/Hello-World', cloneUrl: 'https://github.com/octocat/Hello-World' }, protocol: 'https',
+    });
+    const parsed = scm.ScmRepositoryCloneInputSchema.parse({ ...selector, destinationParentPath: '/parent',
+      destinationDirectoryName: 'checkout', confirmed: true, authorizationToken: 'clone-repository' });
+    expect(parsed.repository.visibility).toBeUndefined();
+    expect(parsed.provider.urlSafety).toEqual({ allowedSchemes: ['https:'] });
+  });
   it('requires an explicit destination parent, safe child name, protocol preference, and user authorization', () => {
     const schema = readProtocolSchema<protocol.ScmRepositoryCloneInput>(
       'ScmRepositoryCloneInputSchema',

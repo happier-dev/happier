@@ -15,16 +15,17 @@ export function createWorkBoardArtifactBoundary(initial: readonly unknown[] = []
         rows.set(value.id, { artifactId: value.id, body: JSON.stringify(raw),
             header: parsed.success ? buildWorkBoardArtifactHeaderV1(parsed.data)
                 : { kind: 'work-board.v1', v: 1, title: value.name ?? value.id, pinnedInSessions: false, readsNeedsYou: false },
-            revision: { headerVersion: 1, bodyVersion: 1 } });
+            revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: false });
     };
     initial.forEach(add);
     const available = () => { if (offline) throw new Error('offline'); };
     const transport: WorkBoardArtifactTransportV1 = {
         read: async id => { available(); reads.push(id); return rows.get(id) ?? null; },
-        list: async () => { available(); return { items: [...rows.values()].map(row => ({ artifactId: row.artifactId, header: row.header, headerVersion: row.revision.headerVersion })) }; },
+        list: async () => { available(); return { items: [...rows.values()].map(row => ({ artifactId: row.artifactId, header: row.header,
+            ...row.revision, ownerAccountId: row.ownerAccountId, access: row.access })) }; },
         create: async input => {
             available(); written = true;
-            if (!rows.has(input.artifactId)) rows.set(input.artifactId, { ...input, revision: { headerVersion: 1, bodyVersion: 1 } });
+            if (!rows.has(input.artifactId)) rows.set(input.artifactId, { ...input, revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: false });
             return { artifactId: input.artifactId };
         },
         update: async input => {
@@ -33,7 +34,7 @@ export function createWorkBoardArtifactBoundary(initial: readonly unknown[] = []
             if (JSON.stringify(row.revision) !== JSON.stringify(input.expectedRevision)) return { ok: false, errorCode: 'version_mismatch', error: 'version_mismatch' };
             written = true; updates.push(input.artifactId);
             const revision = { headerVersion: row.revision.headerVersion + 1, bodyVersion: row.revision.bodyVersion + 1 };
-            rows.set(input.artifactId, { artifactId: input.artifactId, header: input.header, body: input.body, revision });
+            rows.set(input.artifactId, { ...row, artifactId: input.artifactId, header: input.header, body: input.body, revision });
             return { ok: true, revision };
         },
         delete: async (id, options) => {
@@ -44,8 +45,16 @@ export function createWorkBoardArtifactBoundary(initial: readonly unknown[] = []
         },
     };
     const forAccount = (accountId: string): HomeHubArtifactTransportV1 => ({
-        read: async (id, options) => { const row = await transport.read(id, options); return row ? { ...row, ownerAccountId: accountId } : null; },
-        create: async input => { await transport.create(input); return { ...rows.get(input.artifactId)!, ownerAccountId: accountId }; },
+        read: async (id, options) => { const row = await transport.read(id, options); return row ? { ...row,
+            ownerAccountId: row.ownerAccountId ?? accountId, access: row.access ?? 'owner', shared: row.shared ?? false } : null; },
+        create: async input => {
+            await transport.create(input);
+            const current = rows.get(input.artifactId)!;
+            const row = { ...current, ownerAccountId: current.ownerAccountId ?? accountId,
+                access: current.access ?? 'owner' as const, shared: current.shared ?? false };
+            rows.set(input.artifactId, row);
+            return row;
+        },
         update: transport.update,
     });
     return { transport, forAccount, rows, reads, updates, add, offline: (next: boolean) => { offline = next; },

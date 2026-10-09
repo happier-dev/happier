@@ -5,7 +5,7 @@ import { SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
 
 const reads = [
   'scm.backend.describe', 'scm.status.snapshot', 'scm.worktrees.enrichment',
-  'scm.diff.file', 'scm.diff.commit', 'scm.log.list', 'scm.branch.list',
+  'scm.diff.file', 'scm.diff.commit', 'scm.log.list', 'scm.history.entries', 'scm.branch.list',
   'scm.stash.list', 'scm.stash.show', 'scm.pullRequest.list', 'scm.pullRequest.get',
   'scm.pullRequest.openCompose', 'scm.hostingRepository.describePublishTargets',
 ] as const;
@@ -26,6 +26,23 @@ const mutations = [
 ] as const;
 
 describe('SCM Action parity', () => {
+  it('resolves credential-free addresses through a safe machine read on all surfaces', async () => {
+    const { getActionSpec } = await import('./actionSpecs.js');
+    const spec = getActionSpec(ActionIdSchema.parse('scm.hostingRepository.resolveAddress'));
+    expect(spec.executionPlacement).toBe('machine');
+    expect(spec.safety).toBe('safe');
+    expect(spec.surfaces).toMatchObject({ ui: true, voice: true, agent: true, mcp: true, cli: true });
+    expect(spec.inputSchema.parse({ address: 'forge.test/team/repo' })).toEqual({ address: 'forge.test/team/repo' });
+    expect(spec.inputSchema.safeParse({ address: 'forge.test/team/repo', token: 'secret' }).success).toBe(false);
+    const selector = { provider: { id: 'plugin/forge', kind: 'custom', displayName: 'Forge', baseUrl: 'https://forge.test' },
+      repository: { nameWithOwner: 'team/repo', cloneUrl: 'https://forge.test/team/repo' }, protocol: 'https' };
+    expect(spec.outputSchema?.safeParse({ success: true, kind: 'resolved', selector }).success).toBe(true);
+    expect(spec.outputSchema?.safeParse({ success: true, kind: 'resolved', selector: { ...selector,
+      repository: { ...selector.repository, cloneUrl: 'https://user:secret@forge.test/team/repo' } } }).success).toBe(false);
+    for (const kind of ['unknown', 'unsupported', 'invalid']) {
+      expect(spec.outputSchema?.safeParse({ success: true, kind }).success).toBe(true);
+    }
+  });
   it('declares every Git read and mutation in the canonical Action ID schema', () => {
     for (const id of [...reads, ...mutations]) {
       expect(ActionIdSchema.safeParse(id).success, id).toBe(true);
@@ -75,6 +92,13 @@ describe('SCM Action parity', () => {
     };
     expect(schema('scm.change.include').safeParse({ paths: ['../outside'] }).success).toBe(false);
     expect(schema('scm.log.list').parse({ range: 'incoming' })).toMatchObject({ range: 'incoming' });
+    const history = { cwd: '/repo', folder: '', paths: ['', ':(glob)*', '-dash', 'line\nbreak', 'space '] };
+    expect(schema('scm.history.entries').parse(history)).toEqual(history);
+    expect(schema('scm.history.entries').safeParse({ ...history, unknown: true }).success).toBe(false);
+    const { zodSchemaToJsonSchemaObject } = await import('./actionInputJsonSchema.js');
+    expect(zodSchemaToJsonSchemaObject(schema('scm.history.entries'))).toMatchObject({
+      type: 'object', additionalProperties: false, required: ['cwd', 'folder', 'paths'],
+    });
     expect(schema('scm.remote.push').safeParse({ pushMode: 'force_with_lease' }).success).toBe(false);
     expect(schema('scm.commit.undoLast').safeParse({}).success).toBe(false);
     expect(schema('scm.commit.undoLast').safeParse({ expectedHeadOid: 'HEAD' }).success).toBe(false);

@@ -49,6 +49,86 @@ describe('workspaceSyncTopology', () => {
     }]);
   });
 
+  it('resolves duplicate ref ids only within the explicitly selected Home', () => {
+    const ab = relationship('ab', 'a', 'b', 'machine-a');
+    const workspaceRefs = [
+      ...refs,
+      { ...refs[0]!, serverId: 'other-home', machineId: 'other-machine-a' },
+      { ...refs[1]!, serverId: 'other-home', machineId: 'other-machine-b' },
+    ];
+
+    expect(deriveWorkspaceSyncTopology({
+      serverId: 'server', workspaceRefs, relationships: [ab],
+    })).toEqual({
+      issues: [],
+      sets: [{ hubWorkspaceRefId: 'a', controllerMachineId: 'machine-a', relationships: [ab] }],
+    });
+    expect(resolveWorkspaceSyncTransferRoute({
+      serverId: 'server', workspaceRefs, relationships: [ab],
+      sourceWorkspaceRefId: 'a', targetWorkspaceRefId: 'b',
+    })).toMatchObject({ ok: true, kind: 'direct', relationships: [ab] });
+    expect(deriveWorkspaceSyncTopology({ workspaceRefs, relationships: [ab] })).toEqual({
+      sets: [],
+      issues: [{ code: 'ambiguous_workspace_ref', relationshipIds: ['ab'], workspaceRefIds: ['a', 'b'] }],
+    });
+    expect(resolveWorkspaceSyncTransferRoute({
+      workspaceRefs, relationships: [ab], sourceWorkspaceRefId: 'a', targetWorkspaceRefId: 'b',
+    })).toEqual({ ok: false, code: 'workspace_ref_not_ready', workspaceRefId: 'a' });
+  });
+
+  it('refuses same-Home duplicate ids even when the last ref would make topology valid', () => {
+    const ab = relationship('ab', 'a', 'b', 'machine-a');
+    const workspaceRefs = [{ ...refs[0]!, machineId: 'another-machine' }, ...refs];
+
+    expect(deriveWorkspaceSyncTopology({
+      serverId: 'server', workspaceRefs, relationships: [ab],
+    })).toEqual({
+      sets: [],
+      issues: [{ code: 'ambiguous_workspace_ref', relationshipIds: ['ab'], workspaceRefIds: ['a'] }],
+    });
+    expect(resolveWorkspaceSyncTransferRoute({
+      serverId: 'server', workspaceRefs, relationships: [],
+      sourceWorkspaceRefId: 'a', targetWorkspaceRefId: 'a',
+    })).toEqual({ ok: false, code: 'workspace_ref_not_ready', workspaceRefId: 'a' });
+  });
+
+  it('does not recover missing or incomplete Home targets from another Home', () => {
+    const ab = relationship('ab', 'a', 'b', 'machine-a');
+    expect(deriveWorkspaceSyncTopology({
+      serverId: 'missing-home', workspaceRefs: refs, relationships: [ab],
+    })).toEqual({
+      sets: [],
+      issues: [{ code: 'missing_workspace_ref', relationshipIds: ['ab'], workspaceRefIds: ['a', 'b'] }],
+    });
+    expect(deriveWorkspaceSyncTopology({
+      serverId: ' ', workspaceRefs: refs, relationships: [ab],
+    })).toEqual({
+      sets: [],
+      issues: [{ code: 'invalid_workspace_ref', relationshipIds: ['ab'], workspaceRefIds: ['a', 'b'] }],
+    });
+    expect(resolveWorkspaceSyncTransferRoute({
+      serverId: 'missing-home', workspaceRefs: refs, relationships: [ab],
+      sourceWorkspaceRefId: 'a', targetWorkspaceRefId: 'b',
+    })).toEqual({ ok: false, code: 'workspace_ref_not_ready', workspaceRefId: 'a' });
+  });
+
+  it('uses the caller Home alias context for endpoint admission and route topology', () => {
+    const ab = relationship('ab', 'a', 'b', 'machine-a');
+    const workspaceRefs = refs.map((ref) => ({ ...ref, serverId: 'legacy-profile' }));
+    const context = { normalizeServerId: (value: string) => value === 'legacy-profile' ? 'server' : value };
+
+    expect(deriveWorkspaceSyncTopology({
+      serverId: 'server', context, workspaceRefs, relationships: [ab],
+    })).toEqual({
+      issues: [],
+      sets: [{ hubWorkspaceRefId: 'a', controllerMachineId: 'machine-a', relationships: [ab] }],
+    });
+    expect(resolveWorkspaceSyncTransferRoute({
+      serverId: 'server', context, workspaceRefs, relationships: [ab],
+      sourceWorkspaceRefId: 'a', targetWorkspaceRefId: 'b',
+    })).toMatchObject({ ok: true, kind: 'direct', relationships: [ab] });
+  });
+
   it('preserves beta-controlled and same-machine bootstrap conventions', () => {
     expect(resolveWorkspaceSyncRelationshipEndpointRoles({
       mode: 'keep_both_in_sync',

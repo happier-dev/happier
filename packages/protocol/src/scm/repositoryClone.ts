@@ -40,7 +40,8 @@ export const ScmRepositoryCloneRepositorySelectorSchema = lazyZodSchema(() => z
     cloneUrl: z.string().min(1).optional(),
     sshUrl: z.string().min(1).optional(),
     defaultBranch: z.string().min(1).nullable().optional(),
-    visibility: ScmHostingRepositorySummarySchema.shape.visibility,
+    // The forge resolves visibility; a saved locator need not have discovered it.
+    visibility: ScmHostingRepositorySummarySchema.shape.visibility.optional(),
   })
   .passthrough());
 export type ScmRepositoryCloneRepositorySelector =
@@ -70,8 +71,6 @@ export const ScmCredentialFreeRepositorySelectorV1Schema = lazyZodSchema(() => z
     webUrl: z.string().url().refine(isCredentialFreeRepositoryLocator).optional(),
     cloneUrl: z.string().trim().min(1).refine(isCredentialFreeRepositoryLocator).optional(),
     sshUrl: z.string().trim().min(1).refine(isCredentialFreeRepositoryLocator).optional(),
-    // Saving a locator need not contact a forge to discover its visibility.
-    visibility: ScmRepositoryCloneRepositorySelectorSchema.shape.visibility.optional(),
   }).strict(),
   protocol: SourceControlCloneProtocolSchema,
 }).strict());

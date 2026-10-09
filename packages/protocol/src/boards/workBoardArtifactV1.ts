@@ -8,6 +8,7 @@ import {
 import { artifactSavedByFromActionContextV1, type ArtifactBodyV1, type ArtifactSavedByV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ActionExecutorContext } from '../actions/executor/types.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import type { ArtifactCallerAccessV1 } from '../artifacts/artifactAccessV1.js';
 
 export const WORK_BOARD_ARTIFACT_KIND_V1 = 'work-board.v1';
 /** Saved structure only: no resolved memberships, widget inputs or runtime counts. */
@@ -36,6 +37,10 @@ export type WorkBoardArtifactRevisionV1 = Readonly<{ headerVersion: number; body
 export type WorkBoardArtifactV1 = Readonly<{
     artifactId: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyV1 | null;
     revision: WorkBoardArtifactRevisionV1;
+    ownerAccountId?: string;
+    access?: ArtifactCallerAccessV1;
+    /** Actual grant census from the admitted Artifact transport, including owner reads. */
+    shared?: boolean;
 }>;
 export type WorkBoardArtifactSummaryV1 = Readonly<{
     id: string; name: string; pinnedInSessions: boolean;
@@ -45,7 +50,8 @@ export type WorkBoardArtifactSummaryV1 = Readonly<{
 export type WorkBoardArtifactTransportV1 = Readonly<{
     read(artifactId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<WorkBoardArtifactV1 | null>;
     list(options: Readonly<{ limit: number; cursor?: string; signal?: AbortSignal }>): Promise<Readonly<{
-        items: readonly Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number }>[];
+        items: readonly Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number;
+            bodyVersion?: number; ownerAccountId?: string; access?: ArtifactCallerAccessV1 }>[];
         nextCursor?: string;
     }>>;
     create(input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>): Promise<unknown>;
@@ -57,7 +63,7 @@ export type WorkBoardArtifactTransportV1 = Readonly<{
 }>;
 
 export class WorkBoardMutationErrorV1 extends Error {
-    constructor(readonly code: 'board_not_found' | 'invalid_board_record' | 'board_scope_retired') {
+    constructor(readonly code: 'board_not_found' | 'invalid_board_record' | 'board_scope_retired' | 'artifact_access_denied' | 'account_target_mismatch') {
         super(code); this.name = 'WorkBoardMutationErrorV1';
     }
 }
@@ -95,8 +101,14 @@ export type WorkBoardArtifactPortV1 = Readonly<{
     read(signal?: AbortSignal): Promise<WorkBoardsV1>;
     list(signal?: AbortSignal): Promise<readonly WorkBoardArtifactSummaryV1[]>;
     readBoard(boardId: string, signal?: AbortSignal): Promise<WorkBoardV1 | null>;
+    readBoardAccess(boardId: string, signal?: AbortSignal): Promise<Readonly<{ board: WorkBoardV1; canEdit: boolean; isShared: boolean; ownerAccountId?: string }> | null>;
     apply(intent: WorkBoardIntentV1, signal?: AbortSignal, context?: ActionExecutorContext): Promise<WorkBoardsV1>;
 }>;
+
+function boardAccess(artifact: WorkBoardArtifactV1) {
+    const canEdit = artifact.access === 'owner' || artifact.access === 'edit' || artifact.access === 'admin';
+    return { canEdit, isShared: artifact.shared === true || artifact.access === 'view' || artifact.access === 'edit' || artifact.access === 'admin' };
+}
 
 /** The only persisted Board edit path: one Artifact, pure semantic replay on its current CAS winner. */
 export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransportV1, options: Readonly<{
@@ -146,6 +158,13 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
     };
     return {
         list, readBoard,
+        async readBoardAccess(id, signal) {
+            const artifact = await fetch(id, signal);
+            if (!artifact) return null;
+            const board = readWorkBoardArtifactV1(artifact);
+            if (!board) throw new WorkBoardMutationErrorV1('invalid_board_record');
+            return { board, ...boardAccess(artifact), ...(artifact.ownerAccountId ? { ownerAccountId: artifact.ownerAccountId } : {}) };
+        },
         async read(signal) {
             const boards: WorkBoardV1[] = [];
             const unreadable: unknown[] = [];
@@ -174,7 +193,11 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
                 if (artifact === undefined) throw new WorkBoardMutationErrorV1('invalid_board_record');
                 const board = artifact ? readWorkBoardArtifactV1(artifact) : null;
                 if (artifact && !board) throw new WorkBoardMutationErrorV1('invalid_board_record');
-                const applied = applyWorkBoardIntentV1(board ? { v: 1, boards: [board] } : DEFAULT_WORK_BOARDS_V1, intent);
+                if (artifact?.ownerAccountId && 'ref' in intent && 'surface' in intent.ref
+                    && intent.ref.surface.accountId !== artifact.ownerAccountId) throw new WorkBoardMutationErrorV1('account_target_mismatch');
+                if (artifact && !boardAccess(artifact).canEdit) throw new WorkBoardMutationErrorV1('artifact_access_denied');
+                const applied = applyWorkBoardIntentV1(board ? { v: 1, boards: [board] } : DEFAULT_WORK_BOARDS_V1, intent,
+                    { shared: artifact ? boardAccess(artifact).isShared : false });
                 if (applied.status !== 'applied') throw new WorkBoardMutationErrorV1('board_not_found');
                 const next = applied.boards.boards[0] ?? null;
                 check(signal);
