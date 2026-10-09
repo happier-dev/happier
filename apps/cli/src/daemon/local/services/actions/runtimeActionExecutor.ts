@@ -1,14 +1,18 @@
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
-import { DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, isLocalServicePublicPreviewCreateConfirmed, redactLocalServicePublicPreviewCreateResponseForAgentEgress, redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress } from '@happier-dev/protocol/local/services/public/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { ProjectServiceRelocateInputV1Schema, type ProjectServiceRelocateInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 import type { LocalServiceActionRoutes } from './routes';
+import type { LocalServiceActionExecutionContext } from './executor';
 import type { LocalServicesDaemonFeatureGate, LocalServicesDaemonFeatureGateId } from '../featureGate';
 import type { LocalServiceInventoryRoutes } from '../inventory/routes';
 import type { LocalServiceLauncherRoutes } from '../launch/routes';
@@ -21,10 +25,14 @@ export type LocalServicesRuntimeActionRoutes = Readonly<{
     previewRoutes?: Pick<LocalServicePreviewRoutes, 'getSnapshot'> & Partial<Pick<LocalServicePreviewRoutes, 'openOrCreate' | 'revoke'>>;
     actionRoutes?: Pick<LocalServiceActionRoutes, 'execute'>;
     publicPreviewRoutes?: LocalServicePublicPreviewRoutes;
+    relocateService?: (request: ProjectServiceRelocateInputV1, context: RuntimeActionExecuteArgs['context']) => Promise<ActionExecuteResult>;
 }>;
 
 type CreateLocalServicesDaemonRuntimeActionExecutorInput = Readonly<{
     routes: LocalServicesRuntimeActionRoutes;
+    /** Captured by the receiving host, never reconstructed from Action input/context. */
+    ingress?: RpcHandlerContext;
+    prepareStartAction?: LocalServiceActionExecutionContext['prepareStartAction'];
     fallback?: RuntimeActionExecute;
     // Single-owner daemon feature-gate (REQUIRED — mirrors the browser daemon executor). Each
     // local-service action family is refused at the execution boundary when its server feature
@@ -82,10 +90,11 @@ function buildPreviewOpenOrCreateRequest(input: unknown): Record<string, unknown
     // The runtime preview input carries a single `targetId`; private preview resolves it as the
     // canonical detected-inventory entry (the common dev-server case).
     const inventoryEntryId = readField(input, 'inventoryEntryId') ?? readField(input, 'targetId');
+    const source = input && typeof input === 'object' ? (input as Record<string, unknown>)['serviceTarget'] : undefined;
     return {
         ...(machineId ? { machineId } : {}),
         ...(sessionId ? { sessionId } : {}),
-        ...(inventoryEntryId ? { inventoryEntryId } : {}),
+        ...(source !== undefined ? { serviceTarget: source } : inventoryEntryId ? { inventoryEntryId } : {}),
     };
 }
 
@@ -93,19 +102,25 @@ function buildLauncherLeafRequest(input: unknown): Record<string, unknown> {
     const machineId = readField(input, 'machineId');
     const targetId = readField(input, 'targetId');
     const sessionId = readField(input, 'sessionId');
+    const scope = readField(input, 'scope');
+    const workspaceRoot = readField(input, 'workspaceRoot');
     return {
         ...(machineId ? { machineId } : {}),
         ...(targetId ? { targetId } : {}),
         ...(sessionId ? { sessionId } : {}),
+        ...(scope ? { scope } : {}),
+        ...(workspaceRoot ? { workspaceRoot } : {}),
     };
 }
 
 function buildPreviewRevokeRequest(input: unknown): Record<string, unknown> {
     const machineId = readField(input, 'machineId');
     const previewId = readField(input, 'previewId');
+    const source = input && typeof input === 'object' ? (input as Record<string, unknown>)['serviceTarget'] : undefined;
     return {
         ...(machineId ? { machineId } : {}),
         ...(previewId ? { previewId } : {}),
+        ...(source !== undefined ? { serviceTarget: source } : {}),
     };
 }
 
@@ -129,6 +144,9 @@ function featureDisabledResult(featureId: LocalServicesDaemonFeatureGateId) {
 function requiredFeatureGateIds(
     actionId: RuntimeActionExecuteArgs['actionId'],
 ): readonly LocalServicesDaemonFeatureGateId[] {
+    if (actionId === 'projects.service.relocate') {
+        return ['localServices.launcher', 'localServices.actions', 'localServices.managed'];
+    }
     if (actionId === 'localServices.inventory.list' || actionId === 'localServices.inventory.refresh') {
         return ['localServices.inventory'];
     }
@@ -203,6 +221,15 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
         const parsed = parseRuntimeActionInput(args);
         if (!parsed.ok) return parsed.result;
 
+        if (args.actionId === 'projects.service.relocate') {
+            const relocate = input.routes.relocateService;
+            if (!relocate) return disabledResult('local_services_runtime_action_unbacked');
+            const request = ProjectServiceRelocateInputV1Schema.safeParse(parsed.input);
+            if (!request.success) return invalidParametersResult;
+            const result = await relocate(request.data, args.context);
+            return result.ok ? result.result : result;
+        }
+
         if (args.actionId === 'localServices.inventory.list') {
             const routes = input.routes.inventoryRoutes;
             return routes
@@ -219,9 +246,12 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
 
         if (args.actionId === 'localServices.launcher.snapshot') {
             const routes = input.routes.launcherRoutes;
-            return routes
-                ? await routes.getSnapshot()
-                : disabledResult('local_services_launcher_routes_unavailable');
+            if (!routes) return disabledResult('local_services_launcher_routes_unavailable');
+            const leaf = buildLauncherLeafRequest(parsed.input);
+            const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.omit({ machineId: true }).safeParse({
+                sessionId: leaf.sessionId, scope: leaf.scope, workspaceRoot: leaf.workspaceRoot,
+            });
+            return request.success ? await routes.getSnapshot(request.data) : invalidParametersResult;
         }
 
         if (args.actionId === 'localServices.launcher.start') {
@@ -233,7 +263,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
                 return disabledResult('local_services_launcher_start_route_unavailable');
             }
             const request = DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(parsed.input);
-            return request.success ? await routes.startTarget(request.data) : invalidParametersResult;
+            return request.success ? await routes.startTarget(request.data, input.ingress, args.context, args.executeCanonicalAction) : invalidParametersResult;
         }
 
         if (
@@ -250,10 +280,10 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             );
             if (!request.success) return invalidParametersResult;
             if (args.actionId === 'localServices.launcher.openPreview') {
-                return await leaves.openPreview(request.data);
+                return await leaves.openPreview(request.data, input.ingress);
             }
             if (args.actionId === 'localServices.launcher.registerPreview') {
-                return await leaves.registerPreview(request.data, args.context.signal);
+                return await leaves.registerPreview(request.data, args.context.signal, input.ingress);
             }
             return await leaves.clearHistory(request.data);
         }
@@ -261,7 +291,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
         if (args.actionId === 'localServices.preview.status') {
             const routes = input.routes.previewRoutes;
             return routes
-                ? await routes.getSnapshot()
+                ? await routes.getSnapshot(input.ingress)
                 : disabledResult('local_services_preview_routes_unavailable');
         }
 
@@ -274,7 +304,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
                 buildPreviewOpenOrCreateRequest(parsed.input),
             );
             if (!request.success) return invalidParametersResult;
-            const result = await routes.openOrCreate(request.data, args.context.signal);
+            const result = await routes.openOrCreate(request.data, args.context.signal, input.ingress);
             return result.ok
                 ? result.response
                 : previewLifecycleDisabledResult(result.reasonCode);
@@ -289,7 +319,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
                 buildPreviewRevokeRequest(parsed.input),
             );
             if (!request.success) return invalidParametersResult;
-            const result = await routes.revoke(request.data);
+            const result = await routes.revoke(request.data, input.ingress);
             return result.ok
                 ? result.response
                 : previewLifecycleDisabledResult(result.reasonCode);
@@ -302,7 +332,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             }
             const request = DaemonLocalServicePublicPreviewStatusRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
-            const snapshot = await routes.getStatus(request.data);
+            const snapshot = await routes.getStatus(request.data, input.ingress);
             return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewSnapshotForAgentEgress(snapshot)
                 : snapshot;
@@ -320,7 +350,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             if (!isLocalServicePublicPreviewCreateConfirmed(request.data)) {
                 return disabledResult('local_services_public_preview_confirmation_required');
             }
-            const response = await routes.createExposure(request.data);
+            const response = await routes.createExposure(request.data, input.ingress);
             return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewCreateResponseForAgentEgress(response)
                 : response;
@@ -333,7 +363,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             }
             const request = DaemonLocalServicePublicPreviewRevokeRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
-            const response = await routes.revokeExposure(request.data);
+            const response = await routes.revokeExposure(request.data, input.ingress);
             return requiresAgentEgressRedaction(args.context)
                 ? redactLocalServicePublicPreviewRevokeResponseForAgentEgress(response)
                 : response;
@@ -345,7 +375,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
                 return disabledResult('local_services_public_preview_routes_unavailable');
             }
             const request = DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema.safeParse(parsed.input);
-            return request.success ? await routes.copyUrl(request.data) : invalidParametersResult;
+            return request.success ? await routes.copyUrl(request.data, input.ingress) : invalidParametersResult;
         }
 
         if (args.actionId.startsWith('localServices.actions.')) {
@@ -360,7 +390,8 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             ) {
                 return invalidParametersResult;
             }
-            return await routes.execute(request.data);
+            return await routes.execute(request.data, { ingress: input.ingress, actionContext: args.context,
+                prepareStartAction: input.prepareStartAction });
         }
 
         return disabledResult('local_services_runtime_action_unbacked');

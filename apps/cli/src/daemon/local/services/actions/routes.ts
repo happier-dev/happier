@@ -7,13 +7,20 @@ import type {
 import {
     executeLocalServiceAction,
     type ResolvedLocalServiceActionTarget,
+    type LocalServiceActionExecutionContext,
+    type RestartProjectManagedService,
+    type LocalServiceActionExecutionOutcome,
 } from './executor';
 import { resolveLocalServiceActionEligibility } from './policy';
 import type { TerminateDetectedService } from './terminate';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
+import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import type { LocalServiceLauncherHistoryStore } from '../launch/leaves';
+
+type ManagedServicesOwner = ReturnType<typeof createManagedServicesOwner>;
 
 export type LocalServiceActionRoutes = Readonly<{
-    execute(request: LocalServiceActionRequestV1): Promise<LocalServiceActionResultV1>;
+    execute(request: LocalServiceActionRequestV1, execution?: LocalServiceActionExecutionContext): Promise<LocalServiceActionResultV1>;
 }>;
 
 function createAuditEvent(input: Readonly<{
@@ -56,6 +63,7 @@ function executionResult(input: Readonly<{
     reasonCode?: string;
     undoKey?: string;
     confirmed: boolean;
+    review?: Extract<LocalServiceActionExecutionOutcome, { reasonCode: string }>;
 }>): LocalServiceActionResultV1 {
     const auditEvents = [
         createAuditEvent({
@@ -88,6 +96,8 @@ function executionResult(input: Readonly<{
         ...(input.undoKey ? { undoKey: input.undoKey } : {}),
         ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
         auditEvents,
+        ...(input.review?.reviewedEffect !== undefined ? { reviewedEffect: input.review.reviewedEffect } : {}),
+        ...(input.review?.reviewedEffectDigest ? { reviewedEffectDigest: input.review.reviewedEffectDigest } : {}),
     };
 }
 
@@ -95,6 +105,7 @@ function resolveActionTarget(input: Readonly<{
     request: LocalServiceActionRequestV1;
     machineId: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
+    projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'>;
 }>): ResolvedLocalServiceActionTarget | Readonly<{ reasonCode: string }> {
     const target = input.request.target;
     if (target.machineId !== input.machineId) {
@@ -110,16 +121,17 @@ function resolveActionTarget(input: Readonly<{
             : { reasonCode: 'unknown_inventory_entry' };
     }
 
-    // The protocol still carries a `managed_service` target arm, but the managed local-service
-    // runtime that could answer it was removed with its producerless registry (RU2 surfaces
-    // finalization, DEC-6). No managed service exists on any machine, so the resolution is
-    // constant. Removal condition: drop the arm with the next plugin-SDK contraction.
-    return { reasonCode: 'unknown_managed_service' };
+    const resolved = input.projectManagedServices?.resolveProjectService(target);
+    return resolved?.status === 'found' ? { kind: 'managed_service', handle: resolved.handle }
+        : { reasonCode: resolved?.status === 'mismatch' ? 'managed_service_target_mismatch' : 'unknown_managed_service' };
 }
 
 export function createLocalServiceActionRoutes(input: Readonly<{
     machineId: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
+    projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'>;
+    launcherHistory?: LocalServiceLauncherHistoryStore;
+    restartManagedService?: RestartProjectManagedService;
     terminateEnabled?: () => boolean;
     verifyConfirmationNonce?: (request: LocalServiceActionRequestV1) => boolean;
     terminateDetectedService?: TerminateDetectedService;
@@ -127,7 +139,7 @@ export function createLocalServiceActionRoutes(input: Readonly<{
 }>): LocalServiceActionRoutes {
     const now = input.now ?? (() => Date.now());
     return {
-        async execute(request) {
+        async execute(request, execution) {
             const requestedAt = now();
             if (request.undoKey) {
                 if (request.target.machineId !== input.machineId) {
@@ -150,6 +162,7 @@ export function createLocalServiceActionRoutes(input: Readonly<{
                 request,
                 machineId: input.machineId,
                 inventoryRegistry: input.inventoryRegistry,
+                projectManagedServices: input.projectManagedServices,
             });
             if ('reasonCode' in target) {
                 return deniedResult({ request, requestedAt, reasonCode: target.reasonCode });
@@ -159,6 +172,7 @@ export function createLocalServiceActionRoutes(input: Readonly<{
                 action: request.action,
                 target,
                 terminateEnabled: input.terminateEnabled?.() === true,
+                restartAdmitted: Boolean(input.restartManagedService && execution?.ingress && execution.prepareStartAction),
             });
             if (!decision.enabled) {
                 return deniedResult({
@@ -188,12 +202,15 @@ export function createLocalServiceActionRoutes(input: Readonly<{
                 target,
                 inventoryRegistry: input.inventoryRegistry,
                 terminateDetectedService: input.terminateDetectedService,
+                launcherHistory: input.launcherHistory,
+                restartManagedService: input.restartManagedService,
+                execution,
                 now: requestedAt,
             });
             return executionResult({
                 request,
                 status: outcome.status,
-                ...(outcome.status === 'succeeded' ? {} : { reasonCode: outcome.reasonCode }),
+                ...(outcome.status === 'succeeded' ? {} : { reasonCode: outcome.reasonCode, review: outcome }),
                 ...(outcome.status === 'succeeded' && outcome.undoKey ? { undoKey: outcome.undoKey } : {}),
                 requestedAt,
                 confirmed: decision.requiresConfirmation,
