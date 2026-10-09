@@ -15,7 +15,7 @@ import {
  * only what it owns: how to read its target and how to mark its own rows stale.
  *
  * The lifecycle is deliberately small — observation counting, single flight, one
- * coalesced trailing reload, and one refcounted lifecycle subscription pair. There is no cursor,
+ * coalesced trailing reload, captured-Account cleanup, and one refcounted lifecycle subscription pair. There is no cursor,
  * replay, generation, ordering machinery, second socket or polling timer.
  */
 
@@ -43,11 +43,28 @@ export type ScopedSnapshotLoadContext = Readonly<{
      * its answer useful for continuity only; the queued read is authoritative.
      */
     isCurrent: () => boolean;
+    /** Publishes a checked read before its retained cleanup, without late obsolete publication. */
+    readWithMaintenance: <TProjection>(input: Readonly<{
+        read: (publication: ScopedSnapshotReadPublication<TProjection>) => Promise<TProjection>;
+        publish: (projection: TProjection, current: boolean) => void;
+        getPublication: () => unknown;
+    }>) => Promise<void | ScopedSnapshotLoadMaintenance>;
+}>;
+
+export type ScopedSnapshotReadPublication<TProjection> = Readonly<{
+    onReady: (projection: TProjection, isAccountCurrent: () => boolean) => void;
+    hasPendingCleanup: () => boolean;
+}>;
+
+export type ScopedSnapshotLoadMaintenance = Readonly<{
+    /** The reader retains and disposes its captured Account until cleanup settles. */
+    maintenance: Promise<void>;
+    isMaintenanceCurrent: () => boolean;
 }>;
 
 export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(params: Readonly<{
     /** Reads the target and publishes the outcome into the domain's store. */
-    load: (target: TTarget, context: ScopedSnapshotLoadContext) => Promise<void>;
+    load: (target: TTarget, context: ScopedSnapshotLoadContext) => Promise<void | ScopedSnapshotLoadMaintenance>;
     /**
      * Whether a newly observed target needs a read. The domain decides this from
      * its own store during one uninterrupted observation period. Returning
@@ -68,6 +85,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
 }>): ScopedSnapshotLoader<TTarget> {
     const observed = new Map<string, { target: TTarget; count: number }>();
     const inFlight = new Map<string, Promise<void>>();
+    const maintenance = new Map<string, { result: ScopedSnapshotLoadMaintenance; reloadAfterMaintenance: boolean }>();
     /**
      * A target that crossed zero observers cannot remain trusted as current:
      * the wake subscription is deliberately absent during that interval. Keep
@@ -97,12 +115,55 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
                     try {
                         // Enter the load through a microtask so `inFlight` is registered before a
                         // domain reader can either resolve or throw synchronously.
-                        await Promise.resolve().then(async () => await params.load(target, {
-                            isCurrent: () => (
-                                !reloadAfterInFlight.has(target.key)
-                                && !revalidateOnNextObserve.has(target.key)
-                            ),
+                        const isCurrent = () => !reloadAfterInFlight.has(target.key) && !revalidateOnNextObserve.has(target.key);
+                        // Only cleanup that preceded this read can suppress it. After
+                        // publication the live map may contain this read's own cleanup.
+                        const incumbentMaintenance = maintenance.get(target.key);
+                        const hasPendingMaintenance = () => {
+                            const incumbent = incumbentMaintenance;
+                            if (incumbent?.result.isMaintenanceCurrent() !== true
+                                || maintenance.get(target.key) !== incumbent) return false;
+                            // This read can include newly activated rows or source roots.
+                            // Resume their cleanup after the incumbent settles rather than
+                            // treating its older proof as completion for the newer read.
+                            incumbent.reloadAfterMaintenance = true;
+                            return true;
+                        };
+                        const result = await Promise.resolve().then(async () => await params.load(observed.get(target.key)?.target ?? target, {
+                            isCurrent,
+                            async readWithMaintenance({ read, publish, getPublication }) {
+                                let finishRead!: () => void;
+                                const ready = new Promise<void>(resolve => { finishRead = resolve; });
+                                let capturedCurrent: (() => boolean) | null = null;
+                                let published: unknown;
+                                const completion = read({ hasPendingCleanup: hasPendingMaintenance,
+                                    onReady: (projection, isAccountCurrent) => {
+                                        capturedCurrent = isAccountCurrent;
+                                        publish(projection, isCurrent());
+                                        published = getPublication();
+                                        finishRead();
+                                    },
+                                }).then(projection => {
+                                    if (!capturedCurrent || (capturedCurrent() && published === getPublication())) {
+                                        publish(projection, isCurrent());
+                                    }
+                                });
+                                await Promise.race([ready, completion]);
+                                if (capturedCurrent) return { maintenance: completion, isMaintenanceCurrent: capturedCurrent };
+                            },
                         }));
+                        // A foreground reread can join cleanup already owned by this
+                        // captured Account. Its short completion must not replace the
+                        // original, still-running cleanup promise.
+                        if (result && maintenance.get(target.key)?.result.isMaintenanceCurrent() !== true) {
+                            const entry = { result, reloadAfterMaintenance: false };
+                            maintenance.set(target.key, entry);
+                            void result.maintenance.catch(() => {}).finally(() => {
+                                if (maintenance.get(target.key) !== entry) return;
+                                maintenance.delete(target.key);
+                                if (entry.reloadAfterMaintenance && result.isMaintenanceCurrent()) requestReload(target);
+                            });
+                        }
                     } catch (error) {
                         failure = error;
                     }
@@ -141,6 +202,8 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     }
 
     function invalidate(target: TTarget): Promise<void> {
+        const observedTarget = observed.get(target.key);
+        if (observedTarget) observedTarget.target = target;
         params.invalidateTarget(target);
         const existing = inFlight.get(target.key);
         if (existing) {
@@ -245,6 +308,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
         resetForTests() {
             observed.clear();
             inFlight.clear();
+            maintenance.clear();
             reloadAfterInFlight.clear();
             revalidateOnNextObserve.clear();
             unsubscribeWake?.();

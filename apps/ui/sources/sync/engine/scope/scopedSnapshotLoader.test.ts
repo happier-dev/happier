@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createScopedSnapshotLoader } from './scopedSnapshotLoader';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 
 type HomeCredentialMutationListener = (event: Readonly<{
     kind: 'credentials_set' | 'credentials_removed';
@@ -36,6 +37,83 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
 }));
 
 describe('createScopedSnapshotLoader', () => {
+    it('uses the newly admitted context on the same target trailing read and subsequent wakes', async () => {
+        type Target = Readonly<{ key: string; serverId: string; machineId: string | null }>;
+        const reads: Array<string | null> = [];
+        let releaseInitial!: () => void;
+        const initialRead = new Promise<void>(resolve => { releaseInitial = resolve; });
+        const loader = createScopedSnapshotLoader<Target>({
+            load: async target => {
+                reads.push(target.machineId);
+                if (reads.length === 1) await initialRead;
+            },
+            shouldLoadOnObserve: () => true,
+            invalidateServer: () => {},
+            invalidateTarget: () => {},
+        });
+        const release = loader.observe({ key: 'home:account:purposes', serverId: 'home', machineId: null });
+        try {
+            await vi.waitFor(() => expect(reads).toEqual([null]));
+            const admission = loader.invalidate({ key: 'home:account:purposes', serverId: 'home', machineId: 'selected' });
+            expect(reads).toEqual([null]);
+            releaseInitial();
+            await admission;
+            expect(reads).toEqual([null, 'selected']);
+            publishHomeAccountChange('home');
+            await vi.waitFor(() => expect(reads).toEqual([null, 'selected', 'selected']));
+        } finally {
+            releaseInitial();
+            release();
+            loader.resetForTests();
+        }
+    });
+    it('does not suppress a published MCP read own retained-source maintenance', async () => {
+        const { loadMcpServerCatalogV1 } = await import('@happier-dev/protocol/mcp/servers/serverCatalogV1');
+        let publication: McpServerCatalogSnapshotV1 = { status: 'loading' };
+        let historyCompleted = false;
+        let reads = 0;
+        let releaseCleanup!: () => void;
+        const cleanupAdmission = new Promise<void>(resolve => { releaseCleanup = resolve; });
+        const loader = createScopedSnapshotLoader({
+            load: async (_target, context) => context.readWithMaintenance({
+                read: ({ onReady, hasPendingCleanup }) => loadMcpServerCatalogV1({ mode: 'plain', material: null,
+                    readRow: async () => {
+                        reads += 1;
+                        if (reads > 1) throw new Error('Unexpected HTTP read without external invalidation');
+                        return { status: 'deleted', revision: 4 };
+                    }, hasPendingCleanup,
+                    onReadyBeforeCleanup: async snapshot => {
+                        onReady(snapshot, () => true);
+                        // The captured HTTP reader can resume after its own maintenance
+                        // has been registered, not only in the publication microtask.
+                        await cleanupAdmission;
+                    },
+                    transfer: {
+                        readSourceSnapshot: async () => ({ raw: {}, version: 3 }),
+                        initializeCatalog: async () => { throw new Error('Active row must not initialize'); },
+                        replaceSource: async () => ({ status: 'applied', settingsVersion: 4 }),
+                        normalizeHistory: async () => { historyCompleted = true; return { status: 'complete' }; },
+                    },
+                }),
+                publish: value => { publication = value; },
+                getPublication: () => publication,
+            }),
+            shouldLoadOnObserve: () => true,
+            invalidateServer: () => {},
+            invalidateTarget: () => {},
+        });
+        try {
+            await loader.refresh({ key: 'mcp:home-account', serverId: 'home' });
+            expect(publication).toMatchObject({ status: 'ready', authority: 'active', revision: 4 });
+            releaseCleanup();
+            await vi.waitFor(() => expect(publication).toMatchObject({ cleanup: { status: 'complete' } }));
+            expect(historyCompleted).toBe(true);
+            expect(reads).toBe(1);
+        } finally {
+            releaseCleanup();
+            loader.resetForTests();
+        }
+    });
     it('shares one refcounted Account-change and credential observer across concurrent consumers', async () => {
         credentialBoundary.listener = null;
         credentialBoundary.subscriptions = 0;
