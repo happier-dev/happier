@@ -8,18 +8,18 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resolveAccountSettingsCachePath } from '@/settings/accountSettings/accountSettingsCache';
 
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 
 // Only true boundaries are simulated: the Home HTTP transport, the stored
 // credential file and the Home features read. The catalog refresh, its
 // admission decision and the MCP materializer all run for real.
-vi.mock('axios', () => ({ default: { get: vi.fn() } }));
+vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), isAxiosError: () => false } }));
 const persistence = vi.hoisted(() => ({ readStoredCredentials: vi.fn() }));
 vi.mock('@/persistence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/persistence')>(),
@@ -35,15 +35,13 @@ vi.mock('@/features/serverFeaturesClient', () => ({
   })),
 }));
 
-type BootstrapResult = Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>;
-
 describe('rpcHandlers.mcpServers (shared Saved Secret admission)', () => {
   beforeEach(() => {
-    resetActiveAccountSettingsSnapshotForTests();
+    resetInMemoryAccountSettingsContextForTests();
     vi.mocked(axios.get).mockReset();
   });
   afterEach(() => {
-    resetActiveAccountSettingsSnapshotForTests();
+    resetInMemoryAccountSettingsContextForTests();
   });
 
   it('refuses a Machine MCP Test whose shared secret the Home revoked after a missed change hint', async () => {
@@ -79,7 +77,20 @@ describe('rpcHandlers.mcpServers (shared Saved Secret admission)', () => {
     });
     persistence.readStoredCredentials.mockResolvedValue({ token, encryption: null });
     // The Home's current authorized answer no longer contains the resource.
-    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [] } });
+    let observedRevokedCatalog = false;
+    vi.mocked(axios.get).mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/saved-secrets/resources/materials') {
+        observedRevokedCatalog = true;
+        return { status: 200, data: { resources: [] } };
+      }
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0,
+      } };
+      if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      // Unrelated optional history maintenance is unavailable in this fixture.
+      throw new Error(`History transport unavailable: ${path}`);
+    });
     const probeMcpStdioServerTools = vi.fn(async () => [{ name: 'echo' }]);
     const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
 
@@ -90,16 +101,13 @@ describe('rpcHandlers.mcpServers (shared Saved Secret admission)', () => {
         },
       } as never,
       deps: {
-        readCredentials: async () => ({ token, encryption: null }) as never,
-        bootstrapAccountSettingsContext: async () => ({
-          source: 'remote',
-          settings,
-          settingsVersion: 1,
-          loadedAtMs: 0,
-          whenRefreshed: null,
-          savedSecretResources: [staleResource],
-          savedSecretCatalogState: 'ready',
-        }) as unknown as BootstrapResult,
+        readCredentials: async () => ({ token, encryption: null }),
+        bootstrapAccountSettingsContext: input => bootstrapAccountSettingsContext({ ...input,
+          honorAccountSettingsModeEnv: false, deps: { resolveCachePath: resolveAccountSettingsCachePath,
+            readCache: async () => null, writeCache: async () => undefined,
+            fetchFromServer: async () => ({ settingsVersion: 1, settingsContent: { t: 'plain', v: {} } }),
+          },
+        }),
         probeMcpStdioServerTools,
       },
     });
@@ -126,6 +134,6 @@ describe('rpcHandlers.mcpServers (shared Saved Secret admission)', () => {
     expect(out).toMatchObject({ ok: false, errorCode: 'materialization_failed' });
     // The revoked value never reached the MCP server.
     expect(probeMcpStdioServerTools).not.toHaveBeenCalled();
-    expect(axios.get).toHaveBeenCalledTimes(1);
+    expect(observedRevokedCatalog).toBe(true);
   });
 });

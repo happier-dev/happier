@@ -3,22 +3,21 @@ import { randomUUID } from 'node:crypto';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonMcpServersDetectRequestSchema, DaemonMcpServersTestRequestSchema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import { DaemonMcpServersPreviewRequestSchema } from '@happier-dev/protocol/mcp/servers/previewV1';
-import type { DaemonMcpServersPreviewResponse, DaemonMcpServersTestErrorCode, DaemonMcpServersDetectResponse, DaemonMcpServersDetectWarningV1, DaemonMcpServersTestRequest, DaemonMcpServersTestResponse, McpServerBindingV1, McpServerCatalogEntryV1, McpServersSettingsV1, ResolveEffectiveServersV1Result } from '@happier-dev/protocol';
-import { isSharedSavedSecretReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { listMcpServerCatalogSavedSecretRefsV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import type { DaemonMcpServersPreviewResponse, DaemonMcpServersTestErrorCode, DaemonMcpServersDetectResponse, DaemonMcpServersDetectWarningV1, DaemonMcpServersTestRequest, DaemonMcpServersTestResponse, McpServerBindingV1, McpServersSettingsV1, ResolveEffectiveServersV1Result } from '@happier-dev/protocol';
 
 import type { McpServerConfig } from '@/agent';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
+import { bootstrapAccountSettingsContext, type AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { loadFreshMcpAccountSettingsContext } from '@/cli/commands/mcp/loadFreshMcpAccountSettingsContext';
+import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { resolveEffectiveMcpServersForDirectory } from '@/mcp/servers/resolveEffectiveMcpServersForDirectory';
-import {
-  deriveSettingsSecretsKeyForCredentials,
-  deriveSettingsSecretsReadKeysForCredentials,
-} from '@/mcp/servers/resolveMcpValueRefPlaintext';
 import { materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpServerConfigRecord';
-import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
-import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
+import { createInvocationSavedSecretOperationContextV1, refreshSavedSecretCatalogForOperation, type SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { probeMcpStdioServerTools } from '@/mcp/servers/probeMcpStdioServerTools';
 import { redactMcpServerProbeError } from '@/mcp/servers/redactMcpServerProbeError';
 import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProviderMcpServers';
@@ -45,29 +44,9 @@ function implicitBindingForMachine(params: Readonly<{ serverId: string; machineI
   };
 }
 
-/**
- * The shared Saved Secret references this test would materialize. A test is a
- * new operation, so these are admitted against the Home's current catalog
- * before use rather than read from a snapshot a missed change hint left behind.
- */
-function listTestSharedSavedSecretReferences(resolved: ResolveEffectiveServersV1Result): Array<{ ref: string }> {
-  const refs = new Set<string>();
-  for (const item of Object.values(resolved.serversByName)) {
-    if (item.enabled !== true) continue;
-    const valueRefs = [
-      ...Object.values(item.config.env),
-      ...Object.values(item.config.remote?.headers ?? {}),
-    ];
-    for (const valueRef of valueRefs) {
-      if (valueRef.t === 'savedSecret' && isSharedSavedSecretReferenceV1(valueRef.secretId)) refs.add(valueRef.secretId);
-    }
-  }
-  return [...refs].map((ref) => ({ ref }));
-}
-
 function resolveServerForTestRequest(params: Readonly<{
   request: DaemonMcpServersTestRequest;
-  accountMcpSettings: McpServersSettingsV1;
+  accountMcpSettings?: McpServersSettingsV1;
 }>): { ok: true; serverName: string; resolved: ResolveEffectiveServersV1Result } | { ok: false; errorCode: DaemonMcpServersTestErrorCode; error: string } {
   const req = params.request;
 
@@ -103,11 +82,13 @@ function resolveServerForTestRequest(params: Readonly<{
     return { ok: true, serverName: req.server.name, resolved: { directory: req.directory, strictMode: true, serversByName: { [req.server.name]: item } } };
   }
 
-  const server = params.accountMcpSettings.servers.find((s) => s.id === req.serverId) ?? null;
+  const accountMcpSettings = params.accountMcpSettings;
+  if (!accountMcpSettings) return { ok: false, errorCode: 'materialization_failed', error: 'mcp_catalog_unavailable' };
+  const server = accountMcpSettings.servers.find((s) => s.id === req.serverId) ?? null;
   if (!server) return { ok: false, errorCode: 'server_not_found', error: 'Server id not found.' };
 
   if (req.bindingId) {
-    const binding = params.accountMcpSettings.bindings.find((b) => b.id === req.bindingId) ?? null;
+    const binding = accountMcpSettings.bindings.find((b) => b.id === req.bindingId) ?? null;
     if (!binding) return { ok: false, errorCode: 'binding_not_found', error: 'Binding id not found.' };
     if (binding.serverId !== server.id) {
       return { ok: false, errorCode: 'binding_not_found', error: 'Binding does not belong to the selected server.' };
@@ -130,7 +111,7 @@ function resolveServerForTestRequest(params: Readonly<{
   }
 
   const resolved = resolveEffectiveMcpServersForDirectory({
-    settings: params.accountMcpSettings,
+    settings: accountMcpSettings,
     machineId: req.machineId,
     directory: req.directory,
   });
@@ -174,57 +155,66 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
         return { ok: false, errorCode: 'missing_credentials', error: 'missing_credentials', durationMs };
       }
 
-      const accountSettingsContext = await bootstrapAccountSettingsContextImpl({
-        credentials,
-        mode: 'blocking',
-        refresh: 'force',
-      }).catch(() => null);
-
-      const settingsObj = accountSettingsContext?.settings ?? {};
-      const accountMcpSettings = readMcpServersSettingsFromAccountSettings(settingsObj);
-
-      const resolution = resolveServerForTestRequest({ request: parsed.data as DaemonMcpServersTestRequest, accountMcpSettings });
+      let accountSettingsContext: AccountSettingsContext;
+      let resolution: ReturnType<typeof resolveServerForTestRequest>;
+      let operationContext: SavedSecretOperationContextV1 | null = null;
+      try {
+        // A complete caller-owned draft does not depend on stored MCP facts.
+        // Stored ids must capture the current admitted Account catalog.
+        if (parsed.data.t === 'draft') {
+          accountSettingsContext = await bootstrapAccountSettingsContextImpl({ credentials, mode: 'blocking', refresh: 'force' });
+        } else {
+          const captured = await loadFreshMcpAccountSettingsContext(credentials, { bootstrapAccountSettingsContext: bootstrapAccountSettingsContextImpl });
+          accountSettingsContext = captured;
+          operationContext = captured.operationContext;
+          if (!await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
+        }
+        resolution = resolveServerForTestRequest({ request: parsed.data,
+          ...(parsed.data.t === 'draft' ? {} : { accountMcpSettings: readMcpServersSettingsFromAccountSettings(accountSettingsContext) }) });
+      } catch (error) {
+        return { ok: false, errorCode: 'materialization_failed', error: redactErrorText(error),
+          durationMs: Math.max(0, nowMs(params.deps?.nowMs) - startedAt) };
+      }
       if (!resolution.ok) {
         const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
         return { ok: false, errorCode: resolution.errorCode, error: resolution.error, durationMs };
       }
 
-      const settingsSecretsKey = credentials.encryption
-        ? deriveSettingsSecretsKeyForCredentials(credentials)
-        : null;
-      const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(credentials);
-      let sharedCatalog = {
-        resources: accountSettingsContext?.savedSecretResources,
-        state: accountSettingsContext?.savedSecretCatalogState,
-      };
-      const sharedReferences = listTestSharedSavedSecretReferences(resolution.resolved);
-      if (sharedReferences.length > 0) {
+      let materialSnapshot: ActiveAccountSettingsSnapshot = accountSettingsContext;
+      const references = [...new Set(listMcpServerCatalogSavedSecretRefsV1({ v: 1, bindings: [],
+        servers: Object.values(resolution.resolved.serversByName).filter(server => server.enabled === true).map(server => server.config),
+      }).map(ref => ref.secretId))].map(ref => ({ ref }));
+      if (references.length > 0 || parsed.data.t === 'byId') {
         try {
-          const admitted = await refreshSavedSecretCatalogForOperation({
-            expectedScopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
-            references: sharedReferences,
-          });
-          sharedCatalog = { resources: admitted.savedSecretResources, state: admitted.savedSecretCatalogState };
+          const scopeKey = resolveAccountSettingsScopeKeyForToken(credentials.token);
+          if (!operationContext) {
+            const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+            operationContext = createInvocationSavedSecretOperationContextV1({ credentials, snapshot: accountSettingsContext,
+              serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+              isCurrent: async () => getActiveAccountSettingsSnapshot()?.scopeKey === scopeKey
+                && getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken });
+          }
+          const capturedSnapshot = operationContext.readSnapshot();
+          if (!capturedSnapshot) throw new McpServerCatalogUnavailableError('scope-retired');
+          materialSnapshot = capturedSnapshot;
+          if (references.length > 0) {
+            const admitted = await refreshSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey, references, operationContext });
+            materialSnapshot = admitted;
+          }
         } catch (error) {
           const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
           return { ok: false, errorCode: 'materialization_failed', error: redactErrorText(error), durationMs };
         }
       }
-      const savedSecretMaterializer = createSavedSecretMaterializerV1({
-        accountSettings: settingsObj,
-        settingsSecretsReadKeys,
-        resources: sharedCatalog.resources,
-        resourceCatalogState: sharedCatalog.state,
+      const savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(materialSnapshot, {
+        isCurrent: () => operationContext !== null && operationContext.readSnapshot() === materialSnapshot,
       });
 
       let mcpConfig: { serverName: string; config: McpServerConfig; cleanup: () => void };
       try {
         const materialized = await materializeMcpServerConfigRecord({
           resolved: resolution.resolved,
-          savedSecretsById: new Map(),
           savedSecretMaterializer,
-          settingsSecretsKey,
-          settingsSecretsReadKeys,
           processEnv: depsEnv,
           tmpDir: null,
           strictMode: true,
@@ -234,6 +224,10 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
           materialized.cleanup();
           throw new Error('materialize_missing_config');
         }
+        if (operationContext && !await operationContext.isCurrent()) {
+          materialized.cleanup();
+          throw new McpServerCatalogUnavailableError('scope-retired');
+        }
         mcpConfig = { serverName: resolution.serverName, config, cleanup: materialized.cleanup };
       } catch (error) {
         const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
@@ -242,6 +236,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
 
       try {
         const tools = await probeMcpStdioServerToolsImpl({ config: mcpConfig.config, baseEnv: depsEnv });
+        if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
         const toolNames = tools.map((t) => t.name);
         const durationMs = Math.max(0, nowMs(params.deps?.nowMs) - startedAt);
         return {
@@ -307,18 +302,17 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
       }
 
       try {
-        const accountSettingsContext = await bootstrapAccountSettingsContextImpl({
-          credentials,
-          mode: 'blocking',
-          refresh: 'force',
+        const accountSettingsContext = await loadFreshMcpAccountSettingsContext(credentials, {
+          bootstrapAccountSettingsContext: bootstrapAccountSettingsContextImpl,
         });
-        const settingsObj = accountSettingsContext?.settings ?? {};
-        const accountMcpSettings = readMcpServersSettingsFromAccountSettings(settingsObj);
+        const accountMcpSettings = readMcpServersSettingsFromAccountSettings(accountSettingsContext);
+        const operationContext = accountSettingsContext.operationContext;
         const detected = await detectProviderMcpServersImpl({
           directory: parsed.data.directory,
           providers: undefined,
           env: depsEnv,
         });
+        if (!await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
 
         return resolveSessionMcpPreview({
           settings: accountMcpSettings,
