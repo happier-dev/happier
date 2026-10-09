@@ -4,6 +4,8 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -44,12 +46,19 @@ export function buildAgentAuthoringSessionSeed(input: Readonly<{
 export function useOpenAgentAuthoringSession(target: Readonly<{ serverId: string; machineId: string }> | null) {
     const router = useRouter();
     const scope = useActiveServerAccountScope();
+    const currentRef = React.useRef({ scope, target });
+    currentRef.current = { scope, target };
     return React.useCallback((intent: AgentAuthoringIntent) => {
         if (!scope) return;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, scope)) return;
         seedAndOpenNewSession({
             seed: buildAgentAuthoringSessionSeed({ intent, target }),
             scope,
-            isCurrent: () => true,
+            isCurrent: () => lifetime.isCurrent()
+                && areServerAccountScopesEqual(currentRef.current.scope, scope)
+                && currentRef.current.target?.serverId === target?.serverId
+                && currentRef.current.target?.machineId === target?.machineId,
             navigateToNewSession: ({ draftId, machineId, directory, spawnServerId, worktree }) => {
                 const result = runGuardedNavigation(() => router.push({
                     pathname: '/new',

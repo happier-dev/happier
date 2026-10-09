@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import { seedNewSessionDraftV1 } from '@/components/sessions/new/newSessionDraftSeed';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * Opens the ordinary New Session composer on the exact selected administration
@@ -24,11 +26,15 @@ export function usePluginAuthoringSession(params: Readonly<{
     const router = useRouter();
     const activeAccountScope = useActiveServerAccountScope();
     const { serverId, machineId } = params;
+    const currentRef = React.useRef({ scope: activeAccountScope, serverId, machineId });
+    currentRef.current = { scope: activeAccountScope, serverId, machineId };
     return React.useCallback((request: Readonly<{ sessionDirectory: string; promptText: string }>) => {
         if (!activeAccountScope || !serverId || !machineId) return;
-        const draftId = seedNewSessionDraftV1({
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, activeAccountScope)) return;
+        seedAndOpenNewSession({
             seed: {
-                prompt: { text: request.promptText, mode: 'replace' },
+                prompt: request.promptText,
                 placement: {
                     kind: 'exactTarget',
                     serverId,
@@ -37,8 +43,13 @@ export function usePluginAuthoringSession(params: Readonly<{
                 },
             },
             scope: activeAccountScope,
+            isCurrent: () => lifetime.isCurrent()
+                && areServerAccountScopesEqual(currentRef.current.scope, activeAccountScope)
+                && currentRef.current.serverId === serverId
+                && currentRef.current.machineId === machineId,
+            navigateToNewSession: ({ draftId }) => {
+                router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) });
+            },
         });
-        if (!draftId) return;
-        router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) });
     }, [activeAccountScope, machineId, router, serverId]);
 }

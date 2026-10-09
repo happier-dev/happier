@@ -1,7 +1,8 @@
 import type { Router } from 'expo-router';
 
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 export type SourceControlBranchMenuMachineTarget = Readonly<{
     machineId: string;
@@ -31,15 +32,21 @@ export async function handleSourceControlBranchMenuSelect(input: Readonly<{
     }
     if (itemId === 'worktree:create-from-another-branch') {
         input.closeMenu();
-        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
-        input.router.push({
-            pathname: '/new',
-            params: buildNewSessionLaunchRouteParams({
-                draftId,
-                directory: input.directoryFallback,
-                machineId: input.machineTarget?.machineId ?? null,
-                targetServerId: input.targetServerId,
-                worktree: 'new',
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return;
+        seedAndOpenNewSession({
+            seed: {
+                placement: input.machineTarget?.machineId
+                    ? { kind: 'exactTarget', serverId: input.targetServerId || lifetime.scope.serverId,
+                        machineId: input.machineTarget.machineId, ...(input.directoryFallback ? { directory: input.directoryFallback } : {}) }
+                    : { kind: 'currentTarget', ...(input.directoryFallback ? { directory: input.directoryFallback } : {}) },
+                checkoutIntent: 'createWorktree',
+            },
+            scope: lifetime.scope,
+            isCurrent: lifetime.isCurrent,
+            navigateToNewSession: ({ draftId, worktree }) => input.router.push({
+                pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId, worktree,
+                    ...(!input.machineTarget?.machineId ? { targetServerId: input.targetServerId } : {}) }),
             }),
         });
         return;

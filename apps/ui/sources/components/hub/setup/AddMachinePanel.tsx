@@ -2,8 +2,9 @@ import * as React from 'react';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MachineAddForm } from '@/components/machines/add/MachineAddForm';
-import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -22,11 +23,16 @@ export const AddMachinePanel = React.memo(function AddMachinePanel(props: Readon
         if (result !== true) fireAndForget(result, { tag });
     }, [router]);
     const startSession = React.useCallback((machine: Readonly<{ machineId: string; serverId: string }>) => {
-        const { draftId } = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined });
-        navigate({
-            pathname: '/new',
-            params: buildNewSessionLaunchRouteParams({ draftId, machineId: machine.machineId, targetServerId: machine.serverId }),
-        }, 'AddMachinePanel.startSession');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return;
+        seedAndOpenNewSession({
+            seed: { placement: { kind: 'exactTarget', serverId: machine.serverId, machineId: machine.machineId } },
+            scope: lifetime.scope,
+            isCurrent: lifetime.isCurrent,
+            navigateToNewSession: ({ draftId }) => navigate({
+                pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }),
+            }, 'AddMachinePanel.startSession'),
+        });
     }, [navigate]);
     const newPool = React.useCallback(() => navigate('/settings/machines/pools/new', 'AddMachinePanel.newPool'), [navigate]);
 

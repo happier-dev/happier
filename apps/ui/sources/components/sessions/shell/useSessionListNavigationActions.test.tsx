@@ -1,27 +1,29 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit';
-import { clearTempData, peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
-import { createUseLocalSettingMock, createUseSettingMock } from '@/dev/testkit/mocks/storage';
-import type { ProjectMobileSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { createMachineFixture, createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { clearTempData } from '@/utils/sessions/tempDataStore';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol';
+import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
+import type { ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { SESSION_CONFIG_OPTION_OVERRIDES_KEY, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
+import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
+let serverIdA: string;
+let serverIdB: string;
+let rows: ProjectAccountRowV1[] = [];
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const openUniversalSearchSpy = vi.hoisted(() => vi.fn());
-const rememberLastProjectSessionSelections = vi.hoisted(() => ({ value: true }));
-const sessionById = vi.hoisted(() => ({ value: {} as Record<string, any> }));
-const projectOpenState = vi.hoisted((): {
-    workspaceRefs: WorkspaceRefV1[];
-    mobileSurfaces: Record<string, ProjectMobileSurface>;
-    activeRootPaths: Record<string, string>;
-    worktreeIds: Record<string, string>;
-} => ({
-    workspaceRefs: [],
-    mobileSurfaces: {},
-    activeRootPaths: {},
-    worktreeIds: {},
-}));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -32,142 +34,102 @@ vi.mock('expo-router', async () => {
     }).module;
 });
 
-vi.mock('@/utils/platform/responsive', () => ({ useDeviceType: () => 'phone' }));
-
-vi.mock('@/components/workspaceCockpit/useMobileWorkspaceExperienceState', () => ({
-    useMobileWorkspaceExperienceState: () => ({ cockpitEnabled: true }),
-}));
-
-vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
-    useOptionalAppPaneContext: () => ({ state: { scopes: {} } }),
-}));
-
-vi.mock('@/components/appShell/search/UniversalSearchRuntimeContext', () => ({
-    useUniversalSearchRuntime: () => ({
-        open: openUniversalSearchSpy,
-        buildCommands: vi.fn(),
-    }),
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    const readStorageState = () => ({
-        sessions: sessionById.value,
-        machines: {
-            machine_target: {
-                id: 'machine_target',
-                active: true,
-                activeAt: 1,
-                metadata: { host: 'target-host' },
-            },
-        },
-    });
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            storage: Object.assign(
-                ((selector?: (state: any) => unknown) => {
-                    const state = readStorageState();
-                    return typeof selector === 'function' ? selector(state) : state;
-                }) as any,
-                {
-                    getState: readStorageState,
-                    getInitialState: readStorageState,
-                    setState: () => undefined,
-                    subscribe: () => () => undefined,
-                    destroy: () => undefined,
-                },
-            ),
-            useSetting: createUseSettingMock({ fallback: (name) => {
-                if (name === 'rememberLastProjectSessionSelections') {
-                    return rememberLastProjectSessionSelections.value;
-                }
-                if (name === 'workspaceRefsV1') {
-                    return projectOpenState.workspaceRefs;
-                }
-                return undefined;
-            } }),
-            useLocalSetting: createUseLocalSettingMock({ fallback: (name) => (
-                name === 'projectLastActiveRootPathByWorkspaceRefId'
-                    ? projectOpenState.activeRootPaths
-                    : name === 'projectLastActiveWorktreeIdByWorkspaceRefId'
-                        ? projectOpenState.worktreeIds
-                        : undefined
-            ) }),
-            useProjectLastMobileSurfacesByWorkspaceRefId: () => projectOpenState.mobileSurfaces,
-        },
+vi.mock('react-native', async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    const dimensions = { width: 390, height: 844, scale: 1, fontScale: 1 };
+    return createReactNativeNativeMock({ platformOS: 'ios' }, {
+        useWindowDimensions: () => dimensions, Dimensions: { get: () => dimensions },
     });
 });
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+function SearchWrapper({ children }: React.PropsWithChildren) {
+    return React.createElement(UniversalSearchRuntimeProvider, {
+        value: { open: openUniversalSearchSpy, buildCommands: () => [] },
+    }, children);
+}
+
+const { storage } = await import('@/sync/domains/state/storage');
+await loadSyncSingletonForTests();
 
 describe('useSessionListNavigationActions', () => {
-    beforeEach(() => {
-        routerPushSpy.mockClear();
+    beforeEach(async () => {
+        await loadSyncSingletonForTests();
+        await homes.reset();
+        routerPushSpy.mockReset();
         openUniversalSearchSpy.mockClear();
-        rememberLastProjectSessionSelections.value = true;
-        sessionById.value = {};
-        projectOpenState.workspaceRefs = [];
-        projectOpenState.mobileSurfaces = {};
-        projectOpenState.activeRootPaths = {};
-        projectOpenState.worktreeIds = {};
+        serverIdA = await homes.addHome({ name: 'Session list A', serverUrl: 'https://session-list-a.test', accountId: 'account-a' });
+        serverIdB = await homes.addHome({ name: 'Session list B', serverUrl: 'https://session-list-b.test', accountId: 'account-a', active: false });
+        rows = [];
+        homes.answer(serverIdA, 'POST /v1/account/project-rows/list', { select: () => ({ body: { status: 'listed', coverage: 'complete', rows } }) });
+        homes.answer(serverIdA, '/v2/cursor', { body: { cursor: '0' } });
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://session-list-a.test')!.token! });
+        storage.getState().activateProjectAccountRowsScope({ serverId: serverIdA, accountId: 'account-a' });
+        storage.getState().applySettingsLocal({ rememberLastProjectSessionSelections: true, mobileWorkspaceExperienceV1: 'cockpit' });
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine_target' })], true, { sourceServerId: serverIdA });
+        storage.setState({ sessions: {} });
         clearTempData();
+        resetSessionDraftRepositoryForTests();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await standardCleanup();
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+        await homes.reset();
         clearTempData();
-    });
-
-    it('routes project create-session actions into a prefilled new-session flow', async () => {
-        const { useSessionListNavigationActions } = await import('./useSessionListNavigationActions');
-        const hook = await renderHook(() => useSessionListNavigationActions());
-
-        await act(async () => {
-            hook.getCurrent().handleCreateSessionFromWorkspaceScope({
-                serverId: 'server_a',
-                machineId: 'machine_a',
-                rootPath: '/repo',
-            });
-        });
-
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/new',
-            params: {
-                draftId: expect.any(String),
-                machineId: 'machine_a',
-                directory: '/repo',
-                spawnServerId: 'server_a',
-            },
-        });
-
-        await hook.unmount();
     });
 
     it('opens an existing project through its persisted mobile surface and worktree', async () => {
-        projectOpenState.workspaceRefs = [{
+        const workspaceRefs: WorkspaceRefV1[] = [{
             id: 'wr_1',
-            serverId: 'server_a',
+            serverId: serverIdA,
             machineId: 'machine_a',
             rootPath: '/repo',
             label: 'Repo',
             createdAtMs: 1,
-        }];
-        projectOpenState.mobileSurfaces = { wr_1: 'git' };
-        projectOpenState.activeRootPaths = { wr_1: '/repo/.worktrees/feature' };
-        projectOpenState.worktreeIds = { wr_1: 'gitwt_feature' };
-
-        const { useSessionListNavigationActions } = await import('./useSessionListNavigationActions');
-        const hook = await renderHook(() => useSessionListNavigationActions());
-
-        act(() => {
-            hook.getCurrent().handleOpenProject('wr_1');
+        }, { id: 'wr_1', serverId: serverIdB, machineId: 'other-machine', rootPath: '/other', createdAtMs: 1 }];
+        rows = workspaceRefs.map(ref => {
+            const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
+            return { key, revision: 1, content: { t: 'plain' as const, v: { key, value: ref } } };
+        });
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const census = await createDefaultActionExecutor().execute('projects.list', { serverId: serverIdA });
+        expect(census, JSON.stringify(census)).toMatchObject({ ok: true });
+        expect(storage.getState().projectAccountRows?.workspaceRefs, JSON.stringify({ census,
+            profileScope: storage.getState().profileScope, snapshot: storage.getState().projectAccountRows })).toHaveLength(workspaceRefs.length);
+        const key = `project-selection:v1:${JSON.stringify([serverIdA, 'wr_1'])}`;
+        storage.getState().applyLocalSettings({
+            projectLastMobileSurfaceByWorkspaceRefId: { [buildRealmQualifiedMobileSurfaceStorageKey('project', { serverId: serverIdA, accountId: 'account-a' }, 'wr_1')!]: 'changes' },
+            projectLastActiveRootPathByWorkspaceRefId: { [key]: '/repo/.worktrees/feature' },
+            projectLastActiveWorktreeIdByWorkspaceRefId: { [key]: 'gitwt_feature' },
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/projects/wr_1/git?worktreeId=gitwt_feature');
+        const { useSessionListNavigationActions } = await import('./useSessionListNavigationActions');
+        const hook = await renderHook(() => useSessionListNavigationActions(), { wrapper: SearchWrapper });
+
+        act(() => {
+            hook.getCurrent().handleOpenProject('wr_1', serverIdA);
+        });
+
+        const href = new URL(routerPushSpy.mock.calls[0][0], 'https://happier.invalid');
+        expect(href.pathname).toBe('/projects/wr_1/changes');
+        expect(Object.fromEntries(href.searchParams)).toMatchObject({ serverId: serverIdA, worktreeId: 'gitwt_feature' });
         await hook.unmount();
     });
 
-    it('uses the latest project session configuration when the remember setting is enabled', async () => {
-        sessionById.value = {
-            seed_sess: {
+    it.each([
+        { navigationRefused: false, managed: false },
+        { navigationRefused: true, managed: false },
+        { navigationRefused: true, managed: true },
+    ])('retains remembered configuration durably (navigation refused: $navigationRefused, managed: $managed)', async ({ navigationRefused, managed }) => {
+        if (navigationRefused) routerPushSpy.mockImplementation(() => { throw new Error('Navigation unavailable'); });
+        storage.setState({ sessions: {
+            seed_sess: createSessionFixture({
                 id: 'seed_sess',
                 seq: 1,
                 createdAt: 1,
@@ -182,6 +144,7 @@ describe('useSessionListNavigationActions', () => {
                 presence: 'online',
                 encryptionMode: 'plain',
                 metadata: {
+                    host: 'source-host',
                     machineId: 'machine-source',
                     path: '/old/repo',
                     flavor: 'codex',
@@ -189,7 +152,11 @@ describe('useSessionListNavigationActions', () => {
                     profileId: 'profile-1',
                     transcriptStorage: 'direct',
                     codexBackendMode: 'appServer',
-                    sessionModeOverrideV1: {
+                    runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } },
+                    mcpSelectionV1: { v: 1, managedServersEnabled: false, forceIncludeServerIds: ['portable'], forceExcludeServerIds: [] },
+                    connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
+                    [SESSION_CONFIG_OPTION_OVERRIDES_KEY]: { v: 1, updatedAt: 101, overrides: { effort: { updatedAt: 101, value: 'high' } } },
+                    [SESSION_MODE_OVERRIDE_KEY]: {
                         v: 1,
                         updatedAt: 100,
                         modeId: 'plan',
@@ -199,43 +166,35 @@ describe('useSessionListNavigationActions', () => {
                 permissionModeUpdatedAt: 101,
                 modelMode: 'gpt-5',
                 modelModeUpdatedAt: 102,
-            },
-        };
+            }),
+        } });
 
         const { useSessionListNavigationActions } = await import('./useSessionListNavigationActions');
-        const hook = await renderHook(() => useSessionListNavigationActions());
+        const hook = await renderHook(() => useSessionListNavigationActions(), { wrapper: SearchWrapper });
 
         await act(async () => {
-            (hook.getCurrent().handleCreateSessionFromWorkspaceScope as any)({
-                serverId: 'server_a',
-                machineId: 'machine_target',
-                rootPath: '/repo',
-            }, { seedSessionId: 'seed_sess' });
+            expect(storage.getState().settings.rememberLastProjectSessionSelections).toBe(true);
+            expect(storage.getState().sessions.seed_sess?.metadata?.profileId).toBe('profile-1');
+            hook.getCurrent().handleCreateSessionFromWorkspaceScope(managed
+                ? { kind: 'managed', serverId: serverIdA, machineId: 'machine_target' }
+                : { serverId: serverIdA, machineId: 'machine_target', rootPath: '/repo' },
+            { seedSessionId: 'seed_sess' });
         });
 
-        const pushArg = routerPushSpy.mock.calls[0]?.[0] as any;
-        expect(pushArg).toEqual({
-            pathname: '/new',
-            params: {
-                dataId: expect.any(String),
-                draftId: expect.any(String),
-                machineId: 'machine_target',
-                directory: '/repo',
-                spawnServerId: 'server_a',
-            },
-        });
-        const tempData = peekTempData<NewSessionData>(pushArg.params.dataId);
-        expect(tempData).toEqual(expect.objectContaining({
-            prompt: '',
-            replacePersistedDraftSelections: true,
-            machineId: 'machine_target',
-            directory: '/repo',
+        const pushArg = routerPushSpy.mock.calls[0]?.[0];
+        expect(pushArg.params.dataId).toBeUndefined();
+        resetSessionDraftRepositoryForTests();
+        const draft = readNewSessionDraftFromRepository({ scope: { serverId: serverIdA, accountId: 'account-a' }, draftId: pushArg.params.draftId });
+        expect(draft).toEqual(expect.objectContaining({
+            input: '',
+            selectedMachineId: 'machine_target',
+            selectedPath: managed ? null : '/repo',
+            ...(managed ? { directoryKind: 'managed' } : {}),
             agentType: 'codex',
             agentTarget: {
                 kind: 'agent',
                 identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
             },
-            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
             selectedProfileId: 'profile-1',
             transcriptStorage: 'direct',
             permissionMode: 'safe-yolo',
@@ -249,54 +208,28 @@ describe('useSessionListNavigationActions', () => {
                 updatedAt: 102,
             },
             acpSessionModeId: 'plan',
+            sessionConfigOptionOverrides: { v: 1, updatedAt: 101, overrides: { effort: { updatedAt: 101, value: 'high' } } },
+            runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } },
+            mcpSelection: { v: 1, managedServersEnabled: false, forceIncludeServerIds: ['portable'], forceExcludeServerIds: [] },
+            backendNewSessionOptionStateByTargetKey: { 'agent:happier.agent.codex/codex': {
+                connectedServices: { v: 1, bindingsByServiceId: { github: { source: 'connected' } } },
+            } },
         }));
 
         await hook.unmount();
     });
 
-    it('starts a project session from the canonical Session control path', async () => {
-        rememberLastProjectSessionSelections.value = false;
-        sessionById.value = {
-            seed_sess: {
-                id: 'seed_sess',
-                active: false,
-                metadataLayoutVersion: 1,
-                metadata: {},
-                ownerMetadataView: {
-                    machineId: 'machine_target',
-                    path: '/home/coder/repo',
-                    sessionWorkspaceLocationV1: {
-                        v: 1,
-                        machineId: 'machine_target',
-                        agentPath: '/home/coder/repo',
-                        machinePath: '/Users/alice/repo',
-                    },
-                },
-            },
-        };
-
+    it('retains a durable no-folder Machine draft when navigation fails', async () => {
+        routerPushSpy.mockImplementation(() => { throw new Error('Navigation unavailable'); });
         const { useSessionListNavigationActions } = await import('./useSessionListNavigationActions');
-        const hook = await renderHook(() => useSessionListNavigationActions());
-
-        await act(async () => {
-            hook.getCurrent().handleCreateSessionFromWorkspaceScope({
-                serverId: 'server_a',
-                machineId: 'machine_target',
-                rootPath: '/home/coder/repo',
-            }, { seedSessionId: 'seed_sess' });
-        });
-
-        expect(routerPushSpy).toHaveBeenCalledWith({
-            pathname: '/new',
-            params: {
-                draftId: expect.any(String),
-                machineId: 'machine_target',
-                directory: '/home/coder/repo',
-                spawnServerId: 'server_a',
-            },
-        });
-
-        await hook.unmount();
+        const hook = await renderHook(() => useSessionListNavigationActions(), { wrapper: SearchWrapper });
+        try {
+            expect(() => act(() => hook.getCurrent().handleCreateSessionFromWorkspaceScope({ kind: 'managed', serverId: serverIdA, machineId: 'machine_target' }))).not.toThrow();
+            const route = routerPushSpy.mock.calls[0]?.[0];
+            resetSessionDraftRepositoryForTests();
+            expect(readNewSessionDraftFromRepository({ scope: { serverId: serverIdA, accountId: 'account-a' }, draftId: route.params.draftId }))
+                .toMatchObject({ selectedMachineId: 'machine_target', directoryKind: 'managed', selectedPath: null, targetServerId: serverIdA });
+        } finally { await hook.unmount(); }
     });
 
     it('escalates through the canonical universal Search opener with a normalized query', async () => {
@@ -307,7 +240,7 @@ describe('useSessionListNavigationActions', () => {
             sessionId: null,
             machineId: null,
             rootPath: null,
-        }));
+        }), { wrapper: SearchWrapper });
 
         await act(async () => {
             hook.getCurrent().handleOpenUniversalSearch('  vector  ');

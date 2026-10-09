@@ -16,7 +16,9 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { showSwitchBranchWithChangesDialog } from '@/components/workspaces/scm/branches/SwitchBranchWithChangesDialog';
 import { t } from '@/text';
 import {
@@ -67,6 +69,15 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
     );
     const targetServerId = props.serverId ?? legacyServerId;
     const repoPath = machineTarget?.basePath ?? snapshot?.repo.rootPath ?? null;
+    const shouldContinue = useMountedShouldContinue();
+    const currentTargetRef = React.useRef({ sessionId: props.sessionId, machineTarget, targetServerId });
+    currentTargetRef.current = { sessionId: props.sessionId, machineTarget, targetServerId };
+    const isCurrentDraftTarget = React.useCallback(() => shouldContinue()
+        && currentTargetRef.current.sessionId === props.sessionId
+        && currentTargetRef.current.targetServerId === targetServerId
+        && currentTargetRef.current.machineTarget?.machineId === machineTarget?.machineId
+        && currentTargetRef.current.machineTarget?.basePath === machineTarget?.basePath,
+    [machineTarget?.basePath, machineTarget?.machineId, props.sessionId, shouldContinue, targetServerId]);
 
     const branchSwitchSetting = normalizeBranchSwitchSetting(useSetting('scmUncommittedChangesStrategy'));
     const askBeforeOverwrite = useSetting('scmAskBeforeOverwritingBranchStash') !== false;
@@ -105,18 +116,22 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
         });
     }, [snapshot?.repo.worktrees]);
 
-    const openNewSessionForDirectory = React.useCallback((directory: string) => {
-        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
-        router.push({
-            pathname: '/new',
-            params: buildNewSessionLaunchRouteParams({
-                draftId,
-                directory,
-                machineId: machineTarget?.machineId ?? null,
-                targetServerId,
+    const openNewSessionForDirectory = React.useCallback((directory: string, preparedLifetime?: ActiveServerAccountScopeLifetime) => {
+        const lifetime = preparedLifetime ?? captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return;
+        seedAndOpenNewSession({
+            seed: { placement: machineTarget?.machineId
+                ? { kind: 'exactTarget', serverId: targetServerId || lifetime.scope.serverId,
+                    machineId: machineTarget.machineId, ...(directory ? { directory } : {}) }
+                : { kind: 'currentTarget', ...(directory ? { directory } : {}) } },
+            scope: lifetime.scope,
+            isCurrent: () => lifetime.isCurrent() && isCurrentDraftTarget(),
+            navigateToNewSession: ({ draftId }) => router.push({
+                pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId,
+                    ...(!machineTarget?.machineId ? { targetServerId } : {}) }),
             }),
         });
-    }, [machineTarget?.machineId, router, targetServerId]);
+    }, [isCurrentDraftTarget, machineTarget?.machineId, router, targetServerId]);
 
     const readCachedBranches = React.useCallback(() => {
         return repoScmBranchService.readCachedBranchesForSession({
@@ -271,12 +286,15 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
 
     const createWorktreeFromCurrentBranch = React.useCallback(async () => {
         if (!canCreateWorktrees || !machineTarget || !currentBranch) return;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return;
         const response = await repoScmWorktreeService.createWorktreeForMachinePath({
             machineId: machineTarget.machineId,
             path: machineTarget.basePath,
             baseRef: null,
             ...(targetServerId ? { serverId: targetServerId } : {}),
         });
+        if (!lifetime.isCurrent() || !isCurrentDraftTarget()) return;
         if (!response.success) {
             Modal.alert(t('common.error'), response.error || t('files.branchMenu.worktrees.createFailed'));
             return;
@@ -286,8 +304,8 @@ export function GitBranchButton(props: GitBranchButtonProps): React.ReactElement
             selectedPath: machineTarget.basePath,
             worktreePath: response.worktreePath,
             sourceRootPath: response.sourceRootPath || machineTarget.basePath,
-        }));
-    }, [canCreateWorktrees, closeMenu, currentBranch, machineTarget, openNewSessionForDirectory, targetServerId]);
+        }), lifetime);
+    }, [canCreateWorktrees, closeMenu, currentBranch, isCurrentDraftTarget, machineTarget, openNewSessionForDirectory, targetServerId]);
 
     const pruneWorktrees = React.useCallback(async () => {
         if (!canCreateWorktrees || !machineTarget) return;

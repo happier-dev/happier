@@ -7,6 +7,7 @@ import {
 
 import { createSessionDraftCipher } from './sessionDraftEncryption';
 import { SessionDraftContextUnavailableError } from '@/sync/ops/sessionDrafts/sessionDraftCipherError';
+import { ProjectOpenDraftDocumentV2Schema } from '@happier-dev/protocol/projects/openProjectDraftV1';
 
 const sessionAddress = { kind: 'session', sessionId: 'session-a' } as const;
 const newAddress = { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000001' } as const;
@@ -35,6 +36,19 @@ function document(kind: 'session' | 'newSession'): SessionDraftDocumentV1 {
 }
 
 describe('sessionDraftEncryption', () => {
+    it.each(['plain', 'e2ee'] as const)('keeps agent-free Open under the Account cipher without a Session (%s)', async accountMode => {
+        const cipher = createSessionDraftCipher({ accountMode,
+            accountCryptoMaterial: accountMode === 'plain' ? null : { type: 'dataKey', machineKey: new Uint8Array(32).fill(42) },
+            getSessionContext: () => { throw new Error('Open has no Session cipher'); }, randomBytes: length => new Uint8Array(length) });
+        const field = (value: unknown) => ({ mutationId: '00000000-0000-4000-8000-000000000010', value });
+        const input = { serverId: 'home', machineId: 'machine', source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } };
+        const open = ProjectOpenDraftDocumentV2Schema.parse({ v: 2, target: { kind: 'projectOpen' }, selection: field(input),
+            uncertainInputs: field([input]), result: field({ kind: 'outcomeUnknown' }), retiredAttempt: field(null) });
+        const address = { kind: 'projectOpen' as const, draftId: newAddress.draftId };
+        const envelope = await cipher.seal(address, open);
+        await expect(cipher.open(address, envelope)).resolves.toEqual(open);
+        await expect(cipher.open(newAddress, envelope)).resolves.toBeNull();
+    });
     it.each(['plain', 'e2ee'] as const)('seals and restores the lossless supported-predecessor newSession projection (%s)', async (accountMode) => {
         const cipher = createSessionDraftCipher({
             accountMode,

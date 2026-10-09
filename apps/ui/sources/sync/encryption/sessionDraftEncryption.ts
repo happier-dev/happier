@@ -1,4 +1,4 @@
-import { SessionDraftPrivatePayloadV2Schema, SessionDraftStoredContentEnvelopeV2Schema, createSessionDraftPrivatePayloadV2, canonicalSessionDraftAddressV2, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { SessionDraftPrivatePayloadV2Schema, SessionDraftStoredContentEnvelopeV2Schema, createSessionDraftPrivatePayloadV2, canonicalSessionDraftAddressV2, isAccountOwnedDraftAddressV2, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 import type { SessionDraftRepositoryCipher } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -32,18 +32,11 @@ function parseBoundPayload(address: SessionDraftAddressV2, value: unknown, encry
     return payload.document;
 }
 
-/** New-Session drafts are Account-bound; every other kind binds one Session. */
-function isAccountBoundDraftAddress(
-    address: SessionDraftAddressV2,
-): address is Extract<SessionDraftAddressV2, { kind: 'newSession' }> {
-    return address.kind === 'newSession';
-}
-
 export function createSessionDraftCipher(options: SessionDraftCipherOptions): SessionDraftRepositoryCipher {
     return {
         seal: async (address, document): Promise<SessionDraftStoredContentEnvelopeV2> => {
             const payload = createSessionDraftPrivatePayloadV2(address, document);
-            if (isAccountBoundDraftAddress(address)) {
+            if (isAccountOwnedDraftAddressV2(address)) {
                 if (options.accountMode === 'e2ee' && !options.accountCryptoMaterial) {
                     throw new Error('Session draft Account encryption key is unavailable');
                 }
@@ -68,7 +61,7 @@ export function createSessionDraftCipher(options: SessionDraftCipherOptions): Se
         },
         open: async (address, content): Promise<SessionDraftDocumentV2 | null> => {
             if (!SessionDraftStoredContentEnvelopeV2Schema.safeParse(content).success) return null;
-            if (isAccountBoundDraftAddress(address)) {
+            if (isAccountOwnedDraftAddressV2(address)) {
                 if (options.accountMode === 'plain') {
                     return content.t === 'plain' ? parseBoundPayload(address, content.v) : null;
                 }

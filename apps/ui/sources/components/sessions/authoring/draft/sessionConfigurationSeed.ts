@@ -23,7 +23,22 @@ import {
     buildNewSessionAuthoringDraft,
     buildNewSessionTempDataFromAuthoringDraft,
     rekeyCompatibilityModelSelection,
+    buildNewSessionAuthoringDraftFromTempData,
+    buildPersistedNewSessionDraftFromAuthoringDraft,
 } from './sessionAuthoringDraftAdapters';
+
+/** Translate incumbent rich ingress into the canonical durable draft before opening. */
+export function buildNewSessionConfigurationDraft(data: NewSessionData) {
+    return buildPersistedNewSessionDraftFromAuthoringDraft({
+        draft: buildNewSessionAuthoringDraftFromTempData(data),
+        machineId: data.machineId ?? null,
+        selectedSecretId: null,
+        selectedSecretIdByProfileIdByEnvVarName: null,
+        sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+        backendNewSessionOptionStateByTargetKey: data.backendNewSessionOptionStateByTargetKey,
+        updatedAt: Date.now(),
+    });
+}
 
 function readMetadataRecord(metadata: unknown): Record<string, unknown> {
     return metadata && typeof metadata === 'object' && !Array.isArray(metadata)

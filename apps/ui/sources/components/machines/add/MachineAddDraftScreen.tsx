@@ -8,8 +8,9 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -50,11 +51,16 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         leave();
     }, [leave]);
     const startSession = React.useCallback((machine: Readonly<{ machineId: string; serverId: string }>) => {
-        const { draftId } = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined });
-        navigate({
-            pathname: '/new',
-            params: buildNewSessionLaunchRouteParams({ draftId, machineId: machine.machineId, targetServerId: machine.serverId }),
-        }, 'MachineAddDraftScreen.startSession', false);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return;
+        seedAndOpenNewSession({
+            seed: { placement: { kind: 'exactTarget', serverId: machine.serverId, machineId: machine.machineId } },
+            scope: lifetime.scope,
+            isCurrent: lifetime.isCurrent,
+            navigateToNewSession: ({ draftId }) => navigate({
+                pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }),
+            }, 'MachineAddDraftScreen.startSession', false),
+        });
     }, [navigate]);
 
     return (

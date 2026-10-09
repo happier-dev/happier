@@ -6,6 +6,7 @@ export type DraftFieldPathV1 =
     | Readonly<{ kind: 'routing'; field: 'recipient' | 'agentContinuation' | 'executionRunDelivery' }>
     /** New-discussion title; the human document owns no other top-level field. */
     | Readonly<{ kind: 'title' }>
+    | Readonly<{ kind: 'projectOpen'; field: 'selection' | 'uncertainInputs' | 'result' | 'retiredAttempt' }>
     | Readonly<{ kind: 'extension'; pluginId: string; fieldId: string }>;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -23,6 +24,9 @@ export function getSessionDraftDocumentField(document: unknown, path: unknown): 
     }
     if (fieldPath.kind === 'title') return draft.title ?? null;
     const target = record(draft.target);
+    if (fieldPath.kind === 'projectOpen' && typeof fieldPath.field === 'string') {
+        return target?.kind === 'projectOpen' ? draft[fieldPath.field] ?? null : null;
+    }
     if (fieldPath.kind === 'routing' && typeof fieldPath.field === 'string') {
         return target?.kind === 'session' ? record(target.routing)?.[fieldPath.field] : null;
     }

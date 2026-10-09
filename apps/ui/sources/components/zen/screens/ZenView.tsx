@@ -16,8 +16,8 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
 import { Icon } from '@/components/ui/icons/Icon';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
-import { seedNewSessionDraftV1 } from '@/components/sessions/new/newSessionDraftSeed';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { toCamelCase } from '@/utils/strings/stringUtils';
 import { TaskSessionStatusPill, TaskStatusPill } from '@/components/zen/views/TaskSessionStatusPill';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -107,16 +107,17 @@ export const ZenView = React.memo(() => {
     };
 
     const openTaskSessionDraft = (prompt: string) => {
-        const scope = getActiveServerAccountScope();
-        if (!scope) return;
-        const draftId = seedNewSessionDraftV1({
-            scope,
-            seed: {
-                prompt: { text: prompt, mode: 'replace' },
-                zenTaskSource: { kind: 'zen_task', taskId: todoId, title: editedText, scope },
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, taskScope)) return;
+        seedAndOpenNewSession({
+            scope: lifetime.scope,
+            seed: { prompt },
+            zenTaskSource: { kind: 'zen_task', taskId: todoId, title: editedText, scope: lifetime.scope },
+            isCurrent: lifetime.isCurrent,
+            navigateToNewSession: ({ draftId }) => {
+                router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) });
             },
         });
-        if (draftId) router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) });
     };
 
     const handleClarifyWithAI = () => {
