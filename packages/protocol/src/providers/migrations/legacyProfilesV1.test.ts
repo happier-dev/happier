@@ -4,10 +4,13 @@ import { ProfileRecordV1Schema } from '../../profiles/profileRecordV1.js';
 import { LaunchProfileV2Schema } from '../../profiles/v2/schema.js';
 import { normalizeBackendTargetKeyV2Input } from '../../backends/targets/backendTargetRefV2.js';
 import { getBuiltInBackendProfile } from '../../profiles/builtInBackendProfiles.js';
+import { resolveVisibleBuiltInAiLaunchProfilesV1 } from '../../profiles/visibilityV1.js';
 import { createProfileDuplicateDraftV1 } from '../../profiles/profileOperations.js';
 import { readAiLaunchProfileRecords } from '../../profiles/read.js';
 import { LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1 } from '../../profiles/v2/schema.js';
 import { DEFAULT_PROVIDER_SETTINGS_V1 } from '../settings/v1.js';
+import { deleteProviderConnectionV1 } from '../settings/operationsV1.js';
+import { migrateProviderAccountSettingsV1 } from './accountSettingsV1.js';
 
 import {
   confirmLegacyAiLaunchProfileMigrationV1,
@@ -72,6 +75,43 @@ it.each(['azure-openai', 'gemini-api-key', 'gemini-vertex'])('duplicates the act
 });
 
 describe('migrateLegacyAiLaunchProfilesV1', () => {
+  it('keeps deletion guards only while the actual current builtin remains selectable from source evidence', () => {
+    const sourceId = 'gemini-api-key';
+    const preset = getBuiltInBackendProfile(sourceId);
+    if (!preset) throw new Error('Expected the current Gemini routing preset');
+    const enabled = { [sourceId]: true };
+    const visible = (profileEnabledById: Readonly<Record<string, boolean>>) => resolveVisibleBuiltInAiLaunchProfilesV1({
+      evidence: { lastUsedProfile: null, favoriteProfileIds: [], profileEnabledById, secretBindingsByProfileId: {} },
+    });
+    expect(visible(enabled)).toContainEqual(expect.objectContaining({ id: preset.id }));
+    const candidate = { kind: 'connection' as const, sourceProfileId: preset.id,
+      connection: { v: 1 as const, id: 'pc-gemini-source', source: { kind: 'contribution' as const, contributionKey: 'happier.provider.google/google' },
+        role: 'default' as const, displayName: preset.name, displayNameMode: 'automatic' as const, revision: 0, createdAt: 20, updatedAt: 20 },
+      selectedModel: { agentTargetKey: 'agent:gemini', modelId: 'gemini-2.5-pro' },
+    };
+    const migrated = migrateProviderAccountSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1, {
+      migratedAt: 20, candidates: [candidate], pendingCustomProfileIds: [],
+    });
+    if (!migrated.ok) throw new Error('Expected accepted current builtin translation');
+    const deleted = deleteProviderConnectionV1(migrated.providerSettings, candidate.connection.id, 30);
+    const retained = migrateLegacyAiLaunchProfilesV1({ profileEnabledById: enabled }, deleted, {
+      migratedAt: 40, candidates: [candidate], pendingCustomProfileIds: [],
+    }, { lastUsedProfile: null });
+    if (!retained.ok) throw new Error('Expected source reconciliation');
+    expect(retained.providerSettings.connections).toEqual([]);
+    expect(retained.settings.profileEnabledById).toEqual(enabled);
+    expect(retained.providerSettings.migration?.completedSources).toEqual(deleted.migration?.completedSources);
+    expect(retained.providerSettings.connectionTombstones).toEqual(deleted.connectionTombstones);
+
+    expect(visible({})).toEqual([]);
+    const gone = migrateLegacyAiLaunchProfilesV1({ profileEnabledById: {} }, retained.providerSettings, {
+      migratedAt: 50, candidates: [], pendingCustomProfileIds: [],
+    }, { lastUsedProfile: null });
+    if (!gone.ok) throw new Error('Expected complete source disappearance reconciliation');
+    expect(gone.providerSettings.migration).toBeUndefined();
+    expect(gone.providerSettings.connectionTombstones).toEqual([]);
+  });
+
   it('preserves an existing private long untrimmed legacy identity and predecessor environment counts after accepted Provider conversion', () => {
     const id = `  retained-${'x'.repeat(270)}  `;
     const publicEnvironment = Array.from({ length: 257 }, (_, index) => ({ name: `TEAM_FLAG_${index}`, value: `public-${index}` }));

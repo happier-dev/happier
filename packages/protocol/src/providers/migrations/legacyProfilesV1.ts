@@ -12,6 +12,7 @@ import { isCanonicalProviderSavedSecretIdV1, type ProviderSettingsV1 } from '../
 import { canonicalizeProviderContributionKeyV1 } from '../contributionIdentityV1.js';
 import type { ProviderContributionV1 } from '../contributions/v1.js';
 import type { ProfileCatalogRecordV1 } from '../../profiles/profileCatalogV1.js';
+import { resolveVisibleBuiltInAiLaunchProfilesV1 } from '../../profiles/visibilityV1.js';
 import { projectHistoricalCodingPromptBehaviorProfileOverrideV1 } from '../../prompts/codingPromptBehaviorV1.js';
 import {
   migrateProviderAccountSettingsV1,
@@ -447,6 +448,20 @@ export function migrateLegacyAiLaunchProfilesV1(
       || outcomeBySource.get(legacy.data.id)?.kind === 'skipped_disabled' ? [legacy.data.id] : [];
   });
   const remembered = authoringMemory.lastUsedProfile;
+  const sourceBindings = Object.fromEntries(Object.entries(nextBindings).flatMap(([id, value]) => isRecord(value)
+    ? [[id, Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))]] : []));
+  const selectableBuiltins = resolveVisibleBuiltInAiLaunchProfilesV1({
+    evidence: { lastUsedProfile: remembered,
+      favoriteProfileIds: Array.isArray(settings.favoriteProfiles) ? settings.favoriteProfiles.filter((id): id is string => typeof id === 'string') : [],
+      profileEnabledById: Object.fromEntries(Object.entries(nextEnabled).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')),
+      secretBindingsByProfileId: sourceBindings },
+    migration: migrated.providerSettings.migration,
+  });
+  // A private converted row shadows its builtin; only an actually selectable routing source can recreate entities.
+  for (const profile of selectableBuiltins) {
+    if (!retainedProfileIds.has(profile.id)
+      && requiresLegacyAiLaunchProfileProviderSourcePreparationV1(profile, sourceBindings[profile.id] ?? {})) retainedSources.push(profile.id);
+  }
   if (remembered !== null && !retainedProfileIds.has(remembered)
     && migrated.outcomes.some(outcome => outcome.sourceProfileId === remembered && outcome.kind === 'connection')) {
     // The still-open authoring-memory source can re-enter the incumbent builtin translator until its conditional clear succeeds.
