@@ -10,6 +10,7 @@ import {
 function executorWithLimaProbe({ installed }) {
   const calls = [];
   let nowInstalled = installed;
+  let retainedInstance = null;
   return {
     calls,
     async capture(command, args) {
@@ -21,12 +22,16 @@ function executorWithLimaProbe({ installed }) {
           : { exitCode: 127, out: '', err: 'not found' };
       }
       if (command === 'brew' && args[0] === '--version') return { exitCode: 0, out: 'Homebrew 4.6.0\n', err: '' };
-      if (command === 'limactl' && args[0] === 'list') return { exitCode: 0, out: '', err: '' };
+      if (command === 'limactl' && args[0] === 'list') return { exitCode: 0, out: retainedInstance ? JSON.stringify(retainedInstance) : '', err: '' };
       return { exitCode: 0, out: '', err: '' };
     },
     async run(command, args) {
       calls.push({ kind: 'run', command, args });
       if (command === 'brew' && args.join(' ') === 'install lima') nowInstalled = true;
+      if (command === 'limactl' && args[0] === 'create') retainedInstance = { name: args[args.indexOf('--name') + 1], status: 'Stopped' };
+      if (command === 'limactl' && retainedInstance && (args[0] === 'restart' || args[0] === 'stop')) {
+        retainedInstance.status = args[0] === 'restart' ? 'Running' : 'Stopped';
+      }
       return { exitCode: 0 };
     },
   };
@@ -189,12 +194,20 @@ test('managed Lima doctor reports an unresponsive guest login manager without re
 test('explicit setup reconciles mutable resource/config drift while preserving retained disk identity', async () => {
   const executor = executorWithLimaProbe({ installed: true });
   const originalCapture = executor.capture.bind(executor);
+  const originalRun = executor.run.bind(executor);
+  let status = 'Running';
+  executor.run = async (command, args) => {
+    const result = await originalRun(command, args);
+    if (command === 'limactl' && args[0] === 'stop') status = 'Stopped';
+    if (command === 'limactl' && args[0] === 'restart') status = 'Running';
+    return result;
+  };
   executor.capture = async (command, args) => {
     if (command === 'limactl' && args[0] === 'list') {
       return {
         exitCode: 0,
         out: `${JSON.stringify({
-          name: 'happier-agent-primary', status: 'Running', vmType: 'vz', arch: 'aarch64',
+          name: 'happier-agent-primary', status, vmType: 'vz', arch: 'aarch64',
           cpus: 4, memory: 8 * 1024 ** 3, disk: 100 * 1024 ** 3,
           config: {
             mounts: [{ location: '/Users/worker' }],
@@ -219,7 +232,7 @@ test('explicit setup reconciles mutable resource/config drift while preserving r
 
   assert.equal(result.reconfigured, true);
   assert.deepEqual(executor.calls.filter((call) => call.kind === 'run').map((call) => call.args[0]), [
-    'stop', 'edit', 'start',
+    'stop', 'edit', 'restart',
   ]);
   assert.equal(executor.calls.some((call) => call.args.includes('delete')), false);
 });

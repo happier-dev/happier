@@ -45,6 +45,7 @@ type RunnerState = {
   resolvePrompt: ((answer: unknown) => void) | null;
   rejectPrompt: ((error: SystemTaskExecutionError) => void) | null;
   abortController: AbortController;
+  settlement: Promise<void> | null;
 };
 
 export function createSystemTasksRunner(params: Readonly<{
@@ -52,6 +53,9 @@ export function createSystemTasksRunner(params: Readonly<{
   kinds: InteractiveSystemTaskKindMap;
 }>): Readonly<{
   start: (params: Readonly<{ taskId: string; kind: string; params: SystemTaskJsonValue }>) => Promise<Readonly<{ taskId: string }>>;
+  /** Host-only prepared transport; public start still uses the fixed kind catalog. */
+  startAdmitted: (params: Readonly<{ taskId: string; kind: string; params: SystemTaskJsonValue }>, kind: InteractiveSystemTaskKind) => Promise<Readonly<{ taskId: string }>>;
+  wait: (params: Readonly<{ taskId: string }>) => Promise<SystemTaskResult>;
   poll: (params: Readonly<{ taskId: string; cursor: number }>) => Promise<Readonly<{
     events: SystemTaskEvent[];
     nextCursor: number;
@@ -85,13 +89,7 @@ export function createSystemTasksRunner(params: Readonly<{
     });
   }
 
-  return {
-    async start(startParams) {
-      const kind = params.kinds[startParams.kind];
-      if (!kind) {
-        throw new Error(`Unsupported system task kind: ${startParams.kind}`);
-      }
-
+  async function startTask(startParams: Readonly<{ taskId: string; kind: string; params: SystemTaskJsonValue }>, kind: InteractiveSystemTaskKind) {
       states.set(startParams.taskId, {
         events: [],
         result: null,
@@ -99,10 +97,11 @@ export function createSystemTasksRunner(params: Readonly<{
         resolvePrompt: null,
         rejectPrompt: null,
         abortController: new AbortController(),
+        settlement: null,
       });
 
       const state = readState(startParams.taskId);
-      void kind.run({
+      state.settlement = kind.run({
         params: startParams.params,
         signal: state.abortController.signal,
         emit: (event) => {
@@ -180,8 +179,23 @@ export function createSystemTasksRunner(params: Readonly<{
       return {
         taskId: startParams.taskId,
       };
-    },
+  }
 
+  return {
+    async start(startParams) {
+      const kind = params.kinds[startParams.kind];
+      if (!kind) throw new Error(`Unsupported system task kind: ${startParams.kind}`);
+      return await startTask(startParams, kind);
+    },
+    async startAdmitted(startParams, kind) {
+      return await startTask(startParams, kind);
+    },
+    async wait({ taskId }) {
+      const state = readState(taskId);
+      await state.settlement;
+      if (!state.result) throw new Error(`System task ${taskId} did not settle`);
+      return state.result;
+    },
     async poll(pollParams) {
       const state = readState(pollParams.taskId);
       const cursor = Math.max(0, Math.floor(pollParams.cursor));

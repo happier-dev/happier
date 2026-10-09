@@ -12,23 +12,59 @@ import { resolveManagedLimaProfile } from './profiles.mjs';
 
 function fakeExecutor(responses) {
   const calls = [];
+  let nativeInstance = null;
   return {
     calls,
     async capture(command, args) {
       calls.push({ kind: 'capture', command, args });
       const key = `${command} ${args.join(' ')}`;
+      if (command === 'limactl' && args[0] === 'list' && nativeInstance) {
+        return { exitCode: 0, out: JSON.stringify(nativeInstance), err: '' };
+      }
       const value = responses[key];
       if (typeof value === 'function') return value();
       return value ?? { exitCode: 0, out: '', err: '' };
     },
     async run(command, args) {
       calls.push({ kind: 'run', command, args });
+      if (command === 'limactl' && args[0] === 'create') {
+        nativeInstance = compatibleInstance({ status: 'Stopped' });
+      }
+      if (command === 'limactl' && (args[0] === 'restart' || args[0] === 'stop')) {
+        const response = responses[`limactl list --all-fields --format=json ${args.at(-1)}`];
+        const current = nativeInstance ?? JSON.parse((typeof response === 'function' ? response() : response).out);
+        nativeInstance = { ...current, status: args[0] === 'restart' ? 'Running' : 'Stopped' };
+      }
       return { exitCode: 0 };
     },
   };
 }
 
 const profile = resolveManagedLimaProfile('balanced');
+
+test('native inspection refuses an unrelated or ambiguous instance instead of targeting its first record', async () => {
+  const executor = fakeExecutor({
+    'limactl list --all-fields --format=json happier-agent-primary': {
+      exitCode: 0,
+      out: JSON.stringify([{ name: 'neighbor', status: 'Running' }]),
+      err: '',
+    },
+  });
+  await assert.rejects(getManagedLimaStatus({ executor, instance: 'happier-agent-primary' }),
+    (error) => error.code === 'LIMA_IDENTITY_MISMATCH');
+});
+
+test('power observes native state after command acceptance', async () => {
+  const executor = fakeExecutor({
+    'limactl list --all-fields --format=json happier-agent-primary': {
+      exitCode: 0, out: JSON.stringify({ name: 'happier-agent-primary', status: 'Stopped' }), err: '',
+    },
+  });
+  executor.run = async () => ({ exitCode: 0 });
+  assert.deepEqual(await startManagedLimaInstance({ executor, instance: 'happier-agent-primary' }), {
+    changed: true, status: 'Stopped',
+  });
+});
 
 function compatibleInstance(overrides = {}) {
   return {
@@ -68,8 +104,8 @@ test('managed Lima reconcile creates and starts a missing retained instance exac
   assert.equal(result.created, true);
   assert.equal(result.started, true);
   assert.equal(executor.calls.filter((call) => call.kind === 'run' && call.args[0] === 'create').length, 1);
-  assert.deepEqual(executor.calls.at(-1), {
-    kind: 'run', command: 'limactl', args: ['start', 'happier-agent-primary'],
+  assert.deepEqual(executor.calls.findLast((call) => call.kind === 'run'), {
+    kind: 'run', command: 'limactl', args: ['restart', 'happier-agent-primary'],
   });
   assert.equal(executor.calls.some((call) => call.args.includes('delete')), false);
 });
@@ -246,7 +282,7 @@ test('managed Lima forced stop delegates the emergency stop contract to Lima', a
     changed: true,
     status: 'Stopped',
   });
-  assert.deepEqual(executor.calls.at(-1), {
+  assert.deepEqual(executor.calls.findLast((call) => call.kind === 'run'), {
     kind: 'run',
     command: 'limactl',
     args: ['stop', '--force', 'happier-agent-primary'],

@@ -6,7 +6,18 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./machineLima": {
+      "types": "./machineLima.d.mts",
+      "import": "./machineLima.mjs",
+      "default": "./machineLima.mjs"
+    },
+    "./sourceRuntimeEntries": {
+      "types": "./sourceRuntimeEntries.d.mts",
+      "import": "./sourceRuntimeEntries.mjs",
+      "default": "./sourceRuntimeEntries.mjs"
+    },
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
@@ -49,11 +60,13 @@
       "default": "./cliRuntimeSidecars.mjs"
     },
     "./componentArtifacts/cliRuntimeSidecars": {
+      "happier-source": "./src/componentArtifacts/cliRuntimeSidecars.ts",
       "types": "./dist/componentArtifacts/cliRuntimeSidecars.d.ts",
       "import": "./dist/componentArtifacts/cliRuntimeSidecars.js",
       "default": "./dist/componentArtifacts/cliRuntimeSidecars.js"
     },
     "./componentArtifacts/copyCliNodeRuntimePayload": {
+      "happier-source": "./src/componentArtifacts/copyCliNodeRuntimePayload.ts",
       "types": "./dist/componentArtifacts/copyCliNodeRuntimePayload.d.ts",
       "import": "./dist/componentArtifacts/copyCliNodeRuntimePayload.js",
       "default": "./dist/componentArtifacts/copyCliNodeRuntimePayload.js"
@@ -89,136 +102,163 @@
       "default": "./processInstance.mjs"
     },
     "./links": {
+      "happier-source": "./src/links.ts",
       "types": "./dist/links.d.ts",
       "import": "./dist/links.js",
       "default": "./dist/links.js"
     },
     "./happierCloud": {
+      "happier-source": "./src/happierCloud.ts",
       "types": "./dist/happierCloud.d.ts",
       "import": "./dist/happierCloud.js",
       "default": "./dist/happierCloud.js"
     },
     "./update": {
+      "happier-source": "./src/update/index.ts",
       "types": "./dist/update/index.d.ts",
       "import": "./dist/update/index.js",
       "default": "./dist/update/index.js"
     },
     "./workspaces": {
+      "happier-source": "./src/workspaces/index.ts",
       "types": "./dist/workspaces/index.d.ts",
       "import": "./dist/workspaces/index.js",
       "default": "./dist/workspaces/index.js"
     },
     "./service": {
+      "happier-source": "./src/service/index.ts",
       "types": "./dist/service/index.d.ts",
       "import": "./dist/service/index.js",
       "default": "./dist/service/index.js"
     },
     "./firstPartyRuntime/serverRuntimeArtifactLayout": {
+      "happier-source": "./src/firstPartyRuntime/serverRuntimeArtifactLayout.ts",
       "types": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.d.ts",
       "import": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.js",
       "default": "./dist/firstPartyRuntime/serverRuntimeArtifactLayout.js"
     },
     "./firstPartyRuntime/server": {
+      "happier-source": "./src/firstPartyRuntime/serverRuntime.ts",
       "types": "./dist/firstPartyRuntime/serverRuntime.d.ts",
       "import": "./dist/firstPartyRuntime/serverRuntime.js",
       "default": "./dist/firstPartyRuntime/serverRuntime.js"
     },
     "./firstPartyRuntime/sqliteMigrationCatalog": {
+      "happier-source": "./src/firstPartyRuntime/sqliteMigrationCatalog.ts",
       "types": "./dist/firstPartyRuntime/sqliteMigrationCatalog.d.ts",
       "import": "./dist/firstPartyRuntime/sqliteMigrationCatalog.js",
       "default": "./dist/firstPartyRuntime/sqliteMigrationCatalog.js"
     },
     "./firstPartyRuntime/personalHome/bootstrap": {
+      "happier-source": "./src/firstPartyRuntime/personalHome/bootstrap.ts",
       "types": "./dist/firstPartyRuntime/personalHome/bootstrap.d.ts",
       "import": "./dist/firstPartyRuntime/personalHome/bootstrap.js",
       "default": "./dist/firstPartyRuntime/personalHome/bootstrap.js"
     },
     "./firstPartyRuntime/personalHome/bootstrapSystemTasks": {
+      "happier-source": "./src/firstPartyRuntime/personalHome/bootstrapSystemTasks.ts",
       "types": "./dist/firstPartyRuntime/personalHome/bootstrapSystemTasks.d.ts",
       "import": "./dist/firstPartyRuntime/personalHome/bootstrapSystemTasks.js",
       "default": "./dist/firstPartyRuntime/personalHome/bootstrapSystemTasks.js"
     },
     "./firstPartyRuntime/personalHome/readiness": {
+      "happier-source": "./src/firstPartyRuntime/personalHome/readiness.ts",
       "types": "./dist/firstPartyRuntime/personalHome/readiness.d.ts",
       "import": "./dist/firstPartyRuntime/personalHome/readiness.js",
       "default": "./dist/firstPartyRuntime/personalHome/readiness.js"
     },
     "./firstPartyRuntime/personalHome/productionAdapters": {
+      "happier-source": "./src/firstPartyRuntime/personalHome/productionAdapters.ts",
       "types": "./dist/firstPartyRuntime/personalHome/productionAdapters.d.ts",
       "import": "./dist/firstPartyRuntime/personalHome/productionAdapters.js",
       "default": "./dist/firstPartyRuntime/personalHome/productionAdapters.js"
     },
     "./firstPartyRuntime/personalHome/configuration": {
+      "happier-source": "./src/firstPartyRuntime/personalHome/configuration.ts",
       "types": "./dist/firstPartyRuntime/personalHome/configuration.d.ts",
       "import": "./dist/firstPartyRuntime/personalHome/configuration.js",
       "default": "./dist/firstPartyRuntime/personalHome/configuration.js"
     },
     "./firstPartyRuntime/personalHome/runtimeSpec": {
+      "happier-source": "./src/firstPartyRuntime/personalHome/personalHomeRuntimeSpec.ts",
       "types": "./dist/firstPartyRuntime/personalHome/personalHomeRuntimeSpec.d.ts",
       "import": "./dist/firstPartyRuntime/personalHome/personalHomeRuntimeSpec.js",
       "default": "./dist/firstPartyRuntime/personalHome/personalHomeRuntimeSpec.js"
     },
     "./firstPartyRuntime/personalHome/signupPolicy": {
+      "happier-source": "./src/firstPartyRuntime/personalHomeSignupPolicy.ts",
       "types": "./dist/firstPartyRuntime/personalHomeSignupPolicy.d.ts",
       "import": "./dist/firstPartyRuntime/personalHomeSignupPolicy.js",
       "default": "./dist/firstPartyRuntime/personalHomeSignupPolicy.js"
     },
     "./service/discovery": {
+      "happier-source": "./src/service/discovery/index.ts",
       "types": "./dist/service/discovery/index.d.ts",
       "import": "./dist/service/discovery/index.js",
       "default": "./dist/service/discovery/index.js"
     },
     "./agents": {
+      "happier-source": "./src/agents/index.ts",
       "types": "./dist/agents/index.d.ts",
       "import": "./dist/agents/index.js",
       "default": "./dist/agents/index.js"
     },
     "./agents/resolution": {
+      "happier-source": "./src/agents/resolution.ts",
       "types": "./dist/agents/resolution.d.ts",
       "import": "./dist/agents/resolution.js",
       "default": "./dist/agents/resolution.js"
     },
     "./path": {
+      "happier-source": "./src/path/index.ts",
       "types": "./dist/path/index.d.ts",
       "import": "./dist/path/index.js",
       "default": "./dist/path/index.js"
     },
     "./scm/gitTemporaryIndex": {
+      "happier-source": "./src/scm/gitTemporaryIndex.ts",
       "types": "./dist/scm/gitTemporaryIndex.d.ts",
       "import": "./dist/scm/gitTemporaryIndex.js",
       "default": "./dist/scm/gitTemporaryIndex.js"
     },
     "./scm/gitComparisonOutput": {
+      "happier-source": "./src/scm/gitComparisonOutput.ts",
       "types": "./dist/scm/gitComparisonOutput.d.ts",
       "import": "./dist/scm/gitComparisonOutput.js",
       "default": "./dist/scm/gitComparisonOutput.js"
     },
     "./agents/managedJavaScriptRuntime": {
+      "happier-source": "./src/agents/managedJavaScriptRuntime.ts",
       "types": "./dist/agents/managedJavaScriptRuntime.d.ts",
       "import": "./dist/agents/managedJavaScriptRuntime.js",
       "default": "./dist/agents/managedJavaScriptRuntime.js"
     },
     "./tailscale": {
+      "happier-source": "./src/tailscale/index.ts",
       "types": "./dist/tailscale/index.d.ts",
       "import": "./dist/tailscale/index.js",
       "default": "./dist/tailscale/index.js"
     },
     "./tailscale/taskContract": {
+      "happier-source": "./src/tailscale/taskContract.ts",
       "types": "./dist/tailscale/taskContract.d.ts",
       "import": "./dist/tailscale/taskContract.js",
       "default": "./dist/tailscale/taskContract.js"
     },
     "./process": {
+      "happier-source": "./src/process/index.ts",
       "types": "./dist/process/index.d.ts",
       "import": "./dist/process/index.js",
       "default": "./dist/process/index.js"
     },
     "./fs/windowsProtectedAcl": {
+      "happier-source": "./src/fs/windowsProtectedAcl.ts",
       "types": "./dist/fs/windowsProtectedAcl.d.ts",
       "import": "./dist/fs/windowsProtectedAcl.js",
       "default": "./dist/fs/windowsProtectedAcl.js"
     },
     "./componentArtifacts": {
+      "happier-source": "./src/componentArtifacts/index.ts",
       "types": "./dist/componentArtifacts/index.d.ts",
       "import": "./dist/componentArtifacts/index.js",
       "default": "./dist/componentArtifacts/index.js"
@@ -229,91 +269,109 @@
       "default": "./componentArtifactTarget.mjs"
     },
     "./firstPartyRuntime/componentCatalog": {
+      "happier-source": "./src/firstPartyRuntime/componentCatalog.ts",
       "types": "./dist/firstPartyRuntime/componentCatalog.d.ts",
       "import": "./dist/firstPartyRuntime/componentCatalog.js",
       "default": "./dist/firstPartyRuntime/componentCatalog.js"
     },
     "./firstPartyRuntime/selfHostServerEnv": {
+      "happier-source": "./src/firstPartyRuntime/selfHostServerEnv.ts",
       "types": "./dist/firstPartyRuntime/selfHostServerEnv.d.ts",
       "import": "./dist/firstPartyRuntime/selfHostServerEnv.js",
       "default": "./dist/firstPartyRuntime/selfHostServerEnv.js"
     },
     "./firstPartyRuntime": {
+      "happier-source": "./src/firstPartyRuntime/index.ts",
       "types": "./dist/firstPartyRuntime/index.d.ts",
       "import": "./dist/firstPartyRuntime/index.js",
       "default": "./dist/firstPartyRuntime/index.js"
     },
     "./happierRuntime": {
+      "happier-source": "./src/happierRuntime/index.ts",
       "types": "./dist/happierRuntime/index.d.ts",
       "import": "./dist/happierRuntime/index.js",
       "default": "./dist/happierRuntime/index.js"
     },
     "./happierRuntime/runtimePathMatching": {
+      "happier-source": "./src/happierRuntime/runtimePathMatching.ts",
       "types": "./dist/happierRuntime/runtimePathMatching.d.ts",
       "import": "./dist/happierRuntime/runtimePathMatching.js",
       "default": "./dist/happierRuntime/runtimePathMatching.js"
     },
     "./homeTarget": {
+      "happier-source": "./src/homeTarget/index.ts",
       "types": "./dist/homeTarget/index.d.ts",
       "import": "./dist/homeTarget/index.js",
       "default": "./dist/homeTarget/index.js"
     },
     "./accountService": {
+      "happier-source": "./src/accountService/index.ts",
       "types": "./dist/accountService/index.d.ts",
       "import": "./dist/accountService/index.js",
       "default": "./dist/accountService/index.js"
     },
     "./authentication/authMethodCatalog": {
+      "happier-source": "./src/authentication/authMethodCatalog.ts",
       "types": "./dist/authentication/authMethodCatalog.d.ts",
       "import": "./dist/authentication/authMethodCatalog.js",
       "default": "./dist/authentication/authMethodCatalog.js"
     },
     "./homeEnrollment": {
+      "happier-source": "./src/homeEnrollment/index.ts",
       "types": "./dist/homeEnrollment/index.d.ts",
       "import": "./dist/homeEnrollment/index.js",
       "default": "./dist/homeEnrollment/index.js"
     },
     "./relayHost": {
+      "happier-source": "./src/relayHost/index.ts",
       "types": "./dist/relayHost/index.d.ts",
       "import": "./dist/relayHost/index.js",
       "default": "./dist/relayHost/index.js"
     },
     "./relayHost/runtimeStatus": {
+      "happier-source": "./src/relayHost/relayRuntimeStatus.ts",
       "types": "./dist/relayHost/relayRuntimeStatus.d.ts",
       "import": "./dist/relayHost/relayRuntimeStatus.js",
       "default": "./dist/relayHost/relayRuntimeStatus.js"
     },
     "./relayAccess": {
+      "happier-source": "./src/relayAccess/index.ts",
       "types": "./dist/relayAccess/index.d.ts",
       "import": "./dist/relayAccess/index.js",
       "default": "./dist/relayAccess/index.js"
     },
     "./relayAccess/catalog": {
+      "happier-source": "./src/relayAccess/catalog.ts",
       "types": "./dist/relayAccess/catalog.d.ts",
       "import": "./dist/relayAccess/catalog.js",
       "default": "./dist/relayAccess/catalog.js"
     },
     "./sessionMetadata": {
+      "happier-source": "./src/sessionMetadata/index.ts",
       "types": "./dist/sessionMetadata/index.d.ts",
       "import": "./dist/sessionMetadata/index.js",
       "default": "./dist/sessionMetadata/index.js"
     },
     "./ssh": {
+      "happier-source": "./src/ssh/index.ts",
       "types": "./dist/ssh/index.d.ts",
       "import": "./dist/ssh/index.js",
       "default": "./dist/ssh/index.js"
     },
     "./output": {
+      "happier-source": "./src/output/index.ts",
       "types": "./dist/output/index.d.ts",
       "import": "./dist/output/index.js",
       "default": "./dist/output/index.js"
     },
     "./systemTasks": {
+      "happier-source": "./src/systemTasks/index.ts",
       "types": "./dist/systemTasks/index.d.ts",
       "import": "./dist/systemTasks/index.js",
       "default": "./dist/systemTasks/index.js"
     },
     "./systemTasks/nativeRemoteSshBootstrap": {
+      "happier-source": "./src/systemTasks/nativeRemoteSshBootstrap.ts",
       "types": "./dist/systemTasks/nativeRemoteSshBootstrap.d.ts",
       "import": "./dist/systemTasks/nativeRemoteSshBootstrap.js",
       "default": "./dist/systemTasks/nativeRemoteSshBootstrap.js"
@@ -339,6 +397,10 @@
     "test:mutagen-engine:live": "../../apps/stack/bin/hstack-exec --script=test:mutagen-engine:live:local",
     "test:mutagen-engine:live:local": "node scripts/runMutagenEngineLiveTest.mjs",
     "test:dist:local": "node --test processInstance.test.mjs tests/componentArtifacts.cliDistBuildLock.test.mjs tests/componentArtifacts.test.mjs tests/downloadGitHubReleaseAsset.test.mjs tests/exports.test.mjs tests/firstPartyRuntime.componentCatalog.test.mjs tests/firstPartyRuntime.installLayout.test.mjs tests/firstPartyRuntime.installVersionedPayload.test.mjs tests/firstPartyRuntime.promoteVersionedPayload.test.mjs tests/firstPartyRuntime.pruneRetainedVersions.test.mjs tests/firstPartyRuntime.relayRuntime.test.mjs tests/firstPartyRuntime.retentionPolicy.test.mjs tests/firstPartyRuntime.syncInstalledShims.test.mjs tests/links.test.mjs tests/nodeRelease.test.mjs tests/pinnedRunnerSnapshot.test.mjs tests/service.test.mjs tests/update.test.mjs tests/vendorBundledPackageRuntimeDependencies.test.mjs tests/workspaces.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.2",
+    "tsx": "^4.20.6"
   },
   "dependencies": {
     "@happier-dev/agents": "0.0.0",

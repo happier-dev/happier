@@ -2,7 +2,10 @@ import {
   evaluateManagedLimaInstance,
   getManagedLimaStatus,
   reconcileManagedLimaInstance,
+  startManagedLimaInstance,
+  stopManagedLimaInstance,
 } from './lifecycle.mjs';
+import { runLimaCommand } from '@happier-dev/cli-common/machineLima';
 import { buildManagedLimaEditArgs, resolveManagedLimaProfile } from './profiles.mjs';
 import { configureManagedLimaGuestPressure } from './guest_pressure.mjs';
 import { resolveManagedLimaPressureProfile } from './pressure_profiles.mjs';
@@ -21,7 +24,7 @@ function managedLimaError(message, code) {
 }
 
 async function probeLima(executor) {
-  const result = await executor.capture('limactl', ['--version']);
+  const result = await runLimaCommand({ executor, args: ['--version'] });
   if (executor.host?.kind === 'ssh' && result.exitCode === 255) {
     throw managedLimaError(
       `[managed-lima] outer host is unavailable: ${String(result.err ?? '').trim() || 'SSH failed'}`,
@@ -97,10 +100,10 @@ export async function setupManagedLimaInstance({
         'MANAGED_LIMA_DISK_SHRINK_REFUSED',
       );
     }
-    if (current.status.toLowerCase() === 'running') await executor.run('limactl', ['stop', instance]);
-    await executor.run('limactl', buildManagedLimaEditArgs({ instance, profile }));
-    await executor.run('limactl', ['start', instance]);
-    reconciliation = { created: false, started: true, reconfigured: true, status: 'Running' };
+    if (current.status.toLowerCase() === 'running') await stopManagedLimaInstance({ executor, instance });
+    await runLimaCommand({ executor, args: buildManagedLimaEditArgs({ instance, profile }), interactive: true });
+    const power = await startManagedLimaInstance({ executor, instance });
+    reconciliation = { created: false, started: power.changed, reconfigured: true, status: power.status };
   }
   return { installed, profile, ...reconciliation };
 }
@@ -170,7 +173,7 @@ export async function doctorManagedLimaInstance({
   resources = null,
 }) {
   const host = await executor.capture('uname', ['-s']);
-  const lima = await executor.capture('limactl', ['--version']);
+  const lima = await runLimaCommand({ executor, args: ['--version'] });
   if (host.exitCode !== 0 || lima.exitCode !== 0) {
     return {
       ok: false,

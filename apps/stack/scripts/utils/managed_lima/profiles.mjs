@@ -1,4 +1,4 @@
-const INSTANCE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+import { validateLimaInstanceName } from '@happier-dev/cli-common/machineLima';
 const MANAGED_LIMA_ARCHITECTURES = new Set(['aarch64', 'x86_64']);
 const MANAGED_LIMA_DISK_IMAGE_FORMATS = new Set(['raw', 'asif']);
 
@@ -11,6 +11,9 @@ const BASE_PROFILE = Object.freeze({
   containerd: 'none',
   mountNone: true,
   rosetta: false,
+  // Lima retains usernet (metric 200); added networks default to metric 100.
+  // Basis: Lima v2.0.3/v2.1.0/v2.2.0 pkg/{cidata/cidata,limayaml/defaults}.go.
+  networks: Object.freeze([Object.freeze({ vzNAT: true })]),
   // TCP Stack services are owned by execution-host SSH transport. Keeping
   // their broad ranges in Lima hostagent creates a second, unreliable owner.
   // The final proto:any ignore rule remains below to prevent implicit Lima
@@ -27,11 +30,7 @@ const PROFILE_SIZES = Object.freeze({
 });
 
 function requireInstanceName(value) {
-  const instance = String(value ?? '').trim();
-  if (!INSTANCE_NAME_RE.test(instance)) {
-    throw new Error(`[managed-lima] invalid managed Lima instance name: ${JSON.stringify(instance)}`);
-  }
-  return instance;
+  return validateLimaInstanceName(value);
 }
 
 function normalizePositiveResource(value, label) {
@@ -89,6 +88,7 @@ export function resolveManagedLimaProfile(
     containerd: BASE_PROFILE.containerd,
     mountNone: BASE_PROFILE.mountNone,
     rosetta: BASE_PROFILE.rosetta,
+    networks: BASE_PROFILE.networks.map((entry) => ({ ...entry })),
     portForwards: BASE_PROFILE.portForwards.map((entry) => ({ ...entry })),
   };
 }
@@ -139,6 +139,7 @@ export function buildManagedLimaCreateArgs({ instance: rawInstance, profile }) {
       ? '.vmOpts.vz.rosetta.enabled = true | .vmOpts.vz.rosetta.binfmt = true'
       : '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
   );
+  args.push('--set', `.networks = ${JSON.stringify(profile.networks)}`);
   args.push('--set', `.portForwards = ${JSON.stringify(renderPortForwards(profile.portForwards))}`);
   args.push(`template:${profile.template}`);
   return args;
@@ -156,6 +157,21 @@ export function buildManagedLimaEditArgs({ instance: rawInstance, profile }) {
     ...mutableConfigurationArgs(profile),
     instance,
   ];
+}
+
+export function resolveManagedLimaNetworks(networks = []) {
+  if (!Array.isArray(networks)) throw new Error('[managed-lima] native networks configuration is unavailable');
+  const native = networks.some((entry) => entry?.vzNAT === true);
+  if (!native) return [...networks, ...BASE_PROFILE.networks.map((entry) => ({ ...entry }))];
+  // Preserve interface/MAC identity and custom networks. Correct only a native
+  // NAT route that cannot beat Lima's usernet metric (200), using its default (100).
+  return networks.map((entry) => entry?.vzNAT === true && entry.metric >= 200
+    ? { ...entry, metric: 100 }
+    : entry);
+}
+
+export function buildManagedLimaNetworkEditArgs({ instance: rawInstance, networks }) {
+  return ['edit', '--tty=false', '--set', `.networks = ${JSON.stringify(networks)}`, requireInstanceName(rawInstance)];
 }
 
 export function validateManagedLimaInstanceName(value) {

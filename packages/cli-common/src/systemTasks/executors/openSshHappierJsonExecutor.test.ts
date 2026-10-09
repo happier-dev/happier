@@ -6,7 +6,16 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { createOpenSshHappierJsonExecutor, parseStrictPersonalHomeTaskFinalResult } from './openSshHappierJsonExecutor.js';
-import { buildRemoteBootstrapCommand } from '../ssh/remoteBootstrapCommandBuilder.js';
+import { buildRemoteBootstrapCommand, buildRemoteHappierInvocationCommand } from '../ssh/remoteBootstrapCommandBuilder.js';
+import { createHappierJsonExecutorFromTextRunner } from './happierJsonExecutor.js';
+
+describe('transport-neutral Happier JSON executor', () => {
+  it('refuses a failed CLI envelope even when the native process exits successfully', async () => {
+    const executor = createHappierJsonExecutorFromTextRunner(async () => ({ status: 0, stdout: JSON.stringify({ ok: false, error: { code: 'installation_failed', message: 'Install failed' } }), stderr: '' }));
+    await expect(executor.runHappierJson(['service', 'install', '--json'])).rejects.toMatchObject({ code: 'cli_command_failed' });
+    await expect(executor.runHappierJson(['auth', 'status', '--json'], { allowJsonFailure: true })).resolves.toMatchObject({ ok: false });
+  });
+});
 
 describe('parseStrictPersonalHomeTaskFinalResult', () => {
   const valid = { kind: 'personal_home_task_result', protocolVersion: 1, result: { protocolVersion: 1, taskId: 'task-1', ok: true, data: { running: false } } };
@@ -27,6 +36,19 @@ describe('parseStrictPersonalHomeTaskFinalResult', () => {
 });
 
 describe('createOpenSshHappierJsonExecutor', () => {
+  it('preserves the selected release ring through a transport-neutral guest invocation', async () => {
+    if (process.platform === 'win32') return;
+    const directory = await mkdtemp(join(tmpdir(), 'happier-native-ring-'));
+    const binary = join(directory, 'guest binary');
+    try {
+      await writeFile(binary, '#!/bin/sh\nprintf "%s\\n" "$HAPPIER_RELEASE_RING"\n');
+      await chmod(binary, 0o755);
+      const command = buildRemoteHappierInvocationCommand({ binaryPath: binary, channel: 'preview', args: ['service', 'install'] });
+      const result = await promisify(execFile)('/bin/sh', ['-c', command]);
+      expect(result.stdout).toBe('preview\n');
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
   it.each(['executor', 'bootstrap'] as const)('executes the default HOME-relative binary through a real POSIX shell (%s)', async (invocation) => {
     if (process.platform === 'win32') return; // Remote execution targets POSIX Linux/macOS; Windows is the local client.
     const directory = await mkdtemp(join(tmpdir(), 'happier-ssh-command-'));

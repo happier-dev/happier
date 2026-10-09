@@ -4,6 +4,20 @@ import { createSystemTasksRunner } from './interactiveTaskKinds.js';
 import { SystemTaskExecutionError } from './runSystemTask.js';
 
 describe('createSystemTasksRunner', () => {
+  it('keeps an admitted prepared transport on the existing prompt, response and completion lifetime', async () => {
+    const runner = createSystemTasksRunner({ kinds: {} });
+    await runner.startAdmitted({ taskId: 'managed-task', kind: 'remote.ssh.bootstrapMachine.v1', params: {} }, {
+      async run(ctx) {
+        const answer = await ctx.prompt({ kind: 'auth.approveRemoteProvisioning', message: 'Approve guest sign-in', data: {} });
+        return { approved: (answer as { approved?: boolean }).approved === true };
+      },
+    });
+    const completed = runner.wait({ taskId: 'managed-task' });
+    expect((await runner.poll({ taskId: 'managed-task', cursor: 0 })).pendingPrompt?.kind).toBe('auth.approveRemoteProvisioning');
+    await runner.respond({ taskId: 'managed-task', answer: { approved: true } });
+    await expect(completed).resolves.toMatchObject({ ok: true, data: { approved: true } });
+  });
+
   it('releases an ordinary pending prompt when cancellation is requested', async () => {
     const runner = createSystemTasksRunner({
       kinds: {

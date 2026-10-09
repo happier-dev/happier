@@ -8,11 +8,14 @@ export {
 } from './ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
 export {
   createRemoteSshBootstrapMachineTaskKind,
+  createRemoteNativeBootstrapMachineTaskKind,
   parseRemoteBootstrapMachineParams,
 } from './kinds/remoteSshBootstrapMachineKind.js';
+export { installRemoteFirstPartyComponentPayload } from './kinds/remoteFirstPartyPayloadInstaller.js';
 export {
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,
+  resolveRemoteInstalledFirstPartyBinaryPath,
 } from './ssh/remoteFirstPartyInstallPath.js';
 export {
   SystemTaskExecutionError,

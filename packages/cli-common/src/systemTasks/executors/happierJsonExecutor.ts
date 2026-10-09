@@ -58,6 +58,35 @@ export interface HappierJsonExecutor {
   ): Promise<unknown>;
 }
 
+/** Transports supply process IO; CLI JSON success/failure stays transport-neutral. */
+export function createHappierJsonExecutorFromTextRunner(runHappierText: HappierJsonExecutor['runHappierText']): HappierJsonExecutor {
+  return {
+    runHappierText,
+    async runHappierJson(args, opts) {
+      const result = await runHappierText(args, opts);
+      const parsed = parseFirstJsonObject(result.stdout);
+      if (result.status !== 0) {
+        if (opts?.allowJsonFailure && parsed && typeof parsed === 'object') return parsed;
+        throw new SystemTaskExecutionError('cli_command_failed', result.stderr.trim() || result.stdout.trim() || 'Command failed.');
+      }
+      if (!parsed || typeof parsed !== 'object') {
+        throw new SystemTaskExecutionError('invalid_cli_response', `Command did not return a JSON object: ${args.join(' ')}`);
+      }
+      if (!opts?.allowJsonFailure && isJsonFailureEnvelope(parsed)) {
+        const envelope = parsed as { error?: unknown; message?: unknown };
+        const error = envelope.error;
+        const message = typeof envelope.message === 'string' && envelope.message.trim()
+          ? envelope.message.trim()
+          : error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+            ? error.message.trim()
+            : `Command failed: ${args.join(' ')}`;
+        throw new SystemTaskExecutionError('cli_command_failed', message);
+      }
+      return parsed;
+    },
+  };
+}
+
 type CommandExecutionResult = Readonly<{
   status: number;
   stdout: string;
@@ -645,8 +674,7 @@ export function createLocalHappierJsonExecutor(params: FirstPartyAcquisitionOpti
     );
   };
 
-  return {
-    async runHappierText(args, opts) {
+  return createHappierJsonExecutorFromTextRunner(async (args, opts) => {
       const processEnv = opts?.env ?? defaultProcessEnv;
       const signal = opts?.signal && params.signal && opts.signal !== params.signal
         ? AbortSignal.any([opts.signal, params.signal])
@@ -679,45 +707,5 @@ export function createLocalHappierJsonExecutor(params: FirstPartyAcquisitionOpti
       });
 
       return result;
-    },
-
-    async runHappierJson(args, opts) {
-      const allowJsonFailure = opts?.allowJsonFailure;
-      const result = await this.runHappierText(args, opts);
-      const parsed = parseFirstJsonObject(result.stdout);
-
-      if (result.status !== 0) {
-        if (allowJsonFailure && parsed && typeof parsed === 'object') {
-          return parsed;
-        }
-        throw new SystemTaskExecutionError(
-          'cli_command_failed',
-          result.stderr.trim() || result.stdout.trim() || 'Command failed.',
-        );
-      }
-
-      if (!parsed || typeof parsed !== 'object') {
-        throw new SystemTaskExecutionError(
-          'invalid_cli_response',
-          `Command did not return a JSON object: ${args.join(' ')}`,
-        );
-      }
-
-      if (!allowJsonFailure && isJsonFailureEnvelope(parsed)) {
-        const envelope = parsed as {
-          error?: { code?: unknown; message?: unknown } | unknown;
-          message?: unknown;
-        };
-        const message = typeof envelope.message === 'string' && envelope.message.trim()
-          ? envelope.message.trim()
-          : envelope.error && typeof envelope.error === 'object' && envelope.error !== null
-              && typeof (envelope.error as { message?: unknown }).message === 'string'
-            ? ((envelope.error as { message?: string }).message ?? '').trim()
-            : `Command failed: ${args.join(' ')}`;
-        throw new SystemTaskExecutionError('cli_command_failed', message);
-      }
-
-      return parsed;
-    },
-  };
+  });
 }

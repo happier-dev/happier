@@ -1,4 +1,5 @@
 import { validateManagedLimaInstanceName } from './profiles.mjs';
+import { runLimaGuestCommand } from '@happier-dev/cli-common/machineLima';
 import { resolveManagedLimaPressureProfile } from './pressure_profiles.mjs';
 
 export async function configureManagedLimaGuestPressure({
@@ -15,14 +16,13 @@ export async function configureManagedLimaGuestPressure({
   const source = String(scriptSource ?? '');
   if (!source.trim()) throw new Error('[managed-lima] guest pressure script is empty');
 
-  const result = await executor.capture('limactl', [
-    'shell', instance, '--',
+  const result = await runLimaGuestCommand({ executor, instance, argv: [
     'env',
     `HAPPIER_SWAP_GIB=${profile.swapGiB}`,
     `HAPPIER_ZSWAP=${profile.zswap ? '1' : '0'}`,
     `HAPPIER_SWAP_FREE_RESERVE_GIB=${profile.freeSpaceReserveGiB}`,
     'bash', '-s',
-  ], { input: source });
+  ], input: source });
   if (result.exitCode !== 0) {
     const detail = String(result.err || result.out || '').trim();
     throw new Error(`[managed-lima] guest pressure configuration failed: ${detail || 'limactl shell failed'}`);

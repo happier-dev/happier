@@ -1,6 +1,6 @@
-import { resolvePublicReleaseRingLabelForId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import type { OpenSshAuth as CanonicalOpenSshAuth } from '../../ssh/openSshTransport.js';
-import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
+import { buildRemoteHappierInvocationCommand } from '../ssh/remoteBootstrapCommandBuilder.js';
 export type { OpenSshAuth } from '../../ssh/openSshTransport.js';
 import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskJsonObject } from '@happier-dev/protocol';
@@ -9,7 +9,7 @@ import type { SystemTaskSshConnectionConfig } from '../kinds/relayRuntimeKinds.j
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../kinds/remoteFirstPartyPayloadInstaller.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 
-import type { HappierJsonExecutor, HappierTextResult, RunHappierOptions } from './happierJsonExecutor.js';
+import { createHappierJsonExecutorFromTextRunner, type HappierJsonExecutor, type HappierTextResult, type RunHappierOptions } from './happierJsonExecutor.js';
 
 function isSystemTaskJsonObject(value: unknown): value is SystemTaskJsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -53,30 +53,6 @@ export type OpenSshRunRemoteText = (params: Readonly<{
   input?: string;
 }>) => Promise<HappierTextResult>;
 
-function parseFirstJsonObject(text: string): unknown {
-  const lines = String(text ?? '')
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  for (const line of lines) {
-    try {
-      return JSON.parse(line);
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-function isJsonFailureEnvelope(value: unknown): value is Readonly<{ ok: false }> {
-  return Boolean(
-    value
-      && typeof value === 'object'
-      && 'ok' in value
-      && (value as { ok?: unknown }).ok === false,
-  );
-}
-
 export function createOpenSshHappierJsonExecutor(params: Readonly<{
   ssh: SystemTaskSshConnectionConfig;
   auth: CanonicalOpenSshAuth;
@@ -86,18 +62,13 @@ export function createOpenSshHappierJsonExecutor(params: Readonly<{
   runRemoteText: OpenSshRunRemoteText;
 }>): HappierJsonExecutor {
   const channel = params.channel ?? 'stable';
-  const scopedLabel = channel === 'stable' ? '' : resolvePublicReleaseRingLabelForId(channel);
   const remoteHappier = String(params.happierCommand ?? '').trim() || resolveRemoteInstalledFirstPartyBinaryPath({
     componentId: 'happier-cli',
     channel,
   });
 
-  return {
-    async runHappierText(args, opts) {
-      const argvCommand = [quoteRemotePathWithHomeExpansion(remoteHappier), ...args.map(safeBashSingleQuote)].join(' ');
-      const remoteCommand = scopedLabel
-        ? `HAPPIER_PUBLIC_RELEASE_CHANNEL=${safeBashSingleQuote(scopedLabel)} HAPPIER_RELEASE_RING=${safeBashSingleQuote(scopedLabel)} ${argvCommand}`
-        : argvCommand;
+  return createHappierJsonExecutorFromTextRunner(async (args, opts) => {
+      const remoteCommand = buildRemoteHappierInvocationCommand({ binaryPath: remoteHappier, args, channel });
       return await params.runRemoteText({
         ssh: params.ssh,
         auth: params.auth,
@@ -110,47 +81,7 @@ export function createOpenSshHappierJsonExecutor(params: Readonly<{
         includeStdoutInError: opts?.includeStdoutInError,
         input: opts?.input,
       });
-    },
-
-    async runHappierJson(args, opts) {
-      const allowJsonFailure = opts?.allowJsonFailure;
-      const result = await this.runHappierText(args, opts);
-      const parsed = parseFirstJsonObject(result.stdout);
-
-      if (result.status !== 0) {
-        if (allowJsonFailure && parsed && typeof parsed === 'object') {
-          return parsed;
-        }
-        throw new SystemTaskExecutionError(
-          'cli_command_failed',
-          result.stderr.trim() || result.stdout.trim() || 'Command failed.',
-        );
-      }
-
-      if (!parsed || typeof parsed !== 'object') {
-        throw new SystemTaskExecutionError(
-          'invalid_cli_response',
-          `Command did not return a JSON object: ${args.join(' ')}`,
-        );
-      }
-
-      if (!allowJsonFailure && isJsonFailureEnvelope(parsed)) {
-        const envelope = parsed as {
-          error?: { code?: unknown; message?: unknown } | unknown;
-          message?: unknown;
-        };
-        const message = typeof envelope.message === 'string' && envelope.message.trim()
-          ? envelope.message.trim()
-          : envelope.error && typeof envelope.error === 'object' && envelope.error !== null
-              && typeof (envelope.error as { message?: unknown }).message === 'string'
-            ? ((envelope.error as { message?: string }).message ?? '').trim()
-            : `Command failed: ${args.join(' ')}`;
-        throw new SystemTaskExecutionError('cli_command_failed', message);
-      }
-
-      return parsed;
-    },
-  };
+  });
 }
 
 export type OpenSshHappierJsonExecutor = HappierJsonExecutor;

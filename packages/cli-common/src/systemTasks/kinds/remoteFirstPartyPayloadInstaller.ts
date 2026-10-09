@@ -80,6 +80,15 @@ function normalizeBootstrapReleaseChannel(raw: unknown): PublicReleaseRingId {
   return normalizePublicReleaseRingId(raw) || 'stable';
 }
 
+export type RemoteFirstPartyPayloadInstallDeps = Readonly<{
+  resolveRemoteReleaseTarget: (params: Omit<Parameters<RemoteFirstPartyInstallDeps['resolveRemoteReleaseTarget']>[0], 'ssh' | 'knownHostsMode'>) => ReturnType<RemoteFirstPartyInstallDeps['resolveRemoteReleaseTarget']>;
+  runRemoteText: (params: Omit<Parameters<RemoteFirstPartyInstallDeps['runRemoteText']>[0], 'ssh' | 'knownHostsMode'>) => ReturnType<RemoteFirstPartyInstallDeps['runRemoteText']>;
+  copyLocalDirectoryToRemote: (params: Omit<Parameters<RemoteFirstPartyInstallDeps['copyLocalDirectoryToRemote']>[0], 'ssh' | 'knownHostsMode'>) => Promise<void>;
+  preparePayload?: RemoteFirstPartyInstallDeps['preparePayload'];
+  resolveSelfDownloadInstallPlan?: RemoteFirstPartyInstallDeps['resolveSelfDownloadInstallPlan'];
+  now?: () => number;
+}>;
+
 export async function installRemoteFirstPartyComponent(params: Readonly<{
   componentId: FirstPartyComponentId;
   channel?: string;
@@ -90,18 +99,39 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
   strategy?: 'scp-upload' | 'remote-self-download';
   signal?: AbortSignal;
 }>, deps: RemoteFirstPartyInstallDeps): Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>> {
+
+  return await installRemoteFirstPartyComponentPayload(params, {
+    ...deps,
+    resolveRemoteReleaseTarget: async (request) => deps.resolveRemoteReleaseTarget({ ...request, ssh: params.ssh, knownHostsMode: params.knownHostsMode }),
+    runRemoteText: async (request) => deps.runRemoteText({ ...request, ssh: params.ssh, knownHostsMode: params.knownHostsMode }),
+    copyLocalDirectoryToRemote: async (request) => deps.copyLocalDirectoryToRemote({ ...request, ssh: params.ssh, knownHostsMode: params.knownHostsMode }),
+  });
+}
+
+/** One binary payload installer; transports own only command and file IO. */
+export async function installRemoteFirstPartyComponentPayload(
+  params: Omit<Readonly<{
+  componentId: FirstPartyComponentId;
+  channel?: string;
+  ssh: SystemTaskSshConnectionConfig;
+  knownHostsMode?: 'app' | 'system';
+  installerBinaryPath?: string;
+  remoteHomeDir?: string;
+  strategy?: 'scp-upload' | 'remote-self-download';
+  signal?: AbortSignal;
+}>, 'ssh' | 'knownHostsMode'>,
+  deps: RemoteFirstPartyPayloadInstallDeps,
+): Promise<Readonly<{ binaryPath: string; versionId: string; source: string | null }>> {
   const resolvedDeps = {
     preparePayload: async (payloadParams: Parameters<NonNullable<RemoteFirstPartyInstallDeps['preparePayload']>>[0]) => await prepareFirstPartyComponentPayloadFromGitHubRelease(payloadParams),
     resolveSelfDownloadInstallPlan: async (planParams: Parameters<NonNullable<RemoteFirstPartyInstallDeps['resolveSelfDownloadInstallPlan']>>[0]) => await resolveRemoteSelfDownloadFirstPartyInstallPlan(planParams),
     now: () => Date.now(),
     ...deps,
-  } satisfies Required<RemoteFirstPartyInstallDeps>;
+  } satisfies Required<RemoteFirstPartyPayloadInstallDeps>;
   const channel = normalizeBootstrapReleaseChannel(params.channel);
   const remoteHomeDir = normalizeRemoteFirstPartyHomeDir(params.remoteHomeDir);
   params.signal?.throwIfAborted();
   const target = await resolvedDeps.resolveRemoteReleaseTarget({
-    ssh: params.ssh,
-    knownHostsMode: params.knownHostsMode,
     ...(params.signal ? { signal: params.signal } : {}),
   });
   if (params.strategy === 'remote-self-download') {
@@ -113,9 +143,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
       ...(params.remoteHomeDir ? { remoteHomeDir } : {}),
     });
     const installResult = await resolvedDeps.runRemoteText({
-      ssh: params.ssh,
-      knownHostsMode: params.knownHostsMode,
-      remoteCommand: plan.command,
+          remoteCommand: plan.command,
       ...(params.signal ? { signal: params.signal } : {}),
     });
     if (installResult.status !== 0) {
@@ -143,16 +171,13 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
     try {
       const stageParent = `${remoteHomeDir}/bootstrap-staging/${sanitizeRemoteFirstPartyPathSegment(params.componentId)}-${sanitizeRemoteFirstPartyPathSegment(prepared.versionId)}-${resolvedDeps.now()}`;
       const stageParentForScp = normalizeScpRemotePath(stageParent);
-      await resolvedDeps.runRemoteText({
-        ssh: params.ssh,
-        knownHostsMode: params.knownHostsMode,
-        remoteCommand: `mkdir -p ${quoteRemotePathWithHomeExpansion(stageParent)}`,
+      const stageResult = await resolvedDeps.runRemoteText({
+                remoteCommand: `mkdir -p ${quoteRemotePathWithHomeExpansion(stageParent)}`,
         ...(params.signal ? { signal: params.signal } : {}),
       });
+      if (stageResult.status !== 0) throw new Error('Remote payload staging failed.');
       await resolvedDeps.copyLocalDirectoryToRemote({
-        ssh: params.ssh,
-        knownHostsMode: params.knownHostsMode,
-        localPath: scpReadyPayload.archiveStageRoot,
+                localPath: scpReadyPayload.archiveStageRoot,
         remotePath: stageParentForScp,
         ...(params.signal ? { signal: params.signal } : {}),
       });
@@ -168,9 +193,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
         remoteHomeDir,
       });
 
-      await resolvedDeps.runRemoteText({
-        ssh: params.ssh,
-        knownHostsMode: params.knownHostsMode,
+      const promotionResult = await resolvedDeps.runRemoteText({
         remoteCommand: [
           'set -eu',
           `cleanup() { rm -rf ${quoteRemotePathWithHomeExpansion(stageParent)}; }`,
@@ -185,6 +208,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
         ].join('; '),
         ...(params.signal ? { signal: params.signal } : {}),
       });
+      if (promotionResult.status !== 0) throw new Error('Remote payload promotion failed.');
     } finally {
       await scpReadyPayload.cleanup();
     }

@@ -18,6 +18,7 @@
   "types": "./dist/index.d.cts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "require": {
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
@@ -28,6 +29,7 @@
       }
     },
     "./lib": {
+      "happier-source": "./src/lib.ts",
       "require": {
         "types": "./dist/lib.d.cts",
         "default": "./dist/lib.cjs"
@@ -38,6 +40,7 @@
       }
     },
     "./mcp/bridges/happierMcpStdioBridge": {
+      "happier-source": "./src/mcp/bridges/happierMcpStdioBridge.ts",
       "require": {
         "types": "./dist/mcp/bridges/happierMcpStdioBridge.d.cts",
         "default": "./dist/mcp/bridges/happierMcpStdioBridge.cjs"
@@ -48,6 +51,7 @@
       }
     },
     "./mcp/bridges/remoteMcpStdioBridge": {
+      "happier-source": "./src/mcp/bridges/remoteMcpStdioBridge.ts",
       "require": {
         "types": "./dist/mcp/bridges/remoteMcpStdioBridge.d.cts",
         "default": "./dist/mcp/bridges/remoteMcpStdioBridge.cjs"
@@ -58,6 +62,7 @@
       }
     },
     "./mcp/launchers/stdioMcpServerLauncher": {
+      "happier-source": "./src/mcp/launchers/stdioMcpServerLauncher.ts",
       "require": {
         "types": "./dist/mcp/launchers/stdioMcpServerLauncher.d.cts",
         "default": "./dist/mcp/launchers/stdioMcpServerLauncher.cjs"
@@ -69,7 +74,10 @@
     }
   },
   "imports": {
-    "#voice-inference-runtime": "./dist/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.mjs"
+    "#voice-inference-runtime": {
+      "happier-source": "./src/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.ts",
+      "default": "./dist/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.mjs"
+    }
   },
   "files": [
     "dist",
@@ -132,6 +140,15 @@
     "@happier-dev/plugins-kimi",
     "@happier-dev/plugins-kiro",
     "@happier-dev/plugins-lmstudio",
+    "@happier-dev/plugins-machine-crabbox",
+    "@happier-dev/plugins-machine-cua",
+    "@happier-dev/plugins-machine-digitalocean",
+    "@happier-dev/plugins-machine-docker-sandboxes",
+    "@happier-dev/plugins-machine-fly",
+    "@happier-dev/plugins-machine-hetzner",
+    "@happier-dev/plugins-machine-lima",
+    "@happier-dev/plugins-machine-lume",
+    "@happier-dev/plugins-machine-modal",
     "@happier-dev/plugins-minimax",
     "@happier-dev/plugins-ohmypi",
     "@happier-dev/plugins-ollama",
@@ -167,14 +184,14 @@
     "typecheck:local": "yarn -s typecheck:source:finite",
     "typecheck:source:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --singleThreaded --project tsconfig.source.json --project tsconfig.test.json",
     "build": "node scripts/build.mjs",
-    "plugins:aggregate:finite": "node scripts/withNodeHeapLimit.mjs node --experimental-strip-types scripts/build-owned/generateBundledPluginEntries.ts --root ../.. --mode check --scope projections --aggregate",
+    "plugins:aggregate:finite": "node scripts/withNodeHeapLimit.mjs node --conditions=happier-source --experimental-strip-types scripts/build-owned/generateBundledPluginEntries.ts --root ../.. --mode check --scope projections --aggregate",
     "build:prepared": "node scripts/build.mjs",
     "test": "../stack/bin/hstack-exec --script=test:local",
     "test:local": "$npm_execpath run test:unit:local",
     "vitest": "../stack/bin/hstack-exec --script=vitest:local",
     "vitest:local": "vitest",
     "test:unit": "../stack/bin/hstack-exec --script=test:unit:local",
-    "test:unit:local": "yarn -s test:unit:vitest:local && node --test scripts/prepack-script.test.mjs scripts/stageManagedRuntimeArchives.test.mjs scripts/runWorkspaceSyncRealIntegration.test.mjs && yarn -s test:import-cycles",
+    "test:unit:local": "node scripts/runVitestShards.mjs --config vitest.config.ts --unit-checks",
     "test:unit:vitest": "../stack/bin/hstack-exec --script=test:unit:vitest:local",
     "test:unit:vitest:local": "node scripts/runVitestShards.mjs --config vitest.config.ts",
     "test:import-cycles": "node scripts/importCycleGuard.mjs",
@@ -255,6 +272,10 @@
     "@happier-dev/plugins-kimi": "0.0.0",
     "@happier-dev/plugins-kiro": "0.0.0",
     "@happier-dev/plugins-lmstudio": "0.0.0",
+    "@happier-dev/plugins-machine-lima": "0.0.0",
+    "@happier-dev/plugins-machine-digitalocean": "0.0.0",
+    "@happier-dev/plugins-machine-fly": "0.0.0",
+    "@happier-dev/plugins-machine-hetzner": "0.0.0",
     "@happier-dev/plugins-minimax": "0.0.0",
     "@happier-dev/plugins-ohmypi": "0.0.0",
     "@happier-dev/plugins-ollama": "0.0.0",
@@ -308,6 +329,7 @@
     "https-proxy-agent": "^7.0.6",
     "ink": "^6.5.1",
     "jiti": "^2.6.1",
+    "json5": "^2.2.3",
     "libsodium-wrappers-sumo": "0.7.16",
     "node-pty": "^1.1.0",
     "open": "^10.2.0",
@@ -327,20 +349,24 @@
     "typescript": "5.9.3",
     "undici": "^6.23.0",
     "ws": "8.21.1",
+    "yaml": "^2.4.2",
     "zod": "4.3.6",
     "@happier-dev/plugins-channel-discord": "0.0.0",
-    "@happier-dev/plugins-devin": "0.0.0"
+    "@happier-dev/plugins-devin": "0.0.0",
+    "@happier-dev/plugins-machine-cua": "0.0.0",
+    "@happier-dev/plugins-machine-lume": "0.0.0",
+    "@happier-dev/plugins-machine-crabbox": "0.0.0",
+    "@happier-dev/plugins-machine-docker-sandboxes": "0.0.0",
+    "@happier-dev/plugins-machine-modal": "0.0.0"
   },
   "devDependencies": {
-    "@eslint/compat": "^1",
+    "@happier-dev/plugins-devcontainer": "0.0.0",
     "@types/archiver": "^7.0.0",
     "@types/node": ">=20",
     "@types/semver": "^7.7.0",
     "@types/ws": "8.18.1",
     "cross-env": "^10.1.0",
     "dotenv": "^16.6.1",
-    "eslint": "^9",
-    "eslint-config-prettier": "^10",
     "pkgroll": "^2.27.0",
     "release-it": "^19.0.6",
     "shx": "^0.3.3",

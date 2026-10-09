@@ -5,6 +5,7 @@ import {
 import type { HappierJsonExecutor } from '../executors/happierJsonExecutor.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 export type RemoteHomeEnrollmentPairingRequest = Readonly<{
   publicKey: string;
@@ -16,6 +17,7 @@ export type RemoteHomeEnrollmentPairingRequest = Readonly<{
   }>;
   supportsTokenOnly: true;
   pairingRequirement: 'v3';
+  remoteProfileId?: string;
 }>;
 
 export type RemoteHomeEnrollmentResult = Readonly<{
@@ -57,13 +59,15 @@ function parsePairingRequest(value: unknown): RemoteHomeEnrollmentPairingRequest
       'pairing',
       'supportsTokenOnly',
       'pairingRequirement',
+      'remoteProfileId',
     ])) {
     return null;
   }
   const publicKey = readNonEmptyString(value.publicKey);
+  const remoteProfileId = value.remoteProfileId === undefined ? undefined : readNonEmptyString(value.remoteProfileId);
   const homeServerIdentityId = normalizeServerIdentityIdCapability(value.homeServerIdentityId);
   const pairing = isRecord(value.pairing) ? value.pairing : null;
-  if (!publicKey || !homeServerIdentityId || !pairing || !hasOnlyKeys(pairing, [
+  if (!publicKey || remoteProfileId === null || !homeServerIdentityId || !pairing || !hasOnlyKeys(pairing, [
     'secretB64Url',
     'createdAtMs',
     'expiresAtMs',
@@ -87,6 +91,7 @@ function parsePairingRequest(value: unknown): RemoteHomeEnrollmentPairingRequest
     pairing: { secretB64Url, createdAtMs, expiresAtMs },
     supportsTokenOnly: true,
     pairingRequirement: 'v3',
+    ...(remoteProfileId ? { remoteProfileId } : {}),
   };
 }
 
@@ -141,20 +146,63 @@ function createLinkedAbortController(signal: AbortSignal | undefined): Readonly<
 }
 
 /**
- * Runs the SSH-only, single-process Home enrollment ceremony.
+ * Runs normal Home enrollment using either the SSH stream or finite auth
+ * request/wait commands for the base buffered native carrier.
  *
- * The remote process owns every claim/key secret in memory and persists only
- * its final Home credential. This coordinator receives only the short-lived
- * v3 approval context and a strict non-secret completion projection.
+ * Claim/key secrets stay guest-owned: in memory for the SSH ceremony or in
+ * normal protected pending state between buffered invocations. This coordinator
+ * receives only the short-lived v3 approval context and non-secret completion.
  */
 export async function runRemoteHomeEnrollmentRecipe(params: Readonly<{
   executor: HappierJsonExecutor;
   homeTargetInput: HomeTargetInput;
+  managedEnrollment?: ManagedEnrollmentCorrelationV1;
+  /** Native exec requires only buffered process results, never output observers. */
+  processIO?: 'streaming' | 'buffered';
   approvePairingRequest(request: RemoteHomeEnrollmentPairingRequest): Promise<void>;
   signal?: AbortSignal;
   timeoutMs: number;
 }>): Promise<RemoteHomeEnrollmentResult> {
   const homeTargetInput = parseHomeTargetInput(params.homeTargetInput);
+  const managedEnrollment = params.managedEnrollment === undefined ? undefined
+    : ManagedEnrollmentCorrelationV1Schema.parse(params.managedEnrollment);
+  if (managedEnrollment && (homeTargetInput.kind !== 'descriptor'
+    || homeTargetInput.descriptor.homeServerIdentityId !== managedEnrollment.homeId)) {
+    throw new SystemTaskExecutionError('home_identity_mismatch', 'Managed enrollment requires its exact admitted Home.');
+  }
+  if (params.processIO === 'buffered') {
+    const capture = async (args: readonly string[], input?: string): Promise<unknown> => {
+      params.signal?.throwIfAborted();
+      const result = await params.executor.runHappierText(args, {
+        ...(input === undefined ? {} : { input }), signal: params.signal,
+        timeoutMs: params.timeoutMs, includeStdoutInError: false,
+      });
+      params.signal?.throwIfAborted();
+      if (result.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Remote Home enrollment failed.');
+      if (Buffer.byteLength(result.stdout, 'utf8') > MAX_PROTOCOL_LINE_BYTES) {
+        throw new SystemTaskExecutionError('invalid_cli_response', 'Remote enrollment protocol line was too large.');
+      }
+      try { return JSON.parse(result.stdout); } catch {
+        throw new SystemTaskExecutionError('invalid_cli_response', 'Remote enrollment returned invalid JSON.');
+      }
+    };
+    const request = parsePairingRequest(await capture(
+      ['auth', 'request', '--json', '--remote-enrollment', '--home-target-stdin', ...(managedEnrollment ? ['--managed-enrollment-stdin'] : [])],
+      JSON.stringify(managedEnrollment ? { homeTarget: homeTargetInput, managedEnrollment } : homeTargetInput),
+    ));
+    if (!request?.remoteProfileId) throw new SystemTaskExecutionError('invalid_cli_response', 'Remote enrollment did not return a pairing request.');
+    if (homeTargetInput.kind === 'descriptor' && request.homeServerIdentityId !== homeTargetInput.descriptor.homeServerIdentityId) {
+      throw new SystemTaskExecutionError('home_identity_mismatch', 'Remote enrollment request does not match the selected Home identity.');
+    }
+    await params.approvePairingRequest(request);
+    params.signal?.throwIfAborted();
+    const result = parseResult(await capture(['auth', 'wait', '--json', '--remote-enrollment', '--server', request.remoteProfileId, '--no-persist', '--public-key', request.publicKey]));
+    if (!result) throw new SystemTaskExecutionError('invalid_cli_response', 'Remote enrollment did not return a valid completion result.');
+    if (result.homeServerIdentityId !== request.homeServerIdentityId || result.remoteProfileId !== request.remoteProfileId) {
+      throw new SystemTaskExecutionError('home_identity_mismatch', 'Remote enrollment changed Home identity during pairing.');
+    }
+    return result;
+  }
   const linked = createLinkedAbortController(params.signal);
   let lineBuffer = '';
   const state: {
@@ -220,9 +268,9 @@ export async function runRemoteHomeEnrollmentRecipe(params: Readonly<{
     let commandResult;
     try {
       commandResult = await params.executor.runHappierText(
-        ['auth', 'enroll-remote', '--json-lines', '--home-target-stdin'],
+        ['auth', 'enroll-remote', '--json-lines', '--home-target-stdin', ...(managedEnrollment ? ['--managed-enrollment-stdin'] : [])],
         {
-          input: JSON.stringify(homeTargetInput),
+          input: JSON.stringify(managedEnrollment ? { homeTarget: homeTargetInput, managedEnrollment } : homeTargetInput),
           signal: linked.controller.signal,
           timeoutMs: params.timeoutMs,
           includeStdoutInError: false,

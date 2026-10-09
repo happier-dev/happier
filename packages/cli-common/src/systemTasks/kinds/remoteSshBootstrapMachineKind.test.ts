@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFile, stat } from 'node:fs/promises';
 
 import { createSystemTasksRunner } from '../interactiveTaskKinds.js';
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 import {
   createRemoteSshBootstrapMachineTaskKind as createProductionRemoteSshBootstrapMachineTaskKind,
+  createRemoteNativeBootstrapMachineTaskKind,
   parseRemoteBootstrapMachineParams,
   preflightRemoteBackgroundServiceReplacement,
   SERVICE_RECONCILIATION_DECLINED_MESSAGE,
@@ -14,6 +15,58 @@ import {
 type RemoteEnrollmentExecutorParams = Parameters<
   NonNullable<RemoteSshBootstrapMachineDeps['createRemoteEnrollmentExecutor']>
 >[0];
+
+describe('native transport through the remote bootstrap task', () => {
+  it('preserves the daemon service replacement prompt from a normal CLI JSON envelope', async () => {
+    const prompts: string[] = [];
+    const task = createRemoteNativeBootstrapMachineTaskKind({
+      configuration: { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, serviceMode: 'user' },
+      assertCurrent: async () => {}, installRemoteCli: async () => {}, approveLocalAuthRequest: async () => {},
+      executor: {
+        runHappierText: async () => { throw new Error('Enrollment must not start before service replacement consent.'); },
+        runHappierJson: async () => ({ ok: true, data: { services: [{ serviceType: 'daemon', label: 'old-preview', ring: 'preview', targetMode: 'pinned', running: true }] } }),
+      },
+    });
+    await expect(task.run({ params: {}, emit: () => undefined, prompt: async (request) => { prompts.push(request.kind); return { approved: false }; } })).rejects.toMatchObject({ code: 'service_reconciliation_declined' });
+    expect(prompts).toEqual(['daemon.replaceRemoteBackgroundServices']);
+  });
+
+  it('enrolls with buffered native exec and carries exact managed correlation in private stdin', async () => {
+    let approved = false;
+    const correlation = { homeId: 'srv_home_identity', managedId: 'managed-1', requestId: 'request-1', expectedIntentRevision: 1, controller: { machineId: 'controller', installationId: 'installation' }, resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained-1' } } };
+    let guestInput: unknown;
+    const runner = createSystemTasksRunner({ kinds: {} });
+    const task = createRemoteNativeBootstrapMachineTaskKind({
+      configuration: { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, managedEnrollment: correlation, serviceMode: 'none' },
+      assertCurrent: async () => {}, installRemoteCli: async () => {},
+      approveLocalAuthRequest: async () => { approved = true; },
+      executor: {
+        runHappierJson: async () => ({ ok: true, data: { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined-machine' } }),
+        runHappierText: async (args, options) => {
+          expect(options?.onStdoutChunk).toBeUndefined();
+          if (args[1] === 'request') {
+            expect(args).toEqual(['auth', 'request', '--json', '--remote-enrollment', '--home-target-stdin', '--managed-enrollment-stdin']);
+            guestInput = JSON.parse(options!.input!);
+            const request = { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1, publicKey: Buffer.alloc(32, 1).toString('base64'), homeServerIdentityId: correlation.homeId, pairing: { secretB64Url: Buffer.alloc(32, 2).toString('base64url'), createdAtMs: 10, expiresAtMs: 20 }, supportsTokenOnly: true, pairingRequirement: 'v3', remoteProfileId: 'guest-home' };
+            return { status: 0, stdout: `${JSON.stringify(request)}\n`, stderr: '' };
+          }
+          expect(args).toEqual(['auth', 'wait', '--json', '--remote-enrollment', '--server', 'guest-home', '--no-persist', '--public-key', Buffer.alloc(32, 1).toString('base64')]);
+          expect(approved).toBe(true);
+          const result = { kind: 'remote_home_enrollment_result', protocolVersion: 1, success: true, homeServerIdentityId: correlation.homeId, machineId: 'joined-machine', encryptionType: 'tokenOnly', pairingAuthentication: 'v3', remoteProfileId: 'guest-home' };
+          return { status: 0, stdout: `${JSON.stringify(result)}\n`, stderr: '' };
+        },
+      },
+    });
+    await runner.startAdmitted({ taskId: 'native-enrollment', kind: 'remote.ssh.bootstrapMachine.v1', params: {} }, task);
+    await vi.waitFor(async () => {
+      expect((await runner.poll({ taskId: 'native-enrollment', cursor: 0 })).pendingPrompt?.kind).toBe('auth.approveRemoteProvisioning');
+    });
+    expect((await runner.poll({ taskId: 'native-enrollment', cursor: 0 })).pendingPrompt?.data).toMatchObject({ credentialScope: 'account' });
+    await runner.respond({ taskId: 'native-enrollment', answer: { approved: true } });
+    await expect(runner.wait({ taskId: 'native-enrollment' })).resolves.toMatchObject({ ok: true, data: { machineId: 'joined-machine' } });
+    expect(guestInput).toMatchObject({ managedEnrollment: correlation });
+  });
+});
 
 type RemoteEnrollmentFixture = Readonly<{
   requestData?: Record<string, unknown>;

@@ -1,9 +1,15 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { runLimaGuestCommand } from '@happier-dev/cli-common/machineLima';
+import { buildLinuxInotifyScript } from '../../provision/linux-inotify.mjs';
 
 import { validateManagedLimaInstanceName } from './profiles.mjs';
 
 const PROFILES = new Set(['happier', 'installer', 'bare']);
 const SIMPLE_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+function readPinnedBunVersion() {
+  return readFileSync(new URL('../../provision/.bun-version', import.meta.url), 'utf8').trim();
+}
 
 export const REQUIRED_MANAGED_LIMA_GUEST_TOOLCHAIN = Object.freeze([
   Object.freeze({ command: 'node', label: 'Node.js' }),
@@ -56,9 +62,9 @@ function provisionVersion({
 export async function inspectManagedLimaGuestIdentity({ executor, instance: rawInstance }) {
   if (!executor || typeof executor.capture !== 'function') throw new Error('[managed-lima] executor is required');
   const instance = validateManagedLimaInstanceName(rawInstance);
-  const result = await executor.capture('limactl', [
-    'shell', instance, '--', 'sh', '-lc', 'printf "%s\\0%s" "$HOME" "$USER"',
-  ]);
+  const result = await runLimaGuestCommand({ executor, instance, argv: [
+    'sh', '-lc', 'printf "%s\\0%s" "$HOME" "$USER"',
+  ] });
   if (result.exitCode !== 0) {
     throw new Error(`[managed-lima] failed to inspect guest identity: ${String(result.err ?? '').trim() || 'limactl shell failed'}`);
   }
@@ -124,9 +130,7 @@ const GUEST_AGENT_RESTART_COMMAND = [
 export async function inspectManagedLimaGuestLoginManager({ executor, instance: rawInstance }) {
   if (!executor || typeof executor.capture !== 'function') throw new Error('[managed-lima] executor is required');
   const instance = validateManagedLimaInstanceName(rawInstance);
-  const result = await executor.capture('limactl', [
-    'shell', instance, '--', 'sh', '-lc', LOGIN_MANAGER_HEALTH_COMMAND,
-  ]);
+  const result = await runLimaGuestCommand({ executor, instance, argv: ['sh', '-lc', LOGIN_MANAGER_HEALTH_COMMAND] });
   return result.exitCode === 0
     ? { ok: true, error: null }
     : { ok: false, error: String(result.err ?? '').trim() || 'loginctl timed out' };
@@ -140,9 +144,7 @@ export async function ensureManagedLimaGuestLoginManager({ executor, instance: r
   const inspect = async () => await inspectManagedLimaGuestLoginManager({ executor, instance });
   if ((await inspect()).ok) return { repaired: false };
 
-  await executor.run('limactl', [
-    'shell', instance, '--', 'sh', '-lc', LOGIN_MANAGER_REPAIR_COMMAND,
-  ]);
+  await runLimaGuestCommand({ executor, instance, interactive: true, argv: ['sh', '-lc', LOGIN_MANAGER_REPAIR_COMMAND] });
   const repaired = await inspect();
   if (!repaired.ok) {
     const error = new Error(
@@ -162,7 +164,7 @@ export async function inspectManagedLimaGuestToolchain({
   mutagenVersion: rawMutagenVersion = '0.18.1',
   agentBrowserVersion: rawAgentBrowserVersion = '0.34.0',
   playwrightVersion: rawPlaywrightVersion = '1.58.2',
-  bunVersion: rawBunVersion = '1.3.5',
+  bunVersion: rawBunVersion = readPinnedBunVersion(),
 }) {
   if (!executor || typeof executor.capture !== 'function') throw new Error('[managed-lima] executor is required');
   const instance = validateManagedLimaInstanceName(rawInstance);
@@ -172,8 +174,8 @@ export async function inspectManagedLimaGuestToolchain({
   const agentBrowserVersion = requireToolchainValue(rawAgentBrowserVersion, 'agent-browser version');
   const playwrightVersion = requireToolchainValue(rawPlaywrightVersion, 'Playwright version');
   const bunVersion = requireToolchainValue(rawBunVersion, 'Bun version');
-  const result = await executor.capture('limactl', [
-    'shell', instance, '--', 'sh', '-lc', guestToolchainHealthCommand({
+  const result = await runLimaGuestCommand({ executor, instance, argv: [
+    'sh', '-lc', guestToolchainHealthCommand({
       nodeMajor,
       yarnVersion,
       mutagenVersion,
@@ -181,7 +183,7 @@ export async function inspectManagedLimaGuestToolchain({
       playwrightVersion,
       bunVersion,
     }),
-  ]);
+  ] });
   if (result.exitCode === 0) return { ok: true, error: null };
   return {
     ok: false,
@@ -196,17 +198,13 @@ export async function restartManagedLimaGuestAgent({ executor, instance: rawInst
     throw new Error('[managed-lima] executor is required');
   }
   const instance = validateManagedLimaInstanceName(rawInstance);
-  const restart = await executor.run('limactl', [
-    'shell', instance, '--', 'sh', '-lc', GUEST_AGENT_RESTART_COMMAND,
-  ]);
+  const restart = await runLimaGuestCommand({ executor, instance, interactive: true, argv: ['sh', '-lc', GUEST_AGENT_RESTART_COMMAND] });
   if (restart?.exitCode !== undefined && restart.exitCode !== 0) {
     const error = new Error('[managed-lima] failed to restart the existing Lima guest agent');
     error.code = 'MANAGED_LIMA_GUEST_AGENT_RESTART_FAILED';
     throw error;
   }
-  const health = await executor.capture('limactl', [
-    'shell', instance, '--', 'sh', '-lc', GUEST_AGENT_HEALTH_COMMAND,
-  ]);
+  const health = await runLimaGuestCommand({ executor, instance, argv: ['sh', '-lc', GUEST_AGENT_HEALTH_COMMAND] });
   if (health.exitCode !== 0) {
     const error = new Error(
       `[managed-lima] Lima guest agent remained unhealthy after targeted restart: ${String(health.err ?? '').trim() || 'systemctl is-active failed'}`,
@@ -227,7 +225,7 @@ export async function provisionManagedLimaGuest({
   mutagenVersion: rawMutagenVersion = '0.18.1',
   agentBrowserVersion: rawAgentBrowserVersion = '0.34.0',
   playwrightVersion: rawPlaywrightVersion = '1.58.2',
-  bunVersion: rawBunVersion = '1.3.5',
+  bunVersion: rawBunVersion = readPinnedBunVersion(),
 }) {
   if (!executor || typeof executor.capture !== 'function' || typeof executor.run !== 'function') {
     throw new Error('[managed-lima] executor is required');
@@ -243,6 +241,13 @@ export async function provisionManagedLimaGuest({
   const source = String(scriptSource ?? '');
   if (!source.trim()) throw new Error('[managed-lima] guest provision script is empty');
 
+  // Apply outside toolchain readiness: retained guests need the persisted
+  // policy even when their original provisioning marker is already present.
+  const inotify = await runLimaGuestCommand({ executor, instance, interactive: true,
+    argv: ['sh', '-c', 'if [ "$(id -u)" = 0 ]; then exec bash -s; else exec sudo bash -s; fi'],
+    input: buildLinuxInotifyScript() });
+  if (inotify.exitCode !== 0) throw new Error('[managed-lima] guest inotify policy could not be applied');
+
   const version = provisionVersion({
     scriptSource: source,
     profile,
@@ -255,9 +260,7 @@ export async function provisionManagedLimaGuest({
   });
   const markerDir = '.local/state/happier/managed-lima-provision';
   const markerPath = `${markerDir}/${version}.ready`;
-  const current = await executor.capture('limactl', [
-    'shell', instance, '--', 'test', '-f', markerPath,
-  ]);
+  const current = await runLimaGuestCommand({ executor, instance, argv: ['test', '-f', markerPath] });
   if (current.exitCode === 0) {
     const health = await inspectManagedLimaGuestToolchain({
       executor,
@@ -272,8 +275,7 @@ export async function provisionManagedLimaGuest({
     if (health.ok) return { changed: false, version, markerPath };
   }
 
-  await executor.run('limactl', [
-    'shell', instance, '--',
+  await runLimaGuestCommand({ executor, instance, interactive: true, argv: [
     'env',
     `HAPPIER_PROVISION_NODE_MAJOR=${nodeMajor}`,
     `HAPPIER_PROVISION_YARN_VERSION=${yarnVersion}`,
@@ -282,7 +284,7 @@ export async function provisionManagedLimaGuest({
     `HAPPIER_PROVISION_PLAYWRIGHT_VERSION=${playwrightVersion}`,
     `HAPPIER_PROVISION_BUN_VERSION=${bunVersion}`,
     'bash', '-s', '--', `--profile=${profile}`,
-  ], { input: source });
+  ], input: source });
   const health = await inspectManagedLimaGuestToolchain({
     executor,
     instance,
@@ -300,9 +302,9 @@ export async function provisionManagedLimaGuest({
     error.code = 'MANAGED_LIMA_GUEST_TOOLCHAIN_UNHEALTHY';
     throw error;
   }
-  await executor.run('limactl', [
-    'shell', instance, '--', 'bash', '-lc',
+  await runLimaGuestCommand({ executor, instance, interactive: true, argv: [
+    'bash', '-lc',
     `mkdir -p '${markerDir}' && : > '${markerPath}'`,
-  ]);
+  ] });
   return { changed: true, version, markerPath };
 }

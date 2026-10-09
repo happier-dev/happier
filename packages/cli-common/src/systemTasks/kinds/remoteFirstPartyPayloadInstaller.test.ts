@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
-import { installRemoteFirstPartyComponent } from './remoteFirstPartyPayloadInstaller.js';
+import { installRemoteFirstPartyComponent, installRemoteFirstPartyComponentPayload } from './remoteFirstPartyPayloadInstaller.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,6 +46,30 @@ async function extractTarFixture(params: Readonly<{ archivePath: string }>): Pro
 }
 
 describe('installRemoteFirstPartyComponent', () => {
+  it('installs the same binary payload through native file and exec IO without an SSH identity', async () => {
+    if (process.platform === 'win32') return;
+    const home = await mkdtemp(join(tmpdir(), 'happier-native-home with spaces-'));
+    const fixture = await createPayloadRootFixture();
+    try {
+      const installed = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => {
+          const result = await execFileAsync('/bin/sh', ['-c', remoteCommand], { env: { ...process.env, HOME: home } });
+          return { status: 0, stdout: result.stdout, stderr: result.stderr };
+        },
+        copyLocalDirectoryToRemote: async ({ localPath, remotePath }) => {
+          await cp(localPath, join(home, remotePath, basename(localPath)), { recursive: true });
+        },
+        preparePayload: async () => ({ componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3', payloadRoot: fixture.payloadRoot, source: null, cleanup: async () => {} }),
+      });
+      expect(installed.binaryPath).toBe('$HOME/.happier/cli/current/happier');
+      await expect(execFileAsync(join(home, '.happier', 'cli', 'current', 'happier'), [])).resolves.toMatchObject({ stdout: '' });
+    } finally {
+      await fixture.cleanup();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('installs and promotes an uploaded payload in a remote HOME containing spaces', async () => {
     if (process.platform === 'win32') return; // The remote installer runs on POSIX targets.
     const root = await mkdtemp(join(tmpdir(), 'happier-remote-home-'));

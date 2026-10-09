@@ -1,7 +1,19 @@
 import {
   buildManagedLimaCreateArgs,
+  buildManagedLimaNetworkEditArgs,
+  resolveManagedLimaNetworks,
   validateManagedLimaInstanceName,
 } from './profiles.mjs';
+import {
+  changeLimaPower,
+  createLimaInstance,
+  getLimaStatus,
+  inspectLimaInstance,
+  limaInstanceField as field,
+  limaVersionAtLeast as versionAtLeast,
+  parseLimaVersion as parseVersion,
+  runLimaCommand,
+} from '@happier-dev/cli-common/machineLima';
 
 const MINIMUM_LIMA_VERSION = Object.freeze([2, 0, 0]);
 
@@ -12,32 +24,6 @@ export class ManagedLimaDriftError extends Error {
     this.code = 'MANAGED_LIMA_CREATION_DRIFT';
     this.drift = drift;
   }
-}
-
-function parseVersion(output) {
-  const match = String(output ?? '').match(/(?:version\s+)?(\d+)\.(\d+)\.(\d+)/i);
-  return match ? match.slice(1).map(Number) : null;
-}
-
-function versionAtLeast(actual, minimum) {
-  if (!actual) return false;
-  for (let index = 0; index < minimum.length; index += 1) {
-    if (actual[index] > minimum[index]) return true;
-    if (actual[index] < minimum[index]) return false;
-  }
-  return true;
-}
-
-function parseInstanceOutput(output) {
-  const text = String(output ?? '').trim();
-  if (!text) return null;
-  const parsed = JSON.parse(text);
-  if (Array.isArray(parsed)) return parsed[0] ?? null;
-  return parsed;
-}
-
-function field(instance, lower, upper) {
-  return instance?.[lower] ?? instance?.[upper] ?? null;
 }
 
 function compareCreationIdentity(instance, profile) {
@@ -122,67 +108,30 @@ export function evaluateManagedLimaInstance(instance, profile) {
 }
 
 export async function inspectManagedLimaInstance({ executor, instance: rawInstance }) {
-  const instance = validateManagedLimaInstanceName(rawInstance);
-  const result = await executor.capture('limactl', ['list', '--all-fields', '--format=json', instance]);
-  if (result.exitCode !== 0) {
-    const detail = String(result.err ?? '');
-    if (/No instance matching .* found\./i.test(detail) && /unmatched instances/i.test(detail)) {
-      return null;
-    }
-    throw new Error(`[managed-lima] failed to inspect ${instance}: ${String(result.err ?? '').trim() || 'limactl list failed'}`);
-  }
-  return parseInstanceOutput(result.out);
+  return inspectLimaInstance({ executor, instance: validateManagedLimaInstanceName(rawInstance) });
 }
 
 export async function getManagedLimaStatus({ executor, instance: rawInstance }) {
-  const instance = await inspectManagedLimaInstance({ executor, instance: rawInstance });
-  if (!instance) return { exists: false, status: 'Absent', instance: null };
-  return {
-    exists: true,
-    status: String(field(instance, 'status', 'Status') ?? 'Unknown'),
-    instance,
-  };
-}
-
-function absentInstanceError(instance) {
-  const error = new Error(`[managed-lima] retained instance ${instance} does not exist; run the explicit managed setup operation`);
-  error.code = 'MANAGED_LIMA_INSTANCE_ABSENT';
-  return error;
+  return getLimaStatus({ executor, instance: validateManagedLimaInstanceName(rawInstance) });
 }
 
 export async function startManagedLimaInstance({ executor, instance: rawInstance }) {
-  const instance = validateManagedLimaInstanceName(rawInstance);
-  const current = await getManagedLimaStatus({ executor, instance });
-  if (!current.exists) throw absentInstanceError(instance);
-  if (current.status.toLowerCase() === 'running') return { changed: false, status: current.status };
-  if (current.status.toLowerCase() === 'broken') {
-    const error = new Error(`[managed-lima] retained instance ${instance} is broken; run managed Lima doctor before repair`);
-    error.code = 'MANAGED_LIMA_INSTANCE_BROKEN';
-    throw error;
-  }
-  await executor.run('limactl', ['start', instance]);
-  return { changed: true, status: 'Running' };
+  return changeLimaPower({ executor, instance: validateManagedLimaInstanceName(rawInstance), intent: 'start' });
 }
 
 export async function stopManagedLimaInstance({ executor, instance: rawInstance, force = false }) {
-  const instance = validateManagedLimaInstanceName(rawInstance);
-  const current = await getManagedLimaStatus({ executor, instance });
-  if (!current.exists) throw absentInstanceError(instance);
-  if (current.status.toLowerCase() !== 'running') return { changed: false, status: current.status };
-  await executor.run('limactl', ['stop', ...(force ? ['--force'] : []), instance]);
-  return { changed: true, status: 'Stopped' };
+  return changeLimaPower({ executor, instance: validateManagedLimaInstanceName(rawInstance), intent: 'stop', force });
 }
 
-export async function reconcileManagedLimaInstance({ executor, instance: rawInstance, profile }) {
+async function requireManagedLimaHost(executor) {
   if (!executor || typeof executor.capture !== 'function' || typeof executor.run !== 'function') {
     throw new Error('[managed-lima] executor is required');
   }
-  const instance = validateManagedLimaInstanceName(rawInstance);
   const host = await executor.capture('uname', ['-s']);
   if (host.exitCode !== 0 || String(host.out ?? '').trim() !== 'Darwin') {
     throw new Error('[managed-lima] managed VZ instances require a macOS host');
   }
-  const versionResult = await executor.capture('limactl', ['--version']);
+  const versionResult = await runLimaCommand({ executor, args: ['--version'] });
   if (versionResult.exitCode !== 0) {
     throw new Error('[managed-lima] Lima is not installed; run the explicit managed setup operation');
   }
@@ -190,12 +139,66 @@ export async function reconcileManagedLimaInstance({ executor, instance: rawInst
   if (!versionAtLeast(version, MINIMUM_LIMA_VERSION)) {
     throw new Error('[managed-lima] Lima 2.0.0 or newer is required');
   }
+}
+
+// Only explicit operator commands call this owner. Ordinary start, doctor,
+// recovery and resource reconciliation preserve retained network configuration.
+export async function applyManagedLimaNetworking({
+  executor,
+  instance: rawInstance,
+  force = false,
+  stopInstance = stopManagedLimaInstance,
+  startInstance = startManagedLimaInstance,
+}) {
+  const instance = validateManagedLimaInstanceName(rawInstance);
+  await requireManagedLimaHost(executor);
+  const current = await getManagedLimaStatus({ executor, instance });
+  if (!current.exists) throw new Error(`[managed-lima] retained instance ${instance} does not exist`);
+  if (field(current.instance, 'vmType') !== 'vz') throw new Error('[managed-lima] native NAT requires a VZ instance');
+  if (!['running', 'stopped'].includes(current.status.toLowerCase())) {
+    throw new Error(`[managed-lima] cannot apply networking to an instance in ${current.status} state`);
+  }
+  if (!current.instance.config) throw new Error('[managed-lima] native instance configuration is unavailable');
+  const existing = current.instance.config.networks ?? [];
+  const networks = resolveManagedLimaNetworks(existing);
+  if (JSON.stringify(existing) === JSON.stringify(networks)) {
+    return { changed: false, status: current.status, networks };
+  }
+  if (!force) {
+    const error = new Error('[managed-lima] network apply requires --force; it stops and starts the retained VM and interrupts all guest processes');
+    error.code = 'MANAGED_LIMA_NETWORK_FORCE_REQUIRED';
+    throw error;
+  }
+  if (current.status.toLowerCase() === 'running') await stopInstance({ executor, instance });
+  const stopped = await getManagedLimaStatus({ executor, instance });
+  if (!stopped.exists || stopped.status.toLowerCase() !== 'stopped') {
+    throw new Error('[managed-lima] network apply could not confirm the retained VM is stopped; configuration was not edited');
+  }
+  const edit = await runLimaCommand({ executor, args: buildManagedLimaNetworkEditArgs({ instance, networks }), interactive: true });
+  if (edit.exitCode !== 0) throw new Error('[managed-lima] network edit failed; the VM remains stopped; correct the error and rerun network apply --force');
+  const edited = await getManagedLimaStatus({ executor, instance });
+  const configured = edited.instance?.config?.networks;
+  if (!Array.isArray(configured)
+      || JSON.stringify(resolveManagedLimaNetworks(configured)) !== JSON.stringify(configured)) {
+    throw new Error('[managed-lima] native NAT configuration was not confirmed; the VM remains stopped');
+  }
+  await startInstance({ executor, instance });
+  const started = await getManagedLimaStatus({ executor, instance });
+  if (!started.exists || started.status.toLowerCase() !== 'running') {
+    throw new Error('[managed-lima] retained VM did not return to Running after network apply');
+  }
+  return { changed: true, status: started.status, networks: started.instance.config.networks };
+}
+
+export async function reconcileManagedLimaInstance({ executor, instance: rawInstance, profile }) {
+  const instance = validateManagedLimaInstanceName(rawInstance);
+  await requireManagedLimaHost(executor);
 
   const existing = await inspectManagedLimaInstance({ executor, instance });
   if (!existing) {
-    await executor.run('limactl', buildManagedLimaCreateArgs({ instance, profile }));
-    await executor.run('limactl', ['start', instance]);
-    return { created: true, started: true, status: 'Running' };
+    await createLimaInstance({ executor, instance, createArgs: buildManagedLimaCreateArgs({ instance, profile }) });
+    const power = await startManagedLimaInstance({ executor, instance });
+    return { created: true, started: power.changed, status: power.status };
   }
 
   const drift = evaluateManagedLimaInstance(existing, profile);
@@ -217,8 +220,8 @@ export async function reconcileManagedLimaInstance({ executor, instance: rawInst
   }
   const status = String(field(existing, 'status', 'Status') ?? 'Unknown');
   if (status.toLowerCase() !== 'running') {
-    await executor.run('limactl', ['start', instance]);
-    return { created: false, started: true, status: 'Running' };
+    const power = await startManagedLimaInstance({ executor, instance });
+    return { created: false, started: power.changed, status: power.status };
   }
   return { created: false, started: false, status };
 }
