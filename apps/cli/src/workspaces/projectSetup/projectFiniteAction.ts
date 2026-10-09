@@ -289,13 +289,11 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 const command = inspection.commands?.find(entry => entry.usage === 'script'
                     && (request.actionId !== 'projects.script.run' || request.input.selection.kind !== 'named' || entry.name === request.input.selection.name)
                     && digest(entry.source) === digest(selectedSource));
-                if (!command?.executionInputs?.some(input => input.file === selectedSource.file.replaceAll('\\', '/'))) throw coded('project_source_declaration_unavailable');
+                if (!command?.executionInputs?.length) throw coded('project_source_declaration_unavailable');
                 for (const input of command.executionInputs) files.set(input.file, input.hash);
             }
             if (manifest?.environment && manifest.environment.kind !== 'host') {
-                const path = manifest.environment.configPath?.replaceAll('\\', '/');
-                if (!inspection.environmentExecutionInputs?.length
-                    || path && !inspection.environmentExecutionInputs.some(input => input.file === path)) throw coded('project_source_declaration_unavailable');
+                if (!inspection.environmentExecutionInputs?.length) throw coded('project_source_declaration_unavailable');
                 for (const input of inspection.environmentExecutionInputs) files.set(input.file, input.hash);
             }
             return { declaredEffect, executionInputs: [...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, hash]) => ({ file, hash })) };
