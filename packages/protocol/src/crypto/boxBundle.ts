@@ -1,5 +1,7 @@
 import tweetnacl from 'tweetnacl';
 import { sha512 } from '@noble/hashes/sha512';
+import { ed25519 } from '@noble/curves/ed25519';
+import { isValidEd25519PublicKey } from './ed25519.js';
 
 import {
   BOX_BUNDLE_MIN_BYTES,
@@ -19,6 +21,14 @@ export function deriveBoxSecretKeyFromSeed(seed: Uint8Array): Uint8Array {
 export function deriveBoxPublicKeyFromSeed(seed: Uint8Array): Uint8Array {
   const secretKey = deriveBoxSecretKeyFromSeed(seed);
   return tweetnacl.box.keyPair.fromSecretKey(secretKey).publicKey;
+}
+
+/** The installed signing identity selects the same box recipient as its private seed. */
+export function deriveBoxPublicKeyFromEd25519PublicKey(publicKey: Uint8Array): Uint8Array {
+  if (!isValidEd25519PublicKey(publicKey)) throw new Error('Invalid Ed25519 installation public key');
+  const recipient = ed25519.utils.toMontgomery(publicKey);
+  if (!isValidBoxBundlePublicKey(recipient)) throw new Error('Invalid installation box recipient');
+  return recipient;
 }
 
 export function sealBoxBundle(params: {

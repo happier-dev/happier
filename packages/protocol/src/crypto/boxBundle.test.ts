@@ -11,6 +11,8 @@ import {
   openBoxBundle,
   openBoxBundleWithSecretKey,
   sealBoxBundle,
+  deriveBoxSecretKeyFromSeed,
+  deriveBoxPublicKeyFromEd25519PublicKey,
 } from './boxBundle.js';
 
 function deterministicRandomBytesFactory(): (length: number) => Uint8Array {
@@ -41,6 +43,19 @@ const LOW_ORDER_PUBLIC_KEYS: ReadonlyArray<Readonly<{ name: string; bytes: Uint8
 ];
 
 describe('boxBundle', () => {
+  it('seals to an installed Ed25519 identity without requiring its private seed', () => {
+    const installed = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(37));
+    const payload = new TextEncoder().encode('original SOURCE writer and exact TARGET custody');
+    const bundle = sealBoxBundle({ plaintext: payload,
+      recipientPublicKey: deriveBoxPublicKeyFromEd25519PublicKey(installed.publicKey),
+      randomBytes: deterministicRandomBytesFactory() });
+    expect(openBoxBundleWithSecretKey({ bundle,
+      recipientSecretKey: deriveBoxSecretKeyFromSeed(installed.secretKey.subarray(0, 32)) })).toEqual(payload);
+    expect(openBoxBundleWithSecretKey({ bundle,
+      recipientSecretKey: deriveBoxSecretKeyFromSeed(new Uint8Array(32).fill(38)) })).toBeNull();
+    expect(() => deriveBoxPublicKeyFromEd25519PublicKey(new Uint8Array(31))).toThrow();
+    expect(() => deriveBoxPublicKeyFromEd25519PublicKey(new Uint8Array(32))).toThrow();
+  });
   // The published layout sizes are stated as literals in `boxBundleFormat.ts`
   // so wire schemas can consume them without loading the box implementation.
   // A literal that drifted from the primitive would silently change the framing
