@@ -140,9 +140,11 @@ type ChangedFilesReviewProps = {
      * The shared active-file scope (`activeReviewFile`): while `presented`, Review reports the file it
      * is on and brings a file a changed-files list asks for into view.
      */
-    activeReviewFile?: Readonly<{ key: string; presented: boolean }> | null;
+    activeReviewFile?: Readonly<{ key: string; presented: boolean; externalLifecycle?: boolean }> | null;
     theme: ChangedFilesReviewTheme;
-    sessionId: string;
+    sessionId?: string;
+    /** Presentation/cache identity only. Workspace hosts always supply their Machine diff reader. */
+    reviewScopeKey?: string;
     snapshot: ScmWorkingSnapshot | null;
     changedFilesViewMode: ChangedFilesViewMode;
     allRepositoryChangedFiles: ScmFileStatus[];
@@ -179,7 +181,7 @@ type ChangedFilesReviewProps = {
     onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
     workspaceScope?: WorkspaceScopeBase | null;
     fetchUnifiedDiffForPath?: ScmReviewUnifiedDiffFetcher;
-};
+} & (Readonly<{ sessionId: string }> | Readonly<{ reviewScopeKey: string; fetchUnifiedDiffForPath: ScmReviewUnifiedDiffFetcher }>);
 
 function areChangedFilesReviewThemesEqual(
     a: ChangedFilesReviewTheme | null | undefined,
@@ -215,7 +217,7 @@ export function areChangedFilesReviewPropsEqual(
 function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const {
         theme,
-        sessionId,
+        sessionId = '',
         snapshot,
         changedFilesViewMode,
             allRepositoryChangedFiles,
@@ -230,6 +232,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         rowDensity = 'comfortable',
     } = props;
     const workspaceScope = props.workspaceScope ?? null;
+    const reviewScopeKey = props.reviewScopeKey ?? sessionId;
 
     const plugin = React.useMemo(() => scmUiBackendRegistry.getPluginForSnapshot(snapshot), [snapshot]);
     const diffConfig = React.useMemo(() => plugin.diffModeConfig(snapshot), [plugin, snapshot]);
@@ -535,7 +538,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const [findTarget, setFindTarget] = React.useState<ReviewFindTarget | null>(null);
     const findSurfaceRef = React.useRef<View | null>(null);
     const findSurfaceInstance = React.useId();
-    const findSurfaceId = `review:${sessionId}:${findSurfaceInstance}`;
+    const findSurfaceId = `review:${reviewScopeKey}:${findSurfaceInstance}`;
     const pathToRowIndex = React.useMemo(() => {
         const map = new Map<string, number>();
         for (let i = 0; i < allKeys.length; i++) map.set(allKeys[i] as string, i);
@@ -627,7 +630,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         tooLarge: tooLargeForExpansion,
         aheadCount: viewabilityConfig.aheadCount,
         behindCount: viewabilityConfig.behindCount,
-        resetKey: `${sessionId}:${snapshotShapeSignature ?? 'nosig'}:${diffArea}`,
+        resetKey: `${reviewScopeKey}:${snapshotShapeSignature ?? 'nosig'}:${diffArea}`,
         initialCollapsedKeys: props.initialCollapsedPaths ?? comparisonDefaultCollapsedPaths,
         onCollapsedKeysChange: props.onCollapsedPathsChange,
         viewableExpansionEnabled,
@@ -901,6 +904,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
 
     const { diffStateSource } = useChangedFilesReviewDiffLoading({
         sessionId,
+        reviewScopeKey,
         isRepo: Boolean(snapshot?.repo.isRepo),
         reviewFiles: reviewListFiles,
         diffArea,
@@ -981,15 +985,18 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         publishActiveReviewFile(activeReviewFileKey, { presented: activeReviewFilePresented, activePath: activeReviewPath });
     }, [activeReviewFileKey, activeReviewFilePresented, activeReviewPath]);
     React.useEffect(() => () => {
-        if (activeReviewFileKey) publishActiveReviewFile(activeReviewFileKey, { presented: false, activePath: null });
-    }, [activeReviewFileKey]);
+        if (activeReviewFileKey && !props.activeReviewFile?.externalLifecycle) publishActiveReviewFile(activeReviewFileKey, { presented: false, activePath: null });
+    }, [activeReviewFileKey, props.activeReviewFile?.externalLifecycle]);
     const activeReviewFileRequest = useActiveReviewFileRequest(activeReviewFileKey);
-    const handledRequestNonceRef = React.useRef<number | null>(activeReviewFileRequest?.nonce ?? null);
+    const handledRequestNonceRef = React.useRef<number | null>(props.activeReviewFile?.externalLifecycle ? null : activeReviewFileRequest?.nonce ?? null);
     React.useEffect(() => {
-        if (!activeReviewFileRequest || handledRequestNonceRef.current === activeReviewFileRequest.nonce) return;
+        // The shared body first promotes a qualified request to its exact comparison.
+        if (!activeReviewFileRequest || activeReviewFileRequest.comparison || !activeReviewFilePresented
+            || handledRequestNonceRef.current === activeReviewFileRequest.nonce
+            || !navigationPaths.includes(activeReviewFileRequest.path)) return;
         handledRequestNonceRef.current = activeReviewFileRequest.nonce;
-        if (navigationPaths.includes(activeReviewFileRequest.path)) focusFile(activeReviewFileRequest.path);
-    }, [activeReviewFileRequest, focusFile, navigationPaths]);
+        focusFile(activeReviewFileRequest.path);
+    }, [activeReviewFileRequest, activeReviewFilePresented, focusFile, navigationPaths]);
 
     // Prefetch scheduling + viewability windowing is handled by useChangedFilesReviewPrefetch.
 

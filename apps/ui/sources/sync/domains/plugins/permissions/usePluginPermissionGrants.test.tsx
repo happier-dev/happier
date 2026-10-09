@@ -1,270 +1,104 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { createDeferred, flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { PluginPermissionGrant, PluginPermissionPendingGrantRequest } from './types';
 
-import { flushHookEffects, renderHook } from '@/dev/testkit';
-import type {
-    PluginPermissionGrant,
-    PluginPermissionGrantApprovedResult,
-    PluginPermissionGrantListInput,
-    PluginPermissionGrantListResponse,
-    PluginPermissionPendingGrantRequest,
-} from './types';
-
-function deferred<T>() {
-    let resolve!: (value: T) => void;
-    let reject!: (error: unknown) => void;
-    const promise = new Promise<T>((promiseResolve, promiseReject) => {
-        resolve = promiseResolve;
-        reject = promiseReject;
-    });
-    return { promise, resolve, reject };
-}
-
-const targetScope = { kind: 'project', projectId: 'project-1' } as const;
+installSessionFilesViewBoundaries();
+beforeAll(prepareSessionFilesViewTestkit);
+let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
+afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
+const targetScope = { kind: 'project', projectId: 'exact-checkout' } as const;
 const capability = 'reviews.comments.write.direct' as const;
+const pending: PluginPermissionPendingGrantRequest = { v: 1, id: 'request', accountId: 'alice', pluginId: 'review-coderabbit', capability,
+    targetScope, requester: { kind: 'plugin', pluginId: 'review-coderabbit', sessionId: 's1' }, authoritySource: { kind: 'bundled' },
+    reason: 'Requested', status: 'pending', createdAt: 1, updatedAt: 1, subject: { kind: 'general' } };
+const grant: PluginPermissionGrant = { v: 1, id: 'grant', accountId: 'alice', pluginId: 'review-coderabbit', capability, targetScope,
+    status: 'active', requestId: 'request', authoritySource: { kind: 'bundled' }, grantedByUserId: 'alice', grantedAt: 2,
+    createdAt: 2, updatedAt: 2, subject: { kind: 'general' } };
 
-function pendingRequest(
-    overrides: Partial<PluginPermissionPendingGrantRequest> = {},
-): PluginPermissionPendingGrantRequest {
-    return {
-        v: 1,
-        id: 'request-1',
-        accountId: 'account-1',
-        pluginId: 'review-coderabbit',
-        capability,
-        targetScope,
-        requester: { kind: 'plugin', pluginId: 'review-coderabbit', sessionId: 'session-1' },
-        authoritySource: { kind: 'bundled' },
-        reason: 'Write approved review comments without another prompt.',
-        status: 'pending',
-        createdAt: 1,
-        updatedAt: 1,
-        ...overrides,
-        subject: overrides.subject ?? { kind: 'general' },
-    };
+async function mount(request: typeof import('@/sync/http/client').serverFetch, enabled = true) {
+    fixture = await createSessionFilesViewFixture();
+    const { createPluginPermissionGrantHttpActionExecutor } = await import('./api');
+    const { createPluginPermissionGrantActions } = await import('./actions');
+    const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
+    const actions = createPluginPermissionGrantActions({ execute: createPluginPermissionGrantHttpActionExecutor({ request }) });
+    let current: ReturnType<typeof usePluginPermissionGrants> | null = null;
+    function Host(props: { scope: ServerAccountScope; enabled?: boolean }) {
+        current = usePluginPermissionGrants({ actions, scope: props.scope, enabled: props.enabled ?? enabled,
+            listInput: { capability, targetScope } });
+        return null;
+    }
+    const scope = { serverId: fixture.home.id, accountId: 'alice' };
+    const screen = await fixture.render(<Host scope={scope} />);
+    return { screen, Host, scope, current: () => { if (!current) throw new Error('Not mounted'); return current; } };
 }
 
-function grant(overrides: Partial<PluginPermissionGrant> = {}): PluginPermissionGrant {
-    return {
-        v: 1,
-        id: 'grant-1',
-        accountId: 'account-1',
-        pluginId: 'review-coderabbit',
-        capability,
-        targetScope,
-        status: 'active',
-        requestId: 'request-1',
-        authoritySource: { kind: 'bundled' },
-        grantedByUserId: 'account-1',
-        grantedAt: 2,
-        createdAt: 2,
-        updatedAt: 2,
-        ...overrides,
-        subject: overrides.subject ?? { kind: 'general' },
-    };
-}
-
-describe('usePluginPermissionGrants', () => {
-    it('loads trusted grant state and preserves rows during refresh', async () => {
-        const secondList = deferred<PluginPermissionGrantListResponse>();
-        const actions = {
-            list: vi.fn(async () => {
-                if (actions.list.mock.calls.length === 1) {
-                    return { grants: [grant()], pendingRequests: [pendingRequest()] };
-                }
-                return await secondList.promise;
-            }),
-            grant: vi.fn(),
-            revoke: vi.fn(),
-            dismissRequest: vi.fn(),
-            request: vi.fn(),
-        };
-        const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
-
-        const hook = await renderHook(() => usePluginPermissionGrants({
-            actions,
-            enabled: true,
-            listInput: { capability, targetScope },
-        }));
-        await flushHookEffects();
-
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(true);
-        expect(hook.getCurrent().pendingRequests).toHaveLength(1);
-
-        await act(async () => {
-            void hook.getCurrent().refresh();
+describe('permission grants through real schemas/actions/store beneath Account HTTP', () => {
+    it('publishes admitted approval, revocation and dismissal through the same owner', async () => {
+        const owner = await mount(async path => {
+            if (String(path).endsWith('/grant')) return Response.json({ grant,
+                pendingRequest: { ...pending, status: 'granted', grantId: grant.id, decidedAt: 2 } });
+            if (String(path).endsWith('/revoke')) return Response.json({ grant: { ...grant, status: 'revoked', revokedAt: 3 } });
+            if (String(path).endsWith('/dismissRequest')) return Response.json({
+                pendingRequest: { ...pending, status: 'dismissed', decidedAt: 4 } });
+            return Response.json({ grants: [], pendingRequests: [pending] });
         });
-        await flushHookEffects({ cycles: 1 });
-        expect(hook.getCurrent().state.status).toBe('refreshing');
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(true);
-        expect(hook.getCurrent().pendingRequests).toHaveLength(1);
-
-        await act(async () => {
-            secondList.resolve({ grants: [], pendingRequests: [] });
+        await act(async () => { await owner.current().grant({ requestId: pending.id }); });
+        expect(owner.current().hasGrant({ capability, targetScope })).toBe(true);
+        expect(owner.current().pendingRequests).toEqual([]);
+        await act(async () => { await owner.current().revoke({ grantId: grant.id }); });
+        expect(owner.current().hasGrant({ capability, targetScope })).toBe(false);
+        await act(async () => { owner.current().upsertPendingRequest(pending); await owner.current().dismissRequest({ requestId: pending.id }); });
+        expect(owner.current().pendingRequests).toEqual([]);
+    });
+    it('preserves admitted rows during an offline refresh and replaces them on recovery', async () => {
+        let reads = 0;
+        const owner = await mount(async () => {
+            if (++reads === 2) throw new Error('offline');
+            return Response.json({ grants: reads === 1 ? [grant] : [], pendingRequests: reads === 1 ? [pending] : [] });
         });
-        await flushHookEffects();
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
-        expect(hook.getCurrent().pendingRequests).toHaveLength(0);
+        expect(owner.current().hasGrant({ capability, targetScope })).toBe(true);
+        await act(async () => { await owner.current().refresh(); });
+        expect(owner.current().state.status).toBe('error');
+        expect(owner.current().hasGrant({ capability, targetScope })).toBe(true);
+        await act(async () => { await owner.current().refresh(); });
+        expect(owner.current().state.status).toBe('ready');
+        expect(owner.current().pendingRequests).toEqual([]);
+        expect(owner.current().hasGrant({ capability, targetScope })).toBe(false);
     });
 
-    it('applies grant, revoke, and dismiss mutations from generic actions', async () => {
-        const actions = {
-            list: vi.fn(async () => ({ grants: [], pendingRequests: [pendingRequest()] })),
-            grant: vi.fn(async () => ({
-                grant: grant(),
-                pendingRequest: pendingRequest({ status: 'granted', grantId: 'grant-1', decidedAt: 2 }),
-            })),
-            revoke: vi.fn(async () => ({ grant: grant({ status: 'revoked', revokedAt: 3 }) })),
-            dismissRequest: vi.fn(async () => ({
-                pendingRequest: pendingRequest({ id: 'request-2', status: 'dismissed', decidedAt: 4 }),
-            })),
-            request: vi.fn(),
-        };
-        const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
-
-        const hook = await renderHook(() => usePluginPermissionGrants({
-            actions,
-            enabled: true,
-            listInput: { capability, targetScope },
-        }));
-        await flushHookEffects();
-
-        await act(async () => {
-            await hook.getCurrent().grant({ requestId: 'request-1' });
-        });
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(true);
-        expect(hook.getCurrent().pendingRequests).toHaveLength(0);
-
-        await act(async () => {
-            await hook.getCurrent().revoke({ grantId: 'grant-1' });
-        });
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
-
-        await act(async () => {
-            hook.getCurrent().upsertPendingRequest(pendingRequest({ id: 'request-2' }));
-            await hook.getCurrent().dismissRequest({ requestId: 'request-2' });
-        });
-        expect(hook.getCurrent().pendingRequests).toHaveLength(0);
+    it('clears grants before another Home/Account can render and rejects retained callbacks before dispatch', async () => {
+        const requests: string[] = [];
+        const owner = await mount(async path => { requests.push(String(path)); return Response.json({ grants: [grant], pendingRequests: [pending] }); });
+        expect(owner.current().hasGrant({ capability, targetScope })).toBe(true);
+        const old = owner.current();
+        for (const scope of [{ ...owner.scope, accountId: 'bob' }, { ...owner.scope, serverId: 'another-home' }]) {
+            await owner.screen.update(fixture.wrap(<owner.Host scope={scope} />));
+            expect(owner.current().state.grantIds).toEqual([]);
+            expect(owner.current().pendingRequests).toEqual([]);
+            await act(async () => { await old.grant({ requestId: 'request' }); await old.refresh(); });
+            expect(requests).toEqual(['/v1/plugins/permissions/grants/list']);
+        }
     });
 
-    it('keeps disabled panes inert at the shared mutation boundary', async () => {
-        const actions = {
-            list: vi.fn(async () => ({ grants: [grant()], pendingRequests: [pendingRequest()] })),
-            grant: vi.fn(async () => ({
-                grant: grant(),
-                pendingRequest: pendingRequest({ status: 'granted', grantId: 'grant-1', decidedAt: 2 }),
-            })),
-            revoke: vi.fn(async () => ({ grant: grant({ status: 'revoked', revokedAt: 3 }) })),
-            dismissRequest: vi.fn(async () => ({
-                pendingRequest: pendingRequest({ id: 'request-1', status: 'dismissed', decidedAt: 4 }),
-            })),
-            request: vi.fn(),
-        };
-        const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
-
-        const hook = await renderHook(() => usePluginPermissionGrants({
-            actions,
-            enabled: false,
-            listInput: { capability, targetScope },
-        }));
-        await flushHookEffects();
-
-        await act(async () => {
-            hook.getCurrent().upsertPendingRequest(pendingRequest());
-            await hook.getCurrent().grant({ requestId: 'request-1' });
-            await hook.getCurrent().revoke({ grantId: 'grant-1' });
-            await hook.getCurrent().dismissRequest({ requestId: 'request-1' });
+    it('ignores a held mutation after retirement and keeps disabled owners inert', async () => {
+        const response = createDeferred<Response>();
+        const requests: string[] = [];
+        const owner = await mount(async path => {
+            requests.push(String(path));
+            return String(path).endsWith('/grant') ? response.promise : Response.json({ grants: [], pendingRequests: [pending] });
         });
-
-        expect(actions.list).not.toHaveBeenCalled();
-        expect(actions.grant).not.toHaveBeenCalled();
-        expect(actions.revoke).not.toHaveBeenCalled();
-        expect(actions.dismissRequest).not.toHaveBeenCalled();
-        expect(hook.getCurrent().pendingRequests).toHaveLength(0);
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
-    });
-
-    it('fails closed across scope changes and ignores stale list and mutation results', async () => {
-        const projectOneList = deferred<PluginPermissionGrantListResponse>();
-        const projectTwoList = deferred<PluginPermissionGrantListResponse>();
-        const staleGrant = deferred<PluginPermissionGrantApprovedResult>();
-        const projectTwoScope = { kind: 'project', projectId: 'project-2' } as const;
-        const actions = {
-            list: vi.fn((input: PluginPermissionGrantListInput) => (
-                input.targetScope?.kind === 'project' && input.targetScope.projectId === 'project-1'
-                    ? projectOneList.promise
-                    : projectTwoList.promise
-            )),
-            grant: vi.fn(() => staleGrant.promise),
-            revoke: vi.fn(),
-            dismissRequest: vi.fn(),
-            request: vi.fn(),
-        };
-        const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
-        type HookProps = Readonly<{ targetScope: typeof targetScope | typeof projectTwoScope }>;
-        const hook = await renderHook(
-            (props: HookProps) => usePluginPermissionGrants({
-                actions,
-                enabled: true,
-                listInput: { capability, targetScope: props.targetScope },
-            }),
-            { initialProps: { targetScope } as HookProps },
-        );
-
-        projectOneList.resolve({ grants: [grant()], pendingRequests: [pendingRequest()] });
+        let mutation: Promise<void> | undefined;
+        await act(async () => { mutation = owner.current().grant({ requestId: 'request' }); });
+        await owner.screen.update(fixture.wrap(<owner.Host scope={owner.scope} enabled={false} />));
+        response.resolve(Response.json({ grant, pendingRequest: { ...pending, status: 'granted', grantId: 'grant', decidedAt: 2 } }));
+        await act(async () => { await mutation; await owner.current().revoke({ grantId: 'grant' }); await owner.current().dismissRequest({ requestId: 'request' }); });
         await flushHookEffects();
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(true);
-        let staleMutation!: Promise<void>;
-        await act(async () => {
-            staleMutation = hook.getCurrent().grant({ requestId: 'request-1' });
-        });
-
-        await hook.rerender({ targetScope: projectTwoScope });
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
-        expect(hook.getCurrent().pendingRequests).toHaveLength(0);
-        projectTwoList.resolve({
-            grants: [grant({ id: 'grant-2', targetScope: projectTwoScope })],
-            pendingRequests: [],
-        });
-        await flushHookEffects();
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope: projectTwoScope })).toBe(true);
-
-        staleGrant.resolve({
-            grant: grant(),
-            pendingRequest: pendingRequest({ status: 'granted', grantId: 'grant-1', decidedAt: 3 }),
-        });
-        await act(async () => { await staleMutation; });
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope: projectTwoScope })).toBe(true);
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
-    });
-
-    it('preserves trusted rows while offline and refreshes them after reconnect', async () => {
-        const actions = {
-            list: vi.fn()
-                .mockResolvedValueOnce({ grants: [grant()], pendingRequests: [pendingRequest()] })
-                .mockRejectedValueOnce(new Error('offline'))
-                .mockResolvedValueOnce({ grants: [], pendingRequests: [] }),
-            grant: vi.fn(),
-            revoke: vi.fn(),
-            dismissRequest: vi.fn(),
-            request: vi.fn(),
-        };
-        const { usePluginPermissionGrants } = await import('./usePluginPermissionGrants');
-        const hook = await renderHook(() => usePluginPermissionGrants({
-            actions,
-            enabled: true,
-            listInput: { capability, targetScope },
-        }));
-        await flushHookEffects();
-
-        await act(async () => { await hook.getCurrent().refresh(); });
-        expect(hook.getCurrent().state.status).toBe('error');
-        expect(hook.getCurrent().state.error).toBe('offline');
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(true);
-
-        await act(async () => { await hook.getCurrent().refresh(); });
-        expect(hook.getCurrent().state.status).toBe('ready');
-        expect(hook.getCurrent().state.error).toBeNull();
-        expect(hook.getCurrent().hasGrant({ pluginId: 'review-coderabbit', capability, targetScope })).toBe(false);
+        expect(owner.current().state.grantIds).toEqual([]);
+        expect(owner.current().pendingRequests).toEqual([]);
+        expect(requests).toEqual(['/v1/plugins/permissions/grants/list', '/v1/plugins/permissions/grants/grant']);
     });
 });

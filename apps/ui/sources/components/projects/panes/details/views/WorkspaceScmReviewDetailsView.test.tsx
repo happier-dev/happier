@@ -1,377 +1,95 @@
 import * as React from 'react';
-import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { flushHookEffects, standardCleanup } from '@/dev/testkit';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
+installSessionFilesViewBoundaries();
+let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
+await prepareSessionFilesViewTestkit();
+const { WorkspaceScmReviewDetailsView } = await import('./WorkspaceScmReviewDetailsView');
+afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let reviewCommentsFeatureEnabled = true;
-let scmWriteOperationsFeatureEnabled = true;
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'ios' },
-        View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@expo/vector-icons', async () => {
-    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
-    return createExpoVectorIconsMock();
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        useSetting: (key: string) => {
-            if (key === 'wrapLinesInDiffs') return true;
-            if (key === 'showLineNumbers') return true;
-            if (key === 'scmReviewMaxFiles') return 25;
-            if (key === 'scmCommitStrategy') return 'git_staging';
-            return undefined;
+async function mountWithRows(kind: 'exact' | 'missing' | 'ambiguous') {
+    const grants: unknown[] = [];
+    const snapshot = fileViewSnapshot({ rootPath: '/repo' });
+    fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request =>
+        request.method === 'scm.status.snapshot' ? { success: true, snapshot } : undefined,
+        request: (url, init) => {
+            if (new URL(String(url)).pathname === '/v1/plugins/permissions/grants/list') {
+                grants.push(JSON.parse(String(init?.body)));
+                return Promise.resolve(Response.json({ grants: [], pendingRequests: [] }));
+            }
+            return Promise.resolve(Response.json({}, { status: 404 }));
         },
-        useWorkspaceScmCommitSelectionPaths: () => [],
-        useWorkspaceScmCommitSelectionPatches: () => [],
-        useWorkspaceReviewCommentsDrafts: () => [
-            {
-                id: 'draft-1',
-                filePath: 'src/a.ts',
-                source: 'diff',
-                anchor: {
-                    kind: 'diffLine',
-                    startLine: 5,
-                    side: 'after',
-                    oldLine: 1,
-                    newLine: 1,
-                },
-                snapshot: {
-                    selectedLines: ['+export const a = 2;'],
-                    beforeContext: ['-export const a = 1;'],
-                    afterContext: [],
-                },
-                body: 'Please verify this change.',
-                createdAt: 1,
-            },
-        ],
     });
-});
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => {
-        if (featureId === 'files.reviewComments') return reviewCommentsFeatureEnabled;
-        if (featureId === 'scm.writeOperations') return scmWriteOperationsFeatureEnabled;
-        return false;
-    },
-}));
-
-vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
-    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: {},
-}));
-
-const reviewDraftHandlers = {
-    onUpsertReviewCommentDraft: vi.fn(),
-    onDeleteReviewCommentDraft: vi.fn(),
-    onReviewCommentError: vi.fn(),
-};
-
-vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers', () => ({
-    useWorkspaceReviewCommentDraftHandlers: () => reviewDraftHandlers,
-}));
-
-const frontDoorActionExecuteSpy = vi.hoisted(() => vi.fn());
-const reviewCommentsSurfaceSpy = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
-    createFrontDoorUiActionExecutor: () => frontDoorActionExecuteSpy,
-}));
-
-vi.mock('@/components/reviews/ReviewCommentsSessionSurface', () => ({
-    ReviewCommentsSessionSurface: (props: any) => {
-        reviewCommentsSurfaceSpy(props);
-        return React.createElement('ReviewCommentsSessionSurface', props);
-    },
-}));
-
-const useWorkspaceScmSnapshotControllerSpy = vi.fn();
-const workspaceSnapshotMock = {
-    repo: { isRepo: true },
-    entries: [
-        {
-            path: 'src/a.ts',
-            kind: 'modified',
-            previousPath: null,
-            hasIncludedDelta: false,
-            hasPendingDelta: true,
-            stats: {
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 1,
-                pendingRemoved: 1,
-                isBinary: false,
-            },
-        },
-    ],
-    branch: { head: null, upstream: null, ahead: 0, behind: 0, detached: false },
-    capabilities: { writeInclude: true, writeExclude: true },
-};
-const machineScmDiffFileSpy = vi.fn<(machineId: string, request: any) => Promise<any>>(async () => ({
-    success: true,
-    diff: [
-        'diff --git a/src/a.ts b/src/a.ts',
-        'index 0000000..1111111 100644',
-        '--- a/src/a.ts',
-        '+++ b/src/a.ts',
-        '@@ -1,1 +1,1 @@',
-        '-export const a = 1;',
-        '+export const a = 2;',
-        '',
-    ].join('\n'),
-}));
-
-vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
-    useWorkspaceScmSnapshotController: (scope: any) => {
-        useWorkspaceScmSnapshotControllerSpy(scope);
-        return {
-            snapshot: workspaceSnapshotMock,
-            loading: false,
-            error: null,
-            refresh: vi.fn(async () => {}),
-        };
-    },
-}));
-
-vi.mock('@/sync/ops/scm/machineScm', () => ({
-    machineScmDiffFile: (machineId: string, request: any) => machineScmDiffFileSpy(machineId, request),
-}));
-
-const changedFilesReviewSpy = vi.fn();
-vi.mock('@/components/workspaces/scm/review/ChangedFilesReview', () => ({
-    ChangedFilesReview: (props: any) => {
-        changedFilesReviewSpy(props);
-        return React.createElement('ChangedFilesReview', props);
-    },
-}));
-
-function reviewComment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV1 {
-    return {
-        v: 1,
-        id: overrides.id ?? 'comment-1',
-        accountId: 'account-1',
-        projectId: overrides.projectId ?? 'project-1',
-        workspaceId: overrides.workspaceId,
-        runId: overrides.runId,
-        engineId: overrides.engineId,
-        anchor: overrides.anchor ?? { kind: 'file', filePath: 'src/a.ts' },
-        snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
-        body: overrides.body ?? 'body',
-        bodyVersion: 1,
-        edits: [],
-        author: overrides.author ?? { kind: 'plugin', pluginId: 'review-coderabbit' },
-        state: overrides.state ?? 'open',
-        flags: overrides.flags ?? {},
-        dispositions: {},
-        threadId: overrides.threadId ?? overrides.id ?? 'comment-1',
-        transitions: [
-            {
-                transitionId: 'transition-1',
-                toState: overrides.state ?? 'open',
-                transitionedAt: 1,
-                transitionedBy: { kind: 'plugin', pluginId: 'review-coderabbit' },
-                serverRevision: 1,
-            },
-        ],
-        createdAt: 1,
-        updatedAt: overrides.updatedAt ?? 1,
-        serverRevision: overrides.serverRevision ?? 1,
-        ...overrides,
-    };
+    fixture.storage.setState({ sessions: {} });
+    fixture.storage.getState().applySettingsLocal({ featureToggles: { 'files.reviewComments': true } });
+    const scope = { serverId: fixture.home.id, accountId: 'alice' };
+    const exact = { id: 'exact-checkout', serverId: fixture.home.id, machineId: 'm1', rootPath: '/repo', projectKey: 'project-anchor', createdAtMs: 1 };
+    const refs: WorkspaceRefV1[] = kind === 'missing' ? [] : kind === 'ambiguous' ? [exact, { ...exact, id: 'duplicate' }] : [
+        exact,
+        { ...exact, id: 'other-checkout', rootPath: '/repo-other' },
+        { ...exact, id: 'other-home', serverId: 'another-home' },
+    ];
+    applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: refs });
+    const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:project-anchor"
+        workspaceRefId="project-anchor" workspaceCacheKey="cache" serverId={fixture.home.id} machineId="m1" rootPath="/repo" />);
+    await flushHookEffects({ cycles: 20 });
+    return { screen, grants, scope };
 }
 
 describe('WorkspaceScmReviewDetailsView', () => {
-    beforeEach(() => {
-        reviewCommentsFeatureEnabled = true;
-        scmWriteOperationsFeatureEnabled = true;
-        useWorkspaceScmSnapshotControllerSpy.mockClear();
-        machineScmDiffFileSpy.mockClear();
-        changedFilesReviewSpy.mockClear();
-        frontDoorActionExecuteSpy.mockReset();
-        frontDoorActionExecuteSpy.mockResolvedValue({ grants: [], pendingRequests: [] });
-        reviewCommentsSurfaceSpy.mockClear();
+    it('keeps the shared comparison toolbar while the first checkout snapshot is loading', async () => {
+        const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+        const snapshotRead = createDeferred<unknown>();
+        fixture = await createSessionFilesViewFixture({ rootPath: '/loading', rpc: request =>
+            request.method === 'scm.status.snapshot' ? snapshotRead.promise : undefined });
+            const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:loading" workspaceRefId="loading"
+            workspaceCacheKey="loading" machineId="m1" serverId={fixture.home.id} rootPath="/loading" />);
+        expect(screen.findByTestId('scm-comparison-view:walkthrough')).not.toBeNull();
+        snapshotRead.resolve({ success: true, snapshot: fileViewSnapshot({ rootPath: '/loading' }) });
+        await flushHookEffects({ cycles: 10 });
+        expect(screen.findByTestId('scm-comparison-view:walkthrough')).not.toBeNull();
     });
-
-    afterEach(() => {
-        standardCleanup();
-        vi.useRealTimers();
+    it('explains live Files using an explicit Machine capture without starting an agent or borrowing a Session', async () => {
+        const captured = { id: 'explicit-files', source: { kind: 'workingTree' as const }, repository: { rootPath: '/repo' },
+            endpoints: {}, inventory: { state: 'complete' as const, files: [], reasons: [] } };
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+            if (request.method === 'scm.status.snapshot') return { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) };
+            if (request.method === 'scm.diffSummary.capture') return ScmComparisonCaptureOutputSchema.parse({
+                success: true, comparison: captured, metadata: { source: captured.source, sourceKey: captured.id },
+            });
+            return undefined;
+        } });
+        fixture.storage.setState({ sessions: {} });
+        const contexts: unknown[] = [];
+            const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:workspace" workspaceRefId="workspace"
+            workspaceCacheKey="cache" machineId="m1" serverId={fixture.home.id} rootPath="/repo" onExplain={input => contexts.push(input)} />);
+        expect(contexts).toEqual([]);
+        await screen.pressByTestIdAsync('scm-comparison-explain-with-agent-action');
+        await flushHookEffects({ cycles: 10 });
+        expect(contexts).toEqual([expect.objectContaining({ comparison: captured, result: null })]);
+        expect(fixture.requests.filter(request => request.method === 'scm.diffSummary.capture')).toEqual([
+            expect.objectContaining({ targetId: 'm1', payload: { cwd: '/repo', source: { kind: 'workingTree' } } }),
+        ]);
+        expect(fixture.requests.filter(request => request.method === 'scm.diffSummary.generate' || request.targetId === 's1')).toEqual([]);
     });
-
-    async function settle(): Promise<void> {
-        await act(async () => {
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-    }
-
-    it('loads the workspace SCM snapshot and renders the shared review surface', async () => {
-        const { WorkspaceScmReviewDetailsView } = await import('./WorkspaceScmReviewDetailsView');
-        await renderScreen(
-            <WorkspaceScmReviewDetailsView
-                scopeId="project:wr_1"
-                workspaceRefId="wr_1"
-                workspaceCacheKey="wk_1"
-                machineId="m1"
-                rootPath="/repo"
-                serverId="s1"
-            />,
-        );
-
-        await settle();
-
-        expect(useWorkspaceScmSnapshotControllerSpy).toHaveBeenCalledWith({
-            serverId: 's1',
-            machineId: 'm1',
-            rootPath: '/repo',
-        });
-        const reviewProps = changedFilesReviewSpy.mock.calls[0]?.[0];
-        expect(reviewProps).toEqual(expect.objectContaining({
-            sessionId: 'project:wr_1',
-            changedFilesViewMode: 'repository',
-            allRepositoryChangedFiles: [expect.objectContaining({ fullPath: 'src/a.ts' })],
-            repositoryOnlyFiles: [expect.objectContaining({ fullPath: 'src/a.ts' })],
-            sessionAttributedFiles: [],
-            turnAttributedFiles: [],
-            reviewCommentsEnabled: true,
-            reviewCommentDrafts: [
-                expect.objectContaining({
-                    id: 'draft-1',
-                    filePath: 'src/a.ts',
-                    body: 'Please verify this change.',
-                }),
-            ],
-            onUpsertReviewCommentDraft: reviewDraftHandlers.onUpsertReviewCommentDraft,
-            onDeleteReviewCommentDraft: reviewDraftHandlers.onDeleteReviewCommentDraft,
-            onReviewCommentError: reviewDraftHandlers.onReviewCommentError,
-            workspaceScope: {
-                serverId: 's1',
-                machineId: 'm1',
-                rootPath: '/repo',
-            },
-            fetchUnifiedDiffForPath: expect.any(Function),
-        }));
-
-        const result = await reviewProps.fetchUnifiedDiffForPath({
-            path: 'src/a.ts',
-            diffArea: 'both',
-            file: reviewProps.allRepositoryChangedFiles[0],
-            normalizeError: (value: unknown) => String(value),
-            fallbackError: 'failed',
-        });
-
-        expect(machineScmDiffFileSpy).toHaveBeenCalledWith('m1', expect.objectContaining({ cwd: '/repo', path: 'src/a.ts', area: 'both' }));
-        expect(result).toEqual(expect.objectContaining({ success: true }));
-    });
-
-    it('mounts durable review comments in the project SCM review surface', async () => {
-        frontDoorActionExecuteSpy.mockImplementation(async (actionId: string) => {
-            if (actionId === 'plugins.permissions.grants.list') {
-                return { grants: [], pendingRequests: [] };
-            }
-            if (actionId === 'reviews.comments.list') {
-                return {
-                    items: [reviewComment({ workspaceId: 'wr_1', body: 'Durable project review comment.' })],
-                    cursor: null,
-                };
-            }
-            throw new Error(`Unexpected action: ${actionId}`);
-        });
-        const { WorkspaceScmReviewDetailsView } = await import('./WorkspaceScmReviewDetailsView');
-        const screen = await renderScreen(
-            <WorkspaceScmReviewDetailsView
-                scopeId="project:wr_1"
-                workspaceRefId="wr_1"
-                workspaceCacheKey="wk_1"
-                machineId="m1"
-                rootPath="/repo"
-                serverId="s1"
-            />,
-        );
-        await settle();
-
-        expect(screen.getTextContent()).not.toContain('Durable project review comment.');
-
-        expect(reviewCommentsSurfaceSpy).toHaveBeenCalledWith(expect.objectContaining({
-            workspaceId: 'wr_1',
-            workspace: { machineId: 'm1', path: '/repo' },
-            directWriteGrants: [],
-            pendingDirectWriteGrantRequests: [],
-            defaultPanelOpen: false,
-            testID: 'workspace-review-comments',
-            execute: expect.any(Function),
-        }));
-        expect(frontDoorActionExecuteSpy).toHaveBeenCalledWith(
-            'plugins.permissions.grants.list',
-            {
-                capability: 'reviews.comments.write.direct',
-                targetScope: { kind: 'project', projectId: 'wr_1' },
-                includeRevoked: false,
-                includeResolvedRequests: false,
-                limit: 50,
-            },
-        );
-
-        const surfaceProps = reviewCommentsSurfaceSpy.mock.calls.at(-1)?.[0];
-        await expect(surfaceProps.execute('reviews.comments.list', {
-            workspaceId: surfaceProps.workspaceId,
-            includeHistory: true,
-        })).resolves.toEqual({
-            items: [expect.objectContaining({ body: 'Durable project review comment.' })],
-            cursor: null,
-        });
-        expect(frontDoorActionExecuteSpy).toHaveBeenCalledWith('reviews.comments.list', {
-            workspaceId: 'wr_1',
-            includeHistory: true,
+    it('uses the exact checkout row for grants, never the Project anchor or another Home', async () => {
+        const { screen, grants, scope } = await mountWithRows('exact');
+        expect(grants).toContainEqual(expect.objectContaining({ capability: 'reviews.comments.write.direct',
+            targetScope: { kind: 'project', projectId: 'exact-checkout' } }));
+        expect(grants.every(value => JSON.stringify(value).includes('exact-checkout'))).toBe(true);
+        const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
+        expect(screen.tree.root.findByType(ReviewCommentsSessionSurface).props).toMatchObject({
+            workspaceId: 'exact-checkout', workspace: { machineId: 'm1', path: '/repo' }, scope,
         });
     });
 
-    it('offers the workspace staging action directly in the review list', async () => {
-        reviewCommentsFeatureEnabled = false;
-        const { WorkspaceScmReviewDetailsView } = await import('./WorkspaceScmReviewDetailsView');
-        const { WorkspaceScmCommitSelectionToggleButton } = await import('@/components/projects/scm/WorkspaceScmCommitSelectionToggleButton');
-        await renderScreen(
-            <WorkspaceScmReviewDetailsView
-                scopeId="project:wr_1"
-                workspaceRefId="wr_1"
-                workspaceCacheKey="wk_1"
-                machineId="m1"
-                rootPath="/repo"
-                serverId="s1"
-            />,
-        );
-
-        const reviewProps = changedFilesReviewSpy.mock.calls.at(-1)?.[0];
-        expect(typeof reviewProps.renderFileActions).toBe('function');
-        const file = reviewProps.allRepositoryChangedFiles[0];
-        const action = reviewProps.renderFileActions(file);
-        expect(action.type).toBe(WorkspaceScmCommitSelectionToggleButton);
-        expect(action.props).toEqual(expect.objectContaining({
-            scope: { serverId: 's1', machineId: 'm1', rootPath: '/repo' },
-            snapshot: workspaceSnapshotMock,
-            scmWriteEnabled: true,
-            commitStrategy: 'git_staging',
-            file,
-            selectedForCommit: false,
-        }));
+    it.each(['missing', 'ambiguous'] as const)('leaves checkout grants unavailable when the row is %s', async kind => {
+        const { grants } = await mountWithRows(kind);
+        expect(grants).toEqual([]);
     });
 });

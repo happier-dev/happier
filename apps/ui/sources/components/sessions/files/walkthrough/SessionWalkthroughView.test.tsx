@@ -2,18 +2,20 @@ import * as React from 'react';
 import '@/dev/testkit/harness/syncSingletonLoader';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ScmDiffSummaryGenerateInputSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultSchema } from '@happier-dev/protocol/scm';
+import { ScmDiffSummaryDiscussInputSchema, ScmDiffSummaryGenerateInputSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultSchema, ScmDiffSummaryResultEditInputSchema } from '@happier-dev/protocol/scm';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 const boundary = vi.hoisted(() => ({
-    calls: [] as Array<{ machineId: string; method: string; payload: unknown; serverId?: string | null; accountId?: string | null }>,
+    calls: [] as Array<{ machineId: string; method: string; payload: unknown; serverId?: string | null; accountId?: string | null;
+        authorization?: import('@happier-dev/protocol/rpc').SocketRpcAuthorizationContext }>,
     capabilities: async (): Promise<unknown> => ({ protocolVersion: 1, results: {} }),
     savedResult: null as import('@happier-dev/protocol/scm').ScmDiffSummaryResult | null,
     savedSessionId: '',
     listBarrier: null as (() => Promise<void>) | null,
     runResponse: null as import('@happier-dev/protocol').ExecutionRunGetResponse | null,
+    nativeRunBarrier: null as (() => Promise<void>) | null,
     sessionCalls: [] as Array<{ sessionId: string; method: string; payload: unknown; scope?: { serverId: string; accountId: string } }>,
 }));
 
@@ -37,13 +39,18 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 // capability facades, admission, schemas, settings and result store are intact.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
-    const rpc = async (request: { machineId: string; method: string; payload: unknown; serverId?: string | null; accountId?: string | null }) => {
+    const rpc = async (request: { machineId: string; method: string; payload: unknown; serverId?: string | null; accountId?: string | null;
+        authorization?: import('@happier-dev/protocol/rpc').SocketRpcAuthorizationContext }) => {
         boundary.calls.push(request);
         if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return boundary.capabilities();
+        if (request.method === RPC_METHODS.DAEMON_EXECUTION_RUN_GET && boundary.runResponse) {
+            await boundary.nativeRunBarrier?.();
+            return boundary.runResponse;
+        }
         if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST) {
             const saved = boundary.savedResult;
             await boundary.listBarrier?.();
-            const results = saved ? [{ cwd: saved.output.comparison!.repository.rootPath, sessionId: boundary.savedSessionId,
+            const results = saved ? [{ cwd: saved.output.comparison!.repository.rootPath, ...(boundary.savedSessionId ? { sessionId: boundary.savedSessionId } : {}),
                 resultId: saved.resultId, revision: saved.revision, comparisonId: saved.output.comparison!.id,
                 source: saved.output.comparison!.source, bytes: 100, updatedAtMs: 1 }] : [];
             return { success: true, results, count: results.length, bytes: saved ? 100 : 0,
@@ -55,20 +62,40 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
         if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_UNDO && boundary.savedResult) {
             return { success: true, result: boundary.savedResult };
         }
+        if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS && boundary.savedResult) {
+            const input = ScmDiffSummaryDiscussInputSchema.parse(request.payload);
+            if (input.expectedRevision !== boundary.savedResult.revision) return { success: false, errorCode: 'revision_conflict', error: 'Changed', latestRevision: boundary.savedResult.revision };
+            return { success: true, result: boundary.savedResult, runId: 'native-run', inputId: 'discussion-input' };
+        }
+        if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_EDIT && boundary.savedResult) {
+            const input = ScmDiffSummaryResultEditInputSchema.parse(request.payload);
+            const saved = boundary.savedResult;
+            if (input.expectedRevision !== saved.revision) return { success: false, errorCode: 'revision_conflict', error: 'Changed', latestRevision: saved.revision };
+            const walkthrough = saved.output.outputs?.walkthrough;
+            if (input.edit.kind !== 'renameWalkthrough' || !walkthrough?.value) throw new Error('Unexpected saved edit');
+            boundary.savedResult = ScmDiffSummaryResultSchema.parse({ ...saved, revision: saved.revision + 1,
+                output: { ...saved.output, revision: saved.revision + 1,
+                    outputs: { ...saved.output.outputs, walkthrough: { ...walkthrough, value: { ...walkthrough.value, title: input.edit.title } } } } });
+            return { success: true, result: boundary.savedResult };
+        }
         if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE) {
             const input = ScmDiffSummaryGenerateInputSchema.parse(request.payload);
             // The host reads this retained identity before model admission; an
             // unavailable capture must not become fresh working-tree evidence.
             if (input.comparisonId) return ScmDiffSummaryGenerateOutputSchema.parse({ success: false,
                 error: 'Captured comparison evidence is unavailable', errorCode: 'DIFF_UNAVAILABLE' });
-            const sourceKey = `comparison:${input.sessionId}`;
-            return ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey,
+            const sourceKey = `comparison:${input.sessionId ?? input.cwd}`;
+            const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey,
+                ...(!input.sessionId ? { runId: 'native-run', inputId: 'native-input', resultId: 'native-result', revision: 0 } : {}),
                 metadata: { sourceKey, source: input.source }, requestedOutputs: input.outputs,
                 comparison: { id: sourceKey, source: input.source, repository: { rootPath: input.cwd }, endpoints: {},
                     inventory: { state: 'complete', files: [], reasons: [] } },
                 outputs: { walkthrough: { state: 'pending' } },
                 analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
             });
+            if (!input.sessionId) boundary.savedResult = ScmDiffSummaryResultSchema.parse({ resultId: 'native-result', revision: 0,
+                canUndo: false, generator: { backendTarget: { kind: 'backend', backendId: 'claude' } }, output });
+            return output;
         }
         throw new Error(`Unexpected machine boundary method: ${request.method}`);
     };
@@ -116,6 +143,8 @@ const { formatWithCachedDateTimeFormatter } = await import('@/utils/datetime/cac
 const { getPreferredLanguage } = await import('@/text');
 await loadSyncSingletonForTests();
 const { SessionWalkthroughView } = await import('./SessionWalkthroughView');
+const { ScmWalkthroughView } = await import('./ScmWalkthroughView');
+const { useWorkspaceScmDiffSummaryBinding } = await import('@/components/projects/scm/useWorkspaceScmDiffSummaryBinding');
 const initialStorage = getStorage().getState();
 const initialAppliedHome = getAppliedActiveServerSnapshot();
 const initialRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
@@ -135,6 +164,7 @@ afterEach(() => {
     boundary.savedSessionId = '';
     boundary.listBarrier = null;
     boundary.runResponse = null;
+    boundary.nativeRunBarrier = null;
     boundary.sessionCalls = [];
 });
 
@@ -214,6 +244,114 @@ async function mountWithAccountMarks(sessionId: string) {
 }
 
 describe('SessionWalkthroughView retained offline reading through real Account marks', () => {
+    it('starts workspace-native generation and observes its exact Run output without Session notifications', async () => {
+        boundary.capabilities = async () => ({ protocolVersion: 1, results: {
+            'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: { backends: { claude: { available: true } } } },
+        } });
+        const profiles = buildScmDiffSummaryModelProfiles({ backendTarget: { kind: 'backend', backendId: 'claude' },
+            models: getAgentStaticModels('claude'), agentFormats: getAgentCore('claude')?.structuredOutput?.formats });
+        const home = await upsertServerProfile({ serverUrl: 'https://native-generation.example.test' });
+        await setActiveServerId(home.id, { scope: 'device' });
+        const machine = createMachineFixture({ id: 'native-machine', activeAt: Date.now() });
+        getStorage().setState({ sessions: {}, machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] },
+            profileScope: { serverId: home.id, accountId: 'walkthrough-account' },
+            settings: { ...initialStorage.settings, experiments: true, featureToggles: { 'execution.runs': true },
+                'scm.diffSummary.modelProfileOverride': profiles.find(profile => profile.structuredOutput === 'supported')!.catalogId } });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const observed = createDeferred<void>();
+        boundary.nativeRunBarrier = () => observed.promise;
+        boundary.runResponse = ExecutionRunGetResponseSchema.parse({ run: {
+            runId: 'native-run', callId: 'native-call', sidechainId: 'native-sidechain', intent: 'scm_diff_summary',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'read_only', retentionPolicy: 'resumable',
+            runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 100,
+        } });
+        function Workspace() {
+            const bound = useWorkspaceScmDiffSummaryBinding({ machineId: machine.id, rootPath: '/native/repo', serverId: home.id,
+                comparison: { kind: 'workingTree' }, output: 'walkthrough' });
+            return <ScmWalkthroughView bound={bound} displayMachineId={machine.id} serverId={home.id} comparison={{ kind: 'workingTree' }}
+                scopeLabel="Workspace" layout="wide" renderBar={actions => actions} onShowFiles={() => {}} onOpenFile={() => {}} />;
+        }
+        const screen = await renderScreen(<Workspace />, { wrapper: ({ children }) =>
+            <InjectedAuthProvider credentials={accountCredentials}>{children}</InjectedAuthProvider> });
+        await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('walkthrough-start');
+        await vi.waitFor(() => expect(boundary.calls).toContainEqual(expect.objectContaining({
+            method: RPC_METHODS.DAEMON_EXECUTION_RUN_GET, payload: { runId: 'native-run', includeStructured: true,
+                waitForInputId: 'native-input',
+                waitForOutput: { kind: 'review_walkthrough', comparisonId: 'comparison:/native/repo', resultId: 'native-result', afterRevision: 0 } },
+        })));
+        const pending = boundary.savedResult!;
+        boundary.savedResult = ScmDiffSummaryResultSchema.parse({ ...pending, revision: 1,
+            output: { ...pending.output, revision: 1, outputs: { walkthrough: { state: 'complete', value: {
+                title: 'Native completion', intro: 'The exact producer finished.', stops: [], otherChangeRefs: [],
+            } } } } });
+        boundary.runResponse = ExecutionRunGetResponseSchema.parse({ ...boundary.runResponse,
+            structuredMeta: { kind: 'scm_diff_summary.v1', payload: boundary.savedResult.output } });
+        observed.resolve();
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Native completion'));
+        const discussed = createDeferred<void>();
+        boundary.nativeRunBarrier = () => discussed.promise;
+        await screen.pressByTestIdAsync('walkthrough-saved-discuss');
+        await act(async () => screen.changeTextByTestId('walkthrough-saved-message', 'Why this approach?'));
+        await screen.pressByTestIdAsync('walkthrough-saved-discuss-send');
+        await vi.waitFor(() => expect(boundary.calls).toContainEqual(expect.objectContaining({
+            method: RPC_METHODS.DAEMON_EXECUTION_RUN_GET,
+            payload: { runId: 'native-run', includeStructured: true, waitForInputId: 'discussion-input' },
+        })));
+        boundary.runResponse = ExecutionRunGetResponseSchema.parse({ ...boundary.runResponse,
+            run: { ...boundary.runResponse!.run, inputTurns: { occurrenceId: 'native-occurrence', current: {
+                turnId: 'discussion-turn', inputIds: ['discussion-input'], state: 'completed',
+                result: { kind: 'text', value: 'The generator answered through its actual native turn.' },
+            } } } });
+        discussed.resolve();
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('The generator answered through its actual native turn.'));
+        expect(screen.getTextContent()).toContain('Native completion');
+        expect(generationCalls()).toEqual([expect.objectContaining({ machineId: machine.id, serverId: home.id,
+            payload: expect.not.objectContaining({ sessionId: expect.anything() }) })]);
+        expect(boundary.sessionCalls).toEqual([]);
+    }, 120_000);
+    it('restores and edits workspace-native saved reading without a Session and retires it on another checkout', async () => {
+        const home = await upsertServerProfile({ name: 'workspace-only', serverUrl: 'https://workspace-only.example.test' });
+        await setActiveServerId(home.id, { scope: 'device' });
+        const machine = createMachineFixture({ id: 'workspace-only-machine', activeAt: Date.now() });
+        getStorage().setState({ sessions: {}, machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] },
+            profileScope: { serverId: home.id, accountId: 'walkthrough-account' } });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const comparison = { id: 'workspace-captured', source: { kind: 'workingTree' }, repository: { rootPath: '/workspace/exact' },
+            endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } };
+        boundary.savedResult = ScmDiffSummaryResultSchema.parse({ resultId: 'workspace-saved', revision: 1, canUndo: true,
+            output: { success: true, resultId: 'workspace-saved', revision: 1, sourceKey: comparison.id, comparison,
+                metadata: { sourceKey: comparison.id, source: comparison.source }, requestedOutputs: ['walkthrough'],
+                outputs: { walkthrough: { state: 'complete', value: { title: 'Workspace saved reading', intro: '', stops: [], otherChangeRefs: [] } } },
+                analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } });
+        function Workspace({ rootPath }: { rootPath: string }) {
+            const bound = useWorkspaceScmDiffSummaryBinding({ machineId: machine.id, rootPath, serverId: home.id,
+                comparison: { kind: 'workingTree' }, output: 'walkthrough' });
+            return <ScmWalkthroughView bound={bound} displayMachineId={machine.id} serverId={home.id} comparison={{ kind: 'workingTree' }}
+                scopeLabel="Workspace" layout="wide" renderBar={(actions) => actions} onShowFiles={() => {}} onOpenFile={() => {}} />;
+        }
+        const screen = await renderScreen(<Workspace rootPath="/workspace/exact" />, {
+            wrapper: ({ children }) => <InjectedAuthProvider credentials={accountCredentials}>{children}</InjectedAuthProvider>,
+        });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Workspace saved reading'));
+        await screen.pressByTestIdAsync('walkthrough-saved-edit');
+        await act(async () => screen.findByTestId('walkthrough-saved-title')!.props.onChangeText('My workspace title'));
+        await screen.pressByTestIdAsync('walkthrough-saved-title-save');
+        await vi.waitFor(() => expect(boundary.savedResult?.revision).toBe(2));
+        expect(screen.getTextContent()).toContain('My workspace title');
+        expect(boundary.sessionCalls).toEqual([]);
+        expect(generationCalls()).toEqual([]);
+        expect(boundary.calls.filter(call => call.method.startsWith('scm.diffSummary.')).every(call => call.authorization === undefined)).toBe(true);
+        const savedState = Object.values(getScmDiffSummaryState().entriesByKey).find((entry) => entry.savedResult?.resultId === 'workspace-saved');
+        expect(savedState).toMatchObject({ sessionId: null, machineId: machine.id, input: { cwd: '/workspace/exact' } });
+        await screen.update(<Workspace rootPath="/workspace/other" />);
+        expect(screen.getTextContent()).not.toContain('My workspace title');
+        expect(boundary.calls.filter((call) => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_EDIT)).toEqual([
+            expect.objectContaining({ machineId: machine.id, serverId: home.id, accountId: 'walkthrough-account', payload: {
+                cwd: '/workspace/exact', resultId: 'workspace-saved', expectedRevision: 1, edit: { kind: 'renameWalkthrough', title: 'My workspace title' },
+            } }),
+        ]);
+    });
     it('labels retained code from its observation and disables personal marks when the owning machine goes offline', async () => {
         const { screen, offline, writes, observedAtMs } = await mountWithAccountMarks('offline-marks');
         await screen.pressByTestIdAsync('walkthrough-mark-retained');
@@ -433,6 +571,8 @@ describe('SessionWalkthroughView START through real generation and model owners'
             } });
         boundary.savedResult = pending;
         const { screen, home } = await mount({ kind: 'workingTree' }, boundary.savedSessionId);
+        await vi.waitFor(() => expect(boundary.calls.some(call => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST
+            && call.authorization?.kind === 'session.write' && call.authorization.sessionId === 'late-bound-run')).toBe(true));
         const projection = () => {
             const state = getScmDiffSummaryState();
             const entry = Object.values(state.entriesByKey).find((value) => value.sessionId === 'late-bound-run');

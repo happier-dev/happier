@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
 const sessionExecutionRunStartMock = vi.hoisted(() => vi.fn());
 const sessionExecutionRunGetMock = vi.hoisted(() => vi.fn());
@@ -57,7 +59,7 @@ function successfulTerminalResult(runId = 'run_1') {
 async function generate() {
     const { generateScmCommitMessage } = await import('./commitMessageGenerator');
     return await generateScmCommitMessage({
-        sessionId: 'sess_1',
+        host: { kind: 'session', sessionId: 'sess_1' },
         backendId: 'claude',
         instructions: 'use conventional commits',
         scopePaths: ['a.txt', 'b.txt'],
@@ -67,6 +69,65 @@ async function generate() {
 describe('commitMessageGenerator', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        actionExecuteMock.mockReset();
+    });
+
+    it('runs a workspace suggestion through real Action normalization with an explicit null Session and exact Machine/cwd', async () => {
+        const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+        const executionRunGet = vi.fn(async () => successfulTerminalResult().result);
+        const executionRunWait = vi.fn(async () => ({ ok: true as const, status: 'succeeded' as const, result: successfulTerminalResult().result }));
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            executionRunCheckProtocolV2: async (_sessionId, _requirements, opts) => ({ ok: true, exactMachineId: opts?.targetMachineId }),
+            executionRunStart,
+            executionRunGet,
+            executionRunWait,
+        }));
+        actionExecuteMock.mockImplementation(executor.execute);
+        const { generateScmCommitMessage } = await import('./commitMessageGenerator');
+
+        expect(await generateScmCommitMessage({
+            host: { kind: 'workspace', workspace: { serverId: 'home_a', workspaceId: 'workspace_a', machineId: 'machine_a', rootPath: '/repo' } },
+            backendId: 'claude', scopePaths: ['a.txt'],
+        })).toMatchObject({ ok: true, message: 'feat: update stuff' });
+        expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({
+            cwd: '/repo', kind: 'scm_commit_message.v1', intent: 'scm_commit_message', permissionMode: 'no_tools',
+            retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+            intentInput: { scope: { kind: 'paths', include: ['a.txt'] } },
+        }), expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a', exactMachineId: 'machine_a' }));
+        expect(executionRunGet).toHaveBeenCalledWith(null, { runId: 'run_1', includeStructured: true },
+            expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a' }));
+        expect(executionRunWait).toHaveBeenCalledWith(null, expect.objectContaining({ runId: 'run_1' }),
+            expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a' }));
+        actionExecuteMock.mockReset();
+    });
+
+    it('retains accepted Run custody for an observation timeout without starting another Run', async () => {
+        actionExecuteMock.mockResolvedValueOnce(startResult({ ok: true, status: 'running', disposition: 'observation_timeout', runId: 'run_1',
+            timeoutMs: 12_000, observedAtMs: 13_000, deadlineAtMs: 13_000 }));
+        const { generateScmCommitMessage } = await import('./commitMessageGenerator');
+        expect(await generateScmCommitMessage({ host: { kind: 'session', sessionId: 'sess_1' }, backendId: 'claude' })).toMatchObject({
+            ok: false, errorCode: 'timeout', runId: 'run_1', outcome: 'pending',
+        });
+        expect(actionExecuteMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('observes and cancels an accepted detached Run on its original Home and Machine without redispatch', async () => {
+        const executionRunGet = vi.fn(async () => successfulTerminalResult().result);
+        const executionRunStop = vi.fn(async () => ({ ok: true as const }));
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            executionRunCheckProtocolV2: async (_sessionId, _requirements, opts) => ({ ok: true, exactMachineId: opts?.targetMachineId }),
+            executionRunGet, executionRunStop,
+        }));
+        actionExecuteMock.mockImplementation(executor.execute);
+        const { readScmCommitMessageSuggestion, stopScmCommitMessageSuggestion } = await import('./commitMessageGenerator');
+        const host = { kind: 'workspace' as const, workspace: { serverId: 'home_a', workspaceId: 'workspace_a', machineId: 'machine_a', rootPath: '/repo' } };
+        expect(await readScmCommitMessageSuggestion({ host, runId: 'run_1' })).toMatchObject({ ok: true, message: 'feat: update stuff' });
+        await stopScmCommitMessageSuggestion({ host, runId: 'run_1' });
+        expect(executionRunGet).toHaveBeenCalledWith(null, { runId: 'run_1', includeStructured: true },
+            expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a' }));
+        expect(executionRunStop).toHaveBeenCalledWith(null, { runId: 'run_1' },
+            expect.objectContaining({ serverId: 'home_a', targetMachineId: 'machine_a' }));
+        expect(actionExecuteMock.mock.calls.map(([id]) => id)).toEqual(['execution.run.get', 'execution.run.stop']);
     });
 
     it('starts scm_commit_message.v1 through the Action front door and reads one canonical terminal result', async () => {
@@ -141,12 +202,12 @@ describe('commitMessageGenerator', () => {
             timeoutMs: 12_000,
             observedAtMs: 13_000,
             deadlineAtMs: 13_000,
-        }, 'Commit message generation timed out'],
-        ['cancelled', { ok: false, code: 'cancelled' }, 'Commit message generation was cancelled'],
+        }, 'Commit message generation is still running'],
+        ['cancelled', { ok: false, code: 'cancelled' }, 'Commit message observation was cancelled'],
     ] as const)('returns the canonical %s observation result without redispatching or stopping', async (errorCode, wait, error) => {
         actionExecuteMock.mockResolvedValueOnce(startResult(wait));
 
-        await expect(generate()).resolves.toEqual({ ok: false, error, errorCode });
+        await expect(generate()).resolves.toMatchObject({ ok: false, error, errorCode, runId: 'run_1' });
 
         expect(actionExecuteMock).toHaveBeenCalledTimes(1);
         expect(actionExecuteMock).toHaveBeenCalledWith(
@@ -175,10 +236,12 @@ describe('commitMessageGenerator', () => {
     it.each([
         ['missing', startResult(undefined)],
         ['malformed', startResult({ ok: false, code: 'not_a_wait_result' })],
-    ] as const)('fails closed for a %s wait result without reading or redispatching the run', async (_name, result) => {
+    ] as const)('fails closed for a %s wait result without reading or redispatching the run', async (name, result) => {
         actionExecuteMock.mockResolvedValueOnce(result);
 
-        await expect(generate()).resolves.toEqual({ ok: false, error: 'Commit message generation failed' });
+        await expect(generate()).resolves.toMatchObject(name === 'missing'
+            ? { ok: false, runId: 'run_1', outcome: 'unknown' }
+            : { ok: false, error: 'Commit message generation failed' });
 
         expect(actionExecuteMock).toHaveBeenCalledTimes(1);
         expect(sessionExecutionRunStartMock).not.toHaveBeenCalled();
@@ -192,10 +255,19 @@ describe('commitMessageGenerator', () => {
             result: successfulTerminalResult('run_other').result,
         }));
 
-        await expect(generate()).resolves.toEqual({ ok: false, error: 'Commit message generation failed' });
+        await expect(generate()).resolves.toMatchObject({ ok: false, runId: 'run_1', outcome: 'unknown' });
 
         expect(actionExecuteMock).toHaveBeenCalledTimes(1);
         expect(sessionExecutionRunStartMock).not.toHaveBeenCalled();
         expect(sessionExecutionRunGetMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects contradictory terminal observation instead of applying a suggestion', async () => {
+        actionExecuteMock.mockResolvedValueOnce(startResult({ ok: true, status: 'succeeded', result: successfulTerminalResult().result }))
+            .mockResolvedValueOnce({ ok: true, result: {
+                ...successfulTerminalResult().result,
+                run: { ...successfulTerminalResult().result.run, status: 'failed' },
+            } });
+        expect(await generate()).toMatchObject({ ok: false, runId: 'run_1', outcome: 'unknown' });
     });
 });

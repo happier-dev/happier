@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     activeReviewFileKeyForWorkspace,
+    acknowledgeActiveReviewFileRequest,
     openChangedFileFromList,
     publishActiveReviewFile,
     readActiveReviewFile,
     requestActiveReviewFile,
+    requestActiveReviewFileForComparison,
     resetActiveReviewFilesForTests,
     subscribeActiveReviewFile,
 } from './activeReviewFile';
@@ -43,6 +45,33 @@ describe('active review file', () => {
 
         publishActiveReviewFile('s1', { presented: false, activePath: 'src/a.ts' });
         expect(requestActiveReviewFile('s1', 'src/c.ts')).toBe(false);
+    });
+
+    it('retains one comparison-qualified promotion before Review mounts, not an unqualified hidden list request', () => {
+        expect(requestActiveReviewFile('workspace', 'src/a.ts')).toBe(false);
+        expect(requestActiveReviewFile('workspace', 'src/a.ts', { kind: 'workingTree' })).toBe(true);
+        publishActiveReviewFile('workspace', { presented: false, activePath: null });
+        publishActiveReviewFile('workspace', { presented: true, activePath: null });
+        expect(readActiveReviewFile('workspace').focusRequest).toMatchObject({ path: 'src/a.ts', comparison: { kind: 'workingTree' } });
+    });
+
+    it('acknowledges only the latest matching promotion and drops it on scope retirement', () => {
+        let current = true;
+        requestActiveReviewFileForComparison('workspace', 'first.ts', { kind: 'workingTree' }, () => current);
+        const first = readActiveReviewFile('workspace').focusRequest!;
+        requestActiveReviewFileForComparison('workspace', 'next.ts', { kind: 'workingTree' }, () => current);
+        const next = readActiveReviewFile('workspace').focusRequest!;
+        acknowledgeActiveReviewFileRequest('workspace', first.nonce);
+        expect(readActiveReviewFile('workspace').focusRequest).toMatchObject({ path: 'next.ts', comparison: { kind: 'workingTree' } });
+        publishActiveReviewFile('workspace', { presented: true, activePath: null });
+        acknowledgeActiveReviewFileRequest('workspace', next.nonce);
+        expect(readActiveReviewFile('workspace').focusRequest).toMatchObject({ path: 'next.ts', nonce: next.nonce });
+        expect(readActiveReviewFile('workspace').focusRequest).not.toHaveProperty('comparison');
+        publishActiveReviewFile('workspace', { presented: false, activePath: null });
+        expect(readActiveReviewFile('workspace').focusRequest).toBeNull();
+        requestActiveReviewFileForComparison('workspace', 'retired.ts', { kind: 'workingTree' }, () => current);
+        current = false;
+        expect(readActiveReviewFile('workspace').focusRequest).toBeNull();
     });
 
     it('tells the list which file Review is on, and nothing once Review is hidden', () => {

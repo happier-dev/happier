@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createSessionScmReviewDetailsTab, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewTarget } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
-const REVIEW_TAB_KEY = SESSION_DETAILS_SCM_REVIEW_TAB_KEY;
 const SCROLL_PERSIST_DEBOUNCE_MS = 250;
 const SCROLL_PERSIST_EPSILON_PX = 1;
 
@@ -24,20 +23,14 @@ function valuesEqual(key: string, previous: unknown, next: unknown): boolean {
 }
 
 /** Both live and captured Files preserve the existing review tab's scroll and collapse state. */
-export function useSessionScmReviewTabState(sessionId: string, pane: ReturnType<typeof useAppPaneScope>, target: SessionScmReviewTarget = {}) {
-    // Explain is presentation on the semantic destination, shared by UI and session.open.
-    const explain = target.explain === true;
-    const openDetailsTab = pane.openDetailsTab;
-    const setExplain = React.useCallback((next: boolean) => {
-        openDetailsTab(createSessionScmReviewDetailsTab({ ...target, explain: next }), { intent: 'pinned' });
-    }, [openDetailsTab, target]);
-    const raw = pane.scopeState?.details?.tabState?.[REVIEW_TAB_KEY];
+export function useScmReviewTabState(hostKey: string, pane: ReturnType<typeof useAppPaneScope>, tabKey = SESSION_DETAILS_SCM_REVIEW_TAB_KEY) {
+    const raw = pane.scopeState?.details?.tabState?.[tabKey];
     const persistedReviewTabState = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
-    const initialStateRef = React.useRef<Readonly<{ sessionId: string; scrollTop: number | null; collapsedPaths: string[] | null }> | null>(null);
-    if (!initialStateRef.current || initialStateRef.current.sessionId !== sessionId) {
+    const initialStateRef = React.useRef<Readonly<{ hostKey: string; scrollTop: number | null; collapsedPaths: string[] | null }> | null>(null);
+    if (!initialStateRef.current || initialStateRef.current.hostKey !== hostKey) {
         const scrollTop = persistedReviewTabState?.scrollTop;
         const collapsedPaths = persistedReviewTabState?.collapsedPaths;
-        initialStateRef.current = { sessionId,
+        initialStateRef.current = { hostKey,
             scrollTop: typeof scrollTop === 'number' && Number.isFinite(scrollTop) ? scrollTop : null,
             collapsedPaths: Array.isArray(collapsedPaths) ? collapsedPaths.filter((path): path is string => typeof path === 'string') : null };
     }
@@ -49,8 +42,13 @@ export function useSessionScmReviewTabState(sessionId: string, pane: ReturnType<
         if (!Object.entries(patch).some(([key, value]) => !valuesEqual(key, previous[key], value))) return;
         const next = { ...previous, ...patch };
         stateRef.current = next;
-        setDetailsTabState(REVIEW_TAB_KEY, next);
-    }, [setDetailsTabState]);
+        if (initialStateRef.current) initialStateRef.current = {
+            ...initialStateRef.current,
+            ...(typeof next.scrollTop === 'number' ? { scrollTop: next.scrollTop } : {}),
+            ...(Array.isArray(next.collapsedPaths) ? { collapsedPaths: next.collapsedPaths.filter((path): path is string => typeof path === 'string') } : {}),
+        };
+        setDetailsTabState(tabKey, next);
+    }, [setDetailsTabState, tabKey]);
     const onCollapsedPathsChange = React.useCallback((paths: string[]) => setPersistedReviewTabState({ collapsedPaths: paths }), [setPersistedReviewTabState]);
     const pendingScrollTopRef = React.useRef<number | null>(null);
     const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,11 +61,25 @@ export function useSessionScmReviewTabState(sessionId: string, pane: ReturnType<
     const onScrollTopChange = React.useCallback((top: number) => {
         if (!Number.isFinite(top) || scrollPositionsEqual(pendingScrollTopRef.current, top)) return;
         if (pendingScrollTopRef.current === null && scrollPositionsEqual(stateRef.current.scrollTop, top)) return;
+        // View switches remount Files immediately; persistence remains debounced.
+        if (initialStateRef.current) initialStateRef.current = { ...initialStateRef.current, scrollTop: top };
         pendingScrollTopRef.current = top;
         if (timerRef.current) clearTimeout(timerRef.current);
         timerRef.current = setTimeout(flushPendingScrollTop, SCROLL_PERSIST_DEBOUNCE_MS);
     }, [flushPendingScrollTop]);
     React.useEffect(() => flushPendingScrollTop, [flushPendingScrollTop]);
-    return { persistedReviewTabState, mountedInitialReviewState: initialStateRef.current, explain, setExplain,
+    return { persistedReviewTabState, mountedInitialReviewState: initialStateRef.current,
         setPersistedReviewTabState, onCollapsedPathsChange, onScrollTopChange };
+}
+
+/** Session destination authoring stays at the Session adapter; persistence is shared. */
+export function useSessionScmReviewTabState(sessionId: string, pane: ReturnType<typeof useAppPaneScope>, target: SessionScmReviewTarget = {}) {
+    // Explain is presentation on the semantic destination, shared by UI and session.open.
+    const explain = target.explain === true;
+    const openDetailsTab = pane.openDetailsTab;
+    const setExplain = React.useCallback((next: boolean) => {
+        openDetailsTab(createSessionScmReviewDetailsTab({ ...target, explain: next }), { intent: 'pinned' });
+    }, [openDetailsTab, target]);
+
+    return { ...useScmReviewTabState(sessionId, pane), explain, setExplain };
 }

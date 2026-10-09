@@ -22,11 +22,16 @@ import {
     type PluginPermissionGrantState,
 } from './store';
 import { pluginPermissionGrantScopeKey } from './types';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 export type UsePluginPermissionGrantsParams = Readonly<{
     actions: PluginPermissionGrantActions;
     enabled: boolean;
     listInput: PluginPermissionGrantListInput | null;
+    /** Exact authority for scoped surfaces; omitted legacy callers use the admitted active Home. */
+    scope?: ServerAccountScope | null;
 }>;
 
 export type UsePluginPermissionGrantsResult = Readonly<{
@@ -58,8 +63,17 @@ function listInputKey(input: PluginPermissionGrantListInput | null): string {
 }
 
 export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParams): UsePluginPermissionGrantsResult {
-    const refreshInputKey = listInputKey(params.listInput);
-    const scopeKey = params.enabled && params.listInput ? refreshInputKey : `inactive:${refreshInputKey}`;
+    const binding = useServerCredentialAccountScopeBinding(params.scope?.serverId).binding;
+    const admittedScope = params.scope !== null && binding?.isCurrent()
+        && (!params.scope || (params.scope.accountId === binding.scope.accountId
+            && areServerProfileIdentifiersEquivalent(params.scope.serverId, binding.scope.serverId))) ? binding.scope : null;
+    const enabled = params.enabled && admittedScope !== null;
+    const refreshInputKey = JSON.stringify([admittedScope?.serverId ?? null, admittedScope?.accountId ?? null, listInputKey(params.listInput)]);
+    const scopeKey = enabled && params.listInput ? refreshInputKey : `inactive:${refreshInputKey}`;
+    const currentScopeKey = React.useRef(scopeKey);
+    currentScopeKey.current = scopeKey;
+    const isCurrent = React.useCallback(() => enabled && binding?.isCurrent() === true && currentScopeKey.current === scopeKey,
+        [binding, enabled, scopeKey]);
     const emptyState = React.useMemo(createEmptyPluginPermissionGrantState, [scopeKey]);
     const [scopedState, setScopedState] = React.useState<Readonly<{
         scopeKey: string;
@@ -69,8 +83,8 @@ export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParam
     const refreshSequenceRef = React.useRef(0);
 
     const refresh = React.useCallback(async () => {
+        if (!isCurrent() || !params.listInput) return;
         const refreshSequence = ++refreshSequenceRef.current;
-        if (!params.enabled || !params.listInput) return;
         const requestScopeKey = refreshInputKey;
         setScopedState((current) => ({
             scopeKey: requestScopeKey,
@@ -82,12 +96,12 @@ export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParam
         }));
         try {
             const response = await params.actions.list(params.listInput);
-            if (refreshSequenceRef.current !== refreshSequence) return;
+            if (!isCurrent() || refreshSequenceRef.current !== refreshSequence) return;
             setScopedState((current) => current.scopeKey === requestScopeKey
                 ? { scopeKey: requestScopeKey, state: applyPluginPermissionGrantList(current.state, response) }
                 : current);
         } catch (error) {
-            if (refreshSequenceRef.current !== refreshSequence) return;
+            if (!isCurrent() || refreshSequenceRef.current !== refreshSequence) return;
             setScopedState((current) => current.scopeKey === requestScopeKey
                 ? {
                       scopeKey: requestScopeKey,
@@ -95,27 +109,29 @@ export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParam
                   }
                 : current);
         }
-    }, [params.actions, params.enabled, refreshInputKey]);
+    }, [params.actions, isCurrent, refreshInputKey]);
 
     React.useEffect(() => {
         void refresh();
     }, [refresh]);
 
     React.useEffect(() => {
-        if (params.enabled && params.listInput) return;
+        if (enabled && params.listInput) return;
         ++refreshSequenceRef.current;
         setScopedState({ scopeKey, state: createEmptyPluginPermissionGrantState() });
-    }, [params.enabled, refreshInputKey, scopeKey]);
+    }, [enabled, refreshInputKey, scopeKey]);
 
     const grant = React.useCallback(async (input: PluginPermissionGrantDecisionInput) => {
-        if (!params.enabled) return;
+        if (!isCurrent()) return;
         const mutationScopeKey = scopeKey;
         try {
             const result = await params.actions.grant(input);
+            if (!isCurrent()) return;
             setScopedState((current) => current.scopeKey === mutationScopeKey
                 ? { scopeKey: mutationScopeKey, state: applyPluginPermissionGrantApproved(current.state, result) }
                 : current);
         } catch (error) {
+            if (!isCurrent()) return;
             setScopedState((current) => current.scopeKey === mutationScopeKey
                 ? {
                       scopeKey: mutationScopeKey,
@@ -123,17 +139,19 @@ export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParam
                   }
                 : current);
         }
-    }, [params.actions, params.enabled, scopeKey]);
+    }, [params.actions, isCurrent, scopeKey]);
 
     const revoke = React.useCallback(async (input: PluginPermissionGrantRevokeInput) => {
-        if (!params.enabled) return;
+        if (!isCurrent()) return;
         const mutationScopeKey = scopeKey;
         try {
             const result = await params.actions.revoke(input);
+            if (!isCurrent()) return;
             setScopedState((current) => current.scopeKey === mutationScopeKey
                 ? { scopeKey: mutationScopeKey, state: applyPluginPermissionGrantRevoked(current.state, result) }
                 : current);
         } catch (error) {
+            if (!isCurrent()) return;
             setScopedState((current) => current.scopeKey === mutationScopeKey
                 ? {
                       scopeKey: mutationScopeKey,
@@ -141,13 +159,14 @@ export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParam
                   }
                 : current);
         }
-    }, [params.actions, params.enabled, scopeKey]);
+    }, [params.actions, isCurrent, scopeKey]);
 
     const dismissRequest = React.useCallback(async (input: PluginPermissionGrantDecisionInput) => {
-        if (!params.enabled) return;
+        if (!isCurrent()) return;
         const mutationScopeKey = scopeKey;
         try {
             const result = await params.actions.dismissRequest(input);
+            if (!isCurrent()) return;
             setScopedState((current) => current.scopeKey === mutationScopeKey
                 ? {
                       scopeKey: mutationScopeKey,
@@ -155,6 +174,7 @@ export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParam
                   }
                 : current);
         } catch (error) {
+            if (!isCurrent()) return;
             setScopedState((current) => current.scopeKey === mutationScopeKey
                 ? {
                       scopeKey: mutationScopeKey,
@@ -162,18 +182,18 @@ export function usePluginPermissionGrants(params: UsePluginPermissionGrantsParam
                   }
                 : current);
         }
-    }, [params.actions, params.enabled, scopeKey]);
+    }, [params.actions, isCurrent, scopeKey]);
 
     const upsertPendingRequest = React.useCallback((request: PluginPermissionPendingGrantRequest) => {
-        if (!params.enabled) return;
+        if (!isCurrent()) return;
         setScopedState((current) => current.scopeKey === scopeKey
             ? { scopeKey, state: upsertPluginPermissionPendingRequest(current.state, request) }
             : current);
-    }, [params.enabled, scopeKey]);
+    }, [isCurrent, scopeKey]);
 
     const hasGrant = React.useCallback((input: Partial<PluginPermissionGrantIdentity>) => {
-        return hasPluginPermissionGrant(state, input);
-    }, [state]);
+        return isCurrent() && hasPluginPermissionGrant(state, input);
+    }, [isCurrent, state]);
 
     const pendingRequests = React.useMemo(
         () => selectPluginPermissionPendingRequests(state),

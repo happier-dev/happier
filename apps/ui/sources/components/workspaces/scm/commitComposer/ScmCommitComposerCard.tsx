@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -9,7 +9,7 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useMountedRef } from '@/hooks/ui/useMountedRef';
 
 // One glyph size for the composer's action row, so its spinner and icons agree.
 const COMPOSER_GLYPH_SIZE_PX = 16;
@@ -42,10 +42,13 @@ export type ScmCommitComposerCardProps = Readonly<{
     onExitSelectionMode?: () => void;
     variant?: 'card' | 'railFooter';
     commitMessageGeneratorEnabled?: boolean;
+    /** Qualified host and comparison/selection basis captured by the suggestion request. */
+    suggestionContextKey?: string;
     onGenerateCommitMessageSuggestion?: () => Promise<
         | { ok: true; message: string }
-        | { ok: false; error: string }
+        | { ok: false; error: string; errorCode?: string; runId?: string; outcome?: 'pending' | 'unknown' }
     >;
+    onCancelCommitMessageSuggestion?: () => Promise<unknown>;
     pushShortcut?: Readonly<{
         label: string;
         disabled: boolean;
@@ -91,48 +94,45 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
     const variant = props.variant ?? 'card';
     const generatorEnabled = props.commitMessageGeneratorEnabled === true && typeof props.onGenerateCommitMessageSuggestion === 'function';
     const [generating, setGenerating] = React.useState(false);
-    const commitButtonContentColor = commitDisabled
-        ? props.theme.colors.text.secondary
-        : props.theme.colors.button?.primary?.tint ?? props.theme.colors.surface.base;
+    const [observation, setObservation] = React.useState<Readonly<{ contextKey?: string; error: string }> | null>(null);
+    const mountedRef = useMountedRef();
+    const currentDraftRef = React.useRef(props);
+    currentDraftRef.current = props;
 
     const onGenerate = React.useCallback(async () => {
         if (!generatorEnabled || !props.onGenerateCommitMessageSuggestion) return;
         if (props.busy || generating) return;
+        const draftMessage = props.draftMessage;
+        const contextKey = props.suggestionContextKey;
         setGenerating(true);
         try {
             const res = await props.onGenerateCommitMessageSuggestion();
+            const current = currentDraftRef.current;
+            if (!mountedRef.current || current.draftMessage !== draftMessage || current.suggestionContextKey !== contextKey) return;
+            if (!res.ok && res.errorCode === 'SCM_COMMIT_MESSAGE_SCOPE_RETIRED') return;
             if (res.ok) {
-                props.onDraftMessageChange(normalizeGeneratedCommitMessageSuggestion(res.message));
+                setObservation(null);
+                current.onDraftMessageChange(normalizeGeneratedCommitMessageSuggestion(res.message));
+            } else if (res.runId && res.outcome) {
+                setObservation({ contextKey, error: res.error });
             } else {
+                setObservation(null);
                 Modal.alert(t('common.error'), res.error);
             }
         } catch (error) {
+            const current = currentDraftRef.current;
+            if (!mountedRef.current || current.draftMessage !== draftMessage || current.suggestionContextKey !== contextKey) return;
             Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
         } finally {
-            setGenerating(false);
+            if (mountedRef.current) setGenerating(false);
         }
     }, [generatorEnabled, generating, props]);
 
     return (
         <View
-            style={{
-                ...(variant === 'card'
-                    ? {
-                        marginHorizontal: 12,
-                        marginTop: 12,
-                        marginBottom: 12,
-                        padding: 12,
-                        borderRadius: 14,
-                        borderWidth: 1,
-                        borderColor: props.theme.colors.border.default,
-                    }
-                    : {
-                        paddingHorizontal: 12,
-                        paddingTop: 10,
-                        paddingBottom: 12,
-                    }),
-                backgroundColor: variant === 'card' ? props.theme.colors.surface.base : 'transparent',
-            }}
+            style={variant === 'card'
+                ? { paddingHorizontal: 12, paddingVertical: 8 }
+                : { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12 }}
         >
             {props.commitSelectionAvailable ? (
                 props.selectionModeActive ? (
@@ -183,17 +183,33 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                     {props.status}
                 </Text>
             ) : null}
+            {observation?.contextKey === props.suggestionContextKey && observation ? (
+                <View>
+                    <Text testID="scm-commit-suggestion-status">{observation.error}</Text>
+                    {props.onCancelCommitMessageSuggestion ? (
+                        <ToolbarButton testID="scm-commit-suggestion-cancel" label={t('common.cancel')}
+                            onPress={() => {
+                                void props.onCancelCommitMessageSuggestion?.().catch((error: unknown) => {
+                                    if (mountedRef.current && currentDraftRef.current.suggestionContextKey === props.suggestionContextKey) {
+                                        Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
+                                    }
+                                });
+                            }} />
+                    ) : null}
+                </View>
+            ) : null}
+            {/* One field (lab p-changes GIT / p-overview Local changes): the message, and under it the
+                suggestion, what is selected and Commit, inside the same border. */}
             <View
                 style={{
                     borderRadius: 12,
-                    borderWidth: variant === 'card' ? 1 : 0,
+                    borderWidth: 1,
                     borderColor: props.theme.colors.border.default,
-                    backgroundColor:
-                        variant === 'card'
-                            ? (props.theme.colors.surface.inset ?? props.theme.colors.surface.base)
-                            : 'transparent',
-                    paddingHorizontal: 10,
-                    paddingVertical: Platform.OS === 'web' ? 10 : 8,
+                    backgroundColor: props.theme.colors.surface.base,
+                    paddingTop: 9,
+                    paddingBottom: 8,
+                    paddingLeft: 12,
+                    paddingRight: 10,
                 }}
             >
                 <TextInput
@@ -206,13 +222,84 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                     placeholderTextColor={props.theme.colors.text.secondary}
                     style={{
                         fontSize: 13,
+                        lineHeight: 19,
                         color: props.theme.colors.text.primary,
-                        minHeight: 44,
+                        minHeight: 19,
                         maxHeight: 96,
                         padding: 0,
                         textAlignVertical: 'top' as any,
                     }}
                 />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                    {generatorEnabled ? (
+                        <IconButton
+                            variant="plain"
+                            size={24}
+                            accessibilityLabel={t('files.commitMessageEditor.generate')}
+                            tooltip={t('files.commitMessageEditor.generate')}
+                            disabled={props.busy || generating}
+                            onPress={onGenerate}
+                            icon={generating
+                                ? <ActivitySpinner
+                                    size={iconMatchedSpinnerSize(COMPOSER_GLYPH_SIZE_PX)}
+                                    color={props.theme.colors.text.secondary}
+                                />
+                                : <Icon
+                                    name="sparkle"
+                                    size={COMPOSER_GLYPH_SIZE_PX}
+                                    color={props.theme.colors.text.secondary}
+                                />}
+                        />
+                    ) : null}
+                    {props.selectionSummary ? (
+                        <Text
+                            testID="scm-commit-selection-lines"
+                            numberOfLines={1}
+                            style={{ flexShrink: 1, fontSize: 12, color: props.theme.colors.text.tertiary, ...Typography.default(), ...Typography.tabular() }}
+                        >
+                            {t('files.commitMessageEditor.selectionMeta', {
+                                count: props.selectionSummary.fileCount,
+                                added: props.selectionSummary.linesAdded,
+                                removed: props.selectionSummary.linesRemoved,
+                            })}
+                        </Text>
+                    ) : null}
+                    <View style={{ flex: 1 }} />
+                    {props.pushShortcut ? (
+                        <IconButton
+                            variant="plain"
+                            size={28}
+                            accessibilityLabel={props.pushShortcut.label}
+                            tooltip={props.pushShortcut.label}
+                            disabled={props.pushShortcut.disabled}
+                            onPress={props.pushShortcut.onPress}
+                            testID="scm-commit-adjacent-push"
+                            icon={props.pushShortcut.busy
+                                ? <ActivitySpinner
+                                    size={iconMatchedSpinnerSize(COMPOSER_GLYPH_SIZE_PX)}
+                                    color={props.theme.colors.text.secondary}
+                                />
+                                : <Icon
+                                    name="arrow-circle-up"
+                                    size={COMPOSER_GLYPH_SIZE_PX}
+                                    color={props.theme.colors.text.secondary}
+                                />}
+                        />
+                    ) : null}
+                    <ToolbarButton
+                        testID="scm-commit-submit"
+                        tone="primary"
+                        label={props.commitActionLabel}
+                        accessibilityLabel={props.commitActionLabel}
+                        disabled={commitDisabled}
+                        busy={props.busy}
+                        // Commit progress stays inside the button rather than as a status line.
+                        icon={props.busy
+                            ? <ActivitySpinner size={iconMatchedSpinnerSize(COMPOSER_GLYPH_SIZE_PX)} color={props.theme.colors.text.secondary} />
+                            : undefined}
+                        onPress={() => props.onCommitFromMessage(trimmedMessage)}
+                    />
+                </View>
             </View>
 
             {!props.commitAllowed && props.commitBlockedMessage ? (
@@ -220,84 +307,6 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                     {props.commitBlockedMessage}
                 </Text>
             ) : null}
-
-            {props.selectionSummary ? (
-                <Text testID="scm-commit-selection-lines" style={{ marginTop: 8, fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.default() }}>
-                    {`${props.selectionSummary.fileCount} · +${props.selectionSummary.linesAdded} / -${props.selectionSummary.linesRemoved}`}
-                </Text>
-            ) : null}
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                {generatorEnabled ? (
-                    <IconButton
-                        variant="plain"
-                        size={38}
-                        accessibilityLabel={t('files.commitMessageEditor.generate')}
-                        disabled={props.busy || generating}
-                        onPress={onGenerate}
-                        icon={generating
-                            ? <ActivitySpinner
-                                size={iconMatchedSpinnerSize(COMPOSER_GLYPH_SIZE_PX)}
-                                color={props.theme.colors.text.secondary}
-                            />
-                            : <Icon
-                                name="sparkle"
-                                size={COMPOSER_GLYPH_SIZE_PX}
-                                color={props.theme.colors.text.secondary}
-                            />}
-                    />
-                ) : null}
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={props.commitActionLabel}
-                    accessibilityState={{ busy: props.busy, disabled: commitDisabled }}
-                    disabled={commitDisabled}
-                    onPress={() => props.onCommitFromMessage(trimmedMessage)}
-                    testID="scm-commit-submit"
-                    style={({ pressed }) => ({
-                        flex: 1,
-                        height: 38,
-                        borderRadius: 12,
-                        // Enabled, the fill carries the button; an outline in the same colour on top
-                        // of it is the same statement twice. Disabled, the fill drops away, so the
-                        // hairline is what keeps it readable as a control.
-                        borderWidth: commitDisabled ? 1 : 0,
-                        borderColor: props.theme.colors.border.subtle,
-                        backgroundColor: commitDisabled ? (props.theme.colors.surface.inset ?? props.theme.colors.surface.base) : props.theme.colors.state.success.foreground,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        opacity: commitDisabled ? 0.55 : pressed ? motionTokens.press.opacitySubtle : 1,
-                    })}
-                >
-                    {props.busy ? (
-                        <ActivitySpinner size={iconMatchedSpinnerSize(COMPOSER_GLYPH_SIZE_PX)} color={commitButtonContentColor} />
-                    ) : (
-                        <Text style={{ fontSize: 12, color: commitButtonContentColor, ...Typography.default('semiBold') }}>
-                            {props.commitActionLabel}
-                        </Text>
-                    )}
-                </Pressable>
-                {props.pushShortcut ? (
-                    <IconButton
-                        variant="plain"
-                        size={38}
-                        accessibilityLabel={props.pushShortcut.label}
-                        disabled={props.pushShortcut.disabled}
-                        onPress={props.pushShortcut.onPress}
-                        testID="scm-commit-adjacent-push"
-                        icon={props.pushShortcut.busy
-                            ? <ActivitySpinner
-                                size={iconMatchedSpinnerSize(COMPOSER_GLYPH_SIZE_PX)}
-                                color={props.theme.colors.text.secondary}
-                            />
-                            : <Icon
-                                name="arrow-circle-up"
-                                size={COMPOSER_GLYPH_SIZE_PX}
-                                color={props.theme.colors.text.secondary}
-                            />}
-                    />
-                ) : null}
-            </View>
         </View>
     );
 });

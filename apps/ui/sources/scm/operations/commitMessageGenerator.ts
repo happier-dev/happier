@@ -1,6 +1,7 @@
-import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, type ExecutionRunStatus } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
@@ -9,7 +10,11 @@ const executeAction = createFrontDoorActionExecute();
 
 export type ScmCommitMessageGeneratorResult =
     | { ok: true; message: string }
-    | { ok: false; error: string; errorCode?: string };
+    | { ok: false; error: string; errorCode?: string; runId?: string; outcome?: 'pending' | 'unknown' };
+
+export type CommitMessageHostV1 =
+    | Readonly<{ kind: 'session'; sessionId: string; serverId?: string }>
+    | Readonly<{ kind: 'workspace'; workspace: WorkspaceAddressV1 }>;
 
 function readObject(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -25,28 +30,33 @@ function readActionError(
     };
 }
 
-function commitMessageActionContext(sessionId: string, serverId?: string): ActionExecutorContext {
+function commitMessageActionContext(host: CommitMessageHostV1): ActionExecutorContext {
     return {
         actionCaller: { kind: 'host' },
-        defaultSessionId: sessionId,
-        ...(serverId === undefined ? {} : { serverId }),
+        ...(host.kind === 'workspace' ? {
+            defaultSessionId: null,
+            serverId: host.workspace.serverId,
+            executionRunTargetMachineId: host.workspace.machineId,
+        } : {
+            defaultSessionId: host.sessionId,
+            ...(host.serverId === undefined ? {} : { serverId: host.serverId }),
+        }),
         surface: 'ui',
     };
 }
 
-function waitObservationFailure(code: string): ScmCommitMessageGeneratorResult {
+function waitObservationFailure(code: string, runId: string): ScmCommitMessageGeneratorResult {
     if (code === 'timeout') {
-        return { ok: false, error: 'Commit message generation timed out', errorCode: code };
+        return { ok: false, error: 'Commit message generation is still running', errorCode: code, runId, outcome: 'pending' };
     }
     if (code === 'cancelled') {
-        return { ok: false, error: 'Commit message generation was cancelled', errorCode: code };
+        return { ok: false, error: 'Commit message observation was cancelled', errorCode: code, runId, outcome: 'unknown' };
     }
-    return { ok: false, error: 'Commit message generation failed', errorCode: code };
+    return { ok: false, error: 'Commit message generation could not be observed', errorCode: code, runId, outcome: 'unknown' };
 }
 
 export async function generateScmCommitMessage(params: Readonly<{
-    sessionId: string;
-    serverId?: string;
+    host: CommitMessageHostV1;
     backendId: string;
     instructions?: string;
     scopePaths?: ReadonlyArray<string>;
@@ -60,11 +70,13 @@ export async function generateScmCommitMessage(params: Readonly<{
         .map((v) => (typeof v === 'string' ? v.trim() : ''))
         .filter((v) => v.length > 0);
 
-    const context = commitMessageActionContext(params.sessionId, params.serverId);
+    const context = commitMessageActionContext(params.host);
+    const sessionId = params.host.kind === 'session' ? params.host.sessionId : null;
     const startResult = await executeAction(
         'execution.run.start',
         {
-            sessionId: params.sessionId,
+            sessionId,
+            ...(params.host.kind === 'workspace' ? { cwd: params.host.workspace.rootPath } : {}),
             kind: 'scm_commit_message.v1',
             intent: 'scm_commit_message',
             backendTarget: { kind: 'backend', backendId, sourceKind: 'built_in' },
@@ -88,41 +100,56 @@ export async function generateScmCommitMessage(params: Readonly<{
     if (!startResult.ok) return readActionError(startResult);
 
     const started = ExecutionRunStartResponseSchema.safeParse(startResult.result);
-    if (!started.success || !started.data.wait) {
+    if (!started.success) {
         return { ok: false, error: 'Commit message generation failed' };
     }
+    if (!started.data.wait) return waitObservationFailure('execution_run_failed', started.data.runId);
 
     const wait = started.data.wait;
-    if (!wait.ok) return waitObservationFailure(wait.code);
-    if (wait.status === 'running') return waitObservationFailure('timeout');
+    if (!wait.ok) return waitObservationFailure(wait.code, started.data.runId);
+    if (wait.status === 'running') return waitObservationFailure('timeout', started.data.runId);
     if (
         wait.result.run.runId !== started.data.runId
         || wait.result.run.status !== wait.status
     ) {
-        return { ok: false, error: 'Commit message generation failed' };
+        return { ok: false, error: 'Commit message generation failed', runId: started.data.runId, outcome: 'unknown' };
     }
+
+    return readScmCommitMessageSuggestion({ host: params.host, runId: started.data.runId, expectedStatus: wait.status });
+}
+
+/** Observes the accepted Run on its original target; never starts a replacement. */
+export async function readScmCommitMessageSuggestion(params: Readonly<{
+    host: CommitMessageHostV1;
+    runId: string;
+    expectedStatus?: ExecutionRunStatus;
+}>): Promise<ScmCommitMessageGeneratorResult> {
+    const context = commitMessageActionContext(params.host);
+    const sessionId = params.host.kind === 'session' ? params.host.sessionId : null;
 
     const terminalResult = await executeAction(
         'execution.run.get',
-        { sessionId: params.sessionId, runId: started.data.runId, includeStructured: true },
+        { sessionId, runId: params.runId, includeStructured: true },
         context,
     );
-    if (!terminalResult.ok) return readActionError(terminalResult);
+    if (!terminalResult.ok) return { ...readActionError(terminalResult), runId: params.runId, outcome: 'unknown' };
 
     const terminal = ExecutionRunGetResponseSchema.safeParse(terminalResult.result);
     if (
         !terminal.success
-        || terminal.data.run.runId !== started.data.runId
-        || terminal.data.run.status !== wait.status
+        || terminal.data.run.runId !== params.runId
+        || (params.expectedStatus !== undefined && terminal.data.run.status !== params.expectedStatus)
     ) {
-        return { ok: false, error: 'Commit message generation failed' };
+        return { ok: false, error: 'Commit message generation failed', runId: params.runId, outcome: 'unknown' };
     }
-    if (wait.status !== 'succeeded') {
+    if (terminal.data.run.status === 'running') return waitObservationFailure('timeout', params.runId);
+    if (terminal.data.run.status !== 'succeeded') {
         const runError = terminal.data.run.error;
         return {
             ok: false,
             error: runError?.message ?? 'Commit message generation failed',
             ...(runError?.code ? { errorCode: runError.code } : {}),
+            runId: params.runId,
         };
     }
 
@@ -132,4 +159,11 @@ export async function generateScmCommitMessage(params: Readonly<{
     return normalized
         ? { ok: true, message: normalized }
         : { ok: false, error: 'Empty commit message suggestion' };
+}
+
+export async function stopScmCommitMessageSuggestion(params: Readonly<{ host: CommitMessageHostV1; runId: string }>) {
+    return executeAction('execution.run.stop', {
+        sessionId: params.host.kind === 'session' ? params.host.sessionId : null,
+        runId: params.runId,
+    }, commitMessageActionContext(params.host));
 }

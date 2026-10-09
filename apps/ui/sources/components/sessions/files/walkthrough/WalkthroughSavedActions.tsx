@@ -25,6 +25,9 @@ export type WalkthroughSavedActionsProps = Readonly<{
     canGenerate?: boolean;
     onUndo?: () => void;
     undoing?: boolean;
+    /** A native host has no Session composer; the same saved-result owner admits its discussion. */
+    nativeDiscussion?: boolean;
+    nativeDiscussionReply?: string | null;
 }>;
 
 type Draft = Readonly<{
@@ -40,6 +43,8 @@ type Draft = Readonly<{
 export function WalkthroughSavedActions(props: WalkthroughSavedActionsProps) {
     const [draft, setDraft] = React.useState<Draft | null>(null);
     const [refining, setRefining] = React.useState(false);
+    const [discussing, setDiscussing] = React.useState(false);
+    const [message, setMessage] = React.useState('');
     const [instructions, setInstructions] = React.useState('');
     const [failure, setFailure] = React.useState<ScmDiffSummaryResultFailure | null>(null);
     const [busy, setBusy] = React.useState(false);
@@ -50,6 +55,8 @@ export function WalkthroughSavedActions(props: WalkthroughSavedActionsProps) {
     React.useEffect(() => {
         setDraft(null);
         setRefining(false);
+        setDiscussing(false);
+        setMessage('');
         setInstructions('');
         setFailure(null);
         setBusy(false);
@@ -85,7 +92,7 @@ export function WalkthroughSavedActions(props: WalkthroughSavedActionsProps) {
                 ...current, expectedRevision: response.result.revision,
                 base: response.result.output.outputs?.walkthrough?.value ?? current.base,
             } : null);
-            if (!options?.rebaseDraft) setRefining(false);
+            if (!options?.rebaseDraft) { setRefining(false); setDiscussing(false); setMessage(''); }
             latest.current.onResult(response.result);
         } finally {
             if (captured.lifetime === lifetime.current) {
@@ -137,12 +144,24 @@ export function WalkthroughSavedActions(props: WalkthroughSavedActionsProps) {
                     onPress={props.onUndo ?? (() => invoke(() => props.operations.undo(revisionInput())))} /> : null}
                 {canGenerate ? <SavedAction id="refine" label={t('walkthrough.saved.refine')} disabled={blocked || !walkthrough}
                     onPress={() => { if (!blocked) { if (!draft) openEdit(); setRefining(true); } }} /> : null}
+                {canGenerate && props.nativeDiscussion ? <SavedAction id="discuss" label={t('walkthrough.saved.discuss')} disabled={blocked}
+                    onPress={() => { if (!blocked) setDiscussing(true); }} /> : null}
                 {canGenerate && !props.result.output.outputs?.summary ? <SavedAction id="add-summary" label={t('walkthrough.saved.addSummary')} disabled={blocked}
                     onPress={() => invoke(() => props.operations.addOutputs({ ...revisionInput(), outputs: ['summary'] }))} /> : null}
                 {canGenerate && props.result.output.comparison?.source.kind === 'workingTree' && !props.result.output.outputs?.commitPlan
                     ? <SavedAction id="add-commitPlan" label={t('walkthrough.saved.addCommitPlan')} disabled={blocked}
                         onPress={() => invoke(() => props.operations.addOutputs({ ...revisionInput(), outputs: ['commitPlan'] }))} /> : null}
             </View>
+            {discussing ? <View style={styles.editor}>
+                <SavedField id="message" label={t('walkthrough.saved.message')} value={message} multiline editable={!blocked} onChange={setMessage} />
+                <SavedAction id="discuss-send" label={t('common.send')} disabled={blocked || !message.trim()}
+                    onPress={() => invoke(() => props.operations.discuss({ ...revisionInput(), message }))} />
+                <SavedAction id="discuss-cancel" label={t('common.cancel')} disabled={busy}
+                    onPress={() => { setDiscussing(false); setMessage(''); }} />
+            </View> : null}
+            {props.nativeDiscussion && props.nativeDiscussionReply ? <Text testID="walkthrough-saved-discussion-reply" style={styles.reason}>
+                {props.nativeDiscussionReply}
+            </Text> : null}
             {disabledReason ? <Text style={styles.reason}>{disabledReason}</Text> : null}
             {failure ? <View testID="walkthrough-saved-error" accessibilityRole="alert" style={styles.feedback}>
                 <Text style={styles.error}>{failure.errorCode === 'revision_conflict' ? t('walkthrough.saved.conflict') : failure.error}</Text>

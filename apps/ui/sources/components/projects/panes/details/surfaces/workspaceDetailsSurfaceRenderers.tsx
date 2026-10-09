@@ -20,11 +20,17 @@ import { readFileTargetAnchorResource } from '@/utils/url/sessionFileDeepLink';
 import { FileFindSeedHost } from '@/components/appShell/panes/fileFindSeedHost';
 import { WorkspaceCommitDetailsView } from '@/components/projects/panes/details/views/WorkspaceCommitDetailsView';
 import { WorkspaceScmReviewDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmReviewDetailsView';
+import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { openWorkspaceScmAuthoringDraft } from '@/components/projects/scm/workspaceScmAuthoring';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 import { WorkspaceScmStashDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmStashDetailsView';
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
 import { readTerminalDetailsCwd, readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { PluginUiDestinationRuntimeFormFactorV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import {
@@ -45,6 +51,7 @@ export type WorkspaceDetailsSurfaceRendererOptions = Readonly<{
     machineId: string;
     rootPath: string;
     activeRootPath: string;
+    terminalWorkspace?: WorkspaceAddressV1 | null;
     presentation: 'screen' | 'panel';
     formFactor?: PluginUiDestinationRuntimeFormFactorV1;
     pluginUiProjectionPhase?: PluginUiProjectionPhase;
@@ -148,6 +155,8 @@ export function createWorkspaceDetailsSurfaceRenderers(
             machineId: options.machineId,
             serverId: options.serverId,
             pluginUiProjection: options.pluginUiProjection,
+            pluginAccountLifetime: options.pluginAccountLifetime,
+            pluginUiInteractionEnabled: options.pluginUiInteractionEnabled,
             pluginBrowserProjection: options.pluginBrowserProjection,
             pluginBrowserActionSessionId: options.pluginBrowserActionSessionId,
             // OWNER-PLATFORM: the browser renderer resolves Tauri-aware; never the leaked
@@ -229,14 +238,30 @@ export function createWorkspaceDetailsSurfaceRenderers(
             owner: 'scm',
             order: 30,
             canRender: (input) => readResourceKind(input) === 'scmReview',
-            render: () => (
+            render: (input) => (
                 <WorkspaceScmReviewDetailsView
+                    key={JSON.stringify([options.serverId, options.machineId, options.activeRootPath])}
                     scopeId={options.scopeId}
                     workspaceRefId={options.workspaceRefId}
                     workspaceCacheKey={options.workspaceCacheKey}
                     machineId={options.machineId}
                     rootPath={options.activeRootPath}
                     serverId={options.serverId}
+                    {...readSessionScmReviewTarget(input.tab.resource)}
+                    onSelectTarget={input.callbacks.replaceTab ? (target) => input.callbacks.replaceTab?.(input.tab.key,
+                        createSessionScmReviewDetailsTab(target), { intent: 'pinned' }) : undefined}
+                    onAsk={(basis) => {
+                        void openWorkspaceScmAuthoringDraft({ ...basis, scope: { serverId: options.serverId,
+                            machineId: options.machineId, rootPath: options.activeRootPath } }).then(outcome => {
+                            if (basis.isCurrent() && outcome.kind === 'unavailable') Modal.alert(t('common.error'), t('common.unavailable'));
+                        });
+                    }}
+                    onExplain={(basis) => {
+                        void openWorkspaceScmAuthoringDraft({ ...basis, scope: { serverId: options.serverId,
+                            machineId: options.machineId, rootPath: options.activeRootPath } }).then(outcome => {
+                            if (basis.isCurrent() && outcome.kind === 'unavailable') Modal.alert(t('common.error'), t('common.unavailable'));
+                        });
+                    }}
                     onOpenFile={(path) => options.openFileTab(path, 'default')}
                     onOpenFilePinned={(path) => options.openFileTab(path, 'pinned')}
                 />
@@ -280,7 +305,7 @@ export function createWorkspaceDetailsSurfaceRenderers(
                         rootPath={readTerminalDetailsCwd(input.tab.resource) ?? options.activeRootPath}
                         serverId={options.serverId}
                         terminalInstanceId={terminalInstanceId}
-                        closeOnUnmount={true}
+                        workspace={options.terminalWorkspace}
                     />
                 );
             },

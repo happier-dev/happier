@@ -34,6 +34,19 @@ function BoundActions(props: Readonly<{ operations: ReturnType<typeof createScmD
 }
 
 describe('Walkthrough saved-result controls', () => {
+    it('discusses a native saved result at the current revision without a Session composer', async () => {
+        const calls: unknown[] = [];
+        const operations = createScmDiffSummaryResultOperations({ machineId: 'native-machine', shouldContinue: () => true,
+            rpc: async (method, input) => { calls.push({ method, input }); return { success: true, result: withRevision(5), runId: 'native-run', inputId: 'actual-input' }; } });
+        const screen = await renderScreen(<WalkthroughSavedActions result={SAVED} cwd="/repo" operations={operations}
+            onResult={() => {}} nativeDiscussion />);
+        await screen.pressByTestIdAsync('walkthrough-saved-discuss');
+        await act(async () => screen.changeTextByTestId('walkthrough-saved-message', 'Why this approach?'));
+        await screen.pressByTestIdAsync('walkthrough-saved-discuss-send');
+        expect(calls).toEqual([{ method: 'scm.diffSummary.discuss', input: {
+            cwd: '/repo', resultId: 'saved', expectedRevision: 4, message: 'Why this approach?',
+        } }]);
+    });
     it('writes the draft revision through the real operations owner and retains the draft on conflict', async () => {
         const calls: Array<{ method: string; input: unknown }> = [];
         const operations = createScmDiffSummaryResultOperations({ sessionId: 'session', shouldContinue: () => true,

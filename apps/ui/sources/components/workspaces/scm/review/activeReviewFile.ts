@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 /**
  * The one "active review file" per review scope (a Session address, a workspace): which changed file
  * Review is showing, and a request from a changed-files list to show another. Review publishes; the
  * Git changed-files list (and any list that replaces it) highlights, reveals and asks — neither owns
- * the other's scroll. It is presentation state only: nothing is persisted, and it holds nothing while
- * Review is not on screen, so a list never points at a Review that isn't there.
+ * the other's scroll. Nothing is persisted. Ordinary hidden lists hold no request; a route promotion
+ * may retain one comparison-qualified path until matching Files mounts, or its captured host retires.
  */
 export type ActiveReviewFileState = Readonly<{
     /** Review is open and on screen for this scope. */
@@ -14,7 +15,7 @@ export type ActiveReviewFileState = Readonly<{
     /** The file Review shows (null while Review is not on screen). */
     activePath: string | null;
     /** The last file a list asked Review to show; a new nonce for every ask. */
-    focusRequest: Readonly<{ path: string; nonce: number }> | null;
+    focusRequest: Readonly<{ path: string; nonce: number; comparison?: SessionScmReviewComparison; isCurrent?: () => boolean }> | null;
 }>;
 
 const EMPTY: ActiveReviewFileState = Object.freeze({ presented: false, activePath: null, focusRequest: null });
@@ -29,7 +30,9 @@ function write(key: string, next: ActiveReviewFileState): void {
 }
 
 export function readActiveReviewFile(key: string): ActiveReviewFileState {
-    return states.get(key) ?? EMPTY;
+    const state = states.get(key) ?? EMPTY;
+    if (state.focusRequest?.isCurrent && !state.focusRequest.isCurrent()) return { ...state, focusRequest: null };
+    return state;
 }
 
 export function subscribeActiveReviewFile(key: string, listener: () => void): () => void {
@@ -50,18 +53,33 @@ export function publishActiveReviewFile(key: string, input: Readonly<{ presented
     const current = readActiveReviewFile(key);
     const activePath = input.presented ? input.activePath : null;
     if (current.presented === input.presented && current.activePath === activePath) return;
-    write(key, { presented: input.presented, activePath, focusRequest: input.presented ? current.focusRequest : null });
+    write(key, { presented: input.presented, activePath,
+        focusRequest: input.presented || current.focusRequest?.comparison ? current.focusRequest : null });
 }
 
 /**
  * A list asks Review to show a file. Answers whether Review took it (it is on screen); when not, the
  * list keeps its own action (opening the file).
  */
-export function requestActiveReviewFile(key: string, path: string): boolean {
+export function requestActiveReviewFile(key: string, path: string, comparison?: SessionScmReviewComparison, isCurrent?: () => boolean): boolean {
     const current = readActiveReviewFile(key);
-    if (!current.presented) return false;
-    write(key, { ...current, focusRequest: { path, nonce: nextNonce++ } });
+    if ((!current.presented && !comparison) || (isCurrent && !isCurrent())) return false;
+    write(key, { ...current, focusRequest: { path, nonce: nextNonce++, ...(comparison ? { comparison } : {}), ...(isCurrent ? { isCurrent } : {}) } });
     return true;
+}
+
+/** A route promotion keeps one pending path until that exact comparison's Files view mounts. */
+export function requestActiveReviewFileForComparison(key: string, path: string, comparison: SessionScmReviewComparison, isCurrent?: () => boolean): boolean {
+    return requestActiveReviewFile(key, path, comparison, isCurrent);
+}
+
+/** Matching Files is mounted: retain the scroll request, but no longer carry it through unmount. */
+export function acknowledgeActiveReviewFileRequest(key: string, nonce: number): void {
+    const current = readActiveReviewFile(key);
+    const request = current.focusRequest;
+    if (!request?.comparison || request.nonce !== nonce) return;
+    const { comparison: _comparison, ...focusRequest } = request;
+    write(key, { ...current, focusRequest });
 }
 
 function useActiveReviewFileSelector<T>(key: string | null, select: (state: ActiveReviewFileState) => T): T {
