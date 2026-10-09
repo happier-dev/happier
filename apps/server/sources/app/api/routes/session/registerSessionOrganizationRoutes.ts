@@ -289,7 +289,6 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             response: {
                 200: ReorderSessionOrganizationResponseSchema,
                 400: z.object({ error: z.literal("invalid-session-organization-order") }),
-                409: z.object({ error: z.literal("session-pin-limit-exceeded") }),
             },
         },
     }, async (request, reply) => {
@@ -308,9 +307,6 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
                 authentication: readSessionAccessAuthenticationFromRequest(request),
             });
             if ("error" in result) {
-                if (result.error === "session-pin-limit-exceeded") {
-                    return reply.code(409).send({ error: result.error });
-                }
                 return reply.code(400).send({ error: "invalid-session-organization-order" });
             }
             return reply.send(result);
@@ -334,7 +330,6 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             response: {
                 200: ReorderSessionOrganizationResponseSchema,
                 400: z.object({ error: z.literal("invalid-session-organization-order") }),
-                409: z.object({ error: z.literal("session-pin-limit-exceeded") }),
             },
         },
     }, async (request, reply) => {
@@ -353,9 +348,6 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             authentication: readSessionAccessAuthenticationFromRequest(request),
         });
         if ("error" in result) {
-            if (result.error === "session-pin-limit-exceeded") {
-                return reply.code(409).send({ error: result.error });
-            }
             return reply.code(400).send({ error: "invalid-session-organization-order" });
         }
 

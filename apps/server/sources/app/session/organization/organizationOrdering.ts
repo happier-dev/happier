@@ -1,7 +1,6 @@
-import {
-    SESSION_ORGANIZATION_MAX_PINNED_SESSIONS,
-    type ReorderSessionOrganizationRequest,
-    type ReorderSessionOrganizationResponse,
+import type {
+    ReorderSessionOrganizationRequest,
+    ReorderSessionOrganizationResponse,
 } from "@happier-dev/protocol";
 
 import { inTx } from "@/storage/inTx";
@@ -12,7 +11,6 @@ import {
     validateSessionOrganizationOrderRequest,
     validateSessionOrganizationSessionOrderItems,
 } from "./organizationOrderValidation";
-import { createVisibleUnarchivedOrganizationSessionWhere } from "./sessionVisibility";
 import type { SessionOrganizationTx } from "./types";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 
@@ -55,7 +53,7 @@ export async function reorderSessionPinsInTx(tx: SessionOrganizationTx, params: 
     authentication: SessionAccessAuthentication;
 }>): Promise<
     | ReorderSessionOrganizationResponse
-    | { readonly error: "invalid-session-organization-order" | "session-pin-limit-exceeded" }
+    | { readonly error: "invalid-session-organization-order" }
 > {
     const valid = await validateSessionOrganizationSessionOrderItems({
         accountId: params.accountId,
@@ -67,57 +65,32 @@ export async function reorderSessionPinsInTx(tx: SessionOrganizationTx, params: 
         return { error: "invalid-session-organization-order" };
     }
 
-    const requestedSessionIds = Array.from(new Set(params.request.entries.map((entry) => entry.itemKey)));
-    if (requestedSessionIds.length > 0) {
-        const [pinnedCount, existingRequestedPins] = await Promise.all([
-            tx.sessionPin.count({
-                where: {
-                    accountId: params.accountId,
-                    session: await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication),
-                },
-            }),
-            tx.sessionPin.findMany({
-                where: {
-                    accountId: params.accountId,
-                    sessionId: { in: requestedSessionIds },
-                },
-                select: { sessionId: true },
-            }),
-        ]);
-        const existingRequestedPinIds = new Set(existingRequestedPins.map((pin) => pin.sessionId));
-        const newPinCount = requestedSessionIds.filter((sessionId) => !existingRequestedPinIds.has(sessionId)).length;
-        if (pinnedCount + newPinCount > SESSION_ORGANIZATION_MAX_PINNED_SESSIONS) {
-            return { error: "session-pin-limit-exceeded" };
-        }
-    }
-
+    const reorderedEntries: ReorderSessionOrganizationRequest["entries"] = [];
     for (const entry of params.request.entries) {
-        await tx.sessionPin.upsert({
+        // Ordering cannot mint membership, including after a last-unpin commits.
+        const updated = await tx.sessionPin.updateMany({
             where: {
-                accountId_sessionId: {
-                    accountId: params.accountId,
-                    sessionId: entry.itemKey,
-                },
-            },
-            create: {
                 accountId: params.accountId,
                 sessionId: entry.itemKey,
-                sortKey: entry.sortKey,
+                OR: [{ listPinned: true }, { railPinned: true }],
             },
-            update: {
+            data: {
                 sortKey: entry.sortKey,
             },
         });
+        if (updated.count > 0) reorderedEntries.push(entry);
     }
 
-    await markSessionOrganizationChanged(tx, {
-        accountId: params.accountId,
-        scope: "pins",
-        sessionIds: params.request.entries.map((entry) => entry.itemKey),
-    });
+    if (reorderedEntries.length > 0) {
+        await markSessionOrganizationChanged(tx, {
+            accountId: params.accountId,
+            scope: "pins",
+            sessionIds: reorderedEntries.map((entry) => entry.itemKey),
+        });
+    }
 
     return {
-        orderEntries: params.request.entries.map((entry) => ({
+        orderEntries: reorderedEntries.map((entry) => ({
             scopeKind: params.request.scopeKind,
             scopeKey: params.request.scopeKey,
             itemKind: entry.itemKind,
@@ -133,7 +106,7 @@ export async function reorderSessionPins(params: Readonly<{
     authentication: SessionAccessAuthentication;
 }>): Promise<
     | ReorderSessionOrganizationResponse
-    | { readonly error: "invalid-session-organization-order" | "session-pin-limit-exceeded" }
+    | { readonly error: "invalid-session-organization-order" }
 > {
     return await inTx(async (tx) => await reorderSessionPinsInTx(tx, params));
 }
