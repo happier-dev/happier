@@ -72,7 +72,8 @@ export function listProjectSetupEffect(
         key: `binding:${binding.name}`,
         label: binding.name,
         value: binding.displayName ?? binding.name,
-        note: binding.revision === undefined ? binding.ref : `${binding.ref} · r${binding.revision}`,
+        note: [binding.ref, binding.revision === undefined ? null : `r${binding.revision}`,
+          t(binding.source === 'personal' ? 'secretsSettings.keepPersonal' : 'secretsSettings.keepShared')].filter(Boolean).join(' · '),
         mono: false,
         binding,
       });
@@ -119,29 +120,20 @@ function describeSetupProvenance(presentation: ProjectSetupReviewPresentation | 
   return [at ? ` ${at}` : '', ` · ${state}`].join('');
 }
 
-/**
- * The setup review (plan 20s3, D18) that the Setup row opens into: what runs and as whom, where it
- * came from, the trust scope, then Not now / Run setup. Only a person reviewing here can approve.
- */
-export const ProjectSetupReview = React.memo(function ProjectSetupReview(
+/** Safe review anatomy shared by the page and Session; the producer projection is the sole parser. */
+export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFacts(
   props: Readonly<{
     testID: string;
     manifest: ProjectManifestV1;
     machineName: string;
     /** A teammate's shared Machine: name the OS user it runs as (D6/D24). */
     sharedRunAs: string | null;
-    pending: boolean;
-    onRun: (scope: ProjectSetupScope) => void;
     /** Safe resolved effect from the D18 review, when the producer supplied it. */
     reviewedEffect?: unknown;
-    /** A scope the review already carries (an earlier request); the person can still change it. */
-    initialScope?: ProjectSetupScope;
-    onNotNow: () => void;
-    onViewFile: () => void;
+    onViewFile?: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const [scope, setScope] = React.useState<ProjectSetupScope>(props.initialScope ?? 'untilChanged');
   const effect = React.useMemo(
     () => listProjectSetupEffect(props.manifest, props.reviewedEffect),
     [props.manifest, props.reviewedEffect],
@@ -150,21 +142,8 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
     () => describeSetupProvenance(readProjectSetupReviewPresentation(props.reviewedEffect)),
     [props.reviewedEffect],
   );
-  const tabs = React.useMemo(
-    () => [
-      { id: 'thisTime' as const, label: t('projects.scripts.setup.thisTime') },
-      {
-        id: 'untilChanged' as const,
-        label: t('projects.scripts.setup.untilChanged'),
-      },
-    ],
-    [],
-  );
   return (
-    <View testID={props.testID} style={styles.review}>
-      <Text style={[styles.body, { color: theme.colors.text.secondary }]}>
-        {t('projects.scripts.setup.lead', { machine: props.machineName })}
-      </Text>
+    <View style={styles.facts}>
       <View
         style={[
           styles.effect,
@@ -240,13 +219,13 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
             </Text>
           ) : null}
         </Text>
-        <RoundButton
+        {props.onViewFile ? <RoundButton
           size="small"
           display="secondary"
           title={t('projects.scripts.setup.viewFile')}
           testID={`${props.testID}.viewFile`}
           onPress={props.onViewFile}
-        />
+        /> : null}
       </View>
       {props.sharedRunAs ? (
         <View
@@ -272,9 +251,41 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
               osUser: props.sharedRunAs,
               machine: props.machineName,
             })}
+            {' '}{t('machines.terminals.sharedOsDetail')}
           </Text>
         </View>
       ) : null}
+    </View>
+  );
+});
+
+/** The page owns trust scope and Run; Session retains its canonical approval and Stop owners. */
+export const ProjectSetupReview = React.memo(function ProjectSetupReview(
+  props: Readonly<{
+    testID: string;
+    manifest: ProjectManifestV1;
+    machineName: string;
+    sharedRunAs: string | null;
+    pending: boolean;
+    onRun: (scope: ProjectSetupScope) => void;
+    reviewedEffect?: unknown;
+    initialScope?: ProjectSetupScope;
+    onNotNow: () => void;
+    onViewFile: () => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const [scope, setScope] = React.useState<ProjectSetupScope>(props.initialScope ?? 'untilChanged');
+  const tabs = React.useMemo(() => [
+    { id: 'thisTime' as const, label: t('projects.scripts.setup.thisTime') },
+    { id: 'untilChanged' as const, label: t('projects.scripts.setup.untilChanged') },
+  ], []);
+  return (
+    <View testID={props.testID} style={styles.review}>
+      <Text style={[styles.body, { color: theme.colors.text.secondary }]}>
+        {t('projects.scripts.setup.lead', { machine: props.machineName })}
+      </Text>
+      <ProjectSetupReviewFacts {...props} />
       <View style={styles.scope}>
         <SegmentedTabBar
           role="radiogroup"
@@ -322,6 +333,7 @@ export const ProjectSetupReview = React.memo(function ProjectSetupReview(
 });
 
 const styles = StyleSheet.create(() => ({
+  facts: { gap: 14 },
   review: { gap: 14, paddingHorizontal: 16, paddingBottom: 16 },
   body: {
     ...Typography.default(),

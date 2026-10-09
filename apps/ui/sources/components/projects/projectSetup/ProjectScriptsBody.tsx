@@ -32,6 +32,7 @@ import { Typography } from '@/constants/Typography';
 import { useLayoutMaxWidth, useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { renderPageHeaderText } from '@/components/ui/layout/PageHeader';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -113,6 +114,7 @@ export function ProjectScriptsBody({
   // Workers settings open in place, like the editor: Scripts › Workers and Run on › Worker settings….
   const [workersKey, setWorkersKey] = React.useState<string | null>(null);
   const page = presentation === 'page';
+  const phone = useDeviceType() === 'phone';
   const inspectionFailure = read && 'error' in read && read.error ? (
     <SurfaceStateCard
       kind="unavailable"
@@ -125,6 +127,7 @@ export function ProjectScriptsBody({
   ) : null;
 
   let content: React.ReactNode;
+  let ownsPhoneScroll = false;
   if (!read || read.key !== key) {
     content = (
       <SurfaceStateCard
@@ -147,6 +150,7 @@ export function ProjectScriptsBody({
       />
     );
   } else if (page && editor?.key === key && accountId && controller.client) {
+    ownsPhoneScroll = phone;
     content = (
       <ProjectManifestEditor
         key={`${key}:${accountId}`}
@@ -200,6 +204,15 @@ export function ProjectScriptsBody({
         </View>
       </ProjectCommandOutputHost>
     );
+  if (ownsPhoneScroll) return (
+    <ProjectCommandOutputHost scopeId={outputScopeId}>
+      <View testID={testID} style={styles.phoneEditor}>
+        {approval}
+        {read && 'value' in read ? inspectionFailure : null}
+        {content}
+      </View>
+    </ProjectCommandOutputHost>
+  );
   return (
     <ProjectCommandOutputHost scopeId={outputScopeId}>
       <ItemList testID={testID}>
@@ -1233,6 +1246,7 @@ function useSetupOpening(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  phoneEditor: { flex: 1, minHeight: 0 },
   body: { gap: 12 },
   setupTail: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   setupOutput: {

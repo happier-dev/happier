@@ -5,6 +5,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Modal } from '@/modal';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -29,6 +32,30 @@ export const ProjectCommandOutputPane = React.memo(
     }>,
   ) {
     const { theme } = useUnistyles();
+    const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
+    const [copying, setCopying] = React.useState(false);
+    const copy = async () => {
+      if (copying) return;
+      setCopying(true);
+      try {
+        // The Action re-reads custody and resolves the actual retained terminal; never copy a
+        // consumer-owned output buffer or supply a terminal id that can retarget the request.
+        const result = await execute('projects.execution.output.copy', {
+          serverId: props.operation.serverId,
+          machineId: props.operation.snapshot.scope.machineId,
+          operationId: props.operation.snapshot.operationId,
+          byteOffset: 0,
+        }, { surface: 'ui', authority: 'present_user', serverId: props.operation.serverId,
+          expectedAccountId: props.operation.snapshot.scope.accountId });
+        if (!result.ok) Modal.alert(t('common.error'), result.errorCode);
+        else if (ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success)
+          Modal.alert(t('approvals.title'), t('approvals.status.open'));
+      } catch {
+        Modal.alert(t('common.error'), t('errors.tryAgain'));
+      } finally {
+        setCopying(false);
+      }
+    };
     const attachment = readActionOperationOutputAttachment(props.operation.snapshot);
     const machine = useServerScopedMachine(
       attachment?.serverId ?? null,
@@ -85,7 +112,19 @@ export const ProjectCommandOutputPane = React.memo(
           title={`${props.title} · ${machineName}`}
           closeOnUnmount={false}
           toolbarActionsStart={
-            props.onOpenInTerminal ? (
+            <>
+            {attachment.kind === 'projectCommand' ? (
+              <IconButton
+                testID="project-command-output.copy"
+                iconName="copy"
+                variant="plain"
+                accessibilityLabel={t('common.copy')}
+                tooltip={t('common.copy')}
+                disabled={copying}
+                onPress={() => { void copy(); }}
+              />
+            ) : null}
+            {props.onOpenInTerminal ? (
               <IconButton
                 testID="project-command-output.openInTerminal"
                 iconName="terminal"
@@ -103,7 +142,8 @@ export const ProjectCommandOutputPane = React.memo(
                 tooltip={t('inbox.actionOperations.details')}
                 onPress={props.onOpenDetail}
               />
-            ) : undefined
+            ) : null}
+            </>
           }
         />
       </View>

@@ -409,6 +409,9 @@ function SetupSection(
             testID={`${ID}.step:${index}`}
             source={source}
             choices={choices}
+            onCommandChange={(command) => model.edit([
+              { kind: 'set', path: ['workspace', 'setup', index, 'command'], value: command },
+            ])}
             onChange={(next) =>
               model.edit([
                 {
@@ -621,6 +624,9 @@ function DeclarationRow(
         testID={testID}
         source={declaration.source}
         choices={props.choices}
+        onCommandChange={(command) => model.edit([
+          { kind: 'set', path: [...path, 'source', 'command'], value: command },
+        ])}
         onChange={(source) =>
           model.edit([
             { kind: 'set', path: [...path, 'source'], value: source },
@@ -683,6 +689,9 @@ function SourceField(
     testID: string;
     source: ProjectCommandSourceV1;
     choices: readonly ProjectNativeRefV1[];
+    /** Literal edits preserve unrecognized siblings in the lossless document. */
+    onCommandChange: (command: string) => void;
+    /** Choosing another native source intentionally replaces the source object. */
     onChange: (source: ProjectCommandSourceV1) => void;
   }>,
 ) {
@@ -711,7 +720,7 @@ function SourceField(
         // A command can't be empty: an empty draft returns to the saved command.
         onCommit={(draft) => {
           if (!draft.trim()) return source.command;
-          props.onChange({ ...source, command: draft });
+          props.onCommandChange(draft);
         }}
       />
     );
@@ -945,6 +954,8 @@ function FoundSection(
 ) {
   const { model, manifest } = props;
   const { theme } = useUnistyles();
+  const [namingIndex, setNamingIndex] = React.useState<number | null>(null);
+  const [importName, setImportName] = React.useState('');
   const rows = getProjectManifestImportSelection(props.importCandidates).rows;
   if (rows.length === 0) return null;
   const setup = manifest.workspace?.setup ?? [];
@@ -989,10 +1000,12 @@ function FoundSection(
           source,
           findProjectInvocation(props.previews, source),
         );
-        const disabled = !checked && (!enabled || taken);
+        const disabled = !checked && !enabled;
+        const trimmedName = importName.trim();
+        const importNameTaken = collection !== null && Object.hasOwn(manifest[collection] ?? {}, trimmedName);
         return (
+          <React.Fragment key={index}>
           <Item
-            key={index}
             testID={`${ID}.found:${index}`}
             accessibilityRole="checkbox"
             selected={checked}
@@ -1029,6 +1042,10 @@ function FoundSection(
             onPress={() => {
               if (collection && name) model.removeDeclaration(collection, name);
               else if (!collection && step >= 0) model.removeSetupStep(step);
+              else if (collection && (taken || candidate.availability === 'ambiguous')) {
+                setImportName(source.target);
+                setNamingIndex(index);
+              }
               else
                 model.importNative({
                   usage,
@@ -1037,6 +1054,32 @@ function FoundSection(
                 });
             }}
           />
+          <InlineAddExpander
+            trigger={null}
+            title={t('projects.scripts.editor.name')}
+            helpText={reason ?? undefined}
+            isOpen={namingIndex === index}
+            onOpenChange={(open) => setNamingIndex(open ? index : null)}
+            cancelLabel={t('common.cancel')}
+            saveLabel={t('common.add')}
+            cancelTestID={`${ID}.found:${index}.cancel`}
+            saveTestID={`${ID}.found:${index}.save`}
+            saveDisabled={!enabled || !trimmedName || importNameTaken}
+            onCancel={() => setNamingIndex(null)}
+            onSave={() => {
+              if (enabled && collection && model.importNative({ usage, name: trimmedName, source })) setNamingIndex(null);
+            }}
+          >
+            <FieldTextInput
+              testID={`${ID}.found:${index}.name`}
+              value={importName}
+              onChangeText={setImportName}
+              accessibilityLabel={t('projects.scripts.editor.name')}
+              autoCapitalize="none"
+              error={importNameTaken ? t('projects.scripts.editor.nameTaken', { name: trimmedName }) : null}
+            />
+          </InlineAddExpander>
+          </React.Fragment>
         );
       })}
     </ItemGroup>
