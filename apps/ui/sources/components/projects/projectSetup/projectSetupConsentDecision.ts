@@ -14,6 +14,7 @@ import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/q
 import { publishActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { getActionOperation } from '@/sync/ops/actionOperations';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 export type ProjectSetupConsentDecisionResult =
   | Readonly<{ kind: 'remembered' }>
@@ -35,20 +36,21 @@ export async function rememberProjectSetupConsent(
     signal?: AbortSignal;
   }>,
 ): Promise<ProjectSetupConsentDecisionResult> {
-  const projectId = resolveProjectSetupProjectId(input.scope, input.workspace);
+  const workspace = { ...input.workspace, serverId: resolveServerProfileScopeIdForIdentifier(input.workspace.serverId) };
+  const projectId = resolveProjectSetupProjectId(input.scope, workspace);
   if (!projectId) return { kind: 'unavailable', code: 'project_unavailable' };
   const retained = input.operation;
   if (!retained) return { kind: 'unavailable', code: 'project_setup_requester_review_unavailable' };
-  if (retained.serverId !== input.scope.serverId || !matchesRetainedCheckout(retained.snapshot, retained.snapshot, input.scope, input.workspace)) {
+  if (retained.serverId !== input.scope.serverId || !matchesRetainedCheckout(retained.snapshot, retained.snapshot, input.scope, workspace)) {
     return { kind: 'unavailable', code: 'project_setup_review_unavailable' };
   }
-  const project = { serverId: input.workspace.serverId, projectId };
+  const project = { serverId: workspace.serverId, projectId };
   const refresh = async () => {
     if (input.signal?.aborted) throw new ProjectTrustOperationError('cancelled');
     const response = await getActionOperation({ serverId: retained.serverId, accountId: input.scope.accountId,
       machineId: retained.snapshot.scope.machineId, operationId: retained.snapshot.operationId, requireCurrentDomainFacts: true });
     if (input.signal?.aborted) throw new ProjectTrustOperationError('cancelled');
-    if (response.kind !== 'found' || !matchesRetainedCheckout(response.operation, retained.snapshot, input.scope, input.workspace)) return null;
+    if (response.kind !== 'found' || !matchesRetainedCheckout(response.operation, retained.snapshot, input.scope, workspace)) return null;
     publishActionOperationObservation({ serverId: retained.serverId, machineId: retained.snapshot.scope.machineId,
       observation: 'available', snapshots: [response.operation] });
     return response.operation;
@@ -129,6 +131,8 @@ function resolveProjectSetupProjectId(
     projectAccountRows: storage.getState().projectAccountRows,
     profileScope: scope,
   });
-  const resolved = resolveWorkspaceRefV1(rows?.workspaceRefs ?? [], workspace);
+  const resolved = resolveWorkspaceRefV1(rows?.workspaceRefs ?? [], workspace, {
+    normalizeServerId: resolveServerProfileScopeIdForIdentifier,
+  });
   return resolved.kind === 'resolved' ? resolved.ref.projectKey ?? null : null;
 }

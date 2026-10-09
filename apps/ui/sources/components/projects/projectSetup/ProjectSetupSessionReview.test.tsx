@@ -29,6 +29,12 @@ installSessionSubagentCommonModuleMocks({
     ),
 });
 installDisconnectedServerSocketBoundary();
+// Current review and continuation are daemon RPC boundaries; the operation reader and Trust owner
+// remain real, including the producer digest check and observation publication.
+const machineTransport = vi.hoisted(() => ({ read: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+  machineRpcWithServerScope: (...args: unknown[]) => machineTransport.read(...args),
+}));
 const { storage } = await import('@/sync/domains/state/storage');
 const { resolveServerProfileScopeIdForIdentifier } =
   await import('@/sync/domains/server/serverProfiles');
@@ -38,6 +44,7 @@ const { ProjectSetupSessionReviews } =
 afterEach(() => {
   standardCleanup();
   actionOperationStore.reset();
+  machineTransport.read.mockReset();
 });
 
 const DIGEST = 'effect-digest-1';
@@ -157,10 +164,13 @@ describe('Project setup review inside a Session', () => {
           ],
         },
       } as never);
+      const held = heldScript(serverId, 'session-1', workspace);
+      machineTransport.read.mockResolvedValueOnce({ kind: 'found', operation: held })
+        .mockResolvedValueOnce({ kind: 'found', operation: { ...held, setupReview: undefined } });
       actionOperationStore.mergeSnapshots({
         serverId,
         snapshots: [
-          heldScript(serverId, 'session-1', workspace),
+          held,
           // Another Session's held run is not asked here.
           {
             ...heldScript(serverId, 'session-2', workspace),

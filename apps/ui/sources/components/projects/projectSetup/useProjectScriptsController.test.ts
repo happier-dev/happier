@@ -6,12 +6,15 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn() }));
 // Authenticated remote daemon RPC is a genuine system boundary.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: rpc.machine }));
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Cold loading of the real Sync graph belongs to collection, not the behavior test's budget.
+await loadSyncSingletonForTests();
 
 function waitForHomeGovernance(assertion: () => void) {
     return waitForRequests(async () => { await flushHookEffects(); assertion(); });
