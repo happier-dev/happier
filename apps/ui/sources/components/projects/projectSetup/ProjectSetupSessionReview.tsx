@@ -151,6 +151,7 @@ const ProjectSetupSessionReviewCard = React.memo(
         const result = await rememberProjectSetupConsent({
           scope,
           workspace,
+          operation,
           reviewedEffectDigest: review.reviewedEffectDigest,
         });
         if (result.kind === 'remembered') onDecided(operation, 'untilChanged');
