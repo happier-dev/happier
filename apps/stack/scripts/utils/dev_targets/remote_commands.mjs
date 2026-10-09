@@ -503,7 +503,22 @@ export function buildRemoteExecCommand(
     }
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)}`);
+      // Dependency bootstrap stays outside admission. Workspace preparation can
+      // then take dist locks, so reserve the largest existing compiler envelope
+      // before it reaches those locks; nested package compilers are reentrant.
+      body.push([
+        cacheEnv,
+        posixQuote(`${repoDir}/apps/stack/bin/hstack-exec`),
+        '--heavyweight-admission',
+        '--class=compilation',
+        posixQuote(`--machine=${target.name}`),
+        posixQuote(`--failure-id=${normalizedExecutionId}`),
+        '--',
+        'node',
+        './apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs',
+        posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`),
+        posixQuote(`--validation-kind=${preparation.validationKind}`),
+      ].join(' '));
     }
     if (admissionClass) {
       // Dependency/build lock holders can need admission themselves. Only

@@ -2380,7 +2380,10 @@ if [ "$requires_remote_dependencies" -eq 1 ]; then
   if [ -n "$command_repo_root" ]; then remote_setup_script="${remote_setup_script%;} --tools-only;"; fi
 fi
 if [ "$requires_remote_workspace_preparation" -eq 1 ]; then
-  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--repo-dir=$remote_repo");"
+  # Bootstrap has already released dependency locks. Validation preparation
+  # can take workspace dist locks, so reserve the largest existing compiler
+  # envelope before it reaches them; nested package compilers are reentrant.
+  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission --class=compilation $(quote_remote "--machine=$selected_name") $(quote_remote "--failure-id=$execution_id") -- node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--repo-dir=$remote_repo");"
 fi
 remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_cwd");"
 remote_command_environment=
@@ -2450,9 +2453,9 @@ if [ "$heavyweight_admission_required" -eq 1 ]; then
   fi
 fi
 if [ -n "$heavyweight_admission_prefix" ]; then
-  # Preparation may wait on a dependency/build lock whose holder still needs
-  # admission. Finish it before reserving the payload's compilation envelope;
-  # its compiler children retain their own canonical leaf admission.
+  # Dependency bootstrap finished before any reservation. Workspace preparation
+  # used its own admitted compiler envelope, then released it before this
+  # payload-specific envelope is reserved.
   heavyweight_command_body="set -euo pipefail; cd -- $(quote_remote "$remote_cwd");$remote_command_environment"
   if [ "$resource_governor_priority" = background ]; then
     # Keep niceness on the actual child process while the admission wrapper
