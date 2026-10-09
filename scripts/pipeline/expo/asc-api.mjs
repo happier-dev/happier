@@ -63,9 +63,18 @@ export class AscApiError extends Error {
   constructor(input) {
     const messages = Array.isArray(input.body?.errors)
       ? input.body.errors
-          .map((error) =>
-            [error?.status, error?.code, error?.title, error?.detail].map((part) => String(part ?? '').trim()).filter(Boolean).join(' '),
-          )
+          .flatMap((error) => {
+            const message = [error?.status, error?.code, error?.title, error?.detail]
+              .map((part) => String(part ?? '').trim()).filter(Boolean).join(' ');
+            // Apple puts review-readiness failures here. Report only their codes
+            // and JSON pointers, not arbitrary metadata or associated details.
+            const associated = Object.values(error?.meta?.associatedErrors ?? {}).flat()
+              .map((row) => [
+                /^[A-Z][A-Z0-9_.]*$/u.test(row?.code ?? '') ? row.code : '',
+                typeof row?.source?.pointer === 'string' && row.source.pointer.startsWith('/') ? row.source.pointer : '',
+              ].filter(Boolean).join(' '));
+            return [message, ...associated];
+          })
           .filter(Boolean)
       : [];
     super(

@@ -52,11 +52,20 @@ test('shared ASC transport preserves structured HTTP failure and refreshes valid
   const tokens = [];
   t.mock.method(globalThis, 'fetch', async (_url, options) => {
     tokens.push(options.headers.Authorization.slice('Bearer '.length));
-    return new Response(JSON.stringify({ errors: [{ code: 'FORBIDDEN', detail: 'Permission required' }] }), { status: 403 });
+    return new Response(JSON.stringify({ errors: [{ code: 'FORBIDDEN', detail: 'Permission required', meta: {
+      associatedErrors: { '/v1/builds/exact': [{ code: 'ENTITY_ERROR.ATTRIBUTE.REQUIRED',
+        source: { pointer: '/data/attributes/usesNonExemptEncryption' }, detail: 'Private associated detail' }] },
+    } }] }), { status: 403 });
   });
   const request = createAscRequest({ issuerId: 'issuer', keyId: 'key', privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }) });
   await assert.rejects(request({ url: 'https://api.appstoreconnect.apple.com/v1/apps' }), { name: 'AscApiError', status: 403 });
-  await assert.rejects(request({ url: 'https://api.appstoreconnect.apple.com/v1/apps' }), (error) => error.body.errors[0].code === 'FORBIDDEN');
+  await assert.rejects(request({ url: 'https://api.appstoreconnect.apple.com/v1/apps' }), (error) => {
+    assert.equal(error.body.errors[0].code, 'FORBIDDEN');
+    assert.match(error.message, /ENTITY_ERROR\.ATTRIBUTE\.REQUIRED/);
+    assert.match(error.message, /\/data\/attributes\/usesNonExemptEncryption/);
+    assert.doesNotMatch(error.message, /Private associated detail/);
+    return true;
+  });
   for (const token of tokens) {
     const [header, payload, signature] = token.split('.');
     assert.equal(JSON.parse(Buffer.from(payload, 'base64url')).aud, 'appstoreconnect-v1');
