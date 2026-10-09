@@ -9,6 +9,19 @@ import {
 } from './providerSettings.js';
 
 describe('voice realtime provider settings contracts', () => {
+  it('keeps predecessor ingress bounds separate from the uncapped complete legacy census', () => {
+    const qualified = { providerId: 'happier.voice.openai-compat/stt',
+      credentialBindings: { account: { api_key: 'existing-personal' } } };
+    expect(providerSettingsContract.PredecessorVoiceCredentialBindingV1Schema.safeParse(qualified).success).toBe(true);
+    expect(providerSettingsContract.LegacyVoiceCredentialBindingV1Schema.safeParse(qualified).success).toBe(false);
+    const byMachineId = Object.fromEntries(Array.from({ length: 2049 }, (_, index) => [
+      `machine_${index}`, { api_key: 'existing-personal' },
+    ]));
+    const bare = { providerId: 'realtime_elevenlabs', credentialBindings: { byMachineId } };
+    expect(providerSettingsContract.LegacyVoiceCredentialBindingV1Schema.safeParse(bare).success).toBe(true);
+    expect(providerSettingsContract.PredecessorVoiceCredentialBindingV1Schema.safeParse(bare).success).toBe(false);
+  });
+
   it('uses one qualified current Voice credential binding schema', () => {
     expect(VoiceCredentialBindingV1Schema.parse({
       contribution: {
@@ -119,5 +132,13 @@ describe('voice realtime provider settings contracts', () => {
       schemaVersion: 1,
       config: cyclic,
     }).success).toBe(false);
+
+    for (const config of [
+      { nested: new Date(0) },
+      { nested: { [Symbol('hidden')]: true } },
+      { nested: Object.defineProperty({ visible: true }, 'hidden', { value: true, enumerable: false }) },
+    ]) {
+      expect(VoiceProviderSettingsEnvelopeV1Schema.safeParse({ schemaVersion: 1, config }).success).toBe(false);
+    }
   });
 });

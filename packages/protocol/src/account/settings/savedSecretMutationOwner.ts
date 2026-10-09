@@ -4,7 +4,7 @@ import {
   AIBackendProfileSchema,
   type SavedSecret,
 } from '../../profiles/backendProfileSchema.js';
-import { SecretStringV1Schema, type SecretStringV1 } from '../../crypto/settingsSecretStringSchemasV1.js';
+import type { SecretStringV1 } from '../../crypto/settingsSecretStringSchemasV1.js';
 import {
   ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES,
   inspectAccountSettingValueBounds,
@@ -23,6 +23,7 @@ import {
 } from '../../connect/connectedAccountPurposes.js';
 import {
   PluginContributionIdentityV1Schema,
+  parseQualifiedPluginContributionKey,
   type PluginContributionIdentityV1,
 } from '../../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
@@ -36,9 +37,13 @@ import { ProviderMachineIdSchema } from '../../providers/ids.js';
 import { SavedSecretSlotBindingsV1Schema } from '../../providers/settings/v1.js';
 import {
   LegacyVoiceCredentialBindingV1Schema,
+  classifyLegacyVoiceCredentialCandidateV1,
+  listLegacyVoiceCredentialMigrationCandidatesV1,
+  type LegacyVoiceCredentialMigrationCandidateV1,
   VoiceCredentialBindingV1Schema,
   type VoiceCredentialBindingV1,
 } from '../../voice/realtime/providerSettings.js';
+import { resolvePredecessorVoiceProviderContributionIdentityV1 } from '../../voice/providerContributionIdentity.js';
 import {
   SAVED_SECRET_REF_MAX_LENGTH_V1,
   SHARED_SAVED_SECRET_REF_V1_PREFIX,
@@ -179,6 +184,14 @@ export type SavedSecretLegacyChatCredentialV1 = Readonly<{
   encryptedValue: SecretStringV1; displayName: string; kind: 'apiKey';
 }>;
 
+/** Original non-Chat Voice carriers; Resource descriptors still require authority admission. */
+export type SavedSecretLegacyVoiceCredentialV1 = Readonly<{
+  source: Extract<SavedSecretImportSourceV1, { kind: 'personal-saved-secret' }>
+    | Readonly<{ kind: 'existing-resource-reference'; resourceRef: string }>;
+  encryptedValue: SecretStringV1; displayName: string; kind: 'apiKey';
+  candidate: LegacyVoiceCredentialMigrationCandidateV1;
+}>;
+
 /** Import retries identify the same Account/source, never mutable labels or secret bytes. */
 function readSavedSecretImportSourcePartsV1(value: SavedSecretImportSourceV1): readonly string[] {
   const source = ownRecord(value);
@@ -223,6 +236,127 @@ export function promoteLegacyInferenceSavedSecretReferenceV1(
   const next = { ...settings };
   delete next.inferenceOpenAIKey;
   return Object.freeze({ value: candidate.value, settings: Object.freeze(next) });
+}
+
+/**
+ * Prepares the exact original non-Chat Voice source for the full S2 candidate.
+ * Material/Resource authority and transaction admission remain with its caller.
+ * An already-Shared descriptor is read-only: there is no create-free cleanup port.
+ */
+export function promoteLegacyVoiceSavedSecretReferenceV1(
+  settings: Readonly<Record<string, unknown>>,
+  input: Readonly<{ credential: SavedSecretLegacyVoiceCredentialV1; sharedSecretRef: string }>,
+  catalogs: SavedSecretReferenceCatalogsV1,
+): SavedSecretReferenceRewriteResultV1 & Readonly<{ encryptedValue: SecretStringV1 }> {
+  const request = ownRecord(input);
+  const credentialProof = ownRecord(request?.credential);
+  if (!credentialProof || !ownRecord(credentialProof.candidate) || !ownRecord(credentialProof.source)) {
+    invalidReferenceRoot('Legacy Voice source proof is invalid');
+  }
+  const voice = ownRecord(settings.voice);
+  const candidates = listLegacyVoiceCredentialMigrationCandidatesV1(voice?.providerId);
+  const selected = candidates.find(candidate => candidate.providerId === input.credential.candidate.providerId
+    && candidate.slotId === input.credential.candidate.slotId
+    && JSON.stringify(candidate.path) === JSON.stringify(input.credential.candidate.path)
+    && JSON.stringify(candidate.canonicalPath) === JSON.stringify(input.credential.candidate.canonicalPath));
+  if (!selected || selected.providerId === 'openai_compat') invalidReferenceRoot('Legacy Voice source descriptor is invalid');
+  const targetRef = parseSharedSavedSecretPromotionRef(input.sharedSecretRef);
+  const rawSecrets = settings[SECRETS_KEY];
+  if (rawSecrets !== undefined && !Array.isArray(rawSecrets)) invalidReferenceRoot('Legacy Voice personal sources are invalid');
+  const personalSources: readonly unknown[] = Array.isArray(rawSecrets) ? rawSecrets : [];
+  const classify = (candidate: LegacyVoiceCredentialMigrationCandidateV1) => classifyLegacyVoiceCredentialCandidateV1({
+    candidate, rawAdapters: voice?.adapters, personalSources, credentialBindings: voice?.credentialBindings,
+  });
+  const classified = classify(selected);
+  if (classified.kind === 'absent' || classified.kind === 'unsupported') invalidReferenceRoot('Legacy Voice source is invalid');
+  const source = input.credential.source;
+  const sameSource = (candidate: ReturnType<typeof classify>): boolean => source.kind === 'personal-saved-secret'
+    ? (candidate.kind === 'existing-personal' || candidate.kind === 'inline-personal-alias') && candidate.secretId === source.secretId
+    : candidate.kind === 'existing-resource-reference' && candidate.resourceRef === source.resourceRef;
+  if (source.kind === 'personal-saved-secret') readSavedSecretImportSourcePartsV1(source);
+  else if (source.kind !== 'existing-resource-reference' || !hasOnlyOwnKeys(source, ['kind', 'resourceRef'])) {
+    invalidReferenceRoot('Legacy Voice source identity is invalid');
+  }
+  const originalEnvelope = JSON.stringify(input.credential.encryptedValue);
+  if (!sameSource(classified) || JSON.stringify(classified.rawSecret) !== originalEnvelope) {
+    throw new AccountSettingsSavedSecretMutationError('saved_secret_conflict', 'Legacy Voice source changed before preparation');
+  }
+  if (source.kind === 'existing-resource-reference') {
+    if (targetRef !== source.resourceRef) {
+      throw new AccountSettingsSavedSecretMutationError('saved_secret_conflict', 'An existing Voice Resource cannot be retargeted by import');
+    }
+    return Object.freeze({ settings, encryptedValue: classified.rawSecret });
+  }
+  const origins = candidates.flatMap(candidate => {
+    if (candidate.providerId === 'openai_compat') return [];
+    const current = classify(candidate);
+    if (!sameSource(current) || current.kind === 'absent' || current.kind === 'unsupported') return [];
+    if (JSON.stringify(current.rawSecret) !== originalEnvelope) {
+      throw new AccountSettingsSavedSecretMutationError('saved_secret_conflict', 'Legacy Voice origins disagree on source material');
+    }
+    return [{ candidate, binding: current.binding }];
+  });
+  validateKnownSavedSecretReferenceRoots(readReferenceSourceSettings(settings, catalogs));
+  let result: SavedSecretReferenceRewriteResultV1;
+  if (classified.kind === 'existing-personal') {
+    const retained = readSavedSecretTransferSourceV1(settings).secrets.find(secret => secret.id === source.secretId);
+    if (!retained) invalidReferenceRoot('Legacy Voice personal source is invalid');
+    result = promotePersonalSavedSecretReference(settings, { secretId: retained.id,
+      expectedUpdatedAt: retained.updatedAt, sharedSecretRef: targetRef }, catalogs);
+  } else {
+    if (listAccountSettingsSavedSecretReferences(settings, targetRef, catalogs).length > 0) {
+      throw new AccountSettingsSavedSecretMutationError('saved_secret_conflict', 'Legacy Voice destination is already bound');
+    }
+    result = { settings };
+  }
+  let nextSettings = result.settings;
+  for (const origin of origins) {
+    const contribution = resolvePredecessorVoiceProviderContributionIdentityV1(origin.candidate.providerId)
+      ?? parseQualifiedPluginContributionKey(origin.candidate.providerId);
+    if (!contribution) invalidReferenceRoot('Legacy Voice contribution identity is invalid');
+    const target = { contribution, credentialSlotId: origin.candidate.slotId, machineId: null };
+    let state = readVoiceCredentialTarget(nextSettings, target);
+    if (state.exactSecretId !== null && state.exactSecretId !== source.secretId && state.exactSecretId !== targetRef) {
+      throw new AccountSettingsSavedSecretMutationError('saved_secret_conflict', 'Canonical Voice target already owns another reference');
+    }
+    if (!state.binding) {
+      const byMachineId = Object.fromEntries(Object.entries(origin.binding?.credentialBindings.byMachineId ?? {})
+        .flatMap(([machineId, slots]) => {
+          const reference = slots[origin.candidate.slotId];
+          return reference === undefined ? [] : [[machineId, { [origin.candidate.slotId]: reference === source.secretId ? targetRef : reference }]];
+        }));
+      const binding = VoiceCredentialBindingV1Schema.parse({ contribution, credentialSlotId: origin.candidate.slotId,
+        credentialSource: { kind: 'savedSecret' }, credentialBindings: {
+          ...(Object.keys(byMachineId).length > 0 ? { byMachineId } : {}),
+        }, ...(origin.binding?.approvedRecipientContractDigest === undefined ? {} : {
+          approvedRecipientContractDigest: origin.binding.approvedRecipientContractDigest,
+        }) });
+      nextSettings = { ...nextSettings, voiceSettingsV1: { ...state.root,
+        credentialBindings: [...state.credentialBindings, binding] } };
+      state = readVoiceCredentialTarget(nextSettings, target);
+    }
+    nextSettings = writeVoiceCredentialTarget({ settings: nextSettings, target, state, secretId: targetRef });
+    nextSettings = removeLegacyVoiceOriginScalarV1(nextSettings, origin.candidate.path);
+  }
+  return Object.freeze({ ...result, settings: Object.freeze(nextSettings), encryptedValue: classified.rawSecret });
+}
+
+function removeLegacyVoiceOriginScalarV1(
+  settings: Readonly<Record<string, unknown>>,
+  path: readonly string[],
+): Readonly<Record<string, unknown>> {
+  const remove = (value: unknown, index: number): Readonly<Record<string, unknown>> => {
+    const record = ownRecord(value);
+    if (!record) invalidReferenceRoot('Legacy Voice origin disappeared during preparation');
+    const next = { ...record };
+    const key = path[index]!;
+    if (index === path.length - 1) delete next[key];
+    else next[key] = remove(record[key], index + 1);
+    return next;
+  };
+  const voice = ownRecord(settings.voice);
+  if (!voice) invalidReferenceRoot('Legacy Voice origin disappeared during preparation');
+  return { ...settings, voice: { ...voice, adapters: remove(voice.adapters, 0) } };
 }
 
 /** Only the classified exact legacy carrier moves; raw unrelated config remains its owner. */
@@ -557,6 +691,7 @@ function readSavedSecrets(
 export function readSavedSecretTransferSourceV1(settings: Readonly<Record<string, unknown>>): Readonly<{
   secrets: readonly SavedSecret[]; complete: boolean; inferenceCredential?: SavedSecretLegacyInferenceCredentialV1;
   legacyChatCredential?: SavedSecretLegacyChatCredentialV1;
+  legacyVoiceCredentials?: readonly SavedSecretLegacyVoiceCredentialV1[];
 }> {
   const inferenceValue = settings.inferenceOpenAIKey;
   const inference = ACCOUNT_SETTING_DEFINITIONS.inferenceOpenAIKey.parseMutationValue(inferenceValue);
@@ -565,10 +700,11 @@ export function readSavedSecretTransferSourceV1(settings: Readonly<Record<string
     ? Object.freeze({ source: { kind: 'legacy-inference-openai-key' as const }, value: inference.data,
       displayName: 'OpenAI API key for inference', kind: 'apiKey' as const }) : undefined;
   const raw = settings[SECRETS_KEY];
-  const chat = readLegacyChatTransferCredentialV1(settings, raw);
-  const sourceComplete = inference.success && chat.complete;
+  const voice = readLegacyVoiceTransferCredentialsV1(settings, raw);
+  const sourceComplete = inference.success && voice.complete;
   const source = { ...(inferenceCredential ? { inferenceCredential } : {}),
-    ...(chat.credential ? { legacyChatCredential: chat.credential } : {}) };
+    ...(voice.chatCredential ? { legacyChatCredential: voice.chatCredential } : {}),
+    ...(voice.credentials.length > 0 ? { legacyVoiceCredentials: voice.credentials } : {}) };
   if (raw === undefined) return { secrets: [], complete: sourceComplete, ...source };
   if (!Array.isArray(raw)) return { secrets: [], complete: false, ...source };
   const secrets = raw.flatMap(value => {
@@ -583,54 +719,50 @@ export function readSavedSecretTransferSourceV1(settings: Readonly<Record<string
 }
 
 /** Receipt of the exact predecessor carrier, not a synthesized Settings record. */
-function readLegacyChatTransferCredentialV1(
+function readLegacyVoiceTransferCredentialsV1(
   settings: Readonly<Record<string, unknown>>,
   rawSecrets: unknown,
-): Readonly<{ complete: boolean; credential?: SavedSecretLegacyChatCredentialV1 }> {
+): Readonly<{ complete: boolean; chatCredential?: SavedSecretLegacyChatCredentialV1;
+  credentials: readonly SavedSecretLegacyVoiceCredentialV1[] }> {
   const voice = ownRecord(settings.voice);
-  const adapters = ownRecord(voice?.adapters);
-  const conversation = ownRecord(adapters?.local_conversation);
-  const agent = ownRecord(conversation?.agent);
-  const chat = ownRecord(agent?.openaiCompat);
-  const rawSecret = chat?.chatApiKey;
-  if (rawSecret == null) return { complete: true };
-  const parsed = SecretStringV1Schema.safeParse(rawSecret);
-  if (!parsed.success || (rawSecrets !== undefined && !Array.isArray(rawSecrets))) return { complete: false };
   const secrets: readonly unknown[] = Array.isArray(rawSecrets) ? rawSecrets : [];
-  if (voice?.credentialBindings !== undefined && !Array.isArray(voice.credentialBindings)) return { complete: false };
-  const bindings: readonly unknown[] = Array.isArray(voice?.credentialBindings) ? voice.credentialBindings : [];
-  let boundSecretId: string | undefined;
-  for (const candidate of bindings) {
-    if (ownRecord(candidate)?.providerId !== 'openai_compat') continue;
-    const parsedBinding = LegacyVoiceCredentialBindingV1Schema.safeParse(candidate);
-    if (!parsedBinding.success) return { complete: false };
-    boundSecretId = parsedBinding.data.credentialBindings.account?.chat_api_key;
-    break;
-  }
-  const material = JSON.stringify(parsed.data);
-  const alias = 'voice:openai_compat:chat_api_key';
-  let source: SavedSecretLegacyChatCredentialV1['source'] = { kind: 'personal-saved-secret', secretId: alias };
-  if (boundSecretId) {
-    let reference: SavedSecretRefV1;
-    try {
-      reference = parseSavedSecretRefV1(boundSecretId);
-    } catch {
-      return { complete: false };
+  const credentials: SavedSecretLegacyVoiceCredentialV1[] = [];
+  const materialsBySource = new Map<string, string>();
+  let chatCredential: SavedSecretLegacyChatCredentialV1 | undefined;
+  let complete = true;
+  for (const candidate of listLegacyVoiceCredentialMigrationCandidatesV1(voice?.providerId)) {
+    const classified = classifyLegacyVoiceCredentialCandidateV1({ candidate, rawAdapters: voice?.adapters,
+      personalSources: secrets, credentialBindings: voice?.credentialBindings });
+    if (classified.kind === 'absent') continue;
+    if (classified.kind === 'unsupported' || (rawSecrets !== undefined && !Array.isArray(rawSecrets))) {
+      complete = false;
+      continue;
     }
-    const boundRecord = secrets.find(candidate => ownRecord(candidate)?.id === boundSecretId);
-    if (reference.kind === 'personal') {
-      // The predecessor retained an already bound personal identity rather
-      // than synthesizing the alias, even when their material was identical.
-      return { complete: JSON.stringify(ownRecord(boundRecord)?.encryptedValue) === material };
+    // Non-Chat inline origins need their descriptor even when the personal record
+    // is also inventoried. Chat retains its separate ordered Provider ACK recipe.
+    if (classified.kind === 'existing-personal' && candidate.providerId === 'openai_compat') continue;
+    const source: SavedSecretLegacyVoiceCredentialV1['source'] = classified.kind === 'existing-resource-reference'
+      ? { kind: 'existing-resource-reference', resourceRef: classified.resourceRef }
+      : { kind: 'personal-saved-secret', secretId: classified.secretId };
+    const identity = JSON.stringify(source);
+    const material = JSON.stringify(classified.parsedSecret);
+    const previous = materialsBySource.get(identity);
+    if (previous !== undefined) {
+      if (previous !== material) complete = false;
+      continue;
     }
-    if (boundRecord) return { complete: false };
-    source = { kind: 'existing-resource-reference', resourceRef: boundSecretId };
-  } else {
-    const existing = secrets.find(candidate => ownRecord(candidate)?.id === alias);
-    if (existing) return { complete: JSON.stringify(ownRecord(existing)?.encryptedValue) === material };
+    materialsBySource.set(identity, material);
+    if (candidate.providerId === 'openai_compat' && candidate.slotId === 'chat_api_key') {
+      const chatSource: SavedSecretLegacyChatCredentialV1['source'] = source.kind === 'existing-resource-reference'
+        ? source : { kind: 'personal-saved-secret', secretId: 'voice:openai_compat:chat_api_key' };
+      chatCredential = Object.freeze({ source: chatSource, encryptedValue: classified.rawSecret,
+        displayName: 'Voice: openai_compat', kind: 'apiKey' });
+    } else {
+      credentials.push(Object.freeze({ source, encryptedValue: classified.rawSecret, candidate,
+        displayName: `Voice: ${candidate.providerId}`, kind: 'apiKey' }));
+    }
   }
-  return { complete: true, credential: Object.freeze({ source,
-    encryptedValue: rawSecret as SecretStringV1, displayName: 'Voice: openai_compat', kind: 'apiKey' } satisfies SavedSecretLegacyChatCredentialV1) };
+  return { complete, credentials: Object.freeze(credentials), ...(chatCredential ? { chatCredential } : {}) };
 }
 
 function pluginSecretBindingError(message: string): never {

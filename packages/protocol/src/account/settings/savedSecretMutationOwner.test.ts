@@ -18,7 +18,7 @@ import {
   type AccountSettingsVoiceCredentialSourceMutation,
 } from './savedSecretMutationOwner.js';
 import { VoiceProviderContributionSchema } from '../../plugins/contributions/voiceProviders.js';
-import { LegacyVoiceCredentialBindingV1Schema, VoiceCredentialBindingV1Schema } from '../../voice/realtime/providerSettings.js';
+import { LegacyVoiceCredentialBindingV1Schema, VoiceCredentialBindingV1Schema, listLegacyVoiceCredentialMigrationCandidatesV1 } from '../../voice/realtime/providerSettings.js';
 import { SAVED_SECRET_COLLECTION_MAX_ENTRIES, SavedSecretSchema } from '../../profiles/backendProfileSchema.js';
 import { accountSettingsParse } from './accountSettings.js';
 import { ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES } from './catalog/accountSettingBounds.js';
@@ -423,6 +423,199 @@ describe('classified legacy credential import', () => {
       legacyChatCredential: { source, encryptedValue, displayName: expect.any(String), kind: 'apiKey' } });
     expect(raw).toEqual(before);
     expect(raw).not.toHaveProperty('secrets');
+  });
+
+  it('classifies an inline legacy ElevenLabs credential from its original carrier without raw SavedSecret records', () => {
+    const encryptedValue = { _isSecretValue: true as const,
+      encryptedValue: { t: 'enc-v1' as const, c: 'original-elevenlabs-ciphertext' } };
+    expect(SecretStringV1Schema.safeParse(encryptedValue).success).toBe(true);
+    const raw = { voice: { providerId: 'realtime_elevenlabs', adapters: {
+      realtime_elevenlabs: { byo: { apiKey: encryptedValue } },
+    } }, preferredLanguage: 'de' };
+    const before = structuredClone(raw);
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1(raw)).toMatchObject({ secrets: [], complete: true,
+      legacyVoiceCredentials: [{ source: { kind: 'personal-saved-secret', secretId: 'voice:realtime_elevenlabs:api_key' },
+        encryptedValue, kind: 'apiKey', candidate: { providerId: 'realtime_elevenlabs', slotId: 'api_key',
+          path: ['realtime_elevenlabs', 'byo', 'apiKey'] } }] });
+    expect(raw).toEqual(before);
+    expect(raw).not.toHaveProperty('secrets');
+  });
+
+  it('keeps the selected speech adapter first while preserving conflicting inline legacy Voice material', () => {
+    const selected = SecretStringV1Schema.parse({ _isSecretValue: true,
+      encryptedValue: { t: 'enc-v1', c: 'selected-conversation-speech' } });
+    const other = SecretStringV1Schema.parse({ _isSecretValue: true,
+      encryptedValue: { t: 'enc-v1', c: 'other-direct-speech' } });
+    const raw = { voice: { providerId: 'local_conversation', adapters: {
+      local_conversation: { stt: { openaiCompat: { apiKey: selected } } },
+      local_direct: { stt: { openaiCompat: { apiKey: other } } },
+    } } };
+    const before = structuredClone(raw);
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1(raw)).toMatchObject({ secrets: [], complete: false,
+      legacyVoiceCredentials: [{ source: { kind: 'personal-saved-secret', secretId: 'voice:happier.voice.openai-compat/stt:api_key' },
+        encryptedValue: selected, candidate: { path: ['local_conversation', 'stt', 'openaiCompat', 'apiKey'] } }] });
+    expect(raw).toEqual(before);
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ voice: { ...raw.voice, adapters: {
+      ...raw.voice.adapters, local_direct: { stt: { openaiCompat: { apiKey: selected } } },
+    } } })).toMatchObject({ secrets: [], complete: true, legacyVoiceCredentials: [
+      { encryptedValue: selected, candidate: { path: ['local_conversation', 'stt', 'openaiCompat', 'apiKey'] } },
+    ] });
+  });
+
+  it('classifies the complete predecessor Voice corpus and preserves every conflicting alias', () => {
+    const encryptedValue = SecretStringV1Schema.parse({ _isSecretValue: true,
+      encryptedValue: { t: 'enc-v1', c: 'original-predecessor-corpus' } });
+    const raw = { voice: { providerId: 'local_conversation', adapters: {
+      realtime_elevenlabs: { byo: { apiKey: encryptedValue } },
+      local_direct: {
+        stt: { googleGemini: { apiKey: encryptedValue }, openaiCompat: { apiKey: encryptedValue } },
+        tts: { googleCloud: { apiKey: encryptedValue }, openaiCompat: { apiKey: encryptedValue } },
+      },
+      local_conversation: { stt: { openaiCompat: { apiKey: encryptedValue } },
+        tts: { openaiCompat: { apiKey: encryptedValue } }, agent: { openaiCompat: { chatApiKey: encryptedValue } } },
+    } } };
+    const before = structuredClone(raw);
+    const expectedIds = ['voice:realtime_elevenlabs:api_key', 'voice:google_gemini:api_key',
+      'voice:google_cloud:api_key', 'voice:happier.voice.openai-compat/stt:api_key',
+      'voice:happier.voice.openai-compat/tts:api_key'];
+    const result = savedSecretOwner.readSavedSecretTransferSourceV1(raw);
+    expect(result.complete).toBe(true);
+    expect(result.legacyVoiceCredentials?.map(credential => credential.source)).toEqual(
+      expectedIds.map(secretId => ({ kind: 'personal-saved-secret', secretId })));
+    expect(result.legacyVoiceCredentials?.every(credential => credential.encryptedValue === encryptedValue)).toBe(true);
+    expect(result.legacyVoiceCredentials?.[0]?.candidate.canonicalPath).toEqual(
+      ['providers', 'happier.voice.elevenlabs/realtime-elevenlabs', 'config', 'byo', 'apiKey']);
+    expect(result.legacyChatCredential).toMatchObject({ source: { kind: 'personal-saved-secret',
+      secretId: 'voice:openai_compat:chat_api_key' }, encryptedValue });
+    const collisions = [...expectedIds, 'voice:openai_compat:chat_api_key'].map(id => SavedSecretSchema.parse({ ...secret, id }));
+    const conflicted = savedSecretOwner.readSavedSecretTransferSourceV1({ ...raw, secrets: collisions });
+    expect(conflicted).toEqual({ complete: false, secrets: collisions });
+    expect(raw).toEqual(before);
+    expect(raw).not.toHaveProperty('secrets');
+  });
+
+  it('retains the bound personal legacy Voice descriptor alongside its actual raw source record', () => {
+    const retained = SavedSecretSchema.parse({ ...secret, id: 'actual-bound-eleven-key' });
+    const binding = LegacyVoiceCredentialBindingV1Schema.parse({ providerId: 'realtime_elevenlabs',
+      credentialBindings: { account: { api_key: retained.id } } });
+    const raw = { secrets: [retained], voice: { providerId: 'realtime_elevenlabs', credentialBindings: [binding],
+      adapters: { realtime_elevenlabs: { byo: { apiKey: retained.encryptedValue, agentId: 'agent-eleven' } } } } };
+    const before = structuredClone(raw);
+    const source = savedSecretOwner.readSavedSecretTransferSourceV1(raw);
+    expect(source).toEqual({ complete: true, secrets: [retained], legacyVoiceCredentials: [{
+      source: { kind: 'personal-saved-secret', secretId: retained.id }, encryptedValue: retained.encryptedValue,
+      displayName: 'Voice: realtime_elevenlabs', kind: 'apiKey',
+      candidate: listLegacyVoiceCredentialMigrationCandidatesV1(raw.voice.providerId)[0],
+    }] });
+    expect(source.secrets[0]).toBe(retained);
+    expect(source.legacyVoiceCredentials?.[0]?.encryptedValue).toBe(retained.encryptedValue);
+    expect(raw).toEqual(before);
+  });
+
+  it('prepares the named legacy Voice transfer final candidate from its actual bound personal identity', () => {
+    const retained = SavedSecretSchema.parse({ ...secret, id: 'actual-bound-eleven-key' });
+    const approvedRecipientContractDigest = `sha256:${'a'.repeat(64)}`;
+    const raw = { preferredLanguage: 'de', secrets: [retained, unrelatedSecret], voice: {
+      providerId: 'realtime_elevenlabs', credentialBindings: [{ providerId: 'realtime_elevenlabs',
+        approvedRecipientContractDigest, credentialBindings: { account: { api_key: retained.id },
+          byMachineId: { machine_a: { api_key: unrelatedSecret.id } } } }],
+      adapters: { realtime_elevenlabs: { billingMode: 'byo', byo: { apiKey: retained.encryptedValue, agentId: 'agent-eleven' } } },
+    } };
+    const before = structuredClone(raw);
+    const sharedSecretRef = formatSharedSavedSecretRefV1('actual-bound-eleven-resource');
+    const candidate = listLegacyVoiceCredentialMigrationCandidatesV1(raw.voice.providerId)[0]!;
+    const result = savedSecretOwner.promoteLegacyVoiceSavedSecretReferenceV1(raw, { credential: {
+      source: { kind: 'personal-saved-secret', secretId: retained.id }, candidate,
+      encryptedValue: retained.encryptedValue, displayName: retained.name, kind: 'apiKey',
+    }, sharedSecretRef }, { profileRecords: [] });
+    expect(result.settings.voiceSettingsV1).toMatchObject({ credentialBindings: [{
+      contribution: { pluginId: 'happier.voice.elevenlabs', localId: 'realtime-elevenlabs' },
+      credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' }, approvedRecipientContractDigest,
+      credentialBindings: { account: { api_key: sharedSecretRef }, byMachineId: { machine_a: { api_key: unrelatedSecret.id } } },
+    }] });
+    expect(result.settings.voice).toMatchObject({ adapters: { realtime_elevenlabs: {
+      billingMode: 'byo', byo: { agentId: 'agent-eleven' },
+    } } });
+    expect(result.settings.voice).not.toHaveProperty('adapters.realtime_elevenlabs.byo.apiKey');
+    expect(result.settings.secrets).toEqual([unrelatedSecret]);
+    expect(result.settings.preferredLanguage).toBe('de');
+    expect(raw).toEqual(before);
+  });
+
+  it('prepares an inline legacy Voice alias without inventing a SavedSecret record or retiring Chat', () => {
+    const raw = { voice: { providerId: 'realtime_elevenlabs', adapters: {
+      realtime_elevenlabs: { byo: { apiKey: secret.encryptedValue, agentId: 'agent-eleven' } },
+      local_conversation: { agent: { openaiCompat: { chatApiKey: secret.encryptedValue } } },
+    } } };
+    const before = structuredClone(raw);
+    const credential = savedSecretOwner.readSavedSecretTransferSourceV1(raw).legacyVoiceCredentials![0]!;
+    const sharedSecretRef = formatSharedSavedSecretRefV1('original-inline-eleven');
+    const result = savedSecretOwner.promoteLegacyVoiceSavedSecretReferenceV1(raw, { credential, sharedSecretRef }, { profileRecords: [] });
+    expect(result.encryptedValue).toBe(secret.encryptedValue);
+    expect(result.settings.voiceSettingsV1).toMatchObject({ credentialBindings: [{
+      contribution: { pluginId: 'happier.voice.elevenlabs', localId: 'realtime-elevenlabs' },
+      credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' },
+      credentialBindings: { account: { api_key: sharedSecretRef } },
+    }] });
+    expect(result.settings).not.toHaveProperty('secrets');
+    expect(result.settings.voice).not.toHaveProperty('adapters.realtime_elevenlabs.byo.apiKey');
+    expect(result.settings.voice).toHaveProperty('adapters.realtime_elevenlabs.byo.agentId', 'agent-eleven');
+    expect(result.settings.voice).toHaveProperty('adapters.local_conversation.agent.openaiCompat.chatApiKey', secret.encryptedValue);
+    expect(raw).toEqual(before);
+    for (const changed of [
+      { ...raw, voice: { ...raw.voice, adapters: { ...raw.voice.adapters,
+        realtime_elevenlabs: { byo: { apiKey: unrelatedSecret.encryptedValue } } } } },
+      { ...raw, voice: { ...raw.voice, credentialBindings: [{ providerId: 'realtime_elevenlabs',
+        credentialBindings: { account: { api_key: formatSharedSavedSecretRefV1('another-active-resource') } } }] } },
+    ]) {
+      expect(() => savedSecretOwner.promoteLegacyVoiceSavedSecretReferenceV1(changed, { credential, sharedSecretRef }, { profileRecords: [] }))
+        .toThrowError(expect.objectContaining({ code: 'saved_secret_conflict' }));
+    }
+    expect(() => savedSecretOwner.promoteLegacyVoiceSavedSecretReferenceV1({ voice: { adapters: {
+      realtime_elevenlabs: { byo: { apiKey: { futureCredential: 'opaque-retained' } } },
+    } } }, { credential, sharedSecretRef }, { profileRecords: [] }))
+      .toThrowError(expect.objectContaining({ code: 'saved_secret_reference_invalid' }));
+  });
+
+  it('keeps an existing Shared legacy Voice source read-only and refuses retargeting it', () => {
+    const sharedSecretRef = formatSharedSavedSecretRefV1('actual-original-eleven-resource');
+    const raw = { voice: { credentialBindings: [{ providerId: 'realtime_elevenlabs',
+      credentialBindings: { account: { api_key: sharedSecretRef } } }],
+    adapters: { realtime_elevenlabs: { byo: { apiKey: secret.encryptedValue } } } } };
+    const credential = savedSecretOwner.readSavedSecretTransferSourceV1(raw).legacyVoiceCredentials![0]!;
+    expect(credential.source).toEqual({ kind: 'existing-resource-reference', resourceRef: sharedSecretRef });
+    const result = savedSecretOwner.promoteLegacyVoiceSavedSecretReferenceV1(raw, { credential, sharedSecretRef }, { profileRecords: [] });
+    expect(result.settings).toBe(raw);
+    expect(result.encryptedValue).toBe(secret.encryptedValue);
+    expect(() => savedSecretOwner.promoteLegacyVoiceSavedSecretReferenceV1(raw, { credential,
+      sharedSecretRef: formatSharedSavedSecretRefV1('unrelated-resource') }, { profileRecords: [] }))
+      .toThrowError(expect.objectContaining({ code: 'saved_secret_conflict' }));
+  });
+
+  it('retires only matching canonical Voice origins and preserves an explicit canonical None target', () => {
+    const raw = { voice: { providerId: 'local_conversation', adapters: {
+      local_direct: { stt: { openaiCompat: { apiKey: secret.encryptedValue, baseUrl: 'https://direct.test' } } },
+      local_conversation: { stt: { openaiCompat: { apiKey: secret.encryptedValue, baseUrl: 'https://conversation.test' } } },
+    } }, voiceSettingsV1: { credentialBindings: [VoiceCredentialBindingV1Schema.parse({
+      contribution: { pluginId: 'happier.voice.openai-compat', localId: 'stt' }, credentialSlotId: 'api_key',
+      credentialSource: { kind: 'none' }, credentialBindings: { byMachineId: { machine_a: { api_key: unrelatedSecret.id } } },
+    })] }, secrets: [unrelatedSecret] };
+    const before = structuredClone(raw);
+    const credential = savedSecretOwner.readSavedSecretTransferSourceV1(raw).legacyVoiceCredentials![0]!;
+    const sharedSecretRef = formatSharedSavedSecretRefV1('selected-speech-source');
+    const result = savedSecretOwner.promoteLegacyVoiceSavedSecretReferenceV1(raw, { credential, sharedSecretRef }, { profileRecords: [] });
+    expect(result.settings.voiceSettingsV1).toMatchObject({ credentialBindings: [{ credentialSource: { kind: 'none' },
+      credentialBindings: { account: { api_key: sharedSecretRef }, byMachineId: { machine_a: { api_key: unrelatedSecret.id } } },
+    }] });
+    expect(result.settings.voice).not.toHaveProperty('adapters.local_direct.stt.openaiCompat.apiKey');
+    expect(result.settings.voice).not.toHaveProperty('adapters.local_conversation.stt.openaiCompat.apiKey');
+    expect(result.settings.voice).toHaveProperty('adapters.local_direct.stt.openaiCompat.baseUrl', 'https://direct.test');
+    expect(raw).toEqual(before);
+    const conflicting = { ...raw, voice: { ...raw.voice, adapters: { ...raw.voice.adapters,
+      local_direct: { stt: { openaiCompat: { apiKey: unrelatedSecret.encryptedValue } } },
+    } } };
+    expect(() => savedSecretOwner.promoteLegacyVoiceSavedSecretReferenceV1(conflicting, { credential, sharedSecretRef }, { profileRecords: [] }))
+      .toThrowError(expect.objectContaining({ code: 'saved_secret_conflict' }));
   });
 
   it('preserves malformed present inline legacy Chat material as an incomplete source', () => {
