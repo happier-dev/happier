@@ -5,13 +5,29 @@ import { installApprovalCommonModuleMocks } from '@/components/approvals/approva
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { PluginProjectedActionV2Schema } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
+
+const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(nativeBoundary.rpc);
+});
 
 installApprovalCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text'),
     modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
-beforeEach(async () => { await harness.reset(); resetScopedHomeActionExecutorsForTests(); });
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const { resetMachineProjectionReadsForTests } = await import('@/sync/ops/machineContributionRegistryProjection');
+beforeEach(async () => {
+    await harness.reset(); resetScopedHomeActionExecutorsForTests(); nativeBoundary.rpc.mockReset();
+    clearDaemonMergedProjectionCacheForTests(); resetMachineProjectionReadsForTests();
+});
 afterEach(() => standardCleanup());
 
 describe('ordinary managed machine picker demand', () => {
@@ -24,14 +40,27 @@ describe('ordinary managed machine picker demand', () => {
         harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
         const { storage } = await import('@/sync/domains/state/storage');
         storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
-        const provisioner = { contribution: preset.recipe.provider, occurrenceId: 'occurrence', descriptor: {
+        const provisioner = { contribution: preset.recipe.provider, occurrenceId: 'occurrence', credentialPurposes: [], descriptor: {
             id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: { cpu: { type: 'integer' } }, required: ['cpu'], additionalProperties: false },
             resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
             billing: { location: 'cloud', stoppedBilling: 'billed' }, retention: { supportedIntents: ['delete'] },
             actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
         } };
-        for (const [actionId, result] of [['machines.provisioners.list', { provisioners: [provisioner] }],
+        // Only the daemon RPC transport is replaced; the real projected-options
+        // owner still validates the declaration, occurrence and returned schema.
+        const action = PluginProjectedActionV2Schema.parse({ id: 'options', pluginId: provisioner.contribution.pluginId,
+            occurrenceId: 'options-occurrence', title: 'Native options', scopes: ['machine'], surfaces: ['cli', 'plugin'],
+            execution: { target: 'daemon' }, available: true, dangerLevel: 'safe' });
+        const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
+            ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
+            installedPackagesById: { [action.pluginId]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: action.pluginId } },
+            actionsById: { [buildQualifiedPluginContributionKey({ pluginId: action.pluginId, localId: action.id })]: action },
+        } });
+        nativeBoundary.rpc.mockImplementation(async (request: { method: string }) => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+            ? projection : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ
+                ? { ok: true, inputSchema: { type: 'object', properties: {}, additionalProperties: false } } : { ok: false, code: 'unsupported' });
+        for (const [actionId, result] of [['machines.provisioners.list', { controller: preset.controller, provisioners: [provisioner] }],
             ['machines.provisioners.check', { available: true }],
             ['machines.provisioners.options', { choices: [{ id: 'small', title: 'Small', launch: { cpu: 2 } }] }]] as const) {
             harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {

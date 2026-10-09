@@ -720,7 +720,7 @@ describe('target action invocation registry', () => {
                         http: ['openWebSocket', 'request'],
                         fs: ['list', 'readFile', 'remove', 'stat', 'writeFile'],
                         exec: ['agentCli', 'clients', 'run', 'spawn', 'systemTools'],
-                        machineProvisioners: ['materializeBootstrapCredential'],
+                        machineProvisioners: ['materializeBootstrapCredential', 'withBootstrapCredentialFile'],
                         managedServices: ['dependencies', 'supervise'],
                         sessions: ['current', 'external', 'get', 'list', 'subagents', 'watch'],
                         resources: ['describe', 'read', 'watch'],
