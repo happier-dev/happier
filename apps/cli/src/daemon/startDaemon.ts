@@ -67,7 +67,7 @@ import {
   notifyTerminalAttachmentRetiredThroughCatalog,
 } from '@/backends/catalog';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
-import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+import { processInstanceFingerprintMatches, readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import {
   writeDaemonStateIfLockOwned,
   writeConnectedServiceBrokerState,
@@ -126,7 +126,7 @@ import {
 } from './sessions/claudeEndpointStateEnv';
 import { HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY } from '@/backends/claude/endpointRecovery/claudeEndpointArtifacts';
 import { buildTerminalAttachmentMetadataFromHostHandle } from '@/agent/runtime/terminal/attachmentMetadata';
-import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
+import { adoptReportedHappySessionId, correlateTrackedSessionReport, createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import { applyTrackedSessionTurnLifecycle } from './sessions/applyTrackedSessionTurnLifecycle';
 import { connectedServiceTurnLifecycleContinue } from './connectedServices/connectedServiceTurnLifecycleContract';
 import { resolveSessionRuntimeSnapshot } from './sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
@@ -163,7 +163,9 @@ import { waitForTrackedRunnerProcessesExit } from './sessions/waitForTrackedRunn
 import { readProcessRunState } from './processRunState';
 import { resolveSpawnWebhookResult } from './sessions/resolveSpawnWebhookResult';
 import {
+  classifyTrackedSessionRunnerPresence,
   isSessionRunnerActive as isSessionRunnerActiveInDaemon,
+  probeSessionRunnerPresence,
   probeSessionRunnerServiceability as probeSessionRunnerServiceabilityInDaemon,
   resolveSessionRunnerResumeDecision,
   type SessionRunnerServiceabilityProbe,
@@ -422,6 +424,7 @@ import {
   type ConnectedServiceMaterializationIdentityV1,
   type RestartSessionRunnerRequestV1,
   type SessionRunnerRestartDisabledReason,
+  SessionTerminalMetadataSchema,
   writeProviderAccountUsageRecordIdToMetadata,
   type SessionContinuationRecoveryIdentityV1,
   type SessionContinuationResumePromptModeV1,
@@ -2089,31 +2092,89 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         const resolveAcceptedExistingSessionStartup = async (
           sessionId: string,
           requestedSpawnNonce: string | undefined,
+          backendTarget: BackendTargetRefV1,
         ): Promise<SpawnSessionResult | null> => {
-          for (const [pid, tracked] of pidToTrackedSession) {
-            const trackedExistingSessionId = typeof tracked.spawnOptions?.existingSessionId === 'string'
-              ? tracked.spawnOptions.existingSessionId.trim()
-              : '';
-            if (
-              tracked.startedBy !== 'daemon'
-              || tracked.pid !== pid
-              || trackedExistingSessionId !== sessionId
-              || !pidToAwaiter.has(pid)
-            ) {
-              continue;
+          const isPendingDaemonChild = (tracked: TrackedSession): boolean =>
+            tracked.startedBy === 'daemon'
+            && pidToTrackedSession.get(tracked.pid) === tracked
+            && pidToAwaiter.has(tracked.pid)
+            && tracked.reportMarkerCustody?.retiring !== true;
+          const matchesSession = (tracked: TrackedSession): boolean =>
+            tracked.happySessionId?.trim() === sessionId
+            || tracked.spawnOptions?.existingSessionId?.trim() === sessionId;
+          const resolveTrackedStartup = async (): Promise<SpawnSessionResult | null> => {
+            for (const tracked of pidToTrackedSession.values()) {
+              if (!isPendingDaemonChild(tracked) || !matchesSession(tracked) || tracked.stopRequestedAtMs !== undefined) continue;
+              const presence = await classifyTrackedSessionRunnerPresence({ tracked });
+              // OS reads can overlap webhook completion, retirement or wrapper promotion.
+              if (presence !== 'present' || !isPendingDaemonChild(tracked) || !matchesSession(tracked)
+                || tracked.stopRequestedAtMs !== undefined) continue;
+              return {
+                type: 'success',
+                sessionId,
+                runnerAcceptance: resolveExistingRunnerAcceptance({
+                  requestedSpawnNonce,
+                  trackedSpawnNonces: [tracked.spawnOptions?.spawnNonce],
+                }),
+              };
             }
-            const runState = await readProcessRunState(pid).catch(() => null);
-            if (runState !== 'servable') continue;
+            return null;
+          };
+          const knownStartup = await resolveTrackedStartup();
+          if (knownStartup) return knownStartup;
+          const isUnboundFreshChild = (tracked: TrackedSession): boolean =>
+            isPendingDaemonChild(tracked)
+            && !tracked.spawnOptions?.existingSessionId?.trim()
+            && (!tracked.happySessionId?.trim() || /^PID-\d+$/.test(tracked.happySessionId.trim()));
+          if (!Array.from(pidToTrackedSession.values()).some(isUnboundFreshChild)) return null;
+          const knownPresence = await probeSessionRunnerPresence({ sessionId, trackedSessions: pidToTrackedSession.values() });
+          if (knownPresence.state !== 'runner_absent') return null;
+
+          // A session row can be published before its creating child receives the ID,
+          // claims its runner lock and reports the webhook. Resolve only that fresh-child
+          // gap through the existing metadata/encryption owner; never wait on unrelated children.
+          const attachContext = await resolveExistingSessionAttachContext({
+            token: credentials.token,
+            credentials,
+            sessionId,
+            backendTarget,
+          });
+          if (!attachContext.ok) {
+            logger.warn('[DAEMON RUN] Unable to verify a pending fresh session owner', { sessionId, reason: attachContext.reason });
+            return mapExistingSessionAttachFailureToSpawnError(attachContext.reason);
+          }
+          const metadata = attachContext.metadata;
+          const pid = metadata?.hostPid;
+          if (!metadata || metadata.machineId !== machineId || metadata.startedBy !== 'daemon'
+            || (metadata.happyHomeDir && metadata.happyHomeDir !== configuration.happyHomeDir)
+            || typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) return null;
+          const terminal = SessionTerminalMetadataSchema.safeParse(metadata.terminal);
+          const tracked = correlateTrackedSessionReport({
+            pidToTrackedSession,
+            pidToAwaiter,
+            pid,
+            metadata: { startedBy: 'daemon', ...(terminal.success ? { terminal: terminal.data } : {}) },
+          });
+          if (!tracked || !isUnboundFreshChild(tracked)) return null;
+          const presence = await classifyTrackedSessionRunnerPresence({ tracked });
+          if (presence === 'absent' || !isUnboundFreshChild(tracked)) return null;
+          // The row's PID can outlive its process. Verify the creating runner's generation,
+          // not a wrapper's generation, before binding an otherwise unknown Session id.
+          const expectedFingerprint = readNonEmptyMetadataString(metadata.hostProcessInstanceFingerprint);
+          const currentFingerprint = readProcessInstanceFingerprintSync(pid);
+          if (!expectedFingerprint || !currentFingerprint) {
+            logger.warn('[DAEMON RUN] Refusing unproven fresh session ownership', { sessionId, pid });
             return {
-              type: 'success',
-              sessionId,
-              runnerAcceptance: resolveExistingRunnerAcceptance({
-                requestedSpawnNonce,
-                trackedSpawnNonces: [tracked.spawnOptions?.spawnNonce],
-              }),
+              type: 'error',
+              errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+              errorMessage: 'The existing session runtime could not be verified. Retry resume after its startup completes.',
             };
           }
-          return null;
+          if (!processInstanceFingerprintMatches(expectedFingerprint, currentFingerprint)) return null;
+          // Identity is learned here; readiness, marker promotion and acceptance completion
+          // still belong to the webhook. Unknown/stopped owners go through normal fencing.
+          adoptReportedHappySessionId(tracked, sessionId);
+          return await resolveTrackedStartup();
         };
 
         const spawnRecentSuccessTtlMs = resolvePositiveIntEnv(
@@ -3088,6 +3149,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               const acceptedExistingSessionStartup = await resolveAcceptedExistingSessionStartup(
                 normalizedExistingSessionId,
                 normalizedOptions.spawnNonce,
+                normalizedOptions.backendTarget ?? { kind: 'builtInAgent', agentId: resolveCatalogAgentId(null) },
               );
               if (acceptedExistingSessionStartup) {
                 logger.debug('[DAEMON RUN] Rejoining accepted existing-session launch while its exact child awaits the session webhook', {

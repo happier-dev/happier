@@ -769,6 +769,8 @@ export type Metadata = {
   happyToolsDir: string,
   startedFromDaemon?: boolean,
   hostPid?: number,
+  /** OS generation of hostPid; permits safe pre-webhook startup association. */
+  hostProcessInstanceFingerprint?: string,
   sessionLogPath?: string,
   startedBy?: 'daemon' | 'terminal',
   // Lifecycle state management

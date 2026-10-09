@@ -74,18 +74,16 @@ async function classifyLockPresence(params: {
   });
 }
 
-async function classifyTrackedSessionPresence(params: {
-  sessionId: string;
+export async function classifyTrackedSessionRunnerPresence(params: {
   tracked: TrackedSession;
-  readProcessRunState: ReadProcessRunState;
+  readProcessRunState?: ReadProcessRunState;
   getProcessCommandHash?: SessionRunnerProcessCommandHashReader;
   getProcessInstanceFingerprint?: SessionRunnerProcessInstanceFingerprintReader;
 }): Promise<SessionRunnerProcessPresence> {
-  if (!trackedSessionMatchesSessionId(params.tracked, params.sessionId)) return 'absent';
-
   const childPid = typeof params.tracked.childProcess?.pid === 'number' ? params.tracked.childProcess.pid : null;
   const pidToCheck = childPid ?? params.tracked.pid;
-  const runState = await params.readProcessRunState(pidToCheck).catch(() => null);
+  const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
+  const runState = await readProcessRunState(pidToCheck).catch(() => null);
   return await classifyStoredProcessPresence({
     storedProcessCommandHash: params.tracked.processCommandHash,
     storedProcessInstanceFingerprint: params.tracked.processInstanceFingerprint,
@@ -111,8 +109,8 @@ export async function isSessionRunnerActive(params: Readonly<{
   const readLockStatus = params.readSessionRunnerLockStatus ?? readSessionRunnerLockStatus;
 
   for (const tracked of params.trackedSessions) {
-    if (await classifyTrackedSessionPresence({
-      sessionId,
+    if (!trackedSessionMatchesSessionId(tracked, sessionId)) continue;
+    if (await classifyTrackedSessionRunnerPresence({
       tracked,
       readProcessRunState,
       getProcessCommandHash: params.getProcessCommandHash,
@@ -183,8 +181,7 @@ export async function probeSessionRunnerPresence(
 
   for (const tracked of trackedSessions) {
     if (!trackedSessionMatchesSessionId(tracked, sessionId)) continue;
-    const presence = await classifyTrackedSessionPresence({
-      sessionId,
+    const presence = await classifyTrackedSessionRunnerPresence({
       tracked,
       readProcessRunState,
       getProcessCommandHash: params.getProcessCommandHash,
