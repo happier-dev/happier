@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 
 const connectMock = vi.fn();
 const callToolMock = vi.fn();
@@ -46,6 +47,9 @@ describe('callResolvedCustomHappierTool', () => {
     'HAPPIER_MCP_EXECUTION_RUN_WAIT_TIMEOUT_GRACE_MS',
   ] as const;
   let envScope = createEnvKeyScope(envKeys);
+  // These existing tests characterize stdio/request timeouts, not Account
+  // custody; the public command tests exercise the real captured context.
+  const operationContext: Readonly<Pick<SavedSecretOperationContextV1, 'isCurrent'>> = { isCurrent: async () => true };
 
   beforeEach(() => {
     connectMock.mockReset();
@@ -72,6 +76,7 @@ describe('callResolvedCustomHappierTool', () => {
       source: 'qa_marker_stdio_20260306',
       toolName: 'get_marker',
       args: {},
+      operationContext,
       mcpServers: {
         qa_marker_stdio_20260306: { command: 'ok-server', args: ['--stdio'], env: { TOKEN: '1' } },
       },
@@ -107,6 +112,7 @@ describe('callResolvedCustomHappierTool', () => {
       source: 'qa_marker_stdio_20260306',
       toolName: 'execution_run_wait',
       args: { runId: 'run_123', timeoutSeconds: 120 },
+      operationContext,
       mcpServers: {
         qa_marker_stdio_20260306: { command: 'ok-server', args: ['--stdio'] },
       },

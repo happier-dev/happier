@@ -6,6 +6,9 @@ import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { loadFreshMcpAccountSettingsContext } from './mcp/loadFreshMcpAccountSettingsContext';
+import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import {
@@ -149,6 +152,7 @@ async function resolveCustomToolsRuntimeContext(args: readonly string[], deps: T
   directory: string;
   mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
   accountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'];
+  operationContext: SavedSecretOperationContextV1;
   cleanup: () => void;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>;
@@ -163,6 +167,7 @@ async function resolveCustomToolsRuntimeContext(
   directory: string;
   mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
   accountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'];
+  operationContext: SavedSecretOperationContextV1;
   cleanup: () => void;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>;
@@ -177,6 +182,7 @@ async function resolveCustomToolsRuntimeContext(
   directory: string;
   mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
   accountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'];
+  operationContext: SavedSecretOperationContextV1;
   cleanup: () => void;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }> {
@@ -189,19 +195,13 @@ async function resolveCustomToolsRuntimeContext(
     machineMetadata: initialMachineMetadata,
     ...(wantsJson(args) ? { suppressMachineRegistrationRecoveryLogs: true } : {}),
   });
-  const accountSettingsContext = await deps.bootstrapAccountSettingsContext({
-    credentials,
-    mode: 'blocking',
-    refresh: 'force',
-  });
+  const accountSettingsContext = await loadFreshMcpAccountSettingsContext(credentials, deps);
   const customContext = await deps.resolveCustomHappierToolsContext({
     credentials,
-    accountSettings: accountSettingsContext.settings ?? {},
+    accountSettingsSnapshot: accountSettingsContext,
+    operationContext: accountSettingsContext.operationContext,
     machineId,
     directory,
-    ...(accountSettingsContext.savedSecretResources
-      ? { savedSecretResources: accountSettingsContext.savedSecretResources }
-      : {}),
   });
   const serverFeaturesSnapshot = resolveToolsCommandSurface(args) === 'agent' && sessionId
     ? await api.getServerFeaturesSnapshot({ refresh: true }).catch(() => undefined)
@@ -213,6 +213,7 @@ async function resolveCustomToolsRuntimeContext(
     directory,
     mcpServers: customContext.mcpServers,
     accountSettings: accountSettingsContext.settings,
+    operationContext: accountSettingsContext.operationContext,
     cleanup: customContext.cleanup,
     ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
   };
@@ -274,6 +275,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           ...(isServerFeatureEnabled ? { isServerFeatureEnabled } : {}),
         });
         const { tools: customTools, warnings } = await deps.listResolvedCustomHappierTools({ mcpServers: context.mcpServers });
+        if (!await context.operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
 
         if (json) {
           await printJsonEnvelope({
@@ -346,6 +348,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
             toolName,
             args: parsedArgs,
             mcpServers: context.mcpServers,
+            operationContext: context.operationContext,
           });
         } finally {
           context.cleanup();
