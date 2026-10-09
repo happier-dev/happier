@@ -6,7 +6,7 @@ import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadR
   AcpCatalogRowMutationV1Schema, AcpCatalogRowMutationResponseV1Schema, readFreshAcpCatalogSourceV1,
   openAcpCatalogContentV1, sealAcpCatalogContentV1, listAcpCatalogSavedSecretRefsV1,
   type AcpCatalogRecordV1, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import { prepareAcpCatalogTransferV2 } from '@happier-dev/protocol/acp/catalog/transferAcpCatalogV2';
+import { prepareAcpCatalogTransferV2, readAcpCatalogTransferSourceV2 } from '@happier-dev/protocol/acp/catalog/transferAcpCatalogV2';
 import { KIRO_ACP_STDERR_RULES } from '@happier-dev/plugins-kiro/agent/acp/transport';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
@@ -162,12 +162,40 @@ export function createCliAcpCatalogStore(input: Readonly<{
     updateCatalog: async (mutate: (current: unknown) => unknown, expectation?: Readonly<{
       expectedRevision?: number | 'absent'; sourceSettingsVersion?: number;
     }>) => {
-      let catalog = requireReadyAcpCatalog(await readCatalog());
+      let sourceSettingsExpectation = expectation?.sourceSettingsVersion;
+      let observed = await readCatalog();
+      if (observed.status === 'unavailable' && observed.reason === 'saved-secret-unavailable' && capturedSource) {
+        const original = readAcpCatalogTransferSourceV2({ rawSettings: capturedSource.raw,
+          sourceSettingsVersion: capturedSource.version });
+        // Passive reads stay read-only. An explicit edit first promotes this
+        // complete source's personal bindings through the existing S2 owner.
+        if (original.status === 'ready' && original.references.length > 0) {
+          if (expectation?.expectedRevision !== undefined && expectation.expectedRevision !== 'absent') {
+            return { status: 'conflict' as const, revision: -1 };
+          }
+          if (sourceSettingsExpectation !== undefined && sourceSettingsExpectation !== capturedSource.version) {
+            return { status: 'settings-conflict' as const, revision: capturedSource.version };
+          }
+          const { importLegacySavedSecretsForOperation } = await import('@/settings/secrets/hydrateSavedSecretCatalog');
+          const imported = await runWithServerHttpBaseUrl(base, () => importLegacySavedSecretsForOperation({
+            expectedScopeKey: scopeKey, signal: input.signal, operationContext: operation,
+          }));
+          await admitCurrent();
+          if (imported.status !== 'complete') throw new AcpCatalogUnavailableError('saved-secret-unavailable');
+          // This operation's acknowledged promotion advances its admitted
+          // source expectation; a later foreign source change still conflicts.
+          if (sourceSettingsExpectation !== undefined) sourceSettingsExpectation = snapshot()?.settingsVersion;
+          // Only the acknowledged original source may supply the next baseline.
+          // A concurrently admitted row wins this fresh read without overwrite.
+          observed = await readCatalog();
+        }
+      }
+      let catalog = requireReadyAcpCatalog(observed);
       if (expectation?.expectedRevision !== undefined) {
         if (catalog.revision !== expectation.expectedRevision) {
           return { status: 'conflict' as const, revision: catalog.revision === 'absent' ? -1 : catalog.revision };
         }
-        if (catalog.revision === 'absent' && catalog.sourceSettingsVersion !== expectation.sourceSettingsVersion) {
+        if (catalog.revision === 'absent' && catalog.sourceSettingsVersion !== sourceSettingsExpectation) {
           return { status: 'settings-conflict' as const, revision: catalog.sourceSettingsVersion };
         }
         if (catalog.revision !== 'absent' && expectation.sourceSettingsVersion !== undefined) {
@@ -184,7 +212,13 @@ export function createCliAcpCatalogStore(input: Readonly<{
           sourceSettingsVersion: catalog.sourceSettingsVersion });
         if (transfer.status !== 'updated') return transfer;
         // Acknowledged transfer is not permission to mutate a replacement Account.
-        await admitCurrent();
+        try { await admitCurrent(); }
+        catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'scope-retired') {
+            throw new AcpCatalogUnavailableError('scope-retired', transfer.revision);
+          }
+          throw error;
+        }
         catalog = { status: 'ready', record: catalog.record, revision: transfer.revision };
         await publish(catalog);
       }

@@ -12,12 +12,19 @@ import * as persistence from '@/persistence';
 import { createCliAcpCatalogStore } from './acpCatalogStore';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { readAcpCatalogTransferSourceV2 } from '@happier-dev/protocol/acp/catalog/transferAcpCatalogV2';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { readSavedSecretTransferSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 
-afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
 
-function account(token = 'acp-catalog') {
+function account(token = 'acp-catalog', rawSettings: Readonly<Record<string, unknown>> = {}) {
   const credentials = { token, encryption: null };
-  setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
+  setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(rawSettings), rawSettings,
     settingsVersion: 7, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
   return credentials;
 }
@@ -29,6 +36,139 @@ const record = (command: string) => AcpCatalogRecordV1Schema.parse({ v: 1, defin
 const currentness = { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 };
 
 describe('ACP Account catalog hydration', () => {
+  it('promotes the original personal source before atomically transferring ACP and applying its numeric edit', async () => {
+    const original = record('original-personal-source');
+    const secret = { id: 'personal-acp-token', name: 'ACP credential', kind: 'apiKey',
+      encryptedValue: { _isSecretValue: true, value: 'private-source-value' }, createdAt: 1, updatedAt: 1 };
+    let raw: Readonly<Record<string, unknown>> = { themePreference: 'dark', secrets: [secret],
+      acpCatalogSettingsV1: { v: 2, backends: original.definitions.map(backend => ({ ...backend,
+        env: { API_TOKEN: { t: 'savedSecret', secretId: secret.id } } })) } };
+    const credentials = account(`header.${Buffer.from(JSON.stringify({ sub: 'acp-personal-source-owner' })).toString('base64url')}.signature`, raw);
+    let settingsVersion = 7;
+    expect(readAcpCatalogTransferSourceV2({ rawSettings: raw, sourceSettingsVersion: settingsVersion })).toMatchObject({
+      status: 'ready', references: [{ secretId: secret.id }],
+    });
+    expect(readSavedSecretTransferSourceV1(raw)).toMatchObject({ complete: true, secrets: [secret] });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({
+      features: { teams: { enabled: true } }, capabilities: {},
+    }))));
+    let catalog: ReturnType<typeof record> | null = null;
+    let revision = -1;
+    let sharedRef: string | null = null;
+    let resourceId: string | null = null;
+    const resources: unknown[] = [];
+    const events: string[] = [];
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { ...currentness, settingsVersion } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/entity-rows/acp') return { status: 200, data: catalog
+        ? { status: 'present', revision, content: { t: 'plain', v: catalog } } : { status: 'absent' } };
+      if (path === '/v2/account/settings') { events.push(`source:${settingsVersion}`); return { status: 200,
+        data: { version: settingsVersion, content: { t: 'plain', v: raw } } }; }
+      if (path === PROFILE_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [], nextCursor: null,
+        complete: true, diagnostics: [], referenceGuardRevision: 3, transferControl: { status: 'absent' } } };
+      if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: 3 } };
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
+      if (path === PROFILE_TRANSFER_ROUTE_V1 || path.startsWith('/v1/account/entity-rows/')) return { status: 200, data: { status: 'absent' } };
+      if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources } };
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
+      if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
+      return { status: 404, data: { error: 'unsupported' } };
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (input, body) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/saved-secrets/resources/promote') {
+        const mutation = SharedSavedSecretPromoteInputV1Schema.parse(body);
+        expect(mutation).toMatchObject({ expectedSettingsVersion: 7, personalSecretPromotions: [{ personalSecretId: secret.id }],
+          referenceCensus: { accountMode: 'plain', catalogs: { acp: 'absent' } } });
+        expect(mutation.catalogMutations?.acp).toBeUndefined();
+        if (mutation.nextSettings?.t !== 'plain') throw new Error('Expected original Plain source promotion');
+        raw = mutation.nextSettings.v;
+        resourceId = mutation.resourceId;
+        sharedRef = `happier:shared-secret:v1:${resourceId}`;
+        expect(raw).toMatchObject({ secrets: [], acpCatalogSettingsV1: { backends: [{ command: original.definitions[0].command,
+          env: { API_TOKEN: { t: 'savedSecret', secretId: sharedRef } } }] } });
+        resources.push({ resourceId, encryptionMode: 'plain', storedContent: mutation.storedContent, recipientEnvelope: null,
+          entry: { ref: sharedRef, source: 'shared_resource', relationship: 'owner', ownerAccountId: 'acp-personal-source-owner',
+            name: mutation.displayName, kind: mutation.kind, revision: 1, materialStatus: 'ready',
+            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } });
+        events.push('promote');
+        return { status: 200, data: { resourceId, settingsVersion: ++settingsVersion } };
+      }
+      if (path === '/v1/account/entity-rows/acp') {
+        const mutation = AcpCatalogRowMutationV1Schema.parse(body);
+        expect(sharedRef).not.toBeNull();
+        expect(mutation.savedSecretRevisions).toEqual([{ resourceId, expectedRevision: 1 }]);
+        if (mutation.content.t !== 'plain') throw new Error('Expected Plain ACP destination');
+        if (revision === -1) {
+          expect(events.slice(events.indexOf('promote') + 1)).toContain('source:8');
+          expect(mutation).toMatchObject({ expectedRevision: 'absent', source: 'predecessor', sourceSettingsVersion: 8,
+            settingsCleanup: { expectedSettingsVersion: 8, nextSettings: { t: 'plain', v: { themePreference: 'dark', secrets: [] } } },
+            content: { v: { definitions: [{ command: original.definitions[0].command }] } } });
+          if (mutation.settingsCleanup?.nextSettings.t !== 'plain') throw new Error('Expected atomic source cleanup');
+          raw = mutation.settingsCleanup.nextSettings.v;
+          settingsVersion += 1;
+          events.push('transfer');
+        } else {
+          expect(mutation.expectedRevision).toBe(0);
+          expect(mutation).not.toHaveProperty('settingsCleanup');
+          events.push('edit');
+        }
+        catalog = mutation.content.v;
+        return { status: 200, data: { status: 'updated', revision: ++revision, cursor: revision + 1 } };
+      }
+      throw new Error(`Unexpected personal ACP mutation: ${path}`);
+    });
+    const stale = await createCliAcpCatalogStore({ credentials }).updateCatalog(() => {
+      throw new Error('A stale source cannot admit the edit');
+    }, { expectedRevision: 'absent', sourceSettingsVersion: 6 });
+    expect(stale).toEqual({ status: 'settings-conflict', revision: 7 });
+    expect(events).not.toContain('promote');
+    const result = await createCliAcpCatalogStore({ credentials }).updateCatalog(current => {
+      expect(current).toMatchObject({ backends: [{ command: original.definitions[0].command,
+        env: { API_TOKEN: { t: 'savedSecret', secretId: sharedRef } } }] });
+      return { v: 2, backends: original.definitions.map(backend => ({ ...backend, command: 'edited-after-transfer',
+        env: { API_TOKEN: { t: 'savedSecret', secretId: sharedRef } } })) };
+    }, { expectedRevision: 'absent', sourceSettingsVersion: 7 });
+    expect(result).toMatchObject({ status: 'updated', revision: 1 });
+    expect(events.filter(event => ['promote', 'transfer', 'edit'].includes(event))).toEqual(['promote', 'transfer', 'edit']);
+    expect(raw).toEqual({ themePreference: 'dark', secrets: [] });
+    expect(catalog).toMatchObject({ definitions: [{ command: 'edited-after-transfer', env: { API_TOKEN: { secretId: sharedRef } } }] });
+  });
+  it('retains the acknowledged original-source revision when retirement refuses the numeric candidate', async () => {
+    const credentials = account();
+    const original = record('original-source');
+    const rawSettings = { schemaVersion: 6, acpCatalogSettingsV1: { v: 2, backends: original.definitions } };
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
+      if (pathname === '/v1/account/entity-rows/acp') return { status: 200, data: { status: 'absent' } };
+      if (pathname === '/v2/account/settings') return { status: 200, data: {
+        version: 7, content: { t: 'plain', v: rawSettings },
+      } };
+      throw new Error(`Unexpected source admission request: ${pathname}`);
+    });
+    const writes: unknown[] = [];
+    vi.spyOn(axios, 'post').mockImplementation(async (input, body) => {
+      expect(new URL(String(input)).pathname).toBe('/v1/account/entity-rows/acp');
+      const mutation = AcpCatalogRowMutationV1Schema.parse(body);
+      expect(mutation).toMatchObject({ expectedRevision: 'absent', source: 'predecessor', sourceSettingsVersion: 7,
+        content: { t: 'plain', v: original }, settingsCleanup: { expectedSettingsVersion: 7 } });
+      writes.push(mutation);
+      // The actual HTTP boundary returns the original-source acknowledgement
+      // after the caller's Account retires. It never acknowledges the user delta.
+      account('replacement-account');
+      return { status: 200, data: { status: 'updated', revision: 0, cursor: 1 } };
+    });
+    await expect(createCliAcpCatalogStore({ credentials }).updateCatalog(() => ({
+      v: 2, backends: original.definitions.map(backend => ({ ...backend, command: 'candidate-not-written' })),
+    }))).rejects.toMatchObject({ code: 'ACP_CATALOG_UNAVAILABLE', reason: 'scope-retired', revision: 0 });
+    expect(writes).toHaveLength(1);
+    expect(getActiveAccountSettingsSnapshot()?.scopeKey).toBe(resolveAccountSettingsScopeKey({ token: 'replacement-account', encryption: null }));
+    expect(getActiveAccountSettingsSnapshot()?.acpCatalog).toBeUndefined();
+  });
   it('returns the canonical published snapshot when the same authoritative row is refreshed again', async () => {
     const credentials = account();
     vi.spyOn(axios, 'get').mockImplementation(async input => {
