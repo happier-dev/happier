@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     MACHINE_PLAIN_DATA_KEY_MARKER,
+    computeWorkspaceSyncPolicyDigest,
     decodePlainArtifactStoredContent,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -14,6 +15,7 @@ import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 
@@ -59,6 +61,7 @@ import {
     inspectWorkspaceSyncLegacyState,
     inspectWorkspaceSyncConflict,
 } from './workspaceSync';
+import * as workspaceSyncOperations from './workspaceSync';
 
 const status = {
     relationshipId: 'relationship-1',
@@ -122,13 +125,44 @@ describe('workspace sync UI operations', () => {
         machineRpcWithServerScope.mockReset();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        // This suite retires its mocked network boundary after every case. The
+        // real pool must release retained sockets before their mock is restored.
+        await serverScopedRpcSocketPool.stopAll();
         resetRuntimeFetch();
         resetServerFeaturesClientForTests();
         invalidateAccountEncryptionModeCache();
         getStorage().setState(initialStorageState, true);
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+    });
+
+    it('builds the existing retirement input only from a strictly bound readonly target preview', async () => {
+        const contentPolicy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [],
+            policyDigest: computeWorkspaceSyncPolicyDigest({ v: 1, selection: 'all_files', extraIgnorePatterns: [], extraIncludePatterns: [] }) };
+        const request = { kind: 'preview' as const, workspace: { serverId: actionServerId, refId: 'workspace-alpha' },
+            machineId: 'machine-controller', targetMachineId: 'machine-target', targetWorkspaceRefId: 'workspace-beta',
+            expectedRelationship: { v: 1 as const, relationshipId: 'relationship-1', controllerMachineId: 'machine-controller',
+                alphaWorkspaceRefId: 'workspace-alpha', betaWorkspaceRefId: 'workspace-beta', mode: 'keep_synced' as const,
+                contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1 } };
+        const preview = { targetMachineId: 'machine-target', workspaceRefId: 'workspace-beta', rootFingerprint: 'a'.repeat(64), sizeBytes: 27 };
+        machineRpcWithServerScope.mockResolvedValueOnce({ ok: true, preview });
+        await expect(workspaceSyncOperations.getWorkspaceSyncCommittedCopyPreview({ accountId: 'workspace-sync-account', request }))
+            .resolves.toEqual({ ok: true, preview, retirementInput: {
+                workspace: request.workspace, machineId: request.machineId, expectedRelationship: request.expectedRelationship,
+                removeTargetCopy: { workspaceRefId: preview.workspaceRefId, rootFingerprint: preview.rootFingerprint },
+            } });
+        expect(machineRpcWithServerScope).toHaveBeenCalledWith({ machineId: 'machine-controller',
+            serverUrl: 'https://workspace-sync-action.test', method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, payload: request });
+        machineRpcWithServerScope.mockResolvedValueOnce({ ok: true, preview: { ...preview, workspaceRefId: 'unrelated-workspace' } });
+        await expect(workspaceSyncOperations.getWorkspaceSyncCommittedCopyPreview({ accountId: 'workspace-sync-account', request }))
+            .rejects.toThrow();
+        machineRpcWithServerScope.mockResolvedValueOnce({ ok: true, preview: { ...preview, canonicalRoot: '/private/path' } });
+        await expect(workspaceSyncOperations.getWorkspaceSyncCommittedCopyPreview({ accountId: 'workspace-sync-account', request }))
+            .rejects.toThrow();
+        machineRpcWithServerScope.mockResolvedValueOnce({ ok: false, errorCode: 'workspace_copy_not_owned' });
+        await expect(workspaceSyncOperations.getWorkspaceSyncCommittedCopyPreview({ accountId: 'workspace-sync-account', request }))
+            .resolves.toEqual({ ok: false, errorCode: 'workspace_copy_not_owned' });
     });
 
     it('reinspects legacy state without publishing a cleanup mutation', async () => {
@@ -150,19 +184,21 @@ describe('workspace sync UI operations', () => {
     });
 
     it('reads strictly validated status through the relationship controller machine', async () => {
+        // A later check must preserve the producer's historical clean completion, not relabel 42 as synced.
+        const cleanStatus = { ...status, lastCleanSyncAtMs: 17 };
         machineRpcWithServerScope
-            .mockResolvedValueOnce({ statuses: [status] })
-            .mockResolvedValueOnce({ status });
+            .mockResolvedValueOnce({ statuses: [cleanStatus] })
+            .mockResolvedValueOnce({ status: cleanStatus });
 
         await expect(listWorkspaceSyncStatuses({
             controllerMachineId: 'machine-controller',
             serverId: actionServerId,
-        })).resolves.toEqual([status]);
+        })).resolves.toEqual([cleanStatus]);
         await expect(getWorkspaceSyncStatus({
             controllerMachineId: 'machine-controller',
             serverId: actionServerId,
             relationshipId: 'relationship-1',
-        })).resolves.toEqual(status);
+        })).resolves.toEqual(cleanStatus);
 
         expect(machineRpcWithServerScope).toHaveBeenNthCalledWith(1, {
             machineId: 'machine-controller',
