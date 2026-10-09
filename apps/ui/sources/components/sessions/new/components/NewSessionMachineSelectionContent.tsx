@@ -15,6 +15,10 @@ import {
     type TemporaryComputerSelection,
 } from './machineSelection/useMachineSelectionListModel';
 import type { MachinePoolSelectionStatus } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
+import type { ManagedMachineDestinationProjection, ManagedMachineSelectionDraft, ManagedMachineSelectionOffer } from './machineSelection/managedMachineSelection';
+
+const ManagedMachineSelectionOffers = React.lazy(() => import('./machineSelection/ManagedMachineSelectionOffers')
+    .then(module => ({ default: module.ManagedMachineSelectionOffers })));
 
 /**
  * The one machine list: the new-session composer popover and picker route, and the settings
@@ -35,6 +39,10 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     resolveMachinePresentation?: (machine: TMachine) => MachineSelectionPresentation;
     onSelectPool?: (selection: ServerScopedMachinePoolSelection) => void;
     temporaryComputers?: readonly TemporaryComputerSelection[];
+    managedMachines?: readonly ManagedMachineSelectionOffer[];
+    selectedManagedMachine?: ManagedMachineSelectionDraft | null;
+    onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
+    onManagedMachineProjection?: (serverId: string, projection: ManagedMachineDestinationProjection) => void;
     poolSelectionStatus?: MachinePoolSelectionStatus;
     onRefreshMachines?: () => void;
     onRefreshPools?: (serverId: string) => void;
@@ -57,7 +65,18 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
 export function NewSessionMachineSelectionContent<TMachine extends MachineDisplayRenderable = Machine>(
     props: NewSessionMachineSelectionContentProps<TMachine>,
 ) {
+    const [loadedOffers, setLoadedOffers] = React.useState<Readonly<{
+        serverId: string; offers: readonly ManagedMachineSelectionOffer[];
+    }> | null>(null);
+    const projectionHandler = React.useRef(props.onManagedMachineProjection);
+    projectionHandler.current = props.onManagedMachineProjection;
+    const receiveOffers = React.useCallback((serverId: string, offers: readonly ManagedMachineSelectionOffer[], projection: ManagedMachineDestinationProjection) => {
+        setLoadedOffers(current => current?.serverId === serverId && current.offers === offers ? current : { serverId, offers });
+        projectionHandler.current?.(serverId, projection);
+    }, []);
+    const managedMachines = props.managedMachines ?? (loadedOffers?.serverId === props.selectedServerId ? loadedOffers.offers : undefined);
     const listModel = useMachineSelectionListModel<TMachine>({
+        purpose: 'session',
         groups: props.groups,
         poolGroups: props.poolGroups,
         selectedMachine: props.selectedMachine,
@@ -70,6 +89,9 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         resolveMachinePresentation: props.resolveMachinePresentation,
         onSelectPool: props.onSelectPool,
         temporaryComputers: props.temporaryComputers,
+        managedMachines,
+        selectedManagedMachine: props.selectedManagedMachine,
+        onSelectManagedMachine: props.onSelectManagedMachine,
         poolSelectionStatus: props.poolSelectionStatus,
         onRefreshMachines: props.onRefreshMachines,
         onRefreshPools: props.onRefreshPools,
@@ -87,6 +109,10 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
     });
 
     return (
+        <>
+        {props.managedMachines === undefined && props.selectedServerId && props.onSelectManagedMachine ?
+            <React.Suspense fallback={null}><ManagedMachineSelectionOffers key={props.selectedServerId} serverId={props.selectedServerId}
+                onOffers={receiveOffers} onUse={props.onSelectManagedMachine} /></React.Suspense> : null}
         <SelectionList
             testID={props.testID ?? 'new-session-machine-list'}
             rootStep={listModel.rootStep}
@@ -101,5 +127,6 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
                     : resolvePopoverSelectionListHeightBehavior()
             }
         />
+        </>
     );
 }
