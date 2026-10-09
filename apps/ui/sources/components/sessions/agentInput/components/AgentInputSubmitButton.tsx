@@ -262,7 +262,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         <PrimaryCircleIconButton
             appearance={props.appearance}
             testID={props.testID}
-            active={props.hasSendableContent || props.isSending || showDictation || showStopWhenEmpty}
+            active={!props.disabled && (props.hasSendableContent || props.isSending || showDictation || showStopWhenEmpty)}
             loading={props.isSending || dictationTranscribing || (showStopWhenEmpty && props.isStopping)}
             disabled={props.disabled}
             accessibilityLabel={

@@ -201,7 +201,7 @@ describe('ProjectsColumn', () => {
 });
 
 describe('Projects index', () => {
-    it('invites opening a saved Source and keeps Add as a secondary entrance', async () => {
+    it('invites opening a saved Source without rendering a duplicate Add affordance below it', async () => {
         workspaceRefsV1Mock = [];
         homes.answer(serverId, `/v1/projects/sources?serverId=${encodeURIComponent(serverId)}&query=`, { body: {
             ok: true, sources: [{ id: 'saved', revision: 1, name: 'Saved repository', createdByAccountId: 'account-1', audience: [],
@@ -213,7 +213,7 @@ describe('Projects index', () => {
         const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
         const screen = await renderProjects(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}><ProjectsIndexView /></AppShellColumnContext.Provider>);
         await vi.waitFor(() => expect(screen.findByTestId('projects-none-open:open-source')).toBeTruthy());
-        expect(screen.findByTestId('projects-none-open:add')).toBeTruthy();
+        expect(screen.findByTestId('projects-none-open:add')).toBeNull();
         await act(async () => { await screen.findAllByType(RoundButton).find(node => node.props.testID === 'projects-none-open:open-source')!.props.action(); });
         // On a computer Open is the dialog over the page, addressed by its retained draft (never a pushed page).
         const { Modal } = await import('@/modal');

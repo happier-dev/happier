@@ -424,6 +424,11 @@
       "types": "./dist/machines/managed/managedDependencyV1.d.ts",
       "default": "./dist/machines/managed/managedDependencyV1.js"
     },
+    "./machines/managed/agentStartV1": {
+      "happier-source": "./src/machines/managed/agentStartV1.ts",
+      "types": "./dist/machines/managed/agentStartV1.d.ts",
+      "default": "./dist/machines/managed/agentStartV1.js"
+    },
     "./machines/managed/actionsV1": {
       "happier-source": "./src/machines/managed/actionsV1.ts",
       "types": "./dist/machines/managed/actionsV1.d.ts",

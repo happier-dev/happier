@@ -71,7 +71,7 @@ describe('resolveMachineDisplayNames', () => {
 });
 
 describe('locked machines', () => {
-    const locked = (id: string) => ({ id, metadata: null });
+    const locked = (id: string) => ({ id, metadata: null, availability: { kind: 'locked' } });
 
     it('calls a machine whose details cannot be read "Locked machine", not unnamed, and never its id', () => {
         expect(getMachineDisplayName(locked('f98b860d-63e0'))).toBe(t('machine.lockedMachine'));
@@ -87,6 +87,12 @@ describe('locked machines', () => {
         expect(pair.get('f98b860d-63e0')).toBe(`${lockedName} · f98b`);
         expect(pair.get('0c1d2e3f-9999')).toBe(`${lockedName} · 0c1d`);
     });
+
+    it('does not call a machine locked while its encrypted display metadata is still hydrating', () => {
+        const hydrating = { id: 'machine-a', metadata: null };
+        expect(getMachineDisplayName(hydrating)).toBe(t('common.loading'));
+        expect(describeMachineLockedReason(hydrating)).toBeNull();
+    });
 });
 
 describe('describeMachineLockedReason', () => {
@@ -96,7 +102,7 @@ describe('describeMachineLockedReason', () => {
         expect(describeMachineLockedReason(lockedFor('encryption_material_unavailable'))).toBe(t('machine.lockedReason.missingKey'));
         expect(describeMachineLockedReason(lockedFor('decryption_failed'))).toBe(t('machine.lockedReason.unopenable'));
         expect(describeMachineLockedReason(lockedFor('content_unreadable'))).toBe(t('machine.lockedReason.unreadable'));
-        expect(describeMachineLockedReason({ id: 'a-1', metadata: null })).toBe(t('machine.lockedReason.unreadable'));
+        expect(describeMachineLockedReason({ id: 'a-1', metadata: null, availability: { kind: 'locked' } })).toBe(t('machine.lockedReason.unreadable'));
     });
 
     it('has no reason for a readable machine', () => {

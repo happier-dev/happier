@@ -40,11 +40,15 @@ const LOCKED_REASON_KEYS = {
 } as const;
 
 /**
- * A machine whose details this device cannot read: sync projects a locked machine (encryption
- * material unavailable, decryption failed, unreadable content) with `metadata: null`.
+ * A machine whose details this device cannot read: sync explicitly projects a locked availability
+ * state. `metadata: null` alone is also used while encrypted metadata is still hydrating.
  */
 function isMachineLocked(machine: MachineNameInput): boolean {
-    return machine.metadata === null || machine.availability?.kind === 'locked';
+    return machine.availability?.kind === 'locked';
+}
+
+function isMachineDisplayHydrating(machine: MachineNameInput): boolean {
+    return machine.metadata === null && machine.availability === undefined;
 }
 
 /**
@@ -85,6 +89,7 @@ export function getMachineDisplayName(machine: MachineNameInput | null | undefin
     if (!machine) return null;
     if (machine.absence) return t(ABSENT_MACHINE_NAME_KEYS[machine.absence]);
     if (isMachineLocked(machine)) return lockedMachineName();
+    if (isMachineDisplayHydrating(machine)) return t('common.loading');
     return readMachineName(machine) ?? unnamedMachineName();
 }
 

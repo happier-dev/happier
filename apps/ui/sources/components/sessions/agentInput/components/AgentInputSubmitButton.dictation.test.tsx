@@ -78,6 +78,27 @@ describe('AgentInputSubmitButton Dictation routing', () => {
         translateOverride.fn = null;
     });
 
+    it('keeps a disabled send visually inactive and exposes its disabled accessibility state', async () => {
+        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
+        let renderer: ReturnType<typeof create>;
+
+        await act(async () => {
+            renderer = create(<AgentInputSubmitButton
+                testID="composer-send"
+                sessionId="session-1"
+                disabled
+                hasSendableContent
+                dictationStatus="idle"
+                onSend={() => {}}
+            />);
+        });
+        const button = renderer!.root.findByType('PrimaryCircleIconButton' as any);
+
+        expect(button.props.active).toBe(false);
+        expect(button.props.disabled).toBe(true);
+        expect(button.props.accessibilityState).toMatchObject({ disabled: true });
+    });
+
     it('ends active Dictation instead of sending composer text as a coding turn', async () => {
         const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onDictationPress = vi.fn();

@@ -38,7 +38,7 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
                     {firstSaved ? <RoundButton testID="projects-none-open:open-source" size="normal"
                         title={`${t('common.open')} ${firstSaved.title}`}
                         action={async () => { model.saved?.onOpen(firstSaved.key); }} /> : null}
-                    <ProjectsAddMenu
+                    {!firstSaved ? <ProjectsAddMenu
                         testID="projects-none-open:add"
                         machines={model.addFirstMachines}
                         onAdd={model.addProjectToMachine}
@@ -54,7 +54,7 @@ const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
                                 action={async () => { open(); }}
                             />
                         )}
-                    />
+                    /> : null}
                     </>
                 )}
             />
