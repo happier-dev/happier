@@ -226,6 +226,7 @@ export async function finishExecutionRun(args: Readonly<{
   const parentWorkerUpdate = composeExecutionRunWorkerUpdate(updated, terminalEventId);
   const markerPayload = {
     pid: process.pid,
+    ...(updated.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: updated.requesterWorkAttributionV1 } : {}),
     happySessionId: existing.sessionId,
     runId: updated.runId,
     callId: updated.callId,
@@ -253,7 +254,9 @@ export async function finishExecutionRun(args: Readonly<{
   const markerWritePromise = args.enqueueMarkerWrite(args.runId, async (): Promise<void> => {
     await retainExecutionRunState(updated, terminalEventId);
     if (parentWorkerUpdate) {
-      await retainExecutionRunWorkerUpdate(parentWorkerUpdate);
+      await retainExecutionRunWorkerUpdate({ ...parentWorkerUpdate,
+        ...(updated.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: updated.requesterWorkAttributionV1 } : {}),
+      });
       args.onWorkerUpdateRetained?.(parentWorkerUpdate);
     }
     // Disk writes can fail transiently (e.g. rename contention on some platforms). Retry once.

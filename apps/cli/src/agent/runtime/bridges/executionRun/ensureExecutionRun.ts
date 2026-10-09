@@ -127,7 +127,7 @@ export async function ensureExecutionRun(args: Readonly<{
     const resumeBackendOptions = resolveExecutionRunResumeBackendOptions({ run });
 
     const needsBudget = Boolean(args.budgetRegistry && run.status !== 'running');
-    if (needsBudget && args.budgetRegistry && !args.budgetRegistry.tryAcquireExecutionRun(args.runId, run.intent)) {
+    if (needsBudget && args.budgetRegistry && !args.budgetRegistry.tryAcquireExecutionRun(args.runId, run.intent, run.requesterWorkAttributionV1)) {
       return { ok: false, errorCode: 'execution_run_budget_exceeded', error: 'Execution run budget exceeded', resumeFailureKind: 'indeterminate' };
     }
 

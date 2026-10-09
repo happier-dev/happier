@@ -148,6 +148,7 @@ type ExecutionRunRpcActionContext = Readonly<{
   /** Exact target-host role/context owner for a present-user start. */
   resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
   readPromptCredentials?: () => Promise<import('@/persistence').StoredCredentials | null>;
+  readRequesterWorkAttributionV1?: () => Promise<import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1 | null>;
   /** Session access owner for a Run's consented Team visibility requirement. */
   grantAttachedRunTeamVisibility?: GrantAttachedRunTeamVisibility;
 }>;
@@ -472,11 +473,19 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       const {
         teamCredentialSessionBindingConsent: _teamCredentialSessionBindingConsent,
+        // Nonsecret custody facts are still host-only. A passthrough public
+        // request must not acquire identity merely by naming the internal field.
+        requesterWorkAttributionV1: _callerAttribution,
         ...runStartRequest
       } = parsed.data;
+      const requesterWorkAttributionV1 = params.context.sessionId === sessionId
+        && params.context.readRequesterWorkAttributionV1
+        ? await params.context.readRequesterWorkAttributionV1()
+        : actionOptions?.requesterWorkAttributionV1;
       const started = await params.manager.start({
         ...(accountSettings ? { accountSettings } : {}),
         ...runStartRequest,
+        ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
         // The accepted Action context supplies role content and write policy;
         // the public request carries identity only.
         resolvedRole: parsed.data.roleId ? actionOptions?.agentStartContext?.roles[parsed.data.roleId] : undefined,

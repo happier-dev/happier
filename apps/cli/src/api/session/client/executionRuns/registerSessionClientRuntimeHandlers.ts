@@ -16,7 +16,12 @@ import {
 } from '@/settings/actionsSettingsProvider';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, readActiveAccountRoleOverrides } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerStore';
+import { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createInvocationSavedSecretOperationContextV1, refreshSavedSecretCatalogForOperation,
+    type SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { applyRunnerMcpSessionContext, type RunnerMcpSessionWithContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
@@ -26,7 +31,7 @@ import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers'
 import { registerSessionRoleConfigurationHandler } from '@/rpc/handlers/sessionRoleConfiguration';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { ROLE_ACTION_IDS_V1 } from '@happier-dev/protocol/prompts/roles/roleActionIdsV1';
-import type { RoleSourceReader } from '@/session/roles/roleSources';
+import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
 import type { RoleWorkspaceWritesPolicyPreparer } from '@/session/actions/roleActions';
 import type { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
@@ -81,6 +86,10 @@ import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/pro
 import type { ExecutionRunHostBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { hashProcessCommand, readSessionMarkerForPid } from '@/daemon/sessionRegistry';
+import { processGenerationMatches, readProcessIdentityByPid } from '@/daemon/processIdentity';
+import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createSessionFollowContextReconciler } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
 import { createSessionFollowSourceHydrator, resolveAccountVoiceFollowDisclosure } from '@/agent/runtime/session/follow/sessionFollowSourceHydrator';
 import { resolveSessionFollowContextUtf8AllowanceV1 } from '@/agent/runtime/session/follow/sessionFollowContextBudget';
@@ -184,8 +193,11 @@ export function registerSessionClientRuntimeHandlers(
     }>,
 ): ReturnType<typeof registerSessionHandlers> {
     const readOwnerAccountCredentials = params.readOwnerAccountCredentials;
+    const roleAccountScopeKey = runWithServerHttpBaseUrl(params.serverUrl,
+        () => resolveAccountSettingsScopeKeyForToken(params.token));
+    const roleAccountLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
     const actionsSettingsProvider = params.actionsSettingsProvider ?? createActionSettingsProvider({
-        scopeKey: resolveAccountSettingsScopeKeyForToken(params.token),
+        scopeKey: roleAccountScopeKey,
     });
     const approvalServerId = params.serverId;
     const approvalServerApiUrl = params.serverUrl;
@@ -201,6 +213,35 @@ export function registerSessionClientRuntimeHandlers(
     const runtimeAccountId = params.runtimePrincipalAccountId !== undefined
         ? restrictedRuntimeAdmission?.accountId
         : tokenAccountId ?? undefined;
+    const markerReadScope = Object.freeze({ happyHomeDir: configuration.happyHomeDir,
+        publicReleaseRing: configuration.publicReleaseRing });
+    const readRequesterWorkAttributionV1 = async () => {
+        if (!runtimeAccountId) return null;
+        const credentials = await readOwnerAccountCredentials();
+        if (!credentials || credentials.token !== params.token) return null;
+        const scope = credentials.requesterSessionCredentialScope;
+        if (scope && (scope.serverId !== params.serverId
+            || scope.serverHttpBaseUrl !== normalizeServerHttpBaseUrl(params.serverUrl))) return null;
+        const child = scope?.requesterSession;
+        if (child) {
+            return child.sessionId === params.sessionId
+                && child.attribution.serverId === params.serverId
+                && child.attribution.accountId === runtimeAccountId ? child.attribution : null;
+        }
+        // Ordinary daemon-launched custody already has a canonical accepted
+        // marker. Only its exact live process generation may supply this fact.
+        const [marker, identity] = await Promise.all([
+            readSessionMarkerForPid(process.pid, markerReadScope), readProcessIdentityByPid(process.pid),
+        ]);
+        const stamp = marker?.requesterWorkAttributionV1;
+        if (!marker || !identity || !stamp || marker.pid !== process.pid
+            || marker.happySessionId !== params.sessionId
+            || stamp.serverId !== params.serverId || stamp.accountId !== runtimeAccountId
+            || marker.processStartTimeMs === undefined || identity.processStartTimeMs === undefined
+            || !processGenerationMatches(marker.processStartTimeMs, identity.processStartTimeMs)
+            || !marker.processCommandHash || marker.processCommandHash !== hashProcessCommand(identity.command)) return null;
+        return Object.freeze(RequesterWorkAttributionV1Schema.parse(stamp));
+    };
     const transcriptQueryContext = params.getTranscriptQueryContext();
     const transcriptTransportContext: SessionStoredContentCryptoContext =
         transcriptQueryContext.encryptionMode === 'plain'
@@ -240,25 +281,54 @@ export function registerSessionClientRuntimeHandlers(
         })
         : null;
     let ownerAccountSettingsForRuntime: AccountSettings | null = null;
+    let ownerAccountOperationContext: SavedSecretOperationContextV1 | undefined;
+    let disposed = false;
+    const ownerAccountIsCurrent = async () => {
+        if (disposed) return false;
+        const credentials = await readOwnerAccountCredentials();
+        const scope = credentials?.requesterSessionCredentialScope;
+        return !disposed && credentials?.token === params.token && (!scope || scope.serverId === params.serverId
+            && scope.serverHttpBaseUrl === normalizeServerHttpBaseUrl(params.serverUrl));
+    };
     const resolveOwnerAccountSettingsSnapshot = async (input?: Readonly<{
         secretReferenceOverlay?: import('@happier-dev/protocol').SecretReferenceOverlayV1;
-    }>) => {
+        mcpServerCatalog?: boolean;
+        signal?: AbortSignal;
+    }>) => runWithServerHttpBaseUrl(params.serverUrl, async () => {
         const credentials = await readOwnerAccountCredentials();
-        if (!credentials) {
+        if (!credentials || !await ownerAccountIsCurrent()) {
             ownerAccountSettingsForRuntime = null;
             return null;
         }
-        const context = await bootstrapAccountSettingsContext({ credentials, mode: 'fast' });
+        const scopeKey = resolveAccountSettingsScopeKeyForToken(credentials.token);
+        input?.signal?.throwIfAborted();
+        const context = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', publication: 'invocation',
+            honorAccountSettingsModeEnv: false, shouldCommit: () => !disposed });
+        if (!await ownerAccountIsCurrent() || context.scopeKey !== scopeKey) return null;
+        ownerAccountOperationContext ??= createInvocationSavedSecretOperationContextV1({ credentials,
+            snapshot: context, serverHttpBaseUrl: params.serverUrl, isCurrent: ownerAccountIsCurrent });
+        if (!await ownerAccountOperationContext.replaceAccountSettings(context)) return null;
         const operationSnapshot = input?.secretReferenceOverlay
             ? await refreshSavedSecretCatalogForOperation({
-                expectedScopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+                expectedScopeKey: scopeKey,
                 secretReferenceOverlay: input.secretReferenceOverlay,
+                operationContext: ownerAccountOperationContext,
+                signal: input.signal,
             })
             : null;
-        const resolved = operationSnapshot ?? context;
+        const resolved = operationSnapshot ?? ownerAccountOperationContext.readSnapshot();
+        if (!resolved || !await ownerAccountOperationContext.isCurrent()) return null;
+        if (input?.mcpServerCatalog && resolved.scopeKey) {
+            const catalog = await createCliMcpServerStoreForOperation({ operationContext: ownerAccountOperationContext,
+                signal: input.signal }).readCatalogForOperation();
+            const admitted = ownerAccountOperationContext.readSnapshot();
+            if (!admitted || !await ownerAccountOperationContext.isCurrent()) return null;
+            ownerAccountSettingsForRuntime = admitted.settings;
+            return { ...admitted, mcpServerCatalog: catalog };
+        }
         ownerAccountSettingsForRuntime = resolved.settings ?? null;
         return resolved;
-    };
+    });
     const resolveOwnerAccountSettings = async (): Promise<AccountSettings | null> => {
         return (await resolveOwnerAccountSettingsSnapshot())?.settings ?? null;
     };
@@ -272,6 +342,14 @@ export function registerSessionClientRuntimeHandlers(
                 session: parentSessionForTools,
                 logPrefix: '[Voice Agent Session]',
                 getAccountSettings: () => ownerAccountSettingsForRuntime,
+                getWorkspaceWrites: () => {
+                    if (params.getCurrentWorkspaceWrites) return params.getCurrentWorkspaceWrites();
+                    if (parentSessionForTools.getCurrentWorkspaceWrites) return parentSessionForTools.getCurrentWorkspaceWrites();
+                    const read = actionsSettingsProvider.getAccountRoleOverrides?.();
+                    return read?.status === 'ready'
+                        ? readSessionWorkspaceWritesV1(parentSessionForTools.getMetadataSnapshot(), { settingsOverrides: read.overrides })
+                        : 'deny';
+                },
                 getCodingPromptBehavior: readCodingPromptBehavior,
             }),
             ...(typeof params.sessionRuntimeControls?.listSkills === 'function'
@@ -342,7 +420,7 @@ export function registerSessionClientRuntimeHandlers(
              * bridge is rebound to the Run's permission mode, location, lifetime and
              * own admitted turn.
              */
-            composeRunToolBinding: async (request: NativeAgentSessionRunToolBindingRequest) => {
+            composeRunToolBinding: (request: NativeAgentSessionRunToolBindingRequest) => runWithServerHttpBaseUrl(params.serverUrl, async () => {
                 const ownerCredentials = await readOwnerAccountCredentials();
                 const credentials = ownerCredentials ?? restrictedRuntimeAdmission?.credentials ?? null;
                 if (!credentials) return {
@@ -351,7 +429,7 @@ export function registerSessionClientRuntimeHandlers(
                 };
                 const { toAgentSessionMcpLaunchConfigs } = await import('@/agent/runtime/registry/engineRegistry/nativeAgentSession');
                 const accountSettingsSnapshot = ownerCredentials
-                    ? await resolveOwnerAccountSettingsSnapshot()
+                    ? await resolveOwnerAccountSettingsSnapshot({ mcpServerCatalog: true, signal: request.signal })
                     : null;
                 const accountSettings = accountSettingsSnapshot?.settings ?? null;
                 // An explicit view, not a spread of the live client: the durable
@@ -386,6 +464,8 @@ export function registerSessionClientRuntimeHandlers(
                     accountCredentials: ownerCredentials,
                     sessionList,
                     accountSettings,
+                    accountSettingsSnapshot,
+                    ...(ownerAccountOperationContext ? { operationContext: ownerAccountOperationContext } : {}),
                     ...(params.actionsSettingsProvider
                         ? { actionsSettingsProvider: params.actionsSettingsProvider }
                         : {}),
@@ -413,7 +493,7 @@ export function registerSessionClientRuntimeHandlers(
                     supportedSessionReadActions: resolved.happierMcpServer.supportedSessionReadActions,
                     dispose: () => resolved.happierMcpServer.stop(),
                 };
-            },
+            }),
         }
         : null;
     const executionBudgetRegistry = createExecutionBudgetRegistry();
@@ -512,12 +592,35 @@ export function registerSessionClientRuntimeHandlers(
         },
     } satisfies Parameters<typeof createCliActionExecutor>[0];
     const transcriptActionExecutor = createCliActionExecutor(sessionActionParams);
-    const resolveCredentialedRoleParams = async () => runWithServerHttpBaseUrl(approvalServerApiUrl, async () => {
+    const resolveCredentialedRoleParams = async (signal?: AbortSignal) => runWithServerHttpBaseUrl(approvalServerApiUrl, async () => {
         const credentials = await readOwnerAccountCredentials();
         if (!credentials || readAccountIdFromToken(credentials.token) !== runtimeAccountId) return null;
         await resolveOwnerAccountSettings();
+        const overrides = await prepareActiveAccountRoleOverrides({ credentials, scopeKey: roleAccountScopeKey,
+            lifetimeToken: roleAccountLifetimeToken, signal });
+        if (overrides.status !== 'ready') return null;
+        const sourceReader = sessionActionParams.readRoleSources ?? createRoleSourceReader({
+            artifactStore: createCredentialedAccountArtifactStore(credentials), accountId: runtimeAccountId,
+            readRawAccountSettings: async () => {
+                const current = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking' });
+                if (current.source === 'none' || !current.rawSettings) {
+                    throw Object.assign(new Error('account_settings_content_unavailable'), { code: 'account_settings_content_unavailable' });
+                }
+                return current.rawSettings;
+            },
+        });
+        const readRoleSources: RoleSourceReader = async (readSignal) => {
+            const prepared = await prepareActiveAccountRoleOverrides({ credentials, scopeKey: roleAccountScopeKey,
+                lifetimeToken: roleAccountLifetimeToken, signal: readSignal });
+            if (prepared.status !== 'ready') throw Object.assign(new Error('account_role_overrides_unavailable'), { code: 'account_role_overrides_unavailable' });
+            const inventory = await sourceReader(readSignal);
+            if (readActiveAccountRoleOverrides({ scopeKey: roleAccountScopeKey, lifetimeToken: roleAccountLifetimeToken }).status !== 'ready') {
+                throw Object.assign(new Error('account_role_overrides_unavailable'), { code: 'account_role_overrides_unavailable' });
+            }
+            return inventory;
+        };
         return { ...sessionActionParams, token: credentials.token, credentials,
-            serverId: approvalServerId, serverHttpBaseUrl: approvalServerApiUrl };
+            serverId: approvalServerId, serverHttpBaseUrl: approvalServerApiUrl, readRoleSources };
     });
 
     registerActionSpecRpcHandlers({
@@ -532,12 +635,16 @@ export function registerSessionClientRuntimeHandlers(
         rpcHandlerManager: params.rpcHandlerManager,
         sessionId: params.sessionId,
         readSessionMetadata: params.getSessionMetadata,
-        readRoleSources: params.readRoleSources ?? parentSessionForTools?.readRoleSources,
+        readRoleSources: async (signal) => {
+            const roleParams = await resolveCredentialedRoleParams(signal);
+            if (!roleParams) throw Object.assign(new Error('account_role_overrides_unavailable'), { code: 'account_role_overrides_unavailable' });
+            return await runWithServerHttpBaseUrl(approvalServerApiUrl, () => roleParams.readRoleSources(signal));
+        },
         prepareWorkspaceWritesPolicy: params.prepareWorkspaceWritesPolicy ?? parentSessionForTools?.prepareWorkspaceWritesPolicy,
-        readSettingsOverrides: async () => runWithServerHttpBaseUrl(approvalServerApiUrl,
-            async () => (await resolveOwnerAccountSettings())?.rolesV1.overrides ?? {}),
+        readSettingsOverrides: () => actionsSettingsProvider.getAccountRoleOverrides?.()
+            ?? { status: 'unavailable', reason: 'source-unavailable' },
         resolveAgentStartContext: async (context) => {
-            const roleParams = await resolveCredentialedRoleParams();
+            const roleParams = await resolveCredentialedRoleParams(context.signal);
             if (!roleParams) return null;
             return await runWithServerHttpBaseUrl(approvalServerApiUrl, () =>
                 createCliActionDeps(roleParams).resolveAgentStartContext?.(context) ?? null);
@@ -549,7 +656,7 @@ export function registerSessionClientRuntimeHandlers(
                 serverId: approvalServerId, serverHttpBaseUrl: approvalServerApiUrl })(input);
         },
         readCurrentReportLead: async (signal) => {
-            const roleParams = await resolveCredentialedRoleParams();
+            const roleParams = await resolveCredentialedRoleParams(signal);
             if (!roleParams) return null;
             const session = await runWithServerHttpBaseUrl(approvalServerApiUrl, () => fetchSessionById({
                 token: roleParams.token, sessionId: params.sessionId, signal, accessProjectionVersion: 1,
@@ -558,7 +665,7 @@ export function registerSessionClientRuntimeHandlers(
         },
         readCallerWorkspaceWrites: async (context) => {
             if (context.actionCaller?.kind !== 'session') return null;
-            const roleParams = await resolveCredentialedRoleParams();
+            const roleParams = await resolveCredentialedRoleParams(context.signal);
             if (!roleParams) return null;
             const sessionId = context.actionCaller.sessionId;
             const transport = await runWithServerHttpBaseUrl(approvalServerApiUrl, () => resolveSessionTransportContext({
@@ -568,11 +675,13 @@ export function registerSessionClientRuntimeHandlers(
             const metadata = tryDecryptSessionOwnerMetadataView({ credentials: roleParams.credentials,
                 accountEncryptionMode: transport.accountEncryptionCurrentness.mode, rawSession: transport.rawSession });
             if (!metadata) return null;
-            const sources = await runWithServerHttpBaseUrl(approvalServerApiUrl,
-                async () => await roleParams.readRoleSources?.(context.signal) ?? []);
+            const roleSourceInventory = await runWithServerHttpBaseUrl(approvalServerApiUrl,
+                async () => await roleParams.readRoleSources(context.signal));
+            const overridesRead = actionsSettingsProvider.getAccountRoleOverrides?.();
+            if (overridesRead?.status !== 'ready') return null;
             return readSessionWorkspaceWritesV1(metadata, {
-                settingsRoles: Object.fromEntries(sources.map((entry) => [entry.roleId, entry.role])),
-                settingsOverrides: actionsSettingsProvider.getAccountSettings?.()?.rolesV1.overrides,
+                roleSourceInventory,
+                settingsOverrides: overridesRead.overrides,
             }) ?? null;
         },
         ...(params.enqueueRegisteredSessionStateFieldMutation ? {
@@ -774,6 +883,7 @@ export function registerSessionClientRuntimeHandlers(
             }
         },
         serverUrl: approvalServerApiUrl,
+        readRequesterWorkAttributionV1,
         parentProvider,
         browserControl: params.getBrowserDaemonControlRoutes?.() ?? null,
         browserContext: params.getBrowserDaemonContextRoutes?.() ?? null,
@@ -854,11 +964,12 @@ export function registerSessionClientRuntimeHandlers(
             return await resolveOwnerAccountSettings();
         },
         resolveAccountSettingsSnapshot: resolveOwnerAccountSettingsSnapshot,
+        get savedSecretOperationContext() { return ownerAccountOperationContext; },
         actionsSettingsProvider,
         actionApprovalDeps: createExecutionRunRpcApprovalDeps({
             readCredentials: readOwnerAccountCredentials,
             isApprovalExecutionOriginCurrent,
         }),
     });
-    return sessionHandlersRegistration;
+    return { dispose: async () => { disposed = true; await sessionHandlersRegistration.dispose(); } };
 }

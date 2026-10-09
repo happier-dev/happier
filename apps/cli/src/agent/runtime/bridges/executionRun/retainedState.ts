@@ -13,6 +13,7 @@ import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/s
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { ExecutionRunState } from './executionRunTypes';
+import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
 
 /** Private lifecycle custody, independent of the daemon's disposable visibility marker. */
 const RetainedRunStateSchema = z.object({
@@ -56,6 +57,7 @@ const RetainedRunStateSchema = z.object({
 
 export const RetainedExecutionRunRecordSchema = z.object({
   ownerPid: z.number().int().positive(), ownerProcessStartTimeMs: z.number().int().nonnegative().optional(),
+  requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.optional(),
   state: RetainedRunStateSchema,
   /** Stable identity for redelivery if recovery is interrupted after the loss commit. */
   terminalEventId: z.string().min(1).optional(),
@@ -65,7 +67,7 @@ export type RetainedExecutionRunRecord = z.infer<typeof RetainedExecutionRunReco
 export function projectRetainedExecutionRunState(run: ExecutionRunState): RetainedExecutionRunRecord['state'] {
   // Materialized auth, transient registrations, Account settings and turn authority
   // are deliberately not restart inputs. Resume re-resolves current material.
-  const { runtimeSettings: _settings, launch, ...state } = run;
+  const { runtimeSettings: _settings, requesterWorkAttributionV1: _attribution, launch, ...state } = run;
   const { connectedServicesRegistration: _registration, connectedServicesSelectionAgent: _agent, ...selection } = launch ?? {};
   return RetainedRunStateSchema.parse({ ...state, ...(launch ? { launch: selection } : {}) });
 }

@@ -1,14 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DaemonExecutionRunMarkerSchema } from '@happier-dev/protocol';
 import { reloadConfiguration } from '@/configuration';
+import { createManagedActivityInventory } from './lifecycle/managedActivity';
+import { projectMachineWorkSummary } from './machines/machineWorkSummary';
+import type { RequesterWorkAttributionV1 } from './lifecycle/requesterWorkAttribution';
 
 const filesystemBoundary = vi.hoisted(() => ({
   afterRead: null as null | ((path: unknown) => Promise<void>),
   writeFileSpy: vi.fn<(...args: Parameters<typeof import('node:fs/promises')['writeFile']>) => void>(),
+  watchers: new Set<import('node:fs').FSWatcher>(),
 }));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, watch: (...args: Parameters<typeof actual.watch>) => {
+    const watcher = actual.watch(...args);
+    filesystemBoundary.watchers.add(watcher);
+    watcher.on('close', () => filesystemBoundary.watchers.delete(watcher));
+    return watcher;
+  } };
+});
 
 // Keep the real filesystem and owner modules loaded; individual tests control only OS interleavings.
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -47,6 +61,8 @@ describe('executionRunRegistry', () => {
   });
 
   afterEach(() => {
+    for (const watcher of filesystemBoundary.watchers) watcher.close();
+    filesystemBoundary.watchers.clear();
     if (existsSync(happyHomeDir)) {
       rmSync(happyHomeDir, { recursive: true, force: true });
     }
@@ -125,6 +141,261 @@ describe('executionRunRegistry', () => {
       updatedAtMs: 1,
     });
     expect(raw).not.toContain(configuration.happyHomeDir);
+  });
+
+  it('projects running and settled execution markers while retaining material delivery custody', async () => {
+    const { createExecutionRunLiveWorkProducer, writeExecutionRunMarker, removeExecutionRunMarker } = await import('./executionRunRegistry');
+    mkdirSync(join(happyHomeDir, 'tmp', 'daemon-execution-runs'), { recursive: true });
+    const producer = createExecutionRunLiveWorkProducer();
+    const unsubscribe = producer.subscribe(() => {});
+    try {
+      const marker = { pid: 123, runId: 'live-run', happySessionId: 'session', callId: 'call', sidechainId: 'side', intent: 'review',
+        backendTarget: { kind: 'backend' as const, backendId: 'codex' }, status: 'running', startedAtMs: 1, updatedAtMs: 1 } satisfies Parameters<typeof writeExecutionRunMarker>[0];
+      await writeExecutionRunMarker(marker);
+      expect(await producer.read()).toEqual({ coverage: 'complete', items: [
+        { category: 'execution_run', ownerRef: 'live-run', attribution: { kind: 'unknown' }, state: 'active' },
+      ] });
+      await writeExecutionRunMarker({ ...marker, status: 'succeeded', finishedAtMs: 2, updatedAtMs: 2 });
+      expect(await producer.read()).toMatchObject({ coverage: 'complete', items: [{ ownerRef: 'live-run', state: 'settled' }] });
+      const { retainExecutionRunWorkerUpdate, acknowledgeExecutionRunWorkerUpdate } = await import('./executionRunRegistry');
+      const pending: import('./executionRunRegistry').RetainedExecutionRunWorkerUpdate = {
+        sessionId: 'session', localId: 'completion', update: {
+          v: 1, workerKind: 'execution_run', workerId: marker.runId, ownerState: 'succeeded', wake: 'finished',
+          headline: 'Run completed', result: 'Result', canInspect: true,
+        },
+      };
+      await retainExecutionRunWorkerUpdate(pending);
+      expect(await producer.read()).toMatchObject({ items: [{ ownerRef: 'live-run', state: 'active' }] });
+      expect(await acknowledgeExecutionRunWorkerUpdate(pending)).toBe(true);
+      expect(await producer.read()).toMatchObject({ items: [{ ownerRef: 'live-run', state: 'settled' }] });
+      await removeExecutionRunMarker('live-run');
+      expect(await producer.read()).toEqual({ coverage: 'complete', items: [] });
+    } finally { unsubscribe(); }
+  });
+
+  it('retains admitted marker attribution for the sole inventory but strips it from public Run listings', async () => {
+    const { createExecutionRunLiveWorkProducer, writeExecutionRunMarker, listExecutionRunMarkers,
+      listExecutionRunMarkersForRehydration, removeExecutionRunMarker } = await import('./executionRunRegistry');
+    const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
+    const requesterWorkAttributionV1 = { ...target, accountId: 'bob' };
+    mkdirSync(join(happyHomeDir, 'tmp', 'daemon-execution-runs'), { recursive: true });
+    const marker = { pid: 123, runId: 'attributed-run', happySessionId: null, callId: 'call', sidechainId: 'side',
+      intent: 'review' as const, backendTarget: { kind: 'backend' as const, backendId: 'codex' },
+      status: 'running' as const, startedAtMs: 1, updatedAtMs: 1, requesterWorkAttributionV1 };
+    const inventory = createManagedActivityInventory({ producers: [createExecutionRunLiveWorkProducer()] });
+    try {
+      await writeExecutionRunMarker(marker);
+      expect(await listExecutionRunMarkersForRehydration()).toEqual([expect.objectContaining({ requesterWorkAttributionV1 })]);
+      const observed = await inventory.read();
+      expect(observed).toEqual({ coverage: 'complete', items: [
+        { category: 'execution_run', ownerRef: marker.runId, attribution: requesterWorkAttributionV1, state: 'active' },
+      ] });
+      expect(await inventory.readDecision()).toEqual({ kind: 'busy', reasons: ['execution_run'] });
+      const project = async () => projectMachineWorkSummary({ inventory: await inventory.read(), target,
+        custodianAccountId: 'alice', requesterIdentities: new Map([['bob', { accountId: 'bob', displayName: 'Bob' }]]) });
+      expect(await project()).toEqual({ kind: 'current', requesters: [
+        { accountId: 'bob', displayName: 'Bob', sessions: 0, tasks: 1, terminals: 0 },
+      ] });
+      expect((await listExecutionRunMarkers())[0]).not.toHaveProperty('requesterWorkAttributionV1');
+      await writeExecutionRunMarker({ ...marker, status: 'succeeded', updatedAtMs: 2, finishedAtMs: 2 });
+      // A native watcher edge during an inventory read is deliberately unknown;
+      // observe the owner's next coherent settled read rather than bypassing it.
+      await vi.waitFor(async () => expect(await project()).toEqual({ kind: 'current', requesters: [] }));
+      await removeExecutionRunMarker(marker.runId);
+    } finally { inventory.dispose(); }
+  });
+
+  it('preserves admitted attribution through private retained Run state and pending delivery after its marker is absent', async () => {
+    const { createExecutionRunLiveWorkProducer, retainExecutionRunState, retainExecutionRunWorkerUpdate,
+      acknowledgeExecutionRunWorkerUpdate, readRetainedExecutionRunRecords } = await import('./executionRunRegistry');
+    const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
+    const attribution = { ...target, accountId: 'bob' };
+    mkdirSync(join(happyHomeDir, 'tmp', 'daemon-execution-runs'), { recursive: true });
+    const state = { runId: 'private-retained-run', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0, intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Private instructions',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+      status: 'running', startedAtMs: 1,
+    } satisfies import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState;
+    const retain: (run: Parameters<typeof retainExecutionRunState>[0], terminalEventId?: string,
+      requesterWorkAttributionV1?: RequesterWorkAttributionV1) => Promise<void> = retainExecutionRunState;
+    const inventory = createManagedActivityInventory({ producers: [createExecutionRunLiveWorkProducer()] });
+    const project = async () => projectMachineWorkSummary({ inventory: await inventory.read(), target,
+      custodianAccountId: 'alice', requesterIdentities: new Map([['bob', { accountId: 'bob', displayName: 'Bob' }]]) });
+    try {
+      await retain(state, undefined, attribution);
+      expect(await readRetainedExecutionRunRecords()).toEqual([expect.objectContaining({ requesterWorkAttributionV1: attribution })]);
+      expect((await inventory.read()).items).toEqual([
+        { category: 'execution_run', ownerRef: state.runId, attribution, state: 'active' },
+      ]);
+      expect(await project()).toEqual({ kind: 'current', requesters: [
+        { accountId: 'bob', displayName: 'Bob', sessions: 0, tasks: 1, terminals: 0 },
+      ] });
+      await retain({ ...state, status: 'succeeded', finishedAtMs: 2 });
+      expect(await project()).toEqual({ kind: 'current', requesters: [] });
+      const delivery = { sessionId: 'origin-session', localId: 'completion', requesterWorkAttributionV1: attribution,
+        update: { v: 1 as const, workerKind: 'execution_run' as const, workerId: state.runId,
+          ownerState: 'succeeded' as const, wake: 'finished' as const,
+          headline: 'Private headline', result: 'Private result', canInspect: true } };
+      await retainExecutionRunWorkerUpdate(delivery);
+      expect((await inventory.read()).items).toEqual([
+        { category: 'execution_run', ownerRef: state.runId, attribution, state: 'active' },
+      ]);
+      expect(await project()).toEqual({ kind: 'current', requesters: [
+        { accountId: 'bob', displayName: 'Bob', sessions: 0, tasks: 1, terminals: 0 },
+      ] });
+      expect(JSON.stringify(await project())).not.toMatch(/Private|origin-session|private-retained-run|completion/);
+      expect(await acknowledgeExecutionRunWorkerUpdate(delivery)).toBe(true);
+      expect(await project()).toEqual({ kind: 'current', requesters: [] });
+    } finally { inventory.dispose(); }
+  });
+
+  it.each(['legacy', 'conflicting'] as const)('does not hide %s active custody behind an attributed duplicate Run', async (duplicate) => {
+    const { createExecutionRunLiveWorkProducer, retainExecutionRunState, writeExecutionRunMarker } = await import('./executionRunRegistry');
+    const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
+    const attribution = { ...target, accountId: 'bob' };
+    const state = { runId: 'duplicated-run', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0, intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: '',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+      status: 'running', startedAtMs: 1,
+    } satisfies import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState;
+    mkdirSync(join(happyHomeDir, 'tmp', 'daemon-execution-runs'), { recursive: true });
+    const inventory = createManagedActivityInventory({ producers: [createExecutionRunLiveWorkProducer()] });
+    try {
+      await retainExecutionRunState(state, undefined, attribution);
+      await writeExecutionRunMarker({ pid: process.pid, runId: state.runId, callId: state.callId, sidechainId: state.sidechainId,
+        happySessionId: null, intent: 'review', backendTarget: { kind: 'backend', backendId: 'codex' },
+        status: 'running', startedAtMs: 1, updatedAtMs: 1,
+        ...(duplicate === 'conflicting' ? { requesterWorkAttributionV1: { ...attribution, accountId: 'alice' } } : {}),
+      });
+      const observed = await inventory.read();
+      expect(observed).toEqual({ coverage: 'complete', items: [
+        { category: 'execution_run', ownerRef: state.runId, attribution: { kind: 'unknown' }, state: 'active' },
+      ] });
+      expect(projectMachineWorkSummary({ inventory: observed, target, custodianAccountId: 'alice',
+        requesterIdentities: new Map([['bob', { accountId: 'bob', displayName: 'Bob' }]]) }))
+        .toEqual({ kind: 'unavailable' });
+      expect(await inventory.readDecision()).toEqual({ kind: 'busy', reasons: ['execution_run'] });
+    } finally { inventory.dispose(); }
+  });
+
+  it('observes external marker writes and fails coverage closed after native watcher failure or corrupt markers', async () => {
+    const { createExecutionRunLiveWorkProducer } = await import('./executionRunRegistry');
+    const directory = join(happyHomeDir, 'tmp', 'daemon-execution-runs');
+    mkdirSync(directory, { recursive: true });
+    const producer = createExecutionRunLiveWorkProducer();
+    let changed!: () => void;
+    const externalChange = new Promise<void>(resolve => { changed = resolve; });
+    const unsubscribe = producer.subscribe(changed);
+    try {
+      expect(await producer.read()).toEqual({ coverage: 'complete', items: [] });
+      const marker = { pid: 123, happySessionId: 'session', runId: 'external-run', callId: 'call', sidechainId: 'side', intent: 'review',
+        backendTarget: { kind: 'backend', backendId: 'codex' }, status: 'running', startedAtMs: 1, updatedAtMs: 1 };
+      writeFileSync(join(directory, 'run-external-run.json'), JSON.stringify(marker));
+      await externalChange;
+      expect(await producer.read()).toMatchObject({ coverage: 'complete', items: [{ ownerRef: marker.runId, state: 'active' }] });
+      writeFileSync(join(directory, 'run-corrupt.json'), '{invalid');
+      expect(await producer.read()).toMatchObject({ coverage: 'unknown', items: [{ ownerRef: marker.runId, state: 'active' }] });
+      unlinkSync(join(directory, 'run-corrupt.json'));
+      expect(await producer.read()).toMatchObject({ coverage: 'complete' });
+      filesystemBoundary.watchers.values().next().value!.emit('error', new Error('Native watcher unavailable'));
+      expect(await producer.read()).toMatchObject({ coverage: 'unknown' });
+    } finally { unsubscribe(); }
+    expect(await producer.read()).toMatchObject({ coverage: 'unknown' });
+  });
+
+  it('cannot prove an absent watch idle and still exposes retained running work without a visibility marker', async () => {
+    const { createExecutionRunLiveWorkProducer, retainExecutionRunState } = await import('./executionRunRegistry');
+    const producer = createExecutionRunLiveWorkProducer();
+    let armed!: () => void;
+    const watchEstablished = new Promise<void>(resolve => { armed = resolve; });
+    const unsubscribe = producer.subscribe(armed);
+    try {
+      expect(await producer.read()).toEqual({ coverage: 'unknown', items: [] });
+      await watchEstablished;
+      // The incumbent marker read has now established its directory. A new
+      // observation arms the native edge source before scanning canonical state.
+      expect(await producer.read()).toEqual({ coverage: 'complete', items: [] });
+      const state = { runId: 'retained-only', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0, intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Private input', permissionMode: 'read_only',
+        retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: 1,
+      } satisfies import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState;
+      await retainExecutionRunState(state);
+      expect(await producer.read()).toEqual({ coverage: 'complete', items: [
+        { category: 'execution_run', ownerRef: state.runId, attribution: { kind: 'unknown' }, state: 'active' },
+      ] });
+      await retainExecutionRunState({ ...state, status: 'succeeded', finishedAtMs: 2 });
+      expect(await producer.read()).toMatchObject({ items: [{ ownerRef: state.runId, state: 'settled' }] });
+    } finally { unsubscribe(); }
+  });
+
+  it('does not certify a replaced canonical directory through the watcher still attached to its former inode', async () => {
+    const { createExecutionRunLiveWorkProducer } = await import('./executionRunRegistry');
+    const directory = join(happyHomeDir, 'tmp', 'daemon-execution-runs');
+    mkdirSync(directory, { recursive: true });
+    const producer = createExecutionRunLiveWorkProducer();
+    const unsubscribe = producer.subscribe(() => {});
+    try {
+      expect(await producer.read()).toEqual({ coverage: 'complete', items: [] });
+      renameSync(directory, `${directory}-moved`);
+      mkdirSync(directory);
+      expect(await producer.read()).toEqual({ coverage: 'unknown', items: [] });
+      expect(await producer.read()).toEqual({ coverage: 'complete', items: [] });
+    } finally { unsubscribe(); }
+  });
+
+  it('opens additive persisted marker fields but refuses corrupt known facts', async () => {
+    const { configuration } = await import('@/configuration');
+    const { listExecutionRunMarkers, listExecutionRunMarkersForRehydration } = await import('./executionRunRegistry');
+    const directory = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
+    mkdirSync(directory, { recursive: true });
+    const file = join(directory, 'run-run_stored.json');
+    const marker = { pid: 123, happySessionId: 'session', runId: 'run_stored', callId: 'call', sidechainId: 'side',
+      intent: 'review', backendTarget: { kind: 'backend', backendId: 'codex' }, status: 'running',
+      startedAtMs: 1, updatedAtMs: 2, future: true,
+      executionRunBrokerAuthorityV1: { occurrenceId: 'occurrence', turnState: 'active_turn', future: true } };
+    writeFileSync(file, JSON.stringify(marker));
+    expect(await listExecutionRunMarkersForRehydration()).toEqual([expect.objectContaining({ runId: 'run_stored',
+      executionRunBrokerAuthorityV1: { occurrenceId: 'occurrence', turnState: 'active_turn' } })]);
+    const publicMarker = (await listExecutionRunMarkers())[0];
+    expect(publicMarker).toHaveProperty('runId', 'run_stored');
+    expect(publicMarker).not.toHaveProperty('future');
+    expect(publicMarker).not.toHaveProperty('executionRunBrokerAuthorityV1');
+    writeFileSync(file, JSON.stringify({ ...marker, executionRunBrokerAuthorityV1: { ...marker.executionRunBrokerAuthorityV1, turnState: 'invalid' } }));
+    expect(await listExecutionRunMarkers()).toEqual([]);
+  });
+
+  it('opens additive stored Saved Secret binding fields but refuses a corrupt retained revision', async () => {
+    const { configuration } = await import('@/configuration');
+    const { readRetainedExecutionRunRecords } = await import('./executionRunRegistry');
+    const { readOrCreateDeviceLocalSecretStorage } = await import('./deviceLocalSecretStorage');
+    const { RetainedExecutionRunRecordSchema } = await import('@/agent/runtime/bridges/executionRun/retainedState');
+    const { writeProtectedLocalStateFileAtomic } = await import('@/utils/fs/protectedLocalState');
+    const directory = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
+    const runId = 'run_stored_binding';
+    const file = join(directory, `state-${Buffer.from(runId).toString('base64url')}.sealed`);
+    const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
+    const record = {
+      ownerPid: 123, future: true,
+      state: {
+        runId, callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+        intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Review',
+        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+        status: 'failed', startedAtMs: 1, finishedAtMs: 2,
+        launch: { secretReferenceOverlay: { v: 1, future: true, bindings: {
+          API_KEY: { ref: 'happier:shared-secret:v1:resource', revision: 7, future: { value: true } },
+        } } },
+      },
+    };
+    await writeProtectedLocalStateFileAtomic(file, storage.sealJson({ purpose: 'execution_run_state', value: record }));
+    const [opened] = await readRetainedExecutionRunRecords();
+    expect(opened.state.launch?.secretReferenceOverlay).toEqual({ v: 1, bindings: {
+      API_KEY: { ref: 'happier:shared-secret:v1:resource', revision: 7 },
+    } });
+    expect(opened).not.toHaveProperty('future');
+    expect(RetainedExecutionRunRecordSchema.safeParse(record).success).toBe(false);
+    record.state.launch.secretReferenceOverlay.bindings.API_KEY.revision = 0;
+    await writeProtectedLocalStateFileAtomic(file, storage.sealJson({ purpose: 'execution_run_state', value: record }));
+    await expect(readRetainedExecutionRunRecords()).rejects.toMatchObject({ code: 'execution_run_state_unavailable' });
   });
 
   it('strips raw output summaries and diagnostics before marker persistence', async () => {

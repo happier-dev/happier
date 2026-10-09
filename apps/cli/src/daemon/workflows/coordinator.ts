@@ -1,20 +1,24 @@
 import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { freezeWorkflowLoopLimitsV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { freezeWorkflowLoopLimitsV1, projectWorkflowFiniteActionInputV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { deriveWorkflowReplacementId } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveWorkflowInvocationStructureV1, resolveWorkflowRetainedConversationAttemptV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
 import type { WorkflowAuthoredInputV1, WorkflowAuthoredProducerRef, WorkflowBlock, WorkflowAcceptedAuthorizationV1, WorkflowCheckpointEnvelopeV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1, WorkflowFinalResultV1, WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowContainerProgressV1, WorkflowContainerResultSelectorV1, WorkflowInvocationFrameV1, WorkflowLoopSourceSelectionV1, WorkflowLoopOutcomeV1, WorkflowRunExecutionTargetV1, WorkflowProgressEnvelopeV1, WorkflowUsageV1, WorkflowStep, WorkflowWaitLeafV1, WorkflowActionLeafV1, WorkflowNestedLeafV1, WorkflowStepExecutionSelection, WorkflowValueReference, WorkflowWorkspaceDescriptorV1, WorkflowWorkspaceProgressV1, WorkflowWorkspaceResolutionV1 } from '@happier-dev/protocol/workflows';
+import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { prepareActionCompletionV1, resumeActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
-import type { createActionExecutor, ActionExecutorContext, ActionCompletionRun, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
+import type { createActionExecutor, ActionExecutorContext, ActionCompletionRun, ActionCompletionOperation, ActionCompletionStateV1, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { readWorkflowProjectSetupConsentHold } from './stepExecution';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { decodeExecutionRunResultObservation } from '@happier-dev/protocol/execution/runs/resultContract';
 import type { ExecutionRunResultDecodeResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { isAuthoritativeAutomationRunCancellation } from '@/daemon/automation/automationRunCancellation';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
+import type { LiveWorkProducerV1 } from '../lifecycle/managedActivity';
+import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 
 import {
   evaluateWorkflowCondition,
@@ -71,6 +75,7 @@ export type WorkflowCoordinatorInvocation = Readonly<{
   contentRevision?: string;
   blockKind?: WorkflowProgressEnvelopeV1['blockKind'];
   review?: WorkflowProgressEnvelopeV1['review'];
+  resultProvenance?: WorkflowProgressEnvelopeV1['resultProvenance'];
   lifecycle: WorkflowInvocationLifecycleV1;
   result?: WorkflowJsonValue;
   usage?: WorkflowUsageV1;
@@ -120,6 +125,7 @@ export type WorkflowCoordinatorStore = Readonly<{
     key: string;
     lifecycle: WorkflowInvocationLifecycleV1;
     review?: WorkflowProgressEnvelopeV1['review'];
+    resultProvenance?: WorkflowProgressEnvelopeV1['resultProvenance'];
     result?: WorkflowJsonValue;
     usage?: WorkflowUsageV1;
     /** Private invocation-scoped request state; never a selected step result. */
@@ -169,7 +175,8 @@ export type WorkflowStepExecutor = (params: Readonly<{
   step: WorkflowStep;
   /** Role projected by the same source-qualified materialized leaf as execution selection. */
   role?: WorkflowMaterializedLeafV1['role'];
-  memberOrdinal?: string;
+  /** The step's visible ordinal (`workflowBlockOrdinalV1`), exactly as its heading and map node show it. */
+  stepOrdinal?: string;
   invocation: WorkflowProgressEnvelopeV1;
   /** Physical attempt row; exact input identities change across retries. */
   invocationRecordId?: string;
@@ -193,7 +200,8 @@ export type WorkflowStepExecutor = (params: Readonly<{
   observationOnly?: boolean;
   item?: Readonly<{ value: WorkflowJsonValue; index: number; position: number; count: number }>;
   iteration?: Readonly<{ index: number; position: number; count: number; stopReason: WorkflowJsonValue | null }>;
-  onInputAccepted: (execution: NonNullable<WorkflowProgressEnvelopeV1['execution']>, acceptedAtMs?: number) => Promise<void>;
+  onInputAccepted: (execution: Exclude<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'session_ready' }>, acceptedAtMs?: number) => Promise<void>;
+  onSessionReady?: (execution: Extract<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'session_ready' }>) => Promise<void>;
   /** Origin observation reads the canonical Run control before waiting for host dispatch. */
   readOriginInputControl?: () => Promise<'running' | 'pause_requested' | 'cancel_requested'>;
   /** Durable admission fence after preparation, immediately before releasing input. */
@@ -210,7 +218,8 @@ export type WorkflowStepPreparer = (params: Readonly<{
   runId: string;
   step: WorkflowStep;
   role?: WorkflowMaterializedLeafV1['role'];
-  memberOrdinal?: string;
+  /** The step's visible ordinal (`workflowBlockOrdinalV1`), exactly as its heading and map node show it. */
+  stepOrdinal?: string;
   invocation: WorkflowProgressEnvelopeV1;
   invocationRecordId?: string;
   recoveryPreviousExecution?: WorkflowProgressEnvelopeV1['execution'];
@@ -253,6 +262,7 @@ export type WorkflowActionExecutor = Readonly<{
     signal?: AbortSignal }>) => Promise<ActionExecutorContext>;
   observeRun: (run: ActionCompletionRun, params: Readonly<{ workspace: WorkflowWorkspaceDescriptorV1;
     signal?: AbortSignal }>) => Promise<ExecutionRunTerminalObservation>;
+  observeOperation?: (operation: ActionCompletionOperation, params: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
 }>;
 
 export type WorkflowAcceptedAuthorizationCurrentness = (params: Readonly<{
@@ -432,7 +442,7 @@ export function doesWorkflowImmediateEligibleStepTargetSession(input: Readonly<{
 }>): boolean {
   if (input.checkpoint?.frontier.paused) return false;
   const block = input.definition.blocks[input.checkpoint?.frontier.nextBlockOrdinal ?? 0];
-  if (!block || block.kind !== 'step' || block.onlyWhen) return false;
+  if (!block || block.kind !== 'step' || block.onlyWhen || block.runWhen === 'failure') return false;
   const leaf = effectiveLeaf({ ...input, authoredDefinition: input.definition }, block);
   if (!leaf || leaf.executionTarget.kind !== 'session') return false;
   const conversation = leaf.selection.conversation;
@@ -717,7 +727,14 @@ class WorkflowReviewHolds {
   private scheduled?: NodeJS.Immediate;
   private refreshing?: Promise<void>;
   private closed = false;
-  constructor(readonly runId: string) {}
+  constructor(readonly runId: string, private readonly onActivityChanged: () => void) {}
+
+  get retainsMaterialWork(): boolean {
+    // This owner retains materialization, in-flight leaves and exact review
+    // holds together until run() releases them. A persisted parked row alone
+    // is not live coordinator custody.
+    return !this.closed;
+  }
 
   async track<T>(operation: () => T | Promise<T>): Promise<T> {
     this.inFlight += 1;
@@ -783,10 +800,11 @@ class WorkflowReviewHolds {
     } finally { detach(); this.waiters.delete(row.recordId); }
   }
 
-  close(): void { this.closed = true; if (this.scheduled) clearImmediate(this.scheduled); }
+  close(): void { this.closed = true; if (this.scheduled) clearImmediate(this.scheduled); this.onActivityChanged(); }
 }
 
 export function createWorkflowCoordinator(deps: Readonly<{
+  requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   store: WorkflowCoordinatorStore;
   sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField'>;
   executeStep: WorkflowStepExecutor;
@@ -795,12 +813,15 @@ export function createWorkflowCoordinator(deps: Readonly<{
   resolveWorkspace: WorkflowWorkspaceResolver;
   /** Revalidates the accepted Account/authority binding before a new leaf effect. */
   isAcceptedAuthorizationCurrent: WorkflowAcceptedAuthorizationCurrentness;
+  /** Parks fresh effects without preventing observation of accepted native work. */
+  waitForNewWorkAdmission?: (signal?: AbortSignal) => Promise<void>;
   /** The production worker supplies the full live controller/current-authority gate for Generate. */
   checkReviewGenerationAuthority?: (params: Readonly<{ signal?: AbortSignal }>) => Promise<string | undefined>;
   allocateInvocationRecordId?: () => string;
   rootInvocationRecordId?: string;
   onReviewEntered?: (params: Readonly<{ runId: string; invocation: WorkflowCoordinatorInvocation }>) => Promise<void>;
 }>): Readonly<{
+  liveWorkProducer: LiveWorkProducerV1;
   refreshReviewHolds: () => Promise<void>;
   run: (params: Readonly<{
     runId: string;
@@ -818,7 +839,19 @@ export function createWorkflowCoordinator(deps: Readonly<{
   }>) => Promise<WorkflowCoordinatorResult>;
 }> {
   let activeHolds: WorkflowReviewHolds | undefined;
+  const attribution = deps.requesterWorkAttributionV1
+    ? Object.freeze(RequesterWorkAttributionV1Schema.parse(deps.requesterWorkAttributionV1)) : { kind: 'unknown' as const };
+  const activityListeners = new Set<() => void>();
+  const publishActivity = () => { for (const listener of activityListeners) listener(); };
+  const liveWorkProducer: LiveWorkProducerV1 = {
+    read: () => ({ coverage: 'complete', items: activeHolds?.retainsMaterialWork ? [{
+      category: 'workflow_run', ownerRef: activeHolds.runId,
+      attribution, state: 'active',
+    }] : [] }),
+    subscribe: listener => { activityListeners.add(listener); return () => { activityListeners.delete(listener); }; },
+  };
   return {
+    liveWorkProducer,
     refreshReviewHolds: async () => { await activeHolds?.refresh(); },
     run: async ({ runId, definition, authoredDefinition, inputs, executionTarget, materializedLeaves, frozenChildren, workDepth, authorization, originSessionId, automationCause, signal }) => {
       const root: Frame = {
@@ -829,8 +862,9 @@ export function createWorkflowCoordinator(deps: Readonly<{
         scope: [],
         collectedFailures: false,
       };
-      const holds = new WorkflowReviewHolds(runId);
+      const holds = new WorkflowReviewHolds(runId, publishActivity);
       activeHolds = holds;
+      publishActivity();
       const trackedStore = new Proxy(deps.store, {
         get(target, property, receiver) {
           const value: unknown = Reflect.get(target, property, receiver);
@@ -864,7 +898,7 @@ export function createWorkflowCoordinator(deps: Readonly<{
         await reserveOwnedNativeInputs(context);
         const frontier = await context.deps.store.readFrontier();
         for (let index = frontier.nextBlockOrdinal; index < definition.blocks.length; index += 1) {
-          await executeBlock(definition.blocks[index]!, [], root, context, undefined, String(index));
+          await executeSequenceBlock(definition.blocks, index, [], root, context);
           await context.deps.store.commitFrontier({ nextBlockOrdinal: index + 1 });
         }
         // A reclaimed pause drains already-owned input, then hands off paused
@@ -1174,7 +1208,7 @@ async function executeBodyFrame(params: Readonly<{
   try {
     const nextBlockOrdinal = existing?.container?.kind === 'body' ? Number(existing.container.nextBlockOrdinal) : 0;
     for (let index = nextBlockOrdinal; index < params.blocks.length; index += 1) {
-      await executeBlock(params.blocks[index]!, params.scope, params.frame, params.context, key, String(index));
+      await executeSequenceBlock(params.blocks, index, params.scope, params.frame, params.context, key);
       await params.context.deps.store.commitFact({
         key,
         lifecycle: 'running',
@@ -1259,6 +1293,63 @@ async function ensureAndCommitContainer(
   }
 }
 
+async function skipWorkflowBlock(
+  block: WorkflowBlock,
+  scope: WorkflowInvocationPath['scope'],
+  context: ExecutionContext,
+  parentKey: string | undefined,
+  memberOrdinal: string,
+  reason: string,
+): Promise<void> {
+  await assertAdmissionOpen(context);
+  const key = workflowInvocationKey({ runId: context.runId, blockId: block.id, scope, attempt: 0 });
+  await context.deps.store.ensureIntent({ key, recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId,
+    blockId: block.id, blockKind: block.kind, memberOrdinal, ...(parentKey ? { parentKey } : {}), path: { blockId: block.id, scope }, attempt: 0, lifecycle: 'pending' });
+  await context.deps.store.commitFact({ key, lifecycle: 'skipped', reason });
+}
+
+/** One status predicate and failure progression for every ordered Workflow list. */
+async function executeSequenceBlock(
+  blocks: readonly WorkflowBlock[],
+  index: number,
+  scope: WorkflowInvocationPath['scope'],
+  frame: Frame,
+  context: ExecutionContext,
+  parentKey?: string,
+): Promise<void> {
+  const block = blocks[index]!;
+  const coordinate = { runId: context.runId, scope, ...(parentKey ? { parentKey } : {}) };
+  const current = await context.deps.store.readCurrent({ ...coordinate, blockId: block.id, memberOrdinal: String(index) });
+  if (!current) {
+    const runWhen = block.runWhen ?? 'success';
+    // Sequence advancement already proves success/skipped for an ordinary
+    // successor: the catch below propagates failure unless the next block is
+    // failure-only or always. Only a failure condition needs predecessor content;
+    // reopening it for default/always would defeat the persisted frontier.
+    if (runWhen === 'failure') {
+      const previous = index === 0 ? undefined : await context.deps.store.readCurrent({
+        ...coordinate, blockId: blocks[index - 1]!.id, memberOrdinal: String(index - 1),
+      });
+      if (previous?.lifecycle !== 'failed') {
+        await skipWorkflowBlock(block, scope, context, parentKey, String(index), 'run_when_false');
+        return;
+      }
+    }
+  }
+  try {
+    await executeBlock(block, scope, frame, context, parentKey, String(index));
+  } catch (error) {
+    const nextRunWhen = blocks[index + 1]?.runWhen;
+    if (!(error instanceof WorkflowLeafFailure && error.collectable) || context.signal?.aborted
+      || (nextRunWhen !== 'failure' && nextRunWhen !== 'always')) throw error;
+    const failed = await context.deps.store.readCurrent({ ...coordinate, blockId: block.id, memberOrdinal: String(index) });
+    if (failed?.lifecycle !== 'failed') throw error;
+    // Retain the failed fact and use the incumbent aggregate outcome; a handler
+    // never rewrites a failed step into success or invents a second status owner.
+    frame.collectedFailures = true;
+  }
+}
+
 async function executeBlock(
   block: WorkflowBlock,
   scope: WorkflowInvocationPath['scope'],
@@ -1271,11 +1362,27 @@ async function executeBlock(
     ...(parentKey ? { parentKey } : {}) });
   if (current?.lifecycle === 'skipped' || (current?.lifecycle === 'completed' && current.containerResult)) return;
   const runtime = createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext);
-  if (!current && 'onlyWhen' in block && block.onlyWhen && !await evaluateWorkflowCondition(block.onlyWhen, runtime)) {
-    const key = workflowInvocationKey({ runId: context.runId, blockId: block.id, scope, attempt: 0 });
-    await context.deps.store.ensureIntent({ key, recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId, blockId: block.id, blockKind: block.kind, memberOrdinal, ...(parentKey ? { parentKey } : {}), path: { blockId: block.id, scope }, attempt: 0, lifecycle: 'pending' });
-    await context.deps.store.commitFact({ key, lifecycle: 'skipped', reason: 'condition_false' });
-    return;
+  if (!current && 'onlyWhen' in block && block.onlyWhen) {
+    const matched = await evaluateWorkflowCondition(block.onlyWhen, runtime);
+    if (block.kind === 'action' && block.actionId === 'notifications.notify_me') {
+      const message = block.input.message;
+      if (message?.kind === 'result' && message.path.length === 0) {
+        const source = await createWorkflowProducerBinding({ runId: context.runId, frame, store: context.deps.store }).resolve(message.producer);
+        // Bind the actual evaluated condition to its whole text result, not a sentinel,
+        // logical step name, or the last leaf. Completed result rows stay immutable.
+        if (source?.blockKind === 'step' && typeof source.result === 'string') {
+          // readCurrent selects children under a parent; the accepted root is already
+          // loaded under its canonical key, not a child of itself.
+          const root = await context.deps.store.read(workflowInvocationKey({ runId: context.runId, blockId: '$root', scope: [], attempt: 0 }));
+          if (root) await context.deps.store.commitFact({ key: root.key, lifecycle: root.lifecycle,
+            resultProvenance: { [source.recordId]: { notificationCondition: matched ? 'matched' : 'suppressed' } } });
+        }
+      }
+    }
+    if (!matched) {
+      await skipWorkflowBlock(block, scope, context, parentKey, memberOrdinal, 'condition_false');
+      return;
+    }
   }
   if (block.kind === 'step') {
     await executeStepBlock(block, scope, frame, context, parentKey, memberOrdinal);
@@ -1319,7 +1426,7 @@ async function executeBlock(
       const row = await context.deps.store.read(key);
       const nextBlockOrdinal = row?.container?.kind === 'if' ? Number(row.container.nextBlockOrdinal) : 0;
       for (let index = nextBlockOrdinal; index < selectedBlocks.length; index += 1) {
-        await executeBlock(selectedBlocks[index]!, scope, branchFrame, context, key, String(index));
+        await executeSequenceBlock(selectedBlocks, index, scope, branchFrame, context, key);
         await context.deps.store.commitFact({
           key,
           lifecycle: 'running',
@@ -1573,7 +1680,11 @@ async function executeActionBlock(
     return result;
   }
   if (row?.lifecycle === 'outcome_uncertain') throw new WorkflowLeafFailure('outcome_uncertain', row.reason ?? 'outcome_uncertain');
-  if (row) { const failure = persistedFailure(row); if (failure) throw failure; }
+  const heldConsent = row?.lifecycle === 'needs_attention'
+    && row.execution?.kind === 'action' && row.execution.actionId === leaf.actionId
+    ? readWorkflowProjectSetupConsentHold(row.execution.actionId, row.execution.output) : null;
+  const setupConsentHold = heldConsent !== null && row?.reason === heldConsent.code;
+  if (row && !setupConsentHold) { const failure = persistedFailure(row); if (failure) throw failure; }
   const frozen = context.materializedLeaves.find((candidate) => candidate.sourceKey === context.sourceKey
     && candidate.blockId === leaf.id && candidate.kind === 'action');
   const actionId = ActionIdSchema.safeParse(frozen?.actionId);
@@ -1591,18 +1702,24 @@ async function executeActionBlock(
     await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code, ...(result === undefined ? {} : { result }) });
     throw new WorkflowLeafFailure(state, code, collectable);
   };
-  let completionState = row.execution?.kind === 'action' && row.execution.awaitedRuns && row.execution.output !== undefined
-    ? { output: row.execution.output, awaitedRuns: row.execution.awaitedRuns } : undefined;
-  if (row.lifecycle !== 'pending' && !completionState) return await fail('outcome_uncertain', 'outcome_uncertain');
+  let completionState: ActionCompletionStateV1 | undefined = row.execution?.kind === 'action'
+    && (row.execution.awaitedRuns || row.execution.awaitedOperations) && row.execution.output !== undefined
+    ? { output: row.execution.output, ...(row.execution.awaitedRuns ? { awaitedRuns: row.execution.awaitedRuns } : {}),
+      ...(row.execution.awaitedOperations ? { awaitedOperations: row.execution.awaitedOperations } : {}) } : undefined;
+  if (row.lifecycle !== 'pending' && !setupConsentHold && !completionState) return await fail('outcome_uncertain', 'outcome_uncertain');
   let workspace = row.workspace?.descriptor;
   let completed: Awaited<ReturnType<typeof resumeActionCompletionV1>> | undefined;
   let noRunsLaunched = false;
-  if (row.lifecycle === 'pending') {
+  if (row.lifecycle === 'pending' || setupConsentHold) {
     const runtime = createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext);
-    const input: Record<string, WorkflowJsonValue> = { ...frozen.actionInput };
+    // Only this producer's explicit no-effect consent hold permits re-admission.
+    // Preserve the original invocation's input and accepted Machine; no retry
+    // attempt, reviewer decision or freshly resolved binding can change them.
+    const heldInput = setupConsentHold && row.execution?.kind === 'action' ? row.execution.input : undefined;
+    let input: Record<string, WorkflowJsonValue> = { ...(heldInput ?? frozen.actionInput) };
     const resolve = async (reference: Exclude<WorkflowActionLeafV1['input'][string], { kind: 'list' }>) =>
       reference.kind === 'origin_session_id' ? context.originSessionId ?? null : await resolveWorkflowValueReference(reference, runtime);
-    for (const [field, binding] of Object.entries(leaf.input)) {
+    for (const [field, binding] of Object.entries(heldInput ? {} : leaf.input)) {
       input[field] = binding.kind === 'list'
         ? await Promise.all(binding.items.map(resolve)) : await resolve(binding);
     }
@@ -1616,6 +1733,7 @@ async function executeActionBlock(
     }
     const actionWorkspace = workspace ?? await resolveLeafWorkspace(leaf, row, scope, frame, context);
     workspace = actionWorkspace;
+    input = projectWorkflowFiniteActionInputV1({ machineId: actionWorkspace.machineId, actionId: actionId.data, input });
     const localInputId = `workflow:${createHash('sha256').update(row.recordId).digest('hex')}:action`;
     const actionRequestId = `${context.runId}/${row.logicalInvocationRecordId ?? row.recordId}/${row.attempt}`;
     const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, authorization: context.authorization,
@@ -1624,22 +1742,38 @@ async function executeActionBlock(
       ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId };
     const prepared = await context.holds.track(() => context.deps.action!.executor.prepare(actionId.data, input, actionContext));
     if (prepared.kind === 'settled' && !prepared.result.ok) return await fail(prepared.result.errorCode, 'failed', true);
+    await context.deps.waitForNewWorkAdmission?.(context.signal);
     await assertAdmissionOpen(context);
     await assertAcceptedAuthorizationCurrent(context);
     const execution = { kind: 'action' as const, actionId: actionId.data, actionRequestId, localInputId, input };
     // This CAS is the last asynchronous boundary before the one-shot effect.
     // Failure/lost acknowledgement never authorizes dispatch or replay.
     try { row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'admitting', execution }); }
-    catch { return await fail('outcome_uncertain', 'outcome_uncertain'); }
+    catch (error) {
+      if (error instanceof WorkflowInputResolutionError && error.code === 'workflow_input_too_large') {
+        // The durable owner rejects this exact typed capacity error before the
+        // fact transport. Attempted writes, including lost ACKs, stay uncertain.
+        return await fail(error.code, 'failed', true);
+      }
+      return await fail('outcome_uncertain', 'outcome_uncertain');
+    }
+    await context.deps.waitForNewWorkAdmission?.(context.signal);
+    await assertAdmissionOpen(context);
     assertWorkflowAbortSignal(context);
     const invoked = await context.holds.track(async () => {
       try { return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result; }
       catch { return undefined; }
     });
     if (!invoked || (!invoked.ok && invoked.errorCode === 'action_failed')) return await fail('outcome_uncertain', 'outcome_uncertain');
+    const consent = readWorkflowProjectSetupConsentHold(actionId.data, invoked.ok ? invoked.result : invoked);
+    if (consent) {
+      row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'needs_attention', reason: consent.code,
+        execution: { ...execution, output: consent } });
+      throw new WorkflowLeafFailure('interrupted', consent.code);
+    }
     const declaration = frozen.actionContract.completion ? getActionSpec(actionId.data).completion : undefined;
     if (frozen.actionContract.completion && !declaration) return await fail('outcome_uncertain', 'outcome_uncertain');
-    const phase = prepareActionCompletionV1(declaration, invoked);
+    const phase = prepareActionCompletionV1(declaration, invoked, { serverId: actionContext.serverId });
     if (phase.kind === 'awaiting') {
       completionState = phase.state;
       row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'running', execution: { ...execution, ...completionState } });
@@ -1650,6 +1784,15 @@ async function executeActionBlock(
   }
   // The one-shot call may have returned exact launch ids after this claim was
   // interrupted. Preserve that correspondence before stopping observation.
+  const abort = classifyWorkflowAbort(context.signal);
+  if ((abort === 'cancelled' || abort === 'fail_stop') && (completed?.kind === 'failed' || completed?.kind === 'completed')
+    && completed.value !== undefined && row.execution?.kind === 'action') {
+    // The effect has definitively ended; retain its response and close this
+    // leaf's cancellation custody. A lost claim does not authorize this write.
+    row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'cancelled',
+      ...(completed.kind === 'failed' ? { reason: completed.errorCode } : {}),
+      execution: { ...row.execution, output: completed.value }, result: completed.value });
+  }
   assertWorkflowAbortSignal(context);
   if (completionState) {
     if (!workspace) return await fail('outcome_uncertain', 'outcome_uncertain');
@@ -1657,16 +1800,32 @@ async function executeActionBlock(
     completed = await context.holds.track(() => resumeActionCompletionV1({ actionId: actionId.data,
       completion: frozen.actionContract!.completion, state: completionState,
       resolveDeclaration: () => getActionSpec(actionId.data).completion,
+      ...(context.deps.action!.observeOperation ? { observeOperation: async (operation: ActionCompletionOperation) =>
+        await context.deps.action!.observeOperation!(operation, context.signal ? { signal: context.signal } : {}) } : {}),
       observeRun: async (run) => await context.deps.action!.observeRun(run, { workspace: observationWorkspace, ...(context.signal ? { signal: context.signal } : {}) }) }));
   }
   if (!completed) return await fail('outcome_uncertain', 'outcome_uncertain');
   assertWorkflowAbortSignal(context);
+  const completionConsent = completed.kind === 'failed'
+    ? readWorkflowProjectSetupConsentHold(actionId.data, completed.value) : null;
+  if (completionConsent && row.execution?.kind === 'action') {
+    row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'needs_attention', reason: completionConsent.code,
+      execution: { ...row.execution, output: completed.kind === 'failed' ? completed.value : undefined } });
+    throw new WorkflowLeafFailure('interrupted', completionConsent.code);
+  }
+  if (completed.kind === 'cancelled') {
+    await context.deps.store.commitFact({ key: row.key, lifecycle: 'cancelled', reason: completed.errorCode,
+      ...(completed.value === undefined ? {} : { result: completed.value }) });
+    throw new WorkflowLeafFailure('cancelled', completed.errorCode);
+  }
   if (completed.kind !== 'completed') {
     // Only the native start owner's explicit non-creation evidence proves failure. Otherwise
     // declaring Actions need persisted correspondence and terminal observation.
+    const declaration = getActionSpec(actionId.data).completion;
     const collectable = completed.kind === 'failed'
       && (!frozen.actionContract.completion || noRunsLaunched || (completionState !== undefined
-        && getActionSpec(actionId.data).completion?.launched(completionState.output).failed.length === 0));
+        && (completionState.awaitedOperations !== undefined
+          || declaration?.awaits === 'execution_runs' && declaration.launched(completionState.output).failed.length === 0)));
     return await fail(completed.errorCode, collectable ? 'failed' : 'outcome_uncertain', collectable,
       completed.kind === 'failed' ? completed.value : undefined);
   }
@@ -1734,7 +1893,7 @@ async function executeWorkflowBlock(
         ...(frameProjectWorkspace.creationIntent ? { creationIntent: frameProjectWorkspace.creationIntent } : {}) } };
     const nextBlockOrdinal = row.container?.kind === 'body' ? Number(row.container.nextBlockOrdinal) : 0;
     for (let index = nextBlockOrdinal; index < child.blocks.length; index++) {
-      await executeBlock(child.blocks[index]!, childScope, childFrame, childContext, key, String(index));
+      await executeSequenceBlock(child.blocks, index, childScope, childFrame, childContext, key);
       await context.deps.store.commitFact({ key, lifecycle: 'running',
         container: { kind: 'body', nextBlockOrdinal: String(index + 1), frameInputs: childInputs, frameProjectWorkspace } });
     }
@@ -1755,6 +1914,9 @@ async function executeStepBlock(
   memberOrdinal = '0',
   supplementalInputValues: readonly WorkflowJsonValue[] = [],
 ): Promise<WorkflowJsonValue> {
+  // The step's visible number in this frame's definition (a nested workflow numbers its own), the one
+  // the editor heading and the Run map show; titles read it, never the persisted sibling slot.
+  const stepOrdinal = workflowBlockOrdinalV1(context.definition.blocks, step.id);
   const current = await context.deps.store.readCurrent({ runId: context.runId, blockId: step.id, scope, memberOrdinal, ...(parentKey ? { parentKey } : {}) });
   const candidateKey = workflowInvocationKey({ runId: context.runId, blockId: step.id, scope, attempt: 0 });
   const existing = current;
@@ -1870,7 +2032,7 @@ async function executeStepBlock(
     ? { ...step, document: recoveryInput.value.document }
     : step;
   const persistedInput = admitted.input;
-  const input = await materializeWorkflowStepInput({
+  const input = step.inputMode === 'none' ? { text: '', references: [], attachments: [], values: [] } : await materializeWorkflowStepInput({
     automationCause: context.automationCause,
     document: persistedInput?.document ?? effectiveStep.document,
     references: persistedInput
@@ -1912,7 +2074,7 @@ async function executeStepBlock(
         throw error;
       }
     } : undefined;
-  if (!admitted.input) {
+  if (step.inputMode !== 'none' && !admitted.input) {
     admitted = await context.deps.store.commitFact({
       key,
       lifecycle: admitted.lifecycle,
@@ -1936,6 +2098,8 @@ async function executeStepBlock(
     }
     let preparedStep: Awaited<ReturnType<WorkflowStepPreparer>> | undefined;
     if (!admitted.execution || (isOriginInput && !rejoining)) {
+      if (!rejoining) await context.deps.waitForNewWorkAdmission?.(context.signal);
+      if (!rejoining) await assertAdmissionOpen(context);
       try {
         await assertInputAuthorization();
       } catch (error) {
@@ -1948,7 +2112,7 @@ async function executeStepBlock(
         runId: context.runId,
         step: effectiveStep,
         ...(selectedLeaf.role ? { role: selectedLeaf.role } : {}),
-        memberOrdinal: admitted.memberOrdinal ?? memberOrdinal,
+        ...(stepOrdinal === null ? {} : { stepOrdinal }),
         invocation,
         invocationRecordId: admitted.recordId,
         producerBinding,
@@ -2018,6 +2182,7 @@ async function executeStepBlock(
     let execution: WorkflowStepExecutionResult;
     if (!admitted.execution && !rejoining) {
       await assertAdmissionOpen(context);
+      await context.deps.waitForNewWorkAdmission?.(context.signal);
       try {
         await assertInputAuthorization();
       } catch (error) {
@@ -2031,7 +2196,7 @@ async function executeStepBlock(
       runId: context.runId,
       step: effectiveStep,
       ...(selectedLeaf.role ? { role: selectedLeaf.role } : {}),
-      memberOrdinal: admitted.memberOrdinal ?? memberOrdinal,
+      ...(stepOrdinal === null ? {} : { stepOrdinal }),
       invocation,
       invocationRecordId: admitted.recordId,
       producerBinding,
@@ -2055,6 +2220,7 @@ async function executeStepBlock(
       ...(frame.item ? { item: frame.item } : {}),
       ...(frame.iteration ? { iteration: frame.iteration } : {}),
       beforeInputAdmission: async () => {
+        await context.deps.waitForNewWorkAdmission?.(context.signal);
         await assertAdmissionOpen(context);
         await assertInputAuthorization();
         if (!isOriginInput && (admitted.lifecycle === 'pending' || admitted.lifecycle === 'waiting_for_capacity' || admitted.lifecycle === 'admitting')) {
@@ -2070,7 +2236,20 @@ async function executeStepBlock(
         // The admitting write is asynchronous too; Generate's live gate is
         // the final boundary before releasing input, not a prepared capability.
         if (isReviewGeneration && context.deps.checkReviewGenerationAuthority) await assertInputAuthorization();
+        await context.deps.waitForNewWorkAdmission?.(context.signal);
+        await assertAdmissionOpen(context);
         assertWorkflowAbortSignal(context);
+      },
+      onSessionReady: async (correspondence) => {
+        durableExecution = correspondence;
+        await context.deps.store.commitFact({ key, lifecycle: 'running', execution: correspondence });
+        if (conversationBinding.kind === 'shared') await context.deps.store.commitSharedConversation({
+          scopeOwnerKey: conversationBinding.scopeOwnerKey, targetClass: conversationBinding.targetClass,
+          invocationRecordId: admitted.recordId,
+          ...(admitted.recovery?.conversation === 'fresh_agent' && recoveryPrevious?.execution
+            ? { replacesExecution: recoveryPrevious.execution } : {}),
+        });
+        releaseAdmission();
       },
       onInputAccepted: async (correspondence, acceptedAtMs) => {
         if (isOriginInput && (correspondence.kind !== 'session' || correspondence.sessionId !== context.originSessionId

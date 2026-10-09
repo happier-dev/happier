@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { RequesterWorkAttributionV1Schema } from '../machines/requesterWorkAttributionV1.js';
 
 import { ExecutionRunClassSchema, ExecutionRunIntentSchema, ExecutionRunIoModeSchema, ExecutionRunRetentionPolicySchema } from '../execution/runs/runPrimitives.js';
 import { ExecutionRunDisplaySchema, ExecutionRunLaunchOriginSchema, normalizeLegacyExecutionRunBackendTargetInput, ExecutionRunResumeHandleSchema } from '../execution/runs/startRequest.js';
@@ -486,6 +487,7 @@ const DaemonExecutionRunMarkerSchemaCore = lazyZodSchema(() => DaemonExecutionRu
 
 export const DaemonExecutionRunMarkerOwnerWriteSchema =
   lazyZodSchema(() => DaemonExecutionRunMarkerFieldsSchema.extend({
+    requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.optional(),
     executionRunConnectedServicesCleanupReceiptV1:
       ExecutionRunConnectedServicesCleanupReceiptV1Schema.optional(),
   }).strip().superRefine((value, ctx) => {
@@ -517,6 +519,7 @@ export type DaemonExecutionRunMarkerOwnerWrite = z.infer<
  * configuration rather than making it a second persisted marker contract.
  */
 const DaemonExecutionRunMarkerPersistenceReadSchemaCore = lazyZodSchema(() => DaemonExecutionRunMarkerPersistenceReadFieldsSchema.extend({
+  requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.optional(),
   executionRunBrokerAuthorityV1: z.object({
     occurrenceId: z.string().trim().min(1).max(512),
     turnState: z.enum(['active_turn', 'idle']),

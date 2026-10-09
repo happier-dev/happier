@@ -22,6 +22,8 @@ import { SECOND_OPINION_RESULT_SCHEMA_V1 } from '@happier-dev/protocol/prompts/r
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { resolveExecutionRunRoleV1 } from '@/agent/executionRuns/profiles/review/reviewRole';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveEffectiveCodingPromptPlan } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
 import { runScmCommand } from '@/scm/runtime';
@@ -198,12 +200,13 @@ type ExecuteBoundedRun = (args: {
  * never a profile hook or backend start request. */
 export function omitExecutionRunRoleCompositionContext(
   params: ExecutionRunManagerStartParams,
-): Omit<ExecutionRunManagerStartParams, 'resolvedRole' | 'roleSessionMetadata' | 'promptCredentials'> {
+): Omit<ExecutionRunManagerStartParams, 'resolvedRole' | 'roleSessionMetadata' | 'promptCredentials' | 'requesterWorkAttributionV1'> {
   const {
     resolvedRole: _resolvedRole,
     roleSessionMetadata: _roleSessionMetadata,
     promptCredentials: _promptCredentials,
     reviewNarration: _reviewNarration,
+    requesterWorkAttributionV1: _requesterWorkAttributionV1,
     ...startParams
   } = params;
   return startParams;
@@ -231,7 +234,7 @@ async function retireProvisionedRuntimeWithoutDispatch(params: Readonly<{
   return true;
 }
 
-export async function startExecutionRun(args: Readonly<{
+type StartExecutionRunArgs = Readonly<{
   params: ExecutionRunManagerStartParams;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
   contributions?: Pick<
@@ -241,6 +244,8 @@ export async function startExecutionRun(args: Readonly<{
   parentProvider: ACPProvider;
   sendAcp: SendAcp;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
+  /** Current daemon admission, evaluated in the Run's actual host process. */
+  admitStart?: () => Promise<void>;
   createRuntime: (opts: {
     runId?: string;
     controllerOccurrenceId?: string;
@@ -300,14 +305,44 @@ export async function startExecutionRun(args: Readonly<{
    * occurrence became current. It returns the occurrence's release operation.
    */
   attachRetainedRunSessionInput?: AttachRetainedRunSessionInput;
-}>): Promise<ExecutionRunStartResult> {
+}>;
+
+export async function startExecutionRun(args: StartExecutionRunArgs): Promise<ExecutionRunStartResult> {
+  const actionRequestId = typeof args.params.actionRequestId === 'string'
+    ? args.params.actionRequestId.trim()
+    : '';
+  const requestBoundRunId = actionRequestId
+    ? deriveExecutionRunIdFromActionRequestId(actionRequestId)
+    : null;
+  if (requestBoundRunId) {
+    const existing = args.runs.get(requestBoundRunId);
+    if (existing) return projectExistingExecutionRunStartResult(existing);
+  }
   // Generated role guidance cannot supply an authored review scope.
   assertPreparedReviewRunStartAllowed(args.params);
+  try {
+    await args.admitStart?.();
+  } catch (error) {
+    throw markExecutionRunStartFailure(error, 'noRunCreated');
+  }
+  const runId = requestBoundRunId ?? `run_${randomUUID()}`;
+  const releasePreparation = args.budgetRegistry?.retainExecutionRunPreparation(runId, args.params.intent, args.params.requesterWorkAttributionV1);
+  try {
+    return await startAdmittedExecutionRun(args, runId, requestBoundRunId);
+  } finally {
+    releasePreparation?.();
+  }
+}
+
+async function startAdmittedExecutionRun(
+  args: StartExecutionRunArgs, runId: string, requestBoundRunId: string | null,
+): Promise<ExecutionRunStartResult> {
   try {
     const role = resolveExecutionRunRoleV1({
       roleId: args.params.roleId ?? resolveExecutionRunImplicitRoleIdV1(args.params.intent),
       resolvedRole: args.params.resolvedRole,
-      accountSettings: args.params.accountSettings,
+      accountRoleOverrides: createActionSettingsProvider({ scopeKey: args.params.promptCredentials
+        ? resolveAccountSettingsScopeKeyForToken(args.params.promptCredentials.token) : undefined }).getAccountRoleOverrides(),
       sessionMetadata: args.params.roleSessionMetadata,
       defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(args.params.backendTarget)) },
     });
@@ -371,12 +406,6 @@ export async function startExecutionRun(args: Readonly<{
   if (args.params.sessionId === null && profile.supportsDetached !== true) {
     throw executionRunNotAllowed(`Execution-run intent '${args.params.intent}' requires a Session scope`);
   }
-  const actionRequestId = typeof args.params.actionRequestId === 'string'
-    ? args.params.actionRequestId.trim()
-    : '';
-  const requestBoundRunId = actionRequestId
-    ? deriveExecutionRunIdFromActionRequestId(actionRequestId)
-    : null;
   if (requestBoundRunId) {
     const existing = args.runs.get(requestBoundRunId);
     if (existing) return projectExistingExecutionRunStartResult(existing);
@@ -411,7 +440,6 @@ export async function startExecutionRun(args: Readonly<{
     : async () => {};
   const computeSidechainStreamText = createExecutionRunSidechainStreamText(profile);
 
-  const runId = requestBoundRunId ?? `run_${randomUUID()}`;
   const controllerOccurrenceId = randomUUID();
   const callId = `subagent_run_${randomUUID()}`;
   const sidechainId = callId;
@@ -473,9 +501,14 @@ export async function startExecutionRun(args: Readonly<{
       ? { secretReferenceOverlay: args.params.secretReferenceOverlay }
       : {}),
   };
+  try {
+    await args.admitStart?.();
+  } catch (error) {
+    throw markExecutionRunStartFailure(error, 'noRunCreated');
+  }
   const acquiredBudget = args.params.intent === 'scm_commit_message'
-    ? args.budgetRegistry?.tryAcquireOneShotTask(runId, 'scm_commit_message') ?? true
-    : args.budgetRegistry?.tryAcquireExecutionRun(runId, args.params.intent) ?? true;
+    ? args.budgetRegistry?.tryAcquireOneShotTask(runId, 'scm_commit_message', args.params.requesterWorkAttributionV1) ?? true
+    : args.budgetRegistry?.tryAcquireExecutionRun(runId, args.params.intent, args.params.requesterWorkAttributionV1) ?? true;
   if (!acquiredBudget) {
     const err = markExecutionRunStartFailure(Object.assign(new Error('Execution run budget exceeded'), {
       code: 'execution_run_budget_exceeded',
@@ -496,6 +529,7 @@ export async function startExecutionRun(args: Readonly<{
   try {
     args.runs.set(runId, {
       runId,
+      ...(args.params.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: args.params.requesterWorkAttributionV1 } : {}),
       callId,
       sidechainId,
       sessionId: args.params.sessionId,
@@ -534,6 +568,7 @@ export async function startExecutionRun(args: Readonly<{
     // Persist a daemon-visible marker so machine-wide UIs can see the run immediately.
     const startMarkerPayload = {
       pid: process.pid,
+      ...(args.params.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: args.params.requesterWorkAttributionV1 } : {}),
       happySessionId: args.params.sessionId,
       runId,
       callId,
@@ -1237,8 +1272,8 @@ export async function startExecutionRun(args: Readonly<{
             },
           });
           await args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
-          args.onPublicStateUpdated?.(runId);
         }
+        args.onPublicStateUpdated?.(runId);
 
         if (initialInstructions.trim().length > 0 && !usesRetainedSessionInput) {
           const start = {

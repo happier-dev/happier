@@ -29,6 +29,8 @@ import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunP
 import type { ExecutionRunWorkflowObservationSink } from './executionRunWorkflowObservation';
 
 export type ExecutionRunManagerStartParams = Readonly<{
+  /** Nonsecret host-admitted custody identity; never accepted from authored Run input. */
+  requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
   /** Session association is explicit; `null` is a daemon-owned detached run. */
   sessionId: string | null;
   /** Absolute depth stamped by host admission; parent refs are correlation only. */
@@ -150,6 +152,8 @@ export type ExecutionRunRuntimeSettings = Readonly<{
 }>;
 
 export type ExecutionRunState = Readonly<{
+  /** Retained with this accepted occurrence, independently of public Run state. */
+  requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
   /** Resolved host runtime engine, rather than a requested launch preference. */
   effectiveEngine?: Readonly<{ agentId: string; modelId?: string }>;
   runId: string;

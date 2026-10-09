@@ -1,13 +1,15 @@
 import { configuration } from '../configuration';
 import { logger } from '../ui/logger';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { statSync, watch, type FSWatcher } from 'node:fs';
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DaemonExecutionRunMarkerPersistenceReadSchema, DaemonExecutionRunMarkerOwnerWriteSchema, DaemonExecutionRunMarkerSchema } from '@happier-dev/protocol/daemon/executionRuns';
 import type { DaemonExecutionRunMarker, DaemonExecutionRunMarkerPersistenceRead, DaemonExecutionRunMarkerOwnerWrite } from '@happier-dev/protocol';
 import { WorkerUpdateV1Schema } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { z } from 'zod';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { readOrCreateDeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 import { resolveReleaseRingScopedBasename } from '../cli/runtime/publicReleaseChannel';
 import {
@@ -24,6 +26,130 @@ import {
 } from '@/agent/runtime/bridges/executionRun/retainedState';
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { composeExecutionRunWorkerUpdate } from '@/agent/runtime/bridges/executionRun/executionRunWorkerUpdate';
+import type { LiveWorkItemV1, LiveWorkProducerV1 } from './lifecycle/managedActivity';
+import { resolveExecutionRunLifecycle } from '@/agent/runtime/bridges/executionRun/resolveExecutionRunLifecycle';
+import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from './lifecycle/requesterWorkAttribution';
+
+const liveWorkListeners = new Set<() => void>();
+function notifyExecutionRunLiveWorkChanged(): void {
+  for (const listener of liveWorkListeners) {
+    try { listener(); } catch { /* Observation cannot alter retained execution custody. */ }
+  }
+}
+
+/**
+ * Reads the existing lifecycle records, visibility markers and retained delivery
+ * custody. A demand-owned directory watcher also observes Session process writes.
+ * Native watcher failure and incomplete parsing cannot establish inactivity.
+ */
+export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
+  const listeners = new Set<() => void>();
+  let watcher: FSWatcher | undefined;
+  let watchedDirectory: string | undefined;
+  let watchedIdentity: Readonly<{ dev: number; ino: number }> | undefined;
+  let watcherFailed = false;
+  const notify = () => {
+    for (const listener of listeners) {
+      try { listener(); } catch { /* Observation cannot alter execution custody. */ }
+    }
+  };
+  const closeWatcher = () => {
+    const current = watcher;
+    watcher = undefined;
+    watchedDirectory = undefined;
+    watchedIdentity = undefined;
+    current?.close();
+  };
+  const armWatcher = () => {
+    const directory = resolveExecutionRunMarkerDir();
+    if (watcher && watchedDirectory !== directory) { closeWatcher(); watcherFailed = false; }
+    if (!listeners.size || watcher || watcherFailed) return;
+    try {
+      const identity = statSync(directory);
+      const armed = watch(directory, { persistent: false }, notify);
+      watcher = armed;
+      watchedDirectory = directory;
+      watchedIdentity = { dev: identity.dev, ino: identity.ino };
+      const unavailable = () => {
+        if (watcher !== armed) return;
+        watcherFailed = true;
+        closeWatcher();
+        notify();
+      };
+      armed.on('error', unavailable);
+      armed.on('close', unavailable);
+    } catch (error) {
+      // An absent directory can be established by the incumbent marker owner
+      // before a later read. Other native failures need subscription repair.
+      watcherFailed = (error as NodeJS.ErrnoException)?.code !== 'ENOENT';
+    }
+  };
+  return {
+    async read() {
+      armWatcher();
+      const observedWatcher = watcher;
+      const observedIdentity = watchedIdentity;
+      let coverage: 'complete' | 'unknown' = observedWatcher ? 'complete' : 'unknown';
+      const incomplete = () => { coverage = 'unknown'; };
+      const observations = await Promise.allSettled([
+        listExecutionRunMarkersRaw(incomplete), readRetainedExecutionRunRecords(), readPendingExecutionRunWorkerUpdates(incomplete),
+      ]);
+      const items = new Map<string, LiveWorkItemV1>();
+      const put = (runId: string, state: LiveWorkItemV1['state'], attribution?: RequesterWorkAttributionV1) => {
+        const prior = items.get(runId);
+        if (prior?.state === 'active' && state !== 'active') return;
+        const compatible = !prior || prior.state !== 'active' || state !== 'active'
+          || attribution && !('kind' in prior.attribution)
+            && attribution.serverId === prior.attribution.serverId && attribution.accountId === prior.attribution.accountId
+            && attribution.machineId === prior.attribution.machineId && attribution.installationId === prior.attribution.installationId;
+        items.set(runId, { category: 'execution_run', ownerRef: runId,
+          attribution: compatible && attribution ? attribution : { kind: 'unknown' }, state });
+      };
+      const [markers, retained, deliveries] = observations;
+      if (markers.status === 'fulfilled') for (const marker of markers.value) {
+        put(marker.runId, isRunningMarker(marker) || marker.executionRunConnectedServicesCleanupReceiptV1 ? 'active' : 'settled', marker.requesterWorkAttributionV1);
+      }
+      if (retained.status === 'fulfilled') for (const record of retained.value) {
+        put(record.state.runId, record.state.status === 'running' || record.terminalEventId ? 'active' : 'settled', record.requesterWorkAttributionV1);
+      }
+      if (deliveries.status === 'fulfilled') for (const delivery of deliveries.value) put(delivery.update.workerId, 'active', delivery.requesterWorkAttributionV1);
+      if (observedWatcher && watcher === observedWatcher) {
+        try {
+          const currentIdentity = await stat(resolveExecutionRunMarkerDir());
+          if (currentIdentity.dev !== observedIdentity?.dev || currentIdentity.ino !== observedIdentity?.ino) {
+            closeWatcher();
+            armWatcher();
+            notify();
+          }
+        } catch { closeWatcher(); notify(); }
+      }
+      if (observations.some(result => result.status === 'rejected') || !watcher || watcher !== observedWatcher) coverage = 'unknown';
+      // The incumbent marker read can establish a previously absent directory.
+      // Arm its edge source and notify the aggregate to take a covered snapshot;
+      // this first uncovered snapshot itself must still remain unknown.
+      if (!observedWatcher && !watcherFailed && listeners.size) {
+        armWatcher();
+        if (watcher) notify();
+      }
+      return { items: [...items.values()], coverage };
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      if (listeners.size === 1) {
+        watcherFailed = false;
+        liveWorkListeners.add(notify);
+      }
+      armWatcher();
+      return () => {
+        listeners.delete(listener);
+        if (!listeners.size) {
+          liveWorkListeners.delete(notify);
+          closeWatcher();
+        }
+      };
+    },
+  };
+}
 
 function retainedStatePath(runId: string): string {
   return join(resolveExecutionRunMarkerDir(), `state-${Buffer.from(runId).toString('base64url')}.sealed`);
@@ -46,7 +172,7 @@ function serializeRetainedStateWrite<T>(runId: string, write: () => Promise<T>):
 async function readRetainedExecutionRunRecord(runId: string): Promise<RetainedExecutionRunRecord | null> {
   const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
   try {
-    return RetainedExecutionRunRecordSchema.parse(storage.openJson({
+    return createStoredReadSchema(RetainedExecutionRunRecordSchema).parse(storage.openJson({
       purpose: 'execution_run_state', ciphertext: await readProtectedLocalStateFile(retainedStatePath(runId)),
     }));
   } catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null; throw error; }
@@ -57,6 +183,7 @@ async function writeRetainedExecutionRunRecord(record: RetainedExecutionRunRecor
   await writeProtectedLocalStateFileAtomic(retainedStatePath(record.state.runId), storage.sealJson({
     purpose: 'execution_run_state', value: RetainedExecutionRunRecordSchema.parse(record),
   }), { authority: 'owned' });
+  notifyExecutionRunLiveWorkChanged();
 }
 
 async function acknowledgeRetainedRunTerminal(input: RetainedExecutionRunWorkerUpdate): Promise<void> {
@@ -70,14 +197,16 @@ async function acknowledgeRetainedRunTerminal(input: RetainedExecutionRunWorkerU
   });
 }
 
-export async function retainExecutionRunState(state: ExecutionRunState, terminalEventId?: string): Promise<void> {
+export async function retainExecutionRunState(state: ExecutionRunState, terminalEventId?: string, requesterWorkAttributionV1?: RequesterWorkAttributionV1): Promise<void> {
   const identity = await readProcessIdentityByPid(process.pid);
   await serializeRetainedStateWrite(state.runId, async () => {
     const current = await readRetainedExecutionRunRecord(state.runId);
+    const attribution = requesterWorkAttributionV1 ?? state.requesterWorkAttributionV1 ?? current?.requesterWorkAttributionV1;
     const pendingEventId = terminalEventId ?? (state.status !== 'running'
       && current?.state.finishedAtMs === state.finishedAtMs ? current?.terminalEventId : undefined);
     await writeRetainedExecutionRunRecord({
       ownerPid: process.pid,
+      ...(attribution ? { requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.parse(attribution) } : {}),
       ...(identity?.processStartTimeMs !== undefined ? { ownerProcessStartTimeMs: identity.processStartTimeMs } : {}),
       state: projectRetainedExecutionRunState(state), ...(pendingEventId ? { terminalEventId: pendingEventId } : {}),
     });
@@ -95,7 +224,7 @@ export async function readRetainedExecutionRunRecords(): Promise<readonly Retain
   for (const entry of entries) {
     const path = join(resolveExecutionRunMarkerDir(), entry);
     try {
-      const parsed = RetainedExecutionRunRecordSchema.safeParse(storage.openJson({
+      const parsed = createStoredReadSchema(RetainedExecutionRunRecordSchema).safeParse(storage.openJson({
         purpose: 'execution_run_state', ciphertext: await readProtectedLocalStateFile(path),
       }));
       if (!parsed.success || retainedStatePath(parsed.data.state.runId) !== path) {
@@ -108,6 +237,29 @@ export async function readRetainedExecutionRunRecords(): Promise<readonly Retain
     }
   }
   return records;
+}
+
+/** Home retention consumes the same live custody and native-resume facts as Run lifecycle. */
+export async function readRetainedExecutionRunHomeKeys(): Promise<readonly string[]> {
+  let complete = true;
+  const [markers, records] = await Promise.all([
+    listExecutionRunMarkersRaw(() => { complete = false; }),
+    readRetainedExecutionRunRecords(),
+  ]);
+  if (!complete) throw Object.assign(new Error('Execution Run home retention is unavailable'), {
+    code: 'execution_run_home_retention_unavailable',
+  });
+  const keys = new Set(markers.filter(isRunningMarker).map(marker => marker.runId));
+  for (const { state } of records) {
+    if (state.status === 'running' || resolveExecutionRunLifecycle(state, null).projection.state !== 'unavailable') {
+      keys.add(state.runId);
+    }
+  }
+  return [...keys];
+}
+
+export async function isExecutionRunHomeRetained(runId: string): Promise<boolean> {
+  return (await readRetainedExecutionRunHomeKeys()).includes(runId);
 }
 
 /** Existing daemon process supervision feeds the lifecycle owner; transport loss never does. */
@@ -136,6 +288,7 @@ export async function reconcileRetainedExecutionRunRecords(params: Readonly<{
           const run = next.state;
           await writeExecutionRunMarker({
             pid: record.ownerPid, happySessionId: run.sessionId, runId: run.runId, callId: run.callId,
+            ...(next.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: next.requesterWorkAttributionV1 } : {}),
             sidechainId: run.sidechainId, intent: run.intent, backendTarget: readBackendTargetRefV2(run.backendTarget),
             permissionMode: run.permissionMode, retentionPolicy: run.retentionPolicy, runClass: run.runClass,
             ioMode: run.ioMode, status: run.status, startedAtMs: run.startedAtMs,
@@ -152,7 +305,9 @@ export async function reconcileRetainedExecutionRunRecords(params: Readonly<{
           try { await readProtectedLocalStateFile(path); }
           catch (error) {
             if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
-            await retainExecutionRunWorkerUpdate(update);
+            await retainExecutionRunWorkerUpdate({ ...update,
+              ...(next.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: next.requesterWorkAttributionV1 } : {}),
+            });
           }
         }
       }
@@ -165,12 +320,13 @@ export async function reconcileRetainedExecutionRunRecords(params: Readonly<{
 
 const ExecutionRunMarkerSchema = DaemonExecutionRunMarkerSchema;
 const ExecutionRunMarkerOwnerWriteSchema = DaemonExecutionRunMarkerOwnerWriteSchema;
-const ExecutionRunMarkerPersistenceReadSchema = DaemonExecutionRunMarkerPersistenceReadSchema;
+const ExecutionRunMarkerPersistenceReadSchema = createStoredReadSchema(DaemonExecutionRunMarkerPersistenceReadSchema);
 
 export type ExecutionRunMarker = DaemonExecutionRunMarker;
 type ExecutionRunMarkerPersistenceRead = DaemonExecutionRunMarkerPersistenceRead;
 
 const RetainedWorkerUpdateSchema = z.object({
+  requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.optional(),
   sessionId: z.string().min(1),
   localId: z.string().min(1),
   update: WorkerUpdateV1Schema,
@@ -214,16 +370,17 @@ export async function retainExecutionRunWorkerUpdate(input: RetainedExecutionRun
     purpose: 'execution_run_worker_update', value: payload,
   }), { authority: 'owned' });
   if (!published) {
-    const retained = RetainedWorkerUpdateSchema.safeParse(storage.openJson({
+    const retained = createStoredReadSchema(RetainedWorkerUpdateSchema).safeParse(storage.openJson({
       purpose: 'execution_run_worker_update', ciphertext: await readProtectedLocalStateFile(path),
     }));
     if (!retained.success || JSON.stringify(retained.data) !== JSON.stringify(payload)) {
       throw new Error('Execution-run worker update custody conflicts with the terminal observation');
     }
   }
+  if (published) notifyExecutionRunLiveWorkChanged();
 }
 
-export async function readPendingExecutionRunWorkerUpdates(): Promise<readonly RetainedExecutionRunWorkerUpdate[]> {
+export async function readPendingExecutionRunWorkerUpdates(onUnavailable?: () => void): Promise<readonly RetainedExecutionRunWorkerUpdate[]> {
   const entries = await listWorkerUpdateEntries();
   if (!entries.length) return [];
   const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
@@ -231,7 +388,7 @@ export async function readPendingExecutionRunWorkerUpdates(): Promise<readonly R
   for (const entry of entries) {
     const identity = readWorkerUpdateEntryIdentity(entry)!;
     try {
-      const parsed = RetainedWorkerUpdateSchema.safeParse(storage.openJson({
+      const parsed = createStoredReadSchema(RetainedWorkerUpdateSchema).safeParse(storage.openJson({
         purpose: 'execution_run_worker_update',
         ciphertext: await readProtectedLocalStateFile(join(resolveExecutionRunMarkerDir(), entry)),
       }));
@@ -243,6 +400,7 @@ export async function readPendingExecutionRunWorkerUpdates(): Promise<readonly R
     } catch (error) {
       // An exact acceptance ACK can remove an entry between the directory scan and read.
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue;
+      onUnavailable?.();
       logger.warn('[executionRunRegistry] Retained worker update could not be opened', {
         code: 'execution_run_worker_update_custody_unavailable', runId: identity[0],
       });
@@ -257,7 +415,7 @@ export async function acknowledgeExecutionRunWorkerUpdate(input: RetainedExecuti
   const path = join(resolveExecutionRunMarkerDir(), resolveWorkerUpdateEntry(input.update.workerId, input.localId));
   const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
   try {
-    const parsed = RetainedWorkerUpdateSchema.safeParse(storage.openJson({
+    const parsed = createStoredReadSchema(RetainedWorkerUpdateSchema).safeParse(storage.openJson({
       purpose: 'execution_run_worker_update', ciphertext: await readProtectedLocalStateFile(path),
     }));
     if (!parsed.success || parsed.data.update.workerKind !== 'execution_run'
@@ -265,6 +423,7 @@ export async function acknowledgeExecutionRunWorkerUpdate(input: RetainedExecuti
       || parsed.data.localId !== input.localId || parsed.data.sessionId !== input.sessionId) return false;
     await acknowledgeRetainedRunTerminal(input);
     await removeProtectedLocalStateFile(path);
+    notifyExecutionRunLiveWorkChanged();
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return true;
@@ -397,6 +556,7 @@ export async function writeExecutionRunMarker(marker: DaemonExecutionRunMarkerOw
 
   const payload = ExecutionRunMarkerOwnerWriteSchema.parse(marker);
   await writeJsonAtomic(resolveExecutionRunMarkerPath(payload.runId), payload);
+  notifyExecutionRunLiveWorkChanged();
 }
 
 export async function removeExecutionRunMarker(runId: string): Promise<void> {
@@ -432,6 +592,7 @@ export async function removeExecutionRunMarker(runId: string): Promise<void> {
       logger.debug(`[executionRunRegistry] Failed to scan temp markers for run-${runId}.json`, e);
     }
   }
+  notifyExecutionRunLiveWorkChanged();
 }
 
 export async function clearExecutionRunConnectedServicesCleanupReceipt(
@@ -449,9 +610,10 @@ export async function clearExecutionRunConnectedServicesCleanupReceipt(
   const parsed = ExecutionRunMarkerOwnerWriteSchema.safeParse(marker);
   if (!parsed.success) return;
   await writeJsonAtomic(filePath, parsed.data);
+  notifyExecutionRunLiveWorkChanged();
 }
 
-async function listExecutionRunMarkersRaw(): Promise<ExecutionRunMarkerPersistenceRead[]> {
+async function listExecutionRunMarkersRaw(onUnavailable?: () => void): Promise<ExecutionRunMarkerPersistenceRead[]> {
   const dir = resolveExecutionRunMarkerDir();
   await mkdir(dir, { recursive: true });
 
@@ -464,7 +626,7 @@ async function listExecutionRunMarkersRaw(): Promise<ExecutionRunMarkerPersisten
     if (!isExecutionRunMarkerEntry(entry)) continue;
     const path = join(dir, entry);
     const marker = await readExecutionRunMarkerFile(path);
-    if (!marker) continue;
+    if (!marker) { onUnavailable?.(); continue; }
 
     const current = recovered.get(marker.runId);
     const nextIsCanonical = isCanonicalExecutionRunMarkerEntry(entry);
@@ -563,6 +725,7 @@ export async function gcExecutionRunMarkers(params: Readonly<{
       const current = await readRetainedExecutionRunRecord(run.runId);
       if (current?.state.status === run.status && current.state.finishedAtMs === run.finishedAtMs) {
         await removeProtectedLocalStateFile(retainedStatePath(run.runId));
+        notifyExecutionRunLiveWorkChanged();
       }
     });
   }

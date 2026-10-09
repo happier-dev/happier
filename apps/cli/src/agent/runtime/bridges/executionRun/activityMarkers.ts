@@ -55,6 +55,7 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
   });
   const markerPayload = {
     pid: process.pid,
+    ...(run.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: run.requesterWorkAttributionV1 } : {}),
     happySessionId: run.sessionId,
     runId: run.runId,
     callId: run.callId,

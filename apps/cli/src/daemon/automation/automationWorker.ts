@@ -1,8 +1,3 @@
-import type {
-  SpawnSessionOptions,
-  SpawnSessionResult,
-} from '@/session/shared/spawnSessionContract';
-
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import {
   createAutomationAccountEncryptionMaterialSnapshotV1,
@@ -27,15 +22,14 @@ import type {
 } from './automationTypes';
 import type { Update } from '@/api/types';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
-import type {
-  SessionServerStartDispatchResultV1,
-  SessionServerStartIngressRequestV1,
-} from '@happier-dev/protocol';
 import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } from '@happier-dev/protocol/automations/automationApiV3';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { invalidateActiveAutomationRun } from './automationRunInvalidation';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import type { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
+import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
+import type { LiveWorkItemV1, LiveWorkProducerV1 } from '../lifecycle/managedActivity';
+import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 
 type AutomationMachineAdmissionTransport = NonNullable<
   Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
@@ -44,6 +38,7 @@ type AutomationMachineAdmissionTransport = NonNullable<
 const ASSIGNMENT_RECONCILIATION_DELAY_MS = 45_000;
 const ASSIGNMENT_RECONCILIATION_JITTER_MS = 15_000;
 export type AutomationWorkerHandle = Readonly<{
+  liveWorkProducer: LiveWorkProducerV1;
   stop: () => void;
   refreshAssignments: () => Promise<void>;
   handleServerUpdate: (update: Update) => void;
@@ -82,16 +77,12 @@ function toClaimableRunPayload(claimResult: AutomationClaimRunResponse): Claimab
 }
 
 export function startAutomationWorker(params: {
+  requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+  admissionDrain?: DaemonAdmissionDrain;
   token: string;
-  credentials?: StoredCredentials;
+  credentials: StoredCredentials;
   machineId: string;
-  spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   machineAdmissionTransport?: AutomationMachineAdmissionTransport;
-  /** The connected daemon's Session-owned Automation start ingress. */
-  dispatchSessionServerStart?: (
-    request: SessionServerStartIngressRequestV1,
-    options?: Readonly<{ signal?: AbortSignal }>,
-  ) => Promise<SessionServerStartDispatchResultV1>;
   env?: NodeJS.ProcessEnv;
   coordinateWorkflowRun?: ReturnType<typeof createProductionWorkflowRunCoordinator>;
   /** Existing lifecycle-indexed custody reader, woken by an exact persisted control invalidation. */
@@ -106,6 +97,7 @@ export function startAutomationWorker(params: {
       blockerCode: workerDecision.blockerCode,
     });
     return {
+      liveWorkProducer: { read: () => ({ coverage: 'complete', items: [] }), subscribe: () => () => {} },
       stop: () => {
         logAutomationInfo('Automation worker stop called while disabled', {
           machineId: params.machineId,
@@ -121,6 +113,8 @@ export function startAutomationWorker(params: {
   }
 
   const scheduler = resolveAutomationPollingConfig(env);
+  const attribution = params.requesterWorkAttributionV1
+    ? Object.freeze(RequesterWorkAttributionV1Schema.parse(params.requesterWorkAttributionV1)) : { kind: 'unknown' as const };
   const claimClient = createAutomationClaimClient({ token: params.token });
   const assignments = createAutomationAssignmentCache();
 
@@ -151,11 +145,43 @@ export function startAutomationWorker(params: {
     attempt: number;
     controller: AbortController;
     refreshReviewHolds?: () => void;
+    materialWorkReleased?: boolean;
+    coordinatorWork?: LiveWorkProducerV1;
+    unsubscribeCoordinatorWork?: () => void;
   }>();
+  const activityListeners = new Set<() => void>();
+  const publishActivity = () => { for (const listener of activityListeners) listener(); };
+  const liveWorkProducer: LiveWorkProducerV1 = {
+    read: async () => {
+      const items: LiveWorkItemV1[] = claimInFlight ? [{ category: 'workflow_run', ownerRef: claimClient,
+        attribution, state: 'active' }] : [];
+      let coverage: 'complete' | 'unknown' = 'complete';
+      for (const active of activeExecutions.values()) {
+        if (active.materialWorkReleased) continue;
+        if (active.coordinatorWork) {
+          try {
+            const observation = await active.coordinatorWork.read();
+            items.push(...observation.items);
+            // Registration/closure borders the coordinator's owned lifetime;
+            // until the worker settles, preparation/commit custody still holds.
+            if (observation.items.length === 0 && !active.materialWorkReleased) {
+              items.push({ category: 'workflow_run', ownerRef: active.runId,
+                attribution, state: 'active' });
+            }
+            if (observation.coverage === 'unknown') coverage = 'unknown';
+          } catch { coverage = 'unknown'; }
+        } else {
+          items.push({ category: 'workflow_run', ownerRef: active.runId,
+            attribution, state: 'active' });
+        }
+      }
+      return { items, coverage };
+    },
+    subscribe: listener => { activityListeners.add(listener); return () => { activityListeners.delete(listener); }; },
+  };
   const capacityWaiters = new Set<() => void>();
   const wakeCapacityWaiters = () => { for (const wake of capacityWaiters) wake(); };
-  const actionExecutor = params.credentials
-    ? createCliActionExecutorFromCredentials({
+  const actionExecutor = createCliActionExecutorFromCredentials({
       credentials: params.credentials,
       readCredentials: async () => await readStoredCredentials().catch(() => null),
       machineId: params.machineId,
@@ -166,12 +192,10 @@ export function startAutomationWorker(params: {
       ...(params.machineAdmissionTransport
         ? { machineAdmissionTransport: params.machineAdmissionTransport }
         : {}),
-    })
-    : null;
+    });
   let maxActiveRunsPerMachine = DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE;
   const sourceObservers = createAutomationRunLifecycleObservers({
     wait: async (source, signal) => {
-      if (!actionExecutor) throw new Error('not_authenticated');
       const result = await actionExecutor.execute('execution.run.wait', {
         runId: source.runId, sessionId: source.sessionId ?? null,
       }, { surface: 'cli', executionRunTargetMachineId: source.machineId, signal });
@@ -205,6 +229,7 @@ export function startAutomationWorker(params: {
     if (stopped) return;
     if (paused) return;
     const at = Math.max(Date.now(), Math.floor(whenMs));
+    if (params.admissionDrain?.isQuiescing()) return;
     if (!force && claimTimer && claimTimerAt > 0 && claimTimerAt <= at) {
       return;
     }
@@ -281,7 +306,7 @@ export function startAutomationWorker(params: {
       const active = activeExecutions.get(runId);
       if (!active || active.controller !== controller) throw new Error('automation_claim_not_current');
       if (active.consumesStartCapacity) return;
-      if (!paused && hasExecutionCapacity()) {
+      if (!paused && !params.admissionDrain?.isQuiescing() && hasExecutionCapacity()) {
         active.consumesStartCapacity = true;
         return;
       }
@@ -320,6 +345,7 @@ export function startAutomationWorker(params: {
   const stopWorker = (reason: 'manual') => {
     if (stopped) return;
     stopped = true;
+    unsubscribeAdmission?.();
     sourceObservers.clear();
     for (const active of activeExecutions.values()) {
       active.controller.abort();
@@ -432,12 +458,26 @@ export function startAutomationWorker(params: {
     let claimedRunStarted = false;
     try {
       claimInFlight = true;
+      publishActivity();
       pendingQueuedWake = false;
-      const scope = hasExecutionCapacity() ? undefined : 'workflow';
+      // The Account owner performs same-id predecessor conversion (or an
+      // encrypted-source pause) before dispatch. Already admitted Run snapshots
+      // remain immutable; subsequent occurrences consume the current recipe.
+      if (assignments.getAll().some((assignment) => assignment.executionRecipeVersion !== 2)) {
+        const migrated = await actionExecutor.execute('workflow.trigger.list', { scope: 'account_all' },
+          { surface: 'cli', authority: 'account_automation' });
+        if (!migrated.ok) throw Object.assign(new Error(migrated.errorCode), { code: migrated.errorCode });
+        await refreshAssignments();
+      }
+      if (stopped || paused || params.admissionDrain?.isQuiescing()) {
+        pendingQueuedWake = true;
+        return;
+      }
+      const scope = 'workflow';
       const claimResult = await claimClient.claimRun({
         machineId: params.machineId,
         leaseDurationMs: scheduler.leaseDurationMs,
-        ...(scope ? { scope } : {}),
+        scope,
       });
 
       // A completed claim is authoritative progress for this loop, regardless
@@ -464,17 +504,16 @@ export function startAutomationWorker(params: {
         runId: claimed.run.id,
         automationId: claimed.run.automationId,
         scopeSessionId: claimed.automation?.scopeSessionId,
-        consumesStartCapacity: claimed.run.automationId !== null && claimed.run.recipeKind !== 'workflow-v2',
+        consumesStartCapacity: false,
         attempt: claimed.run.attempt,
         controller: executionController,
       });
+      publishActivity();
       claimedRunStarted = true;
 
       void (async () => {
         try {
           await executeClaimedRun({
-            token: params.token,
-            ...(params.credentials ? { credentials: params.credentials } : {}),
             machineId: params.machineId,
             claimClient,
             acquireMachineStartCapacity: (signal) => acquireMachineStartCapacity(claimed.run.id, executionController, signal),
@@ -484,27 +523,41 @@ export function startAutomationWorker(params: {
               active.refreshReviewHolds = () => { void refresh().catch((error) =>
                 logAutomationWarn('Failed to refresh workflow review holds', error, { runId: claimed.run.id })); };
             },
-            spawnSession: params.spawnSession,
             heartbeatMs: scheduler.heartbeatMs,
             leaseDurationMs: scheduler.leaseDurationMs,
-            ...(params.machineAdmissionTransport
-              ? { machineAdmissionTransport: params.machineAdmissionTransport }
-              : {}),
-            ...(params.dispatchSessionServerStart
-              ? { dispatchSessionServerStart: params.dispatchSessionServerStart }
-              : {}),
             ...(params.coordinateWorkflowRun
-              ? { coordinateWorkflowRun: params.coordinateWorkflowRun }
+              ? { coordinateWorkflowRun: (claim: Parameters<NonNullable<typeof params.coordinateWorkflowRun>>[0]) => params.coordinateWorkflowRun!({ ...claim,
+                registerLiveWorkProducer: producer => {
+                  const active = activeExecutions.get(claimed.run.id);
+                  if (active?.controller !== executionController) return () => {};
+                  active.coordinatorWork = producer;
+                  active.unsubscribeCoordinatorWork = producer.subscribe(publishActivity);
+                  publishActivity();
+                  return () => {
+                    active.unsubscribeCoordinatorWork?.();
+                    active.unsubscribeCoordinatorWork = undefined;
+                    active.coordinatorWork = undefined;
+                    publishActivity();
+                  };
+                },
+              }) }
               : {}),
             resolveAutomationAccountEncryption: async (signal) => await resolveAutomationWorkerAccountEncryption({
               token: params.token,
               ...(params.credentials ? { credentials: params.credentials } : {}),
               signal,
             }),
-            ...(actionExecutor ? { executeAction: actionExecutor.execute } : {}),
             signal: executionController.signal,
             claimed,
           });
+
+          // A released/parked Run owns no material work during the trailing
+          // assignment refresh. The map remains the claim/capacity authority.
+          const active = activeExecutions.get(claimed.run.id);
+          if (active?.controller === executionController) {
+            active.materialWorkReleased = true;
+            publishActivity();
+          }
 
           // Pull a fresh assignments snapshot so we have an updated nextRunAt after the run transitions/enqueue.
           await refreshAssignments().catch((error) => {
@@ -530,7 +583,9 @@ export function startAutomationWorker(params: {
         } finally {
           const active = activeExecutions.get(claimed.run.id);
           if (active?.controller === executionController) {
+            active.unsubscribeCoordinatorWork?.();
             activeExecutions.delete(claimed.run.id);
+            publishActivity();
             wakeCapacityWaiters();
           }
           if (!stopped && !paused) {
@@ -562,6 +617,7 @@ export function startAutomationWorker(params: {
       });
     } finally {
       claimInFlight = false;
+      publishActivity();
 
       if (claimedRunStarted) {
         // Refill through the same map and claim timer after releasing request
@@ -578,6 +634,13 @@ export function startAutomationWorker(params: {
       rescheduleClaim('tick-complete');
     }
   };
+
+  const unsubscribeAdmission = params.admissionDrain?.subscribe(() => {
+    wakeCapacityWaiters();
+    if (params.admissionDrain?.isQuiescing()) { clearClaimTimer(); return; }
+    if (pendingQueuedWake) scheduleClaimSoon('admission-reopened');
+    else rescheduleClaim('admission-reopened', true);
+  });
 
   // Seed the first bounded reconciliation before the initial read so a transient
   // startup failure cannot leave an empty cache without another authoritative read.
@@ -596,6 +659,7 @@ export function startAutomationWorker(params: {
   });
 
   return {
+    liveWorkProducer,
     stop: () => stopWorker('manual'),
     refreshAssignments: async () => {
       await refreshAssignments();

@@ -1,22 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import os from 'node:os';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
-  AutomationRunExecutionRecipeV1Schema,
-  AutomationV3WorkerStartResponseSchema,
-  type SessionServerStartDispatchResultV1,
-  type SessionServerStartIngressRequestV1,
+  FeaturesResponseSchema,
   materializeWorkflowAcceptedSnapshotV1,
   serializeWorkflowStoredContentEnvelopeV1,
   sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
   deriveWorkflowSessionInputLocalIdV2,
+  type AutomationDefinitionDetail,
+  type AutomationDefinitionReconcileRequest,
 } from '@happier-dev/protocol';
+import type { StoredCredentials } from '@/persistence';
+import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from '../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 import { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
 import { createWorkflowRunStorageTestkit, createPlainWorkflowRunKeyCensusFixture } from '@/daemon/workflows/workflowRunStorage.testkit';
 import type { Update } from '@/api/types';
 import { reloadConfiguration as reloadCapacityConfiguration } from '@/configuration';
-import { startAutomationWorker as startCapacityAutomationWorker } from './automationWorker';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
+  emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { startAutomationWorker } from './automationWorker';
+import { createDaemonAdmissionDrain } from '../lifecycle/admissionDrain';
+import { createManagedActivityInventory, type LiveWorkInventoryV1 } from '../lifecycle/managedActivity';
+import { projectMachineWorkSummary } from '../machines/machineWorkSummary';
 
 const { mockGet, mockPost, mockIsAxiosError, mockCreate } = vi.hoisted(() => ({
   mockGet: vi.fn(),
@@ -24,6 +33,40 @@ const { mockGet, mockPost, mockIsAxiosError, mockCreate } = vi.hoisted(() => ({
   mockIsAxiosError: vi.fn(() => true),
   mockCreate: vi.fn(),
 }));
+const migrationBoundary = vi.hoisted(() => ({ credentials: null as StoredCredentials | null,
+  list: vi.fn(), get: vi.fn(), reconcile: vi.fn() }));
+const freshSpawnBoundary = vi.hoisted(() => vi.fn());
+
+function startCapacityAutomationWorker(params: Parameters<typeof startAutomationWorker>[0]) {
+  migrationBoundary.credentials = params.credentials;
+  return startAutomationWorker(params);
+}
+
+// The credential store and Automation HTTP adapters are system boundaries;
+// the worker, Account Actions and predecessor converter remain real.
+vi.mock('@/persistence', async importOriginal => ({ ...await importOriginal<typeof import('@/persistence')>(),
+  readStoredCredentials: async () => migrationBoundary.credentials }));
+vi.mock('@/api/automations', async importOriginal => ({ ...await importOriginal<typeof import('@/api/automations')>(),
+  listAutomationDefinitions: migrationBoundary.list, getAutomationDefinition: migrationBoundary.get,
+  reconcileAutomationDefinition: migrationBoundary.reconcile }));
+
+// Machine RPC is the process boundary for both resume and fresh Session spawn.
+// Canonical readiness and Agent selection remain real.
+vi.mock('@/session/transport/rpc/machineRpc', () => {
+  const resumed = new Map<string, string>();
+  return { callMachineRpc: async (input: Parameters<typeof import('@/session/transport/rpc/machineRpc').callMachineRpc>[0]) => {
+    const { method, request } = input;
+    const resumeRequest = request as { sessionId?: string; spawnNonce?: string };
+    if ((method === RPC_METHODS.SPAWN_HAPPY_SESSION || method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) && !resumeRequest.sessionId) {
+      return freshSpawnBoundary(input);
+    }
+    if (method === RPC_METHODS.SPAWN_HAPPY_SESSION && resumeRequest.sessionId && resumeRequest.spawnNonce) {
+      resumed.set(resumeRequest.spawnNonce, resumeRequest.sessionId);
+      return { type: 'success', sessionId: resumeRequest.sessionId };
+    }
+    return { status: 'success', sessionId: resumed.get(resumeRequest.spawnNonce ?? '') };
+  } };
+});
 
 vi.mock('axios', () => {
   const client = {
@@ -143,11 +186,285 @@ describe('automationWorker', () => {
   const previousHomeDir = process.env.HAPPIER_HOME_DIR;
 
   beforeEach(() => {
+    migrationBoundary.credentials = { token: 'token-1', encryption: null };
+    freshSpawnBoundary.mockReset();
+    migrationBoundary.list.mockReset().mockResolvedValue({ automations: [], nextCursor: null });
+    migrationBoundary.get.mockReset();
+    migrationBoundary.reconcile.mockReset();
+    // The canonical Action reads the Home's authenticated feature descriptor
+    // through Fetch, independently of its Axios Automation transport.
+    vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/profile') return new Response(JSON.stringify({ username: 'capacity-account' }), { status: 200 });
+      return new Response(JSON.stringify(path.startsWith('/v1/features')
+        ? FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} })
+        : { error: 'unexpected_network_request' }), { status: path.startsWith('/v1/features') ? 200 : 404 });
+    });
     vi.useRealTimers();
+  });
+
+  it('holds fresh claims during a temporary drain and consumes the same queued wake after reopening', async () => {
+    mockPost.mockClear();
+    const now = Date.now();
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-drain-claim-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
+    mockPost.mockResolvedValue({ data: { run: null, automation: null } });
+    const admissionDrain = createDaemonAdmissionDrain();
+    admissionDrain.beginTemporaryDrain();
+    const worker = startCapacityAutomationWorker({ token: 'token',
+      credentials: { token: 'token', encryption: null }, machineId: 'machine-1', admissionDrain });
+    try {
+      await worker.refreshAssignments();
+      worker.handleServerUpdate({ id: 'drain-wake', seq: 1, createdAt: now, body: {
+        t: 'automation-run-updated', runId: 'drain-run', automationId: null, state: 'queued', scheduledAt: now,
+        startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: 'machine-1',
+      } } satisfies Update);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      await settleRequestDispatch();
+      expect(mockPost.mock.calls.filter(([url]) => String(url).endsWith('/runs/claim'))).toHaveLength(0);
+      admissionDrain.resume();
+      await waitForCondition(() => mockPost.mock.calls.some(([url]) => String(url).endsWith('/runs/claim')));
+    } finally { worker.stop(); }
+  });
+
+  it('projects admitted claim custody through the sole inventory until its response settles without blanking custodian summary', async () => {
+    mockPost.mockClear();
+    const now = Date.now();
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-activity-claim-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    mockGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
+    let releaseClaim!: () => void;
+    mockPost.mockImplementation(async () => {
+      await new Promise<void>(resolve => { releaseClaim = resolve; });
+      return { data: { run: null, automation: null } };
+    });
+    const target = { serverId: 'home', machineId: 'machine-1', installationId: 'installation' };
+    const attribution = { ...target, accountId: 'alice' };
+    const workerParams = { token: 'token', credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      requesterWorkAttributionV1: attribution };
+    const worker = startCapacityAutomationWorker(workerParams);
+    const inventory = createManagedActivityInventory({ producers: [worker.liveWorkProducer] });
+    const project = async () => projectMachineWorkSummary({ inventory: await inventory.read(), target,
+      custodianAccountId: 'alice', requesterIdentities: new Map() });
+    const states: string[] = [];
+    const unsubscribe = worker.liveWorkProducer.subscribe(() => {
+      void Promise.resolve(worker.liveWorkProducer.read()).then(snapshot => {
+        states.push(snapshot.items.length ? 'busy' : 'idle');
+      });
+    });
+    try {
+      await worker.refreshAssignments();
+      expect(await worker.liveWorkProducer.read()).toEqual({ coverage: 'complete', items: [] });
+      worker.handleServerUpdate({ id: 'activity-wake', seq: 1, createdAt: now, body: {
+        t: 'automation-run-updated', runId: 'activity-run', automationId: null, state: 'queued', scheduledAt: now,
+        startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: 'machine-1',
+      } } satisfies Update);
+      await waitForCondition(() => mockPost.mock.calls.some(([url]) => String(url).endsWith('/runs/claim')));
+      expect(await worker.liveWorkProducer.read()).toMatchObject({ coverage: 'complete', items: [
+        { category: 'workflow_run', state: 'active', attribution },
+      ] });
+      expect(await inventory.readDecision()).toEqual({ kind: 'busy', reasons: ['workflow_run'] });
+      expect(await project()).toEqual({ kind: 'current', requesters: [] });
+      worker.stop();
+      expect((await worker.liveWorkProducer.read()).items).toHaveLength(1);
+      releaseClaim();
+      await waitForCondition(() => states.at(-1) === 'idle');
+      expect(await worker.liveWorkProducer.read()).toEqual({ coverage: 'complete', items: [] });
+      expect(states).toContain('busy');
+      expect(await project()).toEqual({ kind: 'current', requesters: [] });
+    } finally { unsubscribe(); inventory.dispose(); worker.stop(); releaseClaim?.(); }
+  });
+
+  it('counts admitted Workflow coordinator work and releases parked custody before a pending assignment refresh finishes', async () => {
+    const now = Date.now();
+    const runId = '00000000-0000-4000-8000-000000000052';
+    const machineId = 'machine-1';
+    const accountId = 'account-1';
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-activity-park-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const materialized = await materializeWorkflowAcceptedSnapshotV1({
+      definition: { version: 1, defaults: {
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      }, blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] },
+      context: { source: { kind: 'automation', automationId: 'automation-park' }, inputs: {}, machineId,
+        executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+        authorization: { principal: { kind: 'host' } } },
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
+    });
+    if (!materialized.ok) throw new Error(materialized.error.code);
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: materialized.snapshot,
+    }));
+    const storage = createWorkflowRunStorageTestkit({ runId, machineId,
+      origin: { kind: 'automation', automationId: 'automation-park' }, acceptedEnvelope, state: 'claimed',
+      keyCensus: { ...createPlainWorkflowRunKeyCensusFixture({ runId, accountId }), ownerAccountCurrentness: V3_CLAIM_CURRENTNESS } });
+    const admissionDrain = createDaemonAdmissionDrain();
+    const target = { serverId: 'server-1', machineId, installationId: 'installation' };
+    const attribution = { ...target, accountId };
+    let reviewInventory: LiveWorkInventoryV1 | undefined;
+    let inventory: ReturnType<typeof createManagedActivityInventory> | undefined;
+    let refreshHeld = false;
+    const releaseRefreshes: Array<() => void> = [];
+    mockGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return {
+        status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) };
+      if (storage.run().state === 'waiting_for_review') {
+        refreshHeld = true;
+        await new Promise<void>(resolve => releaseRefreshes.push(resolve));
+      }
+      return { data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } };
+    });
+    let claimed = false;
+    mockPost.mockImplementation(async (url: string) => {
+      if (!url.endsWith('/v3/automations/runs/claim')) return { data: { ok: true } };
+      if (claimed) return { data: { run: null, automation: null, accountCurrentness: null } };
+      claimed = true;
+      return { data: { run: { id: runId, automationId: 'automation-park', attempt: 1, revision: 0,
+        recipeKind: 'workflow-v2', triggerId: null, triggerRetired: false, cause: { kind: 'manual', invokedAt: now },
+        executionInputEnvelope: '{}', automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: acceptedEnvelope },
+        automation: { id: 'automation-park', name: 'Park', enabled: true }, accountCurrentness: V3_CLAIM_CURRENTNESS } };
+    });
+    const coordinatorParams = { token: 'token', accountId, machineId, storage, requesterWorkAttributionV1: attribution,
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: V3_CLAIM_CURRENTNESS }),
+      isAcceptedAuthorizationCurrent: async () => true,
+      onReviewEntered: async () => { reviewInventory = await inventory!.read(); admissionDrain.beginTemporaryDrain(); },
+      workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected_worktree'); },
+        inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+      execution: { credentials: { token: 'token', encryption: null }, serverId: 'server-1',
+        machineAdmissionTransport: async () => { throw new Error('unexpected_message'); },
+        resolveExistingSessionConversation: async () => null,
+        detachedRun: { actionExecutor: { execute: async () => { throw new Error('unexpected_execution'); } },
+          buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) } },
+    } satisfies Parameters<typeof createProductionWorkflowRunCoordinator>[0] & { requesterWorkAttributionV1: typeof attribution };
+    const coordinateWorkflowRun = createProductionWorkflowRunCoordinator(coordinatorParams);
+    const workerParams = { token: 'token', credentials: { token: 'token', encryption: null },
+      machineId, admissionDrain, coordinateWorkflowRun, requesterWorkAttributionV1: attribution };
+    const worker = startCapacityAutomationWorker(workerParams);
+    inventory = createManagedActivityInventory({ producers: [worker.liveWorkProducer] });
+    const observations: Array<readonly { state: string }[]> = [];
+    const unsubscribe = worker.liveWorkProducer.subscribe(() => {
+      void Promise.resolve(worker.liveWorkProducer.read()).then(snapshot => observations.push(snapshot.items));
+    });
+    try {
+      await worker.refreshAssignments();
+      worker.handleServerUpdate({ id: 'park-wake', seq: 1, createdAt: now, body: {
+        t: 'automation-run-updated', runId, automationId: 'automation-park', state: 'queued', scheduledAt: now,
+        startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: machineId,
+      } } satisfies Update);
+      await waitForCondition(() => refreshHeld);
+      expect(storage.run().state).toBe('waiting_for_review');
+      expect(observations.some(items => items.some(item => item.state === 'active'))).toBe(true);
+      expect(reviewInventory).toMatchObject({ coverage: 'complete', items: [
+        { category: 'workflow_run', ownerRef: runId, state: 'active', attribution },
+      ] });
+      expect(projectMachineWorkSummary({ inventory: reviewInventory!, target, custodianAccountId: 'alice',
+        requesterIdentities: new Map([[accountId, { accountId, displayName: 'Bob' }]]) })).toEqual({ kind: 'current', requesters: [
+          { accountId, displayName: 'Bob', sessions: 0, tasks: 1, terminals: 0 },
+        ] });
+      expect(await worker.liveWorkProducer.read()).toEqual({ coverage: 'complete', items: [] });
+      expect(projectMachineWorkSummary({ inventory: await inventory.read(), target, custodianAccountId: 'alice',
+        requesterIdentities: new Map([[accountId, { accountId, displayName: 'Bob' }]]) })).toEqual({ kind: 'current', requesters: [] });
+    } finally { unsubscribe(); inventory.dispose(); worker.stop(); for (const release of releaseRefreshes) release(); }
+  });
+
+  it.each(['ordinary', 'retained encrypted'] as const)('reads unread scheduled %s predecessor rows through the Account Workflow owner before claiming work', async (kind) => {
+    mockPost.mockClear();
+    const now = Date.now();
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-preclaim-conversion-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const credentials: StoredCredentials = { token: 'token', encryption: null };
+    migrationBoundary.credentials = credentials;
+    let row: AutomationDefinitionDetail = { id: 'automation-unread', name: 'Unread scheduled predecessor', description: null,
+      enabled: true, targetType: kind === 'ordinary' ? 'newSession' : 'existingSession',
+      existingSessionId: kind === 'ordinary' ? null : 'session-old', templateVersion: 1, lastRunAt: null,
+      createdAt: now, updatedAt: now, workflowDefinitionId: null, scopeSessionId: null,
+      templateCiphertext: kind === 'ordinary' ? AUTOMATION_TEMPLATE_V02_PLAIN : AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED,
+      assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: now }], triggers: [] };
+    migrationBoundary.list.mockImplementation(async () => ({ automations: [row], nextCursor: null }));
+    migrationBoundary.get.mockImplementation(async () => row);
+    migrationBoundary.reconcile.mockImplementation(async ({ input }: { input: AutomationDefinitionReconcileRequest }) => {
+      if (input.expectedTemplateVersion !== row.templateVersion) throw Object.assign(new Error('currentness_conflict'), { code: 'currentness_conflict' });
+      row = { ...row, templateVersion: row.templateVersion + 1, enabled: input.enabled,
+        ...(input.executionRecipe ? { targetType: null, templateCiphertext: undefined, executionRecipe: input.executionRecipe } : {}) };
+      return row;
+    });
+    mockGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return {
+        status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) };
+      if (url.endsWith('/v2/account/settings')) return {
+        status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      return { data: { assignments: [{ machineId: 'machine-1', automationId: row.id, nextClaimAt: now + 60_000 }], settings: DEFAULT_WORKER_SETTINGS } };
+    });
+    let recipeAtClaim: AutomationDefinitionDetail['executionRecipe'];
+    let enabledAtClaim: boolean | undefined;
+    let scopeAtClaim: unknown;
+    mockPost.mockImplementation(async (_url: string, body: { scope?: string }) => {
+      recipeAtClaim = row.executionRecipe;
+      enabledAtClaim = row.enabled;
+      scopeAtClaim = body.scope;
+      return { data: { run: null, automation: null, accountCurrentness: null } };
+    });
+    const worker = startCapacityAutomationWorker({ token: 'token', credentials, machineId: 'machine-1' });
+    try {
+      await worker.refreshAssignments();
+      worker.handleServerUpdate({ id: 'unread-wake', seq: 1, createdAt: now, body: {
+        t: 'automation-run-updated', runId: 'unread-run', automationId: row.id, state: 'queued', scheduledAt: now,
+        startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: 'machine-1',
+      } } satisfies Update);
+      await waitForCondition(() => mockPost.mock.calls.length > 0);
+      expect(scopeAtClaim).toBe('workflow');
+      if (kind === 'ordinary') {
+        expect(recipeAtClaim).toMatchObject({ v: 2 });
+        expect(row.executionRecipe).toMatchObject({ v: 2 });
+      } else {
+        expect(enabledAtClaim).toBe(false);
+        expect(recipeAtClaim).toBeUndefined();
+        expect(row.executionRecipe).toBeUndefined();
+        expect(row.templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
+      }
+      expect(row.id).toBe('automation-unread');
+      expect(row.assignments[0]?.machineId).toBe('machine-1');
+      expect(row.templateVersion).toBe(2);
+    } finally {
+      worker.stop();
+    }
+  });
+
+  it('does not decode or migrate Account definitions while the current assignment inventory contains only Workflow recipes', async () => {
+    const now = Date.now();
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-current-workflow-inventory-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    mockGet.mockImplementation(async (url: string) => url.endsWith('/v1/account/encryption/currentness')
+      ? { status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) }
+      : { data: { assignments: [{ machineId: 'machine-1', automationId: 'automation-current', nextClaimAt: now,
+        executionRecipeVersion: 2 }], settings: DEFAULT_WORKER_SETTINGS } });
+    mockPost.mockClear().mockResolvedValue({ data: { run: null, automation: null, accountCurrentness: null } });
+    const worker = startCapacityAutomationWorker({ token: 'token-1', credentials: { token: 'token-1', encryption: null }, machineId: 'machine-1' });
+    try {
+      await worker.refreshAssignments();
+      await waitForCondition(() => mockPost.mock.calls.length > 0);
+      expect(migrationBoundary.list).not.toHaveBeenCalled();
+      expect(migrationBoundary.get).not.toHaveBeenCalled();
+      expect(migrationBoundary.reconcile).not.toHaveBeenCalled();
+    } finally { worker.stop(); }
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
 
     if (previousServer === undefined) delete process.env.HAPPIER_SERVER_URL;
     else process.env.HAPPIER_SERVER_URL = previousServer;
@@ -176,8 +493,8 @@ describe('automationWorker', () => {
     const { startAutomationWorker } = await import('./automationWorker');
     const worker = startAutomationWorker({
       token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
       machineId: 'machine-1',
-      spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
       env: {
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '5000',
@@ -213,9 +530,9 @@ describe('automationWorker', () => {
     const { startAutomationWorker } = await import('./automationWorker');
     const worker = startAutomationWorker({
       token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
       machineId: 'machine-1',
       recoverWorkflowRuns,
-      spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
       env: {
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '5000',
@@ -266,8 +583,8 @@ describe('automationWorker', () => {
       const { startAutomationWorker } = await import('./automationWorker');
       const worker = startAutomationWorker({
         token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
         env: {
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -308,8 +625,8 @@ describe('automationWorker', () => {
     const { startAutomationWorker } = await import('./automationWorker');
     const worker = startAutomationWorker({
       token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
       machineId: 'machine-1',
-      spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
       env: {
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -354,8 +671,8 @@ describe('automationWorker', () => {
       const { startAutomationWorker } = await import('./automationWorker');
       const worker = startAutomationWorker({
         token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
         env: {
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '5000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -403,8 +720,8 @@ describe('automationWorker', () => {
       const { startAutomationWorker } = await import('./automationWorker');
       const worker = startAutomationWorker({
         token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
         env: {
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -442,8 +759,8 @@ describe('automationWorker', () => {
       const { startAutomationWorker } = await import('./automationWorker');
       const worker = startAutomationWorker({
         token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
         env: {
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -487,6 +804,7 @@ describe('automationWorker', () => {
 
   it('does not let an older empty assignment response erase a newer queued-wake assignment', async () => {
     vi.useFakeTimers();
+    let worker: ReturnType<typeof startAutomationWorker> | undefined;
     try {
       vi.setSystemTime(new Date('2026-02-01T00:00:00.000Z'));
       const now = Date.now();
@@ -506,6 +824,7 @@ describe('automationWorker', () => {
             machineId: string;
             automationId: string;
             nextClaimAt: number;
+            executionRecipeVersion: 2;
           }>;
           settings: typeof DEFAULT_WORKER_SETTINGS;
         };
@@ -523,10 +842,10 @@ describe('automationWorker', () => {
       reloadConfiguration();
 
       const { startAutomationWorker } = await import('./automationWorker');
-      const worker = startAutomationWorker({
+      worker = startAutomationWorker({
         token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
         env: {
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -563,6 +882,9 @@ describe('automationWorker', () => {
             machineId: 'machine-1',
             automationId: 'automation-1',
             nextClaimAt: now + 60_000,
+            // This cadence fixture represents a current Workflow definition;
+            // unread predecessor reconciliation has separate real-owner tests.
+            executionRecipeVersion: 2,
           }],
           settings: DEFAULT_WORKER_SETTINGS,
         },
@@ -581,12 +903,14 @@ describe('automationWorker', () => {
 
       worker.stop();
     } finally {
+      worker?.stop();
       vi.useRealTimers();
     }
   });
 
   it('checks for direct runs at reconciliation and scheduled runs at V3 nextClaimAt without continuous polling', async () => {
     vi.useFakeTimers();
+    let worker: ReturnType<typeof startAutomationWorker> | undefined;
     try {
       vi.spyOn(Math, 'random').mockReturnValue(0);
       vi.setSystemTime(new Date('2026-02-01T00:00:00.000Z'));
@@ -607,6 +931,7 @@ describe('automationWorker', () => {
               machineId: 'machine-1',
               automationId: 'automation-1',
               nextClaimAt: now + 60_000,
+              executionRecipeVersion: 2,
             }],
             settings: DEFAULT_WORKER_SETTINGS,
           },
@@ -617,6 +942,7 @@ describe('automationWorker', () => {
               machineId: 'machine-1',
               automationId: 'automation-1',
               nextClaimAt: now + 60_000,
+              executionRecipeVersion: 2,
             }],
             settings: DEFAULT_WORKER_SETTINGS,
           },
@@ -628,10 +954,10 @@ describe('automationWorker', () => {
       reloadConfiguration();
 
       const { startAutomationWorker } = await import('./automationWorker');
-      const worker = startAutomationWorker({
+      worker = startAutomationWorker({
         token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
         env: {
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -654,6 +980,7 @@ describe('automationWorker', () => {
 
       worker.stop();
     } finally {
+      worker?.stop();
       vi.useRealTimers();
     }
   });
@@ -679,8 +1006,8 @@ describe('automationWorker', () => {
       const { startAutomationWorker } = await import('./automationWorker');
       const worker = startAutomationWorker({
         token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
         env: {
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -746,8 +1073,8 @@ describe('automationWorker', () => {
       const { startAutomationWorker } = await import('./automationWorker');
       const worker = startAutomationWorker({
         token: 'token-1',
+      credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        spawnSession: vi.fn(async () => ({ type: 'error' as const, errorCode: 'SPAWN_FAILED' as const, errorMessage: 'noop' })),
         env: {
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
@@ -800,17 +1127,11 @@ describe('automationWorker', () => {
     }
   });
 
-  it('keeps one ordinary admission when queued wakes overlap asynchronous assignment preparation', async () => {
+  it('keeps one claim when queued wakes overlap asynchronous assignment preparation', async () => {
     const now = Date.now();
     process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
     process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
     process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-claim-preparation-${now}-${Math.random()}`);
-    const executionInputEnvelope = JSON.stringify({
-      v: 1, templateVersion: 1, assignmentMachineIds: ['machine-1'],
-      template: { t: 'plain', v: { v: 1, prompt: 'Ordinary work' } }, triggerEvidence: null,
-      target: { kind: 'newSession', spawn: { executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-        directory: { kind: 'path', path: '/tmp/claim-preparation' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } },
-    });
     const assignmentSnapshot = { data: { assignments: [], settings: { maxActiveRunsPerMachine: 1 } } };
     let holdReads = false;
     const releaseAssignmentReads: Array<() => void> = [];
@@ -822,16 +1143,13 @@ describe('automationWorker', () => {
       return assignmentSnapshot;
     });
     const scopes: Array<string | undefined> = [];
-    const releaseOrdinaryClaims: Array<() => void> = [];
+    const releaseWorkflowClaims: Array<() => void> = [];
     mockPost.mockImplementation(async (url: string, body: { scope?: string }) => {
       if (url.endsWith('/v3/automations/runs/claim')) {
         scopes.push(body.scope);
-        if (body.scope || releaseOrdinaryClaims.length === 2) return { data: { run: null, automation: null, accountCurrentness: null } };
-        const ordinal = releaseOrdinaryClaims.length + 1;
-        await new Promise<void>((resolve) => releaseOrdinaryClaims.push(resolve));
-        return { data: { run: { id: `preparation-${ordinal}`, automationId: 'automation-1', attempt: 1, revision: 0,
-          recipeKind: 'legacy', triggerId: null, triggerRetired: false, cause: { kind: 'manual', invokedAt: now }, executionInputEnvelope },
-          automation: { id: 'automation-1', name: 'Ordinary', enabled: true }, accountCurrentness: V3_CLAIM_CURRENTNESS } };
+        if (releaseWorkflowClaims.length === 2) return { data: { run: null, automation: null, accountCurrentness: null } };
+        await new Promise<void>((resolve) => releaseWorkflowClaims.push(resolve));
+        return { data: { run: null, automation: null, accountCurrentness: null } };
       }
       if (url.endsWith('/start')) return { data: {
         ...createV3StartResponse({ runId: url.split('/').at(-2)!, now, attempt: 1 }), accountCurrentness: V3_CLAIM_CURRENTNESS,
@@ -839,10 +1157,7 @@ describe('automationWorker', () => {
       return { data: { ok: true } };
     });
     reloadCapacityConfiguration();
-    const ingressResolvers: Array<(value: SessionServerStartDispatchResultV1) => void> = [];
-    const dispatchSessionServerStart = vi.fn(() => new Promise<SessionServerStartDispatchResultV1>((resolve) => ingressResolvers.push(resolve)));
-    const worker = startCapacityAutomationWorker({ token: 'preparation-token', machineId: 'machine-1', dispatchSessionServerStart,
-      spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'Use canonical ingress' }) });
+    const worker = startCapacityAutomationWorker({ token: 'preparation-token', credentials: { token: 'preparation-token', encryption: null }, machineId: 'machine-1' });
     const wake = () => worker.handleServerUpdate({ id: 'preparation-wake', seq: 1, createdAt: now,
       body: { t: 'automation-run-updated', runId: 'preparation-1', automationId: 'automation-1', state: 'queued',
         scheduledAt: now, startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: 'machine-1' },
@@ -854,40 +1169,40 @@ describe('automationWorker', () => {
       await waitForCondition(() => releaseAssignmentReads.length === 1);
       wake();
       await waitForCondition(() => releaseAssignmentReads.length === 2);
+      holdReads = false;
       releaseAssignmentReads[0]!();
-      await waitForCondition(() => releaseOrdinaryClaims.length === 1);
+      await waitForCondition(() => releaseWorkflowClaims.length === 1);
       releaseAssignmentReads[1]!();
       await settleRequestDispatch();
-      releaseOrdinaryClaims[0]!();
-      await waitForCondition(() => ingressResolvers.length === 1);
-      // Any second ordinary HTTP claim already passed the same empty-map
-      // capacity decision. Let its real executor reach the native boundary.
-      if (releaseOrdinaryClaims[1]) {
-        releaseOrdinaryClaims[1]();
-        await waitForCondition(() => ingressResolvers.length === 2);
-      }
-      expect(ingressResolvers).toHaveLength(1);
-      expect(scopes.filter((scope) => scope === undefined)).toHaveLength(1);
+      expect(releaseWorkflowClaims).toHaveLength(1);
+      expect(scopes).toEqual(['workflow']);
     } finally {
       worker.stop();
       holdReads = false;
       for (const release of releaseAssignmentReads) release();
-      for (const release of releaseOrdinaryClaims) release();
-      for (const resolve of ingressResolvers) resolve({ type: 'error', code: 'spawn_failed', retryable: false });
+      for (const release of releaseWorkflowClaims) release();
     }
   });
 
-  it.each(['settle', 'cancel_waiter'] as const)('admits Account and Session destination writes at full start capacity (%s)', async ending => {
+  it.each([
+    { ending: 'settle', budget: 1 }, { ending: 'cancel_waiter', budget: 1 },
+    { ending: 'settle', budget: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE },
+  ] as const)('admits Account and Session destination writes at full start capacity ($ending, budget $budget)', async ({ ending, budget }) => {
     const now = Date.now();
+    const directory = realpathSync(process.cwd());
     process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
     process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
     process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-destination-capacity-${now}-${Math.random()}`);
     reloadCapacityConfiguration();
     const machineId = 'machine-1';
     const accountId = 'account-1';
-    const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
-      '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
-    const kinds = ['fresh', 'origin_session', 'existing_session', 'fresh'] as const;
+    const kinds: Array<'fresh' | 'origin_session' | 'existing_session'> = [
+      ...Array.from({ length: budget }, () => 'fresh' as const), 'origin_session', 'existing_session', 'fresh',
+    ];
+    const ids = kinds.map((_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`);
+    const destinationIndex = budget;
+    const waiterIndex = budget + 2;
+    let projectedBudget: number = budget;
     const accepted = await Promise.all(kinds.map(async (kind, index) => {
       const result = await materializeWorkflowAcceptedSnapshotV1({
         definition: { version: 1, defaults: {
@@ -896,7 +1211,7 @@ describe('automationWorker', () => {
         }, blocks: [{ kind: 'step', id: 'write', document: { text: 'Write', references: [], attachments: [] } }] },
         context: { source: { kind: 'automation', automationId: `automation-${index}` }, inputs: {}, machineId,
           executionTarget: { kind: 'session' },
-          workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+          workspaceTarget: { project: { machineId, directory, checkoutRootPath: directory } },
           ...(kind === 'origin_session' ? { origin: { kind: 'direct', originSessionId: 'destination' } } : {}),
           authorization: { principal: { kind: 'host' } } },
         admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
@@ -910,34 +1225,66 @@ describe('automationWorker', () => {
       origin: { kind: 'automation', automationId: `automation-${index}` }, acceptedEnvelope: accepted[index], state: 'claimed',
       keyCensus: { ...createPlainWorkflowRunKeyCensusFixture({ runId: id, accountId }), ownerAccountCurrentness: V3_CLAIM_CURRENTNESS } }));
     const claims: Array<string | undefined> = [];
+    const httpObservations: Array<Readonly<{ method: 'GET' | 'POST'; path: string; elapsedMs: number }>> = [];
     let ordinal = 0;
-    mockGet.mockImplementation(async (url: string) => url.endsWith('/v1/account/encryption/currentness')
-      ? { status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) }
-      : { data: { assignments: [{ machineId, automationId: 'automation-0', nextClaimAt: now + 60_000 }],
-        settings: { maxActiveRunsPerMachine: 1 } } });
-    mockPost.mockImplementation(async (url: string, body: { scope?: string }) => {
+    const destination = createSessionRecordFixture({ id: 'destination', active: true, encryptionMode: 'plain', machineId,
+      metadata: JSON.stringify({ machineId, path: directory, claudeSessionId: 'native-session',
+        runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } }) });
+    mockGet.mockImplementation(async (url: string) => {
+      httpObservations.push({ method: 'GET', path: new URL(url).pathname, elapsedMs: Date.now() - now });
+      if (url.endsWith('/v1/account/encryption/currentness')) return {
+        status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) };
+      if (url.endsWith('/v2/account/settings')) return {
+        status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      // Fresh Session preparation reads Account defaults through the real
+      // invocation-scoped purpose owner. The assignments response below is
+      // not valid catalog content and must not stand in for native defaults.
+      if (url.endsWith(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`)) return {
+        status: 200, data: ConnectedAccountCatalogRowReadResponseV1Schema.parse({
+          status: 'present', revision: 1,
+          content: { t: 'plain', v: emptyConnectedAccountCatalogRecordV1('purposes') },
+        }) };
+      if (url.endsWith('/v2/sessions/destination')) return { status: 200, data: { session: destination } };
+      return { data: { assignments: [{ machineId, automationId: 'automation-0', nextClaimAt: now + 60_000,
+        executionRecipeVersion: 2 }], settings: { maxActiveRunsPerMachine: projectedBudget } } };
+    });
+    mockPost.mockImplementation(async (url: string, body: { scope?: string; tags?: string[] }) => {
+      httpObservations.push({ method: 'POST', path: new URL(url).pathname, elapsedMs: Date.now() - now });
+      if (url.endsWith('/v2/sessions/lookup-by-tags')) {
+        return { status: 200, data: { sessions: body.tags?.includes('destination') ? [destination] : [] } };
+      }
       if (url.endsWith('/start')) return { data: { ...createV3StartResponse({ runId: ids[0]!, now, attempt: 1 }), accountCurrentness: V3_CLAIM_CURRENTNESS } };
       if (!url.endsWith('/v3/automations/runs/claim')) return { data: { ok: true } };
       claims.push(body.scope);
       const index = ordinal++;
-      const legacyEnvelope = JSON.stringify({ v: 1, templateVersion: 1, assignmentMachineIds: [machineId],
-        template: { t: 'plain', v: { v: 1, prompt: 'Start' } }, triggerEvidence: null,
-        target: { kind: 'newSession', spawn: { executionTarget: { serverId: 'server-1', machineId },
-          directory: { kind: 'path', path: '/repo' },
-          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } });
       return { data: index >= ids.length ? { run: null, automation: null, accountCurrentness: null } : {
-        run: { id: ids[index], automationId: `automation-${index}`, attempt: 1, revision: 0, recipeKind: index === 0 ? 'legacy' : 'workflow-v2',
+        run: { id: ids[index], automationId: `automation-${index}`, attempt: 1, revision: 0, recipeKind: 'workflow-v2',
           triggerId: null, triggerRetired: false, cause: { kind: 'manual', invokedAt: now },
-          ...(index === 0 ? { executionInputEnvelope: legacyEnvelope }
-            : { executionInputEnvelope: '{}', automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: accepted[index] }) },
+          executionInputEnvelope: '{}', automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: accepted[index] },
         automation: { id: `automation-${index}`, name: 'Capacity', enabled: true,
-          ...(index === 1 ? { scopeSessionId: 'destination' } : {}) }, accountCurrentness: V3_CLAIM_CURRENTNESS,
+          ...(index === 0 || index === destinationIndex ? { scopeSessionId: 'destination' } : {}) }, accountCurrentness: V3_CLAIM_CURRENTNESS,
       } };
     });
     const starts: Array<() => void> = [];
     const writes: string[] = [];
+    const startSignals: AbortSignal[] = [];
     const coordinationErrors: unknown[] = [];
     const coordinationResults: unknown[] = [];
+    let resolveFreshStartup!: () => void;
+    let rejectFreshStartup!: (error: unknown) => void;
+    const freshStartup = new Promise<void>((resolve, reject) => {
+      resolveFreshStartup = resolve;
+      rejectFreshStartup = reject;
+    });
+    void freshStartup.catch(() => undefined);
+    freshSpawnBoundary.mockImplementation(async (request: Parameters<typeof import('@/session/transport/rpc/machineRpc').callMachineRpc>[0]) => {
+      if (request.signal) startSignals.push(request.signal);
+      await new Promise<void>(resolve => {
+        starts.push(resolve);
+        if (starts.length === budget) resolveFreshStartup();
+      });
+      throw new Error('start_boundary_stopped');
+    });
     const coordinators = stores.map((storage, index) => createProductionWorkflowRunCoordinator({
       token: 'token', accountId, machineId, storage,
       resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
@@ -946,11 +1293,8 @@ describe('automationWorker', () => {
       workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected_worktree'); },
         inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
       execution: { credentials: { token: 'token', encryption: null }, serverId: 'server-1',
-        machineAdmissionTransport: async () => {
-          await new Promise<void>(resolve => starts.push(resolve));
-          throw new Error('start_boundary_stopped');
-        },
-        resolveExistingSessionConversation: async () => ({ sessionId: 'destination', machineId, directory: '/repo' }),
+        machineAdmissionTransport: async () => { throw new Error('unexpected_message_admission'); },
+        resolveExistingSessionConversation: async () => ({ sessionId: 'destination', machineId, directory }),
         sessionInput: { enqueue: async request => ({ status: 'accepted', localId: deriveWorkflowSessionInputLocalIdV2(request.workflow) }),
           observe: async ({ sessionId, localId }) => { writes.push(ids[index]!);
             return { ok: true, sessionId, localId, result: { kind: 'final_text', text: 'Written' } }; } },
@@ -958,15 +1302,10 @@ describe('automationWorker', () => {
           buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) },
       },
     }));
-    const worker = startCapacityAutomationWorker({ token: 'token', machineId,
-      spawnSession: async () => { throw new Error('unexpected_legacy_start'); },
-      dispatchSessionServerStart: async () => {
-        await new Promise<void>(resolve => starts.push(resolve));
-        return { type: 'error', code: 'spawn_failed', retryable: false };
-      },
+    const worker = startCapacityAutomationWorker({ token: 'token', credentials: { token: 'token', encryption: null }, machineId,
       coordinateWorkflowRun: async claim => {
         try { const result = await coordinators[ids.indexOf(claim.runId)]!(claim); coordinationResults.push(result); return result; }
-        catch (error) { coordinationErrors.push(error); throw error; }
+        catch (error) { coordinationErrors.push(error); rejectFreshStartup(error); throw error; }
       },
     });
     try {
@@ -974,294 +1313,42 @@ describe('automationWorker', () => {
       worker.handleServerUpdate({ id: 'wake', seq: 1, createdAt: now, body: { t: 'automation-run-updated',
         runId: ids[0]!, automationId: 'automation-0', state: 'queued', scheduledAt: now, startedAt: null,
         finishedAt: null, updatedAt: now, machineId: null, targetMachineId: machineId } } satisfies Update);
-      await waitForCondition(() => (starts.length === 1 && writes.length === 2 && ordinal >= 5 && stores[3]!.rows().length > 0) || coordinationErrors.length > 0 || coordinationResults.length >= 4).catch(error => {
+      // Await genuine process admission, including first-use source preparation,
+      // before timing the capacity behavior. A shorter fixture polling deadline
+      // must not race the actual settings/native startup boundary.
+      await freshStartup;
+      await waitForCondition(() => (starts.length === budget && writes.length === 2 && ordinal > ids.length && stores[waiterIndex]!.rows().length > 0) || coordinationErrors.length > 0 || coordinationResults.length >= ids.length).catch(async error => {
+        const activity = await worker.liveWorkProducer.read();
         throw new Error(JSON.stringify({ claims, ordinal, starts: starts.length, writes, coordinationResults,
-          states: stores.map(store => store.run().state), operations: stores.map(store => store.operations()) }), { cause: error });
+          httpObservations, activity: { coverage: activity.coverage,
+            items: activity.items.map(item => ({ category: item.category, attribution: item.attribution, state: item.state })) },
+          states: stores.map(store => store.run().state), progress: stores.map(store => store.rows()), operations: stores.map(store => store.operations()) }), { cause: error });
       });
       expect(coordinationErrors).toEqual([]);
-      expect({ starts: starts.length, writes: writes.length }).toEqual({ starts: 1, writes: 2 });
-      expect(new Set(writes)).toEqual(new Set([ids[1], ids[2]]));
+      expect({ starts: starts.length, writes: writes.length }, JSON.stringify({ coordinationResults, progress: stores.map(store => store.rows()) })).toEqual({ starts: budget, writes: 2 });
+      expect(new Set(writes)).toEqual(new Set([ids[destinationIndex], ids[destinationIndex + 1]]));
       expect(claims).toContain('workflow');
-      expect(stores[1]!.run().state).toBe('succeeded');
-      expect(stores[2]!.run().state).toBe('succeeded');
-      expect(stores[3]!.rows()).toHaveLength(1); // Accepted root, no Agent leaf admitted while full.
+      expect(stores[destinationIndex]!.run().state).toBe('succeeded');
+      expect(stores[destinationIndex + 1]!.run().state).toBe('succeeded');
+      expect(stores[waiterIndex]!.rows()).toHaveLength(1); // Accepted root, no Agent leaf admitted while full.
       if (ending === 'settle') {
         starts[0]!();
-        await waitForCondition(() => stores[3]!.rows().length > 1);
+        await waitForCondition(() => stores[waiterIndex]!.rows().length > 1);
+        if (budget === DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE) {
+          projectedBudget = 2;
+          await worker.refreshAssignments();
+          expect(startSignals.length).toBeGreaterThanOrEqual(budget);
+          expect(startSignals.every(signal => !signal.aborted)).toBe(true);
+        }
       } else {
         worker.stop();
         await waitForCondition(() => coordinationErrors.length === 1);
         starts[0]!();
-        expect(stores[3]!.rows()).toHaveLength(1);
+        expect(stores[waiterIndex]!.rows()).toHaveLength(1);
       }
     } finally {
       worker.stop();
       for (const release of starts) release();
-    }
-  });
-
-  it('charges new Agents even when their trigger has Session scope', async () => {
-    const now = Date.now();
-    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
-    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
-    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-scoped-capacity-${now}-${Math.random()}`);
-    const executionInputEnvelope = JSON.stringify({
-      v: 1, templateVersion: 1, assignmentMachineIds: ['machine-1'], template: { t: 'plain', v: { v: 1, prompt: 'Scoped capacity' } },
-      triggerEvidence: null,
-      target: { kind: 'newSession', spawn: {
-        executionTarget: { serverId: 'server-1', machineId: 'machine-1' }, directory: { kind: 'path', path: '/tmp/scoped-capacity' },
-        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-      } },
-    });
-    AutomationRunExecutionRecipeV1Schema.parse(JSON.parse(executionInputEnvelope));
-    AutomationV3WorkerStartResponseSchema.parse(createV3StartResponse({ runId: 'run-fixture', now, attempt: 1 }));
-    mockGet.mockImplementation(async (url: string) => ({
-      ...(url.endsWith('/v1/account/encryption/currentness') ? { status: 200 } : {}),
-      data: url.endsWith('/v1/account/encryption/currentness')
-        ? createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now)
-        : { assignments: [{ machineId: 'machine-1', automationId: 'automation-1', nextClaimAt: now + 60_000 }],
-          settings: { maxActiveRunsPerMachine: 1 } },
-    }));
-    const claims: Array<{ scope?: string }> = [];
-    let ordinaryRefillReady = false;
-    mockPost.mockImplementation(async (url: string, body: { scope?: string }) => {
-      if (url.endsWith('/v3/automations/runs/claim')) {
-        claims.push(body);
-        if (body.scope === 'workflow') return { data: { run: null, automation: null, accountCurrentness: null } };
-        const ordinal = claims.length;
-        if (ordinal > 3 && !(ordinaryRefillReady && body.scope === undefined)) {
-          return { data: { run: null, automation: null, accountCurrentness: null } };
-        }
-        ordinaryRefillReady = false;
-        return { data: {
-          run: { id: `run-${ordinal}`, automationId: 'automation-1', attempt: 1, revision: 0,
-            recipeKind: 'legacy', triggerId: null, triggerRetired: false,
-            cause: { kind: 'manual', invokedAt: now }, executionInputEnvelope },
-          automation: { id: 'automation-1', name: 'Capacity', enabled: true,
-            ...(ordinal === 1 || ordinal === 3 ? { scopeSessionId: 'origin-session' } : {}) },
-          accountCurrentness: V3_CLAIM_CURRENTNESS,
-        } };
-      }
-      if (url.endsWith('/start')) return { data: {
-        ...createV3StartResponse({ runId: url.split('/').at(-2)!, now, attempt: 1 }), accountCurrentness: V3_CLAIM_CURRENTNESS,
-      } };
-      return { data: { ok: true } };
-    });
-    reloadCapacityConfiguration();
-    const ingressResolvers: Array<(value: SessionServerStartDispatchResultV1) => void> = [];
-    const dispatchSessionServerStart = vi.fn(() => new Promise<SessionServerStartDispatchResultV1>((resolve) => ingressResolvers.push(resolve)));
-    const worker = startCapacityAutomationWorker({
-      token: 'capacity-token', machineId: 'machine-1', dispatchSessionServerStart,
-      spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'Use Session ingress' }),
-    });
-    const wake = () => worker.handleServerUpdate({ id: 'capacity-wake', seq: 1, createdAt: now,
-      body: { t: 'automation-run-updated', runId: 'run-1', automationId: 'automation-1', state: 'queued',
-        scheduledAt: now, startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: 'machine-1' },
-    } satisfies Update);
-    try {
-      await worker.refreshAssignments();
-      wake();
-      await waitForCondition(() => ingressResolvers.length === 1 && claims.length >= 2);
-      expect(claims.slice(0, 2).map((claim) => claim.scope)).toEqual([undefined, 'workflow']);
-      expect(dispatchSessionServerStart).toHaveBeenCalledTimes(1);
-      ordinaryRefillReady = true;
-      ingressResolvers[0]!({ type: 'error', code: 'spawn_failed', retryable: false });
-      await waitForCondition(() => ingressResolvers.length === 2);
-      expect(claims.slice(2).some((claim) => claim.scope === undefined)).toBe(true);
-    } finally {
-      worker.stop();
-    }
-  });
-
-  it('fills the default four-slot Automation budget and claims again when a slot settles', async () => {
-    const now = Date.now();
-
-    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
-    process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
-    process.env.HAPPIER_HOME_DIR = join(
-      os.tmpdir(),
-      `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
-    );
-
-    const executionInputEnvelope = JSON.stringify({
-      v: 1,
-      templateVersion: 1,
-      assignmentMachineIds: ['machine-1'],
-      template: { t: 'plain', v: { v: 1, prompt: 'create an Automation Session' } },
-      triggerEvidence: null,
-      target: {
-        kind: 'newSession',
-        spawn: {
-          executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-          directory: { kind: 'path', path: '/tmp/happier-automation' },
-          agentTarget: {
-            kind: 'agent',
-            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-          },
-        },
-      },
-    });
-
-    const assignment = {
-      machineId: 'machine-1',
-      automationId: 'automation-1',
-      nextClaimAt: now + 60_000,
-    };
-    const claimedAutomation = {
-      id: 'automation-1',
-      name: 'A1',
-      enabled: true,
-    };
-    let projectedSettings = {
-      maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
-    };
-
-    mockGet.mockImplementation(async (url: string) => {
-      if (url.endsWith('/v1/account/encryption/currentness')) {
-        return {
-          status: 200,
-          data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now),
-        };
-      }
-      return {
-        data: {
-          assignments: [assignment],
-          settings: projectedSettings,
-        },
-      };
-    });
-
-    let claimCount = 0;
-    mockPost.mockImplementation(async (url: string, body?: { scope?: string }) => {
-      if (url.endsWith('/v3/automations/runs/claim')) {
-        if (body?.scope === 'workflow') return { data: { run: null, automation: null, accountCurrentness: null } };
-        claimCount += 1;
-        return {
-          data: {
-            run: {
-              id: `run-${claimCount}`,
-              automationId: 'automation-1',
-              attempt: 1,
-              revision: 0,
-              recipeKind: 'legacy',
-              triggerId: null,
-              triggerRetired: false,
-              cause: { kind: 'manual', invokedAt: now },
-              executionInputEnvelope,
-            },
-            automation: claimedAutomation,
-            accountCurrentness: V3_CLAIM_CURRENTNESS,
-          },
-        };
-      }
-      if (/\/v3\/automations\/runs\/.+\/start$/.test(url)) {
-        const runId = url.split('/').at(-2) ?? 'run-1';
-        return {
-          data: {
-            ...createV3StartResponse({ runId, now, attempt: 1 }),
-            accountCurrentness: V3_CLAIM_CURRENTNESS,
-          },
-        };
-      }
-      if (/\/v3\/automations\/runs\/.+\/(heartbeat|succeed|fail)$/.test(url)) {
-        return { data: { ok: true } };
-      }
-      throw new Error(`Unexpected POST ${url}`);
-    });
-
-    const { reloadConfiguration } = await import('@/configuration');
-    reloadConfiguration();
-
-    const ingressResolvers: Array<(value: SessionServerStartDispatchResultV1) => void> = [];
-    const ingressSignals: AbortSignal[] = [];
-    const dispatchSessionServerStart = vi.fn((
-      _request: SessionServerStartIngressRequestV1,
-      options?: Readonly<{ signal?: AbortSignal }>,
-    ) => new Promise<SessionServerStartDispatchResultV1>((resolve) => {
-      if (options?.signal) ingressSignals.push(options.signal);
-      ingressResolvers.push(resolve);
-    }));
-    const sessionStartSuccess = (runId: string): SessionServerStartDispatchResultV1 => ({
-      type: 'success',
-      disposition: 'created',
-      sessionId: `session-${runId}`,
-      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-      organizationPlacement: { folderId: null, tagIds: [] },
-      initialInput: { status: 'accepted', localId: `automation:run:${runId}` },
-    });
-
-    const { startAutomationWorker } = await import('./automationWorker');
-    const worker = startAutomationWorker({
-      token: 'token-1',
-      machineId: 'machine-1',
-      spawnSession: vi.fn(async () => ({
-        type: 'error' as const,
-        errorCode: 'SPAWN_FAILED' as const,
-        errorMessage: 'Strict V3 Runs must use the Session ingress owner',
-      })),
-      dispatchSessionServerStart,
-      env: {
-        HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
-        HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
-        HAPPIER_AUTOMATION_LEASE_MS: '30000',
-        HAPPIER_AUTOMATION_HEARTBEAT_MS: '10000',
-      } as NodeJS.ProcessEnv,
-    });
-
-    try {
-      await worker.refreshAssignments();
-
-      worker.handleServerUpdate({
-        id: 'u-run-1',
-        seq: 1,
-        createdAt: now,
-        body: {
-          t: 'automation-run-updated',
-          runId: 'run-1',
-          automationId: 'automation-1',
-          state: 'queued',
-          scheduledAt: now,
-          startedAt: null,
-          finishedAt: null,
-          updatedAt: now,
-          machineId: null,
-          targetMachineId: 'machine-1',
-        },
-      } as any);
-
-      await waitForCondition(() => ingressResolvers.length >= 4);
-      expect(claimCount).toBe(4);
-      expect(ingressResolvers).toHaveLength(4);
-
-      ingressResolvers[0]!(sessionStartSuccess('run-1'));
-      await waitForCondition(() => ingressResolvers.length >= 5);
-
-      expect(claimCount).toBe(5);
-      expect(ingressResolvers).toHaveLength(5);
-
-      // The current server projects its canonical default above. A later
-      // setting may lower the budget, but it must not abort the four already-
-      // owned local effects.
-      projectedSettings = { maxActiveRunsPerMachine: 2 };
-      await worker.refreshAssignments();
-      expect(ingressSignals).toHaveLength(5);
-      expect(ingressSignals.every((signal) => !signal.aborted)).toBe(true);
-
-      ingressResolvers[1]!(sessionStartSuccess('run-2'));
-      ingressResolvers[2]!(sessionStartSuccess('run-3'));
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(claimCount).toBe(5);
-
-      ingressResolvers[3]!(sessionStartSuccess('run-4'));
-      await waitForCondition(() => ingressResolvers.length >= 6);
-      expect(claimCount).toBe(6);
-
-    } finally {
-      worker.stop();
-      for (const [index, resolve] of ingressResolvers.entries()) {
-        resolve(sessionStartSuccess(`run-${index + 1}`));
-      }
-      await settleRequestDispatch();
     }
   });
 

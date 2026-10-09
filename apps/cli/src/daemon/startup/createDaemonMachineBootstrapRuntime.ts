@@ -1,4 +1,5 @@
 import type { ApiClient } from '@/api/api';
+import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import type {
   ApiMachineClient,
   ApiMachineClientLifecycleDependencies,
@@ -47,6 +48,86 @@ import type { StartPeerMediationLoopbackInput } from '../peer/mediation/rpc/star
 import type { DaemonProviderBrokerRuntime } from '@/providers/broker/daemonProviderBrokerRuntime';
 import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import type { DirectRouteGrantTrustRoot } from '../peer/mediation/verifyDirectRouteGrant';
+import type { ManagedActivityRpcOwner } from '@/api/machine/rpcHandlers.managedActivity';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readInstallationIdentityIfExistsSync } from '../identity/store';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
+
+/** The installed host's passive source Action composition; it never reads a remote OS path. */
+export function createProjectFiniteSourceManifestInspector(params: Readonly<{
+  api: Pick<ApiClient, 'getMachine'>;
+  credentials: StoredCredentials;
+  serverId: string;
+  serverHttpBaseUrl: string;
+  accountId: string;
+  ingress: RpcHandlerContext;
+  isCurrent(): Promise<boolean>;
+}>): NonNullable<ProjectFiniteActionRuntime['inspectSourceProjectManifest']> {
+  return async ({ source, signal }) => {
+    const sourceSignal = AbortSignal.any([params.ingress.signal, signal]);
+    const assertSourceCurrent = async () => {
+      if (sourceSignal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+      if (!await params.isCurrent()) throw Object.assign(new Error('project_requester_credentials_unavailable'), { code: 'project_requester_credentials_unavailable' });
+      if (sourceSignal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+    };
+    if (source.serverId !== params.serverId) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+    const assertSourceCustody = async () => {
+      await assertSourceCurrent();
+      let machine: Awaited<ReturnType<ApiClient['getMachine']>>;
+      try {
+        machine = await runWithServerHttpBaseUrl(params.serverHttpBaseUrl,
+          () => params.api.getMachine(source.machineId, { signal: sourceSignal }));
+      } catch {
+        await assertSourceCurrent();
+        throw Object.assign(new Error('project_source_declaration_unavailable'), { code: 'project_source_declaration_unavailable' });
+      }
+      await assertSourceCurrent();
+      if (machine?.id !== source.machineId || machine.access?.custodian.accountId !== params.accountId) {
+        throw Object.assign(new Error('project_requester_credentials_unavailable'), { code: 'project_requester_credentials_unavailable' });
+      }
+    };
+    await assertSourceCustody();
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: params.credentials, serverId: params.serverId,
+      serverApiUrl: params.serverHttpBaseUrl, machineId: source.machineId,
+      pluginActionExecutionOwner: 'current_process',
+      readCredentials: async () => { await assertSourceCurrent(); return params.credentials; },
+    });
+    const context = buildActionExecutorContextForRpc({
+      serverId: params.serverId, signal: sourceSignal,
+      callerAuthority: params.ingress.callerAuthority, sessionActionOrigin: params.ingress.sessionActionOrigin,
+      localActionContext: params.ingress.localActionContext, runtimeAccountId: params.accountId,
+    });
+    let result: Awaited<ReturnType<typeof executor.execute>>;
+    try {
+      result = await executor.execute('projects.inspect', { workspace: {
+        serverId: source.serverId, workspaceId: source.id,
+        machineId: source.machineId, rootPath: source.rootPath,
+      } }, { ...context,
+        ...(!params.ingress.localActionContext?.surface && !params.ingress.sessionActionOrigin ? { surface: 'api' as const } : {}),
+        externalActionTarget: { kind: 'machine', machineId: source.machineId },
+      });
+    } catch (error) {
+      await assertSourceCurrent();
+      const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code : 'project_source_declaration_unavailable';
+      throw Object.assign(new Error(code), { code });
+    }
+    await assertSourceCurrent();
+    if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+    const output = ProjectDefinitionInspectOutputSchema.safeParse(result.result);
+    if (!output.success) throw Object.assign(new Error('project_source_declaration_unavailable'), { code: 'project_source_declaration_unavailable' });
+    await assertSourceCustody();
+    return { ...output.data.definition, commands: output.data.commands,
+      environmentExecutionInputs: output.data.environmentExecutionInputs };
+  };
+}
 
 type BootstrapRuntime = Omit<
   Parameters<typeof startDaemonMachineRegistration>[0]['bootstrapRuntime'],
@@ -69,10 +150,18 @@ export function createDaemonMachineBootstrapRuntime(
   params: Readonly<{
     api: ApiClient;
     credentials: StoredCredentials;
+    requesterServerId?: BootstrapRuntime['requesterServerId'];
+    resolveCurrentMachineExecutionOriginContext?: BootstrapRuntime['resolveCurrentMachineExecutionOriginContext'];
+    resolveRequesterSessionRuntimeContext?: BootstrapRuntime['resolveRequesterSessionRuntimeContext'];
+    readRequesterSessionCredentialBindings?: BootstrapRuntime['readRequesterSessionCredentialBindings'];
+    releaseRequesterSessionRuntimeContext?: BootstrapRuntime['releaseRequesterSessionRuntimeContext'];
+    stopRequesterSessionForHandoff?: (sessionId: string, expectedSpawnNonce: string) => Promise<'stopped' | 'already_inactive' | 'failed'>;
     daemonSessionMutationCustody?: DaemonSessionMutationCustody;
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     workspaceSyncHandoffAdapter?: WorkspaceSyncHandoffAdapter;
     workspaceSync?: ApiMachineClientLifecycleDependencies['workspaceSync'];
+    onMachineMetadataChanged?: ApiMachineClientLifecycleDependencies['onMachineMetadataChanged'];
+    onProjectOperationInspection?: ApiMachineClientLifecycleDependencies['onProjectOperationInspection'];
     createWorkspaceSyncRuntime?: (input: Readonly<{
       machineId: string;
       onReadinessPublished(readiness: WorkspaceSyncRuntimeReadinessV1): void;
@@ -80,9 +169,13 @@ export function createDaemonMachineBootstrapRuntime(
     }>) => Promise<Readonly<{
       handoffAdapter: WorkspaceSyncHandoffAdapter;
       workspaceSync: NonNullable<ApiMachineClientLifecycleDependencies['workspaceSync']>;
+      createProjectFiniteRuntime?: ApiMachineClientLifecycleDependencies['createProjectFiniteRuntime'];
+      readProjectFiniteLoad?: ApiMachineClientLifecycleDependencies['readProjectFiniteLoad'];
     }>> | Readonly<{
       handoffAdapter: WorkspaceSyncHandoffAdapter;
       workspaceSync: NonNullable<ApiMachineClientLifecycleDependencies['workspaceSync']>;
+      createProjectFiniteRuntime?: ApiMachineClientLifecycleDependencies['createProjectFiniteRuntime'];
+      readProjectFiniteLoad?: ApiMachineClientLifecycleDependencies['readProjectFiniteLoad'];
     }>;
     runtimeId: string;
     publicReleaseChannel: NonNullable<DaemonState['publicReleaseChannel']>;
@@ -117,6 +210,9 @@ export function createDaemonMachineBootstrapRuntime(
     reconcileConnectedServicesProjection: Parameters<ApiMachineClient['onConnectedServicesProjection']>[0];
     subscribeConnectedAccountInvalidations?: BootstrapRuntime['subscribeConnectedAccountInvalidations'];
     isShuttingDown: BootstrapRuntime['isShuttingDown'];
+    admissionDrain?: DaemonAdmissionDrain;
+    managedActivity?: Pick<ManagedActivityRpcOwner, 'activity' | 'admissionDrain'>;
+    isPublicationQuiescing?: () => boolean;
     getServerFeaturesSnapshot?: BootstrapRuntime['getServerFeaturesSnapshot'];
     resolvePeerMediationTrustRoots?: () => readonly DirectRouteGrantTrustRoot[];
     refreshServerFeaturesSnapshot?: ApiMachineClientLifecycleDependencies['resolveServerFeaturesSnapshot'];
@@ -149,6 +245,7 @@ export function createDaemonMachineBootstrapRuntime(
     externalActionIngressOwner?: ExternalActionIngressOwner;
     createWorkflowRunCoordinatorForMachine?: (input: Readonly<{
       machineId: string;
+      requesterWorkAttributionV1?: RequesterWorkAttributionV1;
       machineAdmissionTransport: NonNullable<Parameters<typeof startAutomationWorker>[0]['machineAdmissionTransport']>;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
     }>) => ReturnType<typeof createProductionWorkflowRunCoordinator>;
@@ -174,7 +271,12 @@ export function createDaemonMachineBootstrapRuntime(
       close(): Promise<void>;
     }>>;
   }>,
-): BootstrapRuntime {
+): BootstrapRuntime & Pick<ApiMachineClient, 'retireProjectFiniteExecution'> {
+  // The same authenticated constructor facts used by Machine work-summary
+  // composition. A later claim cannot choose its Account, Home or installation.
+  const automationHomeId = params.requesterServerId ?? configuration.activeServerId;
+  const automationAccountId = readAccountIdFromToken(params.credentials.token);
+  const automationInstallationId = readInstallationIdentityIfExistsSync()?.installationId;
   const runnerBrokerReadinessApplication = createRunnerBrokerReadinessApplicationLifecycle({
     authorize: async (request, signal) => await params.api.authorizeRunnerBrokerReadiness(request, signal),
     checkLocalCurrentness: async (currentness, signal) => await providerBrokerApplication
@@ -189,42 +291,38 @@ export function createDaemonMachineBootstrapRuntime(
   let providerBrokerApplicationMachineId: string | null = null;
   let providerBrokerApplicationApiMachine: ApiMachineClient | null = null;
   let workflowRecovery: ((trigger: WorkflowRecoveryTrigger) => Promise<void>) | null = null;
-  const pendingWorkspaceSyncStatuses = new Map<string, WorkspaceSyncStatusV1>();
   let workspaceSyncReadiness: WorkspaceSyncRuntimeReadinessV1 | null = null;
-  let latestWorkspaceSyncStatus: WorkspaceSyncStatusV1 | null = null;
   let workspaceSyncPublicationTail = Promise.resolve();
-  const publishWorkspaceSyncEvent = (status: WorkspaceSyncStatusV1 | null): void => {
+  const publishWorkspaceSyncEvent = (): void => {
     workspaceSyncPublicationTail = workspaceSyncPublicationTail.catch(() => undefined).then(async () => {
       const apiMachine = connectedApiMachine;
       const readiness = workspaceSyncReadiness;
-      if (!apiMachine || !readiness || params.isShuttingDown()) return;
-      const next = status ? pendingWorkspaceSyncStatuses.get(status.relationshipId) : latestWorkspaceSyncStatus;
-      if (status && !next) return;
+      if (!apiMachine || !readiness || (params.isPublicationQuiescing ?? params.isShuttingDown)()) return;
       await apiMachine.updateDaemonState((state) => ({
         ...(state ?? { status: 'running' as const }),
         workspaceSync: {
           v: 1 as const,
           readiness,
-          ...(next ? { status: next } : {}),
         },
       }));
-      if (status && pendingWorkspaceSyncStatuses.get(status.relationshipId) === next) {
-        pendingWorkspaceSyncStatuses.delete(status.relationshipId);
-      }
     });
     void workspaceSyncPublicationTail.catch(() => undefined);
   };
-  const publishWorkspaceSyncStatus = (status: WorkspaceSyncStatusV1): void => {
-    pendingWorkspaceSyncStatuses.set(status.relationshipId, status);
-    latestWorkspaceSyncStatus = status;
-    publishWorkspaceSyncEvent(status);
+  const publishWorkspaceSyncStatus = (): void => {
+    // A daemon-state version advance invalidates demanded private reads. The
+    // admitted relationship owner, never this share-wide blob, supplies detail.
+    publishWorkspaceSyncEvent();
   };
   const publishWorkspaceSyncReadiness = (readiness: WorkspaceSyncRuntimeReadinessV1): void => {
     workspaceSyncReadiness = readiness;
-    publishWorkspaceSyncEvent(null);
+    publishWorkspaceSyncEvent();
   };
   let workspaceSyncService: ApiMachineClientLifecycleDependencies['workspaceSync'];
   return {
+    // Routing attachment may fail after this client has accepted finite work.
+    // Retire its existing custody even while attempt cleanup is still awaiting
+    // another resource and the session-facing routing projection is null.
+    retireProjectFiniteExecution: async () => await connectedApiMachine?.retireProjectFiniteExecution(),
     cliVersion: packageJson.version,
     // K5 (plan R13): published with the daemon-owned metadata and republished on each update outcome.
     readCliUpdateFacts: readCliUpdateFactsForThisCli,
@@ -235,6 +333,15 @@ export function createDaemonMachineBootstrapRuntime(
       onError: (error) => logger.warn('[DAEMON RUN] Stopped watching the CLI update record; the next daemon start republishes it', error),
     }),
     credentials: params.credentials,
+    ...(params.requesterServerId ? { requesterServerId: params.requesterServerId } : {}),
+    ...(params.resolveCurrentMachineExecutionOriginContext
+      ? { resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext } : {}),
+    ...(params.resolveRequesterSessionRuntimeContext
+      ? { resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext } : {}),
+    ...(params.readRequesterSessionCredentialBindings
+      ? { readRequesterSessionCredentialBindings: params.readRequesterSessionCredentialBindings } : {}),
+    ...(params.releaseRequesterSessionRuntimeContext
+      ? { releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext } : {}),
     ...(params.daemonSessionMutationCustody
       ? { daemonSessionMutationCustody: params.daemonSessionMutationCustody }
       : {}),
@@ -292,13 +399,28 @@ export function createDaemonMachineBootstrapRuntime(
             serviceManaged: params.startupSource === 'background-service',
             ...(params.serviceLabel ? { serviceLabel: params.serviceLabel } : null),
           }, {
-            isDaemonQuiescing: params.isShuttingDown,
+            isDaemonQuiescing: params.isPublicationQuiescing ?? params.isShuttingDown,
+            ...(params.requesterServerId && params.resolveRequesterSessionRuntimeContext && params.releaseRequesterSessionRuntimeContext ? {
+              requesterSessionRuntime: { serverId: params.requesterServerId,
+                resolve: params.resolveRequesterSessionRuntimeContext, release: params.releaseRequesterSessionRuntimeContext,
+                ...(params.stopRequesterSessionForHandoff ? { stopForHandoff: params.stopRequesterSessionForHandoff } : {}) },
+            } : {}),
+            ...(params.managedActivity ? { managedActivity: params.managedActivity } : {}),
+            ...(params.onMachineMetadataChanged ? { onMachineMetadataChanged: params.onMachineMetadataChanged } : {}),
+            ...(params.onProjectOperationInspection ? { onProjectOperationInspection: params.onProjectOperationInspection } : {}),
+            ...(params.directPeerServerLifecycle ? { directPeerServerLifecycle: params.directPeerServerLifecycle } : {}),
             ...(params.liveStreamCaptureRegistry ? { liveStreamCaptureRegistry: params.liveStreamCaptureRegistry } : {}),
             resolveHostedSessionWorkingDirectory: params.resolveHostedSessionWorkingDirectory,
             ...(workspaceSyncHandoffAdapter
               ? { workspaceSyncHandoffAdapter }
               : {}),
             ...(workspaceSync ? { workspaceSync } : {}),
+            ...(workspaceRuntime?.createProjectFiniteRuntime
+              ? { createProjectFiniteRuntime: workspaceRuntime.createProjectFiniteRuntime }
+              : {}),
+            ...(workspaceRuntime?.readProjectFiniteLoad
+              ? { readProjectFiniteLoad: workspaceRuntime.readProjectFiniteLoad }
+              : {}),
             ...(params.refreshServerFeaturesSnapshot || params.getServerFeaturesSnapshot
               ? {
                   resolveServerFeaturesSnapshot: async () =>
@@ -315,7 +437,7 @@ export function createDaemonMachineBootstrapRuntime(
       if (localServices) {
         let online = false;
         const publishSummary = (): void => {
-          if (!online || connectedApiMachine !== apiMachine || params.isShuttingDown()) return;
+          if (!online || connectedApiMachine !== apiMachine || (params.isPublicationQuiescing ?? params.isShuttingDown)()) return;
           // The existing transport may defer/retry this handler. Read the live projection
           // at that boundary so an older attempt cannot restore a superseded count.
           void apiMachine.updateDaemonState((state) => ({
@@ -345,11 +467,7 @@ export function createDaemonMachineBootstrapRuntime(
             await recoverWorkflowRuns(trigger);
           }
         : null;
-      if (pendingWorkspaceSyncStatuses.size > 0) {
-        for (const status of pendingWorkspaceSyncStatuses.values()) publishWorkspaceSyncStatus(status);
-      } else {
-        publishWorkspaceSyncEvent(null);
-      }
+      publishWorkspaceSyncEvent();
       params.prepareApiMachineForSessions?.(apiMachine);
       if (
         providerBrokerApplication
@@ -391,9 +509,13 @@ export function createDaemonMachineBootstrapRuntime(
     },
     startAutomationWorkerForMachine: (runtimeMachineId) => {
       const automationApiMachine = connectedApiMachine;
+      const requesterWorkAttributionV1 = automationApiMachine && automationAccountId && automationInstallationId
+        ? Object.freeze({ serverId: automationHomeId, accountId: automationAccountId,
+          machineId: runtimeMachineId, installationId: automationInstallationId }) : undefined;
       const coordinateWorkflowRun = automationApiMachine && params.createWorkflowRunCoordinatorForMachine
         ? params.createWorkflowRunCoordinatorForMachine({
             machineId: runtimeMachineId,
+            ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
             machineAdmissionTransport: async (request, options) =>
               await automationApiMachine.enqueueSessionPendingByMachine(request, options),
             machineActionDirectTargetTransport: {
@@ -407,10 +529,11 @@ export function createDaemonMachineBootstrapRuntime(
           })
         : null;
       const worker = startAutomationWorker({
+        admissionDrain: params.admissionDrain,
         token: params.credentials.token,
         credentials: params.credentials,
         machineId: runtimeMachineId,
-        spawnSession: params.spawnSession,
+        ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
         ...(coordinateWorkflowRun
           ? {
               coordinateWorkflowRun: async (...args: Parameters<typeof coordinateWorkflowRun>) => {
@@ -426,8 +549,6 @@ export function createDaemonMachineBootstrapRuntime(
           ? {
               machineAdmissionTransport: async (request, options) =>
                 await connectedApiMachine!.enqueueSessionPendingByMachine(request, options),
-              dispatchSessionServerStart: async (request, options) =>
-                await connectedApiMachine!.dispatchSessionServerStart(request, options),
             }
           : {}),
       });

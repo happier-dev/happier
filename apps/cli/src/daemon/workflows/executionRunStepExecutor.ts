@@ -66,10 +66,10 @@ export type WorkflowDetachedExecutionRunStepExecutorDeps = Readonly<{
     invocation: WorkflowProgressEnvelopeV1;
     producerBinding?: WorkflowProducerBinding;
   }>) => Promise<WorkflowExecutionRunConversation | null>;
-  /** Supplies immutable accepted-run authority without letting this leaf invent it. */
+  /** Supplies accepted authority and, for new input, fresh host admission facts. */
   buildActionContext: (
-    params: Parameters<WorkflowStepExecutor>[0],
-  ) => RpcActionExecutorContext;
+    params: Parameters<WorkflowStepExecutor>[0] & Readonly<{ workDepth: number }>,
+  ) => RpcActionExecutorContext | Promise<RpcActionExecutorContext>;
 }>;
 
 export class WorkflowExecutionRunCompositionError extends Error {
@@ -92,15 +92,15 @@ function isPreparedWorkflowDetachedExecutionRun(
     && 'runtimeSelection' in value;
 }
 
-function actionContextFor(
+async function actionContextFor(
   deps: WorkflowDetachedExecutionRunStepExecutorDeps,
   params: Parameters<WorkflowStepExecutor>[0],
   observation?: Readonly<{
     localInputId: string;
     runtimeSelection: WorkflowRetainedRuntimeSelectionV1;
   }>,
-): RpcActionExecutorContext {
-  const ownerContext = deps.buildActionContext(params);
+): Promise<RpcActionExecutorContext> {
+  const ownerContext = await deps.buildActionContext({ ...params, workDepth: deps.workDepth });
   return {
     ...ownerContext,
     actionCaller: {
@@ -571,7 +571,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
       }
       return await observeExactRunInput({
         deps, executionParams: params, runId: existing.runId, localInputId: existing.localInputId,
-        sessionId: null, context: actionContextFor(deps, params), deadline,
+        sessionId: null, context: await actionContextFor(deps, params), deadline,
       });
     }
     const permissionMode = resolveWorkflowExecutionPermissionMode(params);
@@ -611,7 +611,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
     });
     const resultContract: ExecutionRunResultContractV1 = params.step.result;
     const structuredInput = buildWorkflowStructuredInput(params.input);
-    const context = actionContextFor(deps, params, { localInputId, runtimeSelection });
+    const context = await actionContextFor(deps, params, { localInputId, runtimeSelection });
     let runId: string;
     let acceptedProviderResumeIdentity: ExecutionRunResumeHandleProviderSessionV1 | undefined;
 

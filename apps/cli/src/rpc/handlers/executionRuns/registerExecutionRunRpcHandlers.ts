@@ -3,7 +3,6 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunUserTranscriptCommitRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
 import type { ExecutionRunPublicState, SessionTranscriptObservationProvenanceV1, ActionExecutorDeps, ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';
-import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
@@ -48,15 +47,19 @@ import {
   createReviewCommentHostActionMaterializer,
   resolveReviewCommentHostPluginAuthority,
 } from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
-import { resolveWorkspaceRefForMachineRoot } from '@/settings/accountSettings/workspaceRefsV1';
-import { checkExecutionRunConnectedServicesGenerationCurrent } from '@/daemon/controlClient';
+import { resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
+import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { admitDaemonExecutionRunStart, checkExecutionRunConnectedServicesGenerationCurrent } from '@/daemon/controlClient';
 import { resolvePluginPromptAssetBlocks } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import { resolveInvocationContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate';
 import type { NativeAgentSessionInteractionHostBinding } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import { createReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
+import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
 
 export type ExecutionRunRpcHandlerContext = Readonly<{
   /** Fixed handler scope: a concrete Session or the daemon-owned detached scope. */
@@ -67,6 +70,8 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   serverId?: string;
   /** Authenticated runtime Account identity for strict V2 execution origins. */
   runtimeAccountId?: string;
+  /** Accepted Session custody observation, never metadata or public request input. */
+  readRequesterWorkAttributionV1?: () => Promise<import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1 | null>;
   /** Session-owned Run listing dependency, injected by the runtime principal owner. */
   sessionList?: ActionExecutorDeps['sessionList'];
   resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
@@ -139,6 +144,8 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
   /** Settings snapshot bound to the runtime owner's Account/Home, never ambient active state. */
   resolveAccountSettingsSnapshot?: () => Promise<ActiveAccountSettingsSnapshot | null>;
+  /** Same invocation holder initialized by the Session owner's Settings admission. */
+  savedSecretOperationContext?: SavedSecretOperationContextV1;
   executionRunProfileCatalog?: ExecutionRunProfileContributionCatalog;
   resolveExecutionRunProfileCatalog?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['resolveExecutionRunProfileCatalog'];
   actionExecutor?: RpcActionExecutor;
@@ -211,6 +218,7 @@ export function registerExecutionRunRpcHandlers(
             try {
               const engineRegistry = await resolveCliEngineRegistry({
                 runtimeRegistry: runtimeRegistryLease.registry,
+                ...(ctx.savedSecretOperationContext ? { savedSecretOperationContext: ctx.savedSecretOperationContext } : {}),
               });
               const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog({
                   resolveAgentIdentity: (agentId) => {
@@ -292,9 +300,14 @@ export function registerExecutionRunRpcHandlers(
         },
         resolveWorkspace: async () => {
           const machineId = typeof ctx.machineId === 'string' ? ctx.machineId.trim() : '';
-          if (!machineId || !ctx.resolveAccountSettings) return null;
-          const settings = accountSettingsParse(await ctx.resolveAccountSettings() ?? {});
-          const workspace = resolveWorkspaceRefForMachineRoot(settings.workspaceRefsV1, {
+          const serverId = ctx.serverId?.trim();
+          const serverUrl = ctx.serverUrl?.trim();
+          if (!serverId || !serverUrl || !machineId || !ctx.readPromptCredentials) return null;
+          const credentials = await ctx.readPromptCredentials();
+          if (!credentials) return null;
+          const rows = await runWithServerHttpBaseUrl(serverUrl, () => readProjectAccountRows({ credentials, serverId }));
+          const workspace = resolveWorkspaceRefForMachineRoot(rows.workspaceRefs, {
+            serverId,
             machineId,
             rootPath: ctx.cwd,
           });
@@ -318,6 +331,13 @@ export function registerExecutionRunRpcHandlers(
     : undefined;
 
   const manager = new ExecutionRunHostBridge({
+    resolveVoicePromptPreparation: async ({ sessionId, signal, workingDirectory }) => {
+      const credentials = await ctx.readPromptCredentials?.();
+      return await resolveCliVoicePromptPreparation({ credentials, sessionId, signal,
+        serverId: ctx.serverId, serverUrl: ctx.serverUrl, machineId: ctx.machineId,
+        directory: workingDirectory ?? ctx.cwd });
+    },
+    admitStart: admitDaemonExecutionRunStart,
     parentProvider: ctx.parentProvider,
     cwd: ctx.cwd,
     sendAcp: ctx.sendAcp,

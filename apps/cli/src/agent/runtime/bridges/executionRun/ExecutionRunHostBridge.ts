@@ -25,7 +25,8 @@ import type {
   SessionExecutionRunBrokerAuthorityRequestV1,
   SessionExecutionRunBrokerAuthorityResponseV1,
 } from '@happier-dev/protocol';
-import { resolveCliVoicePromptStackBlocks } from '../../../prompts/library/resolveCliVoicePromptStackBlocks';
+import { resolveCliVoicePromptPreparation } from '../../../prompts/library/resolveCliVoicePromptStackBlocks';
+import type { VoicePromptPreparation } from '../../../voice/agent/voiceAgentTypes';
 import { configuration } from '../../../../configuration';
 import {
   type ExecutionRunActionParams,
@@ -129,7 +130,7 @@ import {
   LaunchSecretReferenceOverlayError,
   readLaunchSecretReferenceOverlayProviderErrorCodeV1,
   resolveSecretReferenceOverlayEnvironment,
-} from '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
+} from '@/settings/secrets/secretReferenceOverlay';
 import { SavedSecretOperationAdmissionError } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
@@ -210,6 +211,8 @@ type ExecutionRunRuntimeCreateOptions = Readonly<{
   resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
   resolveAccountSettingsSnapshot?: (input?: Readonly<{
     secretReferenceOverlay?: SecretReferenceOverlayV1;
+    mcpServerCatalog?: boolean;
+    signal?: AbortSignal;
   }>) => Promise<ActiveAccountSettingsSnapshot | null>;
 }>;
 
@@ -266,6 +269,7 @@ async function prepareExecutionRunManagerStartParams(
   const prepared: Record<string, unknown> = {
     ...(params as unknown as Record<string, unknown>),
     ...(startProfilePatch ?? {}),
+    requesterWorkAttributionV1: params.requesterWorkAttributionV1,
   };
   delete prepared.replay;
 
@@ -273,6 +277,7 @@ async function prepareExecutionRunManagerStartParams(
 }
 
 export type ExecutionRunHostBridgeOptions = Readonly<{
+  admitStart?: () => Promise<void>;
   parentProvider: ACPProvider;
   cwd: string;
   sendAcp: ExecutionRunTranscriptPublisher;
@@ -300,12 +305,13 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
   budgetRegistry?: ExecutionBudgetRegistry;
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
-  resolveVoicePromptStackBlocks?: (args: Readonly<{
+  resolveVoicePromptPreparation?: (args: Readonly<{
     settings?: unknown;
     profileId?: string | null;
     sessionId?: string | null;
     workingDirectory?: string | null;
-  }>) => Promise<readonly string[]>;
+    signal?: AbortSignal;
+  }>) => Promise<VoicePromptPreparation>;
   executionRunProfileCatalog?: ExecutionRunProfileContributionCatalog;
   resolveExecutionRunProfileCatalog?: () =>
     | Promise<ExecutionRunProfileCatalogResolution>
@@ -326,6 +332,8 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
   resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
   resolveAccountSettingsSnapshot?: (input?: Readonly<{
     secretReferenceOverlay?: SecretReferenceOverlayV1;
+    mcpServerCatalog?: boolean;
+    signal?: AbortSignal;
   }>) => Promise<ActiveAccountSettingsSnapshot | null>;
 }>;
 
@@ -335,6 +343,7 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
  * this class plus the shared execution-run runtime helpers it composes.
  */
 export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
+  private readonly admitStart: ExecutionRunHostBridgeOptions['admitStart'];
   private readonly parentProvider: ACPProvider;
   private readonly cwd: string;
   private readonly sendAcp: ExecutionRunTranscriptPublisher;
@@ -909,6 +918,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }
 
   constructor(opts: ExecutionRunHostBridgeOptions) {
+    this.admitStart = opts.admitStart;
     this.parentProvider = opts.parentProvider;
     this.cwd = opts.cwd;
     this.sendAcp = opts.sendAcp;
@@ -949,16 +959,20 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ? opts.resolveExecutionRunProfileCatalog
       : null;
     const resolveAccountSettings = opts.resolveAccountSettings ?? (async () => null);
-    const resolveVoicePromptStackBlocks = opts.resolveVoicePromptStackBlocks
+    const resolveVoicePromptPreparation = opts.resolveVoicePromptPreparation
       ?? (async ({
         settings,
         profileId,
+        sessionId,
+        workingDirectory,
+        signal,
       }: Readonly<{
         settings?: unknown;
         profileId?: string | null;
         sessionId?: string | null;
         workingDirectory?: string | null;
-      }>) => await resolveCliVoicePromptStackBlocks({ settings, profileId }));
+        signal?: AbortSignal;
+      }>) => await resolveCliVoicePromptPreparation({ settings, profileId, sessionId, directory: workingDirectory ?? undefined, signal }));
 
     this.voiceAgentManager = new VoiceAgentManager({
       createRuntime: ({ backendTarget, backendId, modelId, permissionIntent, start, connectedServices }) => {
@@ -979,19 +993,31 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           throw new VoiceAgentError('VOICE_AGENT_UNSUPPORTED', message);
         }
       },
-      resolveSystemAppendBlocks: async ({ profileId, sessionId, workingDirectory }) => {
+      resolvePromptPreparation: async ({ profileId, sessionId, workingDirectory, signal }) => {
         const settings = await resolveAccountSettings();
-        return await resolveVoicePromptStackBlocks({
+        return await resolveVoicePromptPreparation({
           settings,
           profileId,
           sessionId,
           workingDirectory: workingDirectory ?? this.cwd,
+          ...(signal ? { signal } : {}),
         });
       },
       responseTimeoutMs: configuration.voiceAgentResponseTimeoutMs,
       getNowMs: this.getNowMs,
       onIdleReaped: this.handleVoiceAgentIdleReaped.bind(this),
       onTerminalFailure: this.handleVoiceAgentTerminalFailure.bind(this),
+      onActivityChanged: (voiceAgentId) => {
+        const run = this.runs.get(voiceAgentId);
+        const controller = this.controllers.get(voiceAgentId);
+        if (
+          run?.status !== 'running'
+          || controller?.kind !== 'voice_agent'
+          || controller.cancelled
+          || controller.voiceAgentId !== voiceAgentId
+        ) return;
+        this.emitPublicStateUpdated(voiceAgentId);
+      },
       onResumeHandleChanged: (voiceAgentId, resumeHandle) => {
         const run = this.runs.get(voiceAgentId);
         const controller = this.controllers.get(voiceAgentId);
@@ -1357,7 +1383,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             if (record.ownerPid !== process.pid) this.runs.delete(record.state.runId);
             continue;
           }
-          this.runs.set(record.state.runId, record.state);
+          this.runs.set(record.state.runId, { ...record.state,
+            ...(record.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: record.requesterWorkAttributionV1 } : {}),
+          });
         }
       })().finally(() => { this.retainedRunRecovery = null; });
     }
@@ -1490,7 +1518,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const requestIds = run.status === 'running' && ctrl?.kind === 'backend'
       ? ctrl.backend.readPendingPermissionRequestIds?.() ?? [] : [];
     return {
-      ...projectExecutionRunPublicState({ ...run, ...(inputTurns ? { inputTurns } : {}) }, ctrl),
+      ...projectExecutionRunPublicState(
+        { ...run, ...(inputTurns ? { inputTurns } : {}) },
+        ctrl,
+        ctrl?.kind === 'voice_agent' ? this.voiceAgentManager.isTurnInFlight(ctrl.voiceAgentId) : undefined,
+      ),
       ...(availableActionIds.length > 0 ? { availableActionIds: [...availableActionIds] } : {}),
       ...(requestIds.length > 0 ? { attention: { kind: 'permission_required' as const, requestIds: [...requestIds] } } : {}),
     };
@@ -1760,6 +1792,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       const secretReferenceOverlay = preparedParams.secretReferenceOverlay;
       const runInteractionStore = preparedParams.getPermissionRequestStore?.() ?? null;
       const started = await startExecutionRun({
+        admitStart: this.admitStart,
         params: preparedParams,
         profileCatalog: resolution.profileCatalog,
         ...(resolution.engineRegistry
