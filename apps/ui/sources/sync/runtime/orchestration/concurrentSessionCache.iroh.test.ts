@@ -104,6 +104,8 @@ async function installHarness(options: { additionalHome?: boolean; failIdentity?
         if (url.pathname === '/v1/account/encryption/currentness') {
             return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         }
+        if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (url.pathname === '/v2/sessions/active') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
         if (url.pathname === '/v2/sessions') {
             return Response.json({ sessions: sessions.map((id) => {
                 const session = createSessionFixture({ id });
@@ -142,7 +144,10 @@ async function installHarness(options: { additionalHome?: boolean; failIdentity?
         (await import('@/sync/api/capabilities/serverFeaturesClient')).resetServerFeaturesClientForTests();
         network.dispose();
         vi.doUnmock('socket.io-client');
-        for (const home of [homeB, homeA, ...(homeC ? [homeC] : [])]) await profiles.removeServerProfile(home.id);
+        for (const home of [homeB, homeA, ...(homeC ? [homeC] : [])]) {
+            const profile = profiles.getServerProfileById(home.id);
+            if (profile) await profiles.removeServerProfile(profile.id);
+        }
         storage.getState().clearSessionListRowsForServerScope(homeBScope);
     };
     return {

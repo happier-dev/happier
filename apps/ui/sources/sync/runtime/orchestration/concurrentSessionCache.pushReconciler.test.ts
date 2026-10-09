@@ -81,14 +81,17 @@ const profiles = [
     },
 ];
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    listServerProfiles: () => profiles,
-    loadHomeViewState: () => null,
-    subscribeHomeViewState: () => () => {},
-    subscribeServerProfiles: () => () => {},
-    resolveServerProfileScopeId: (profile: typeof profiles[number]) => profile.serverIdentityId,
-    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '') === String(right ?? ''),
-}));
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const { createPartialServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
+    return createPartialServerProfilesModuleMock(importOriginal, {
+        listServerProfiles: () => profiles,
+        overrides: {
+            loadHomeViewState: () => null,
+            subscribeHomeViewState: () => () => {},
+            subscribeServerProfiles: () => () => {},
+        },
+    });
+});
 
 // Device-level lifecycle fixture: mounted without any focused Sync runtime.
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -209,8 +212,7 @@ describe('device-level push token reconciliation lifecycle', () => {
         schedulePushTokenReconciliation();
         schedulePushTokenReconciliation();
 
-        await flushSchedulerTurn();
-        expect(mocks.registerPushToken).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(mocks.registerPushToken).toHaveBeenCalledTimes(1));
         await flushSchedulerTurn();
         expect(mocks.registerPushToken).toHaveBeenCalledTimes(1);
     });

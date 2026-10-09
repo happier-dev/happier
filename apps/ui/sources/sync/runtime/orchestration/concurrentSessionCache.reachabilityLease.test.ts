@@ -53,7 +53,10 @@ async function installHarness() {
         await TokenStorage.removeCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id });
         network.dispose();
         io.mockRestore();
-        for (const home of [homeB, homeA]) await profiles.removeServerProfile(home.id);
+        for (const home of [homeB, homeA]) {
+            const profile = profiles.getServerProfileById(home.id);
+            if (profile) await profiles.removeServerProfile(profile.id);
+        }
     };
     cache.startConcurrentSessionCacheSync();
     await vi.advanceTimersByTimeAsync(1);
@@ -83,7 +86,7 @@ describe('concurrent session cache reachability lease fencing', () => {
         await vi.advanceTimersByTimeAsync(1);
 
         expect(h.io).not.toHaveBeenCalled();
-        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('shutting_down');
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)).toBeNull();
         expect(h.isConcurrentOrdinarySessionListHome(h.homeB.id)).toBe(false);
     });
 
@@ -95,7 +98,7 @@ describe('concurrent session cache reachability lease fencing', () => {
         await vi.advanceTimersByTimeAsync(1);
 
         expect(h.io).not.toHaveBeenCalled();
-        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('shutting_down');
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)).toBeNull();
         expect(h.isConcurrentOrdinarySessionListHome(h.homeB.id)).toBe(false);
     });
 
@@ -114,7 +117,7 @@ describe('concurrent session cache reachability lease fencing', () => {
         h.pendingPings[0].respond();
         await vi.advanceTimersByTimeAsync(1);
 
-        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('shutting_down');
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)).toBeNull();
         expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, newToken)?.phase).toBe('online');
         expect(h.io).toHaveBeenCalledTimes(1);
         expect(h.io).toHaveBeenCalledWith(h.homeB.serverUrl, expect.objectContaining({
@@ -122,7 +125,7 @@ describe('concurrent session cache reachability lease fencing', () => {
         }));
         h.stopConcurrentSessionCacheSync();
         await vi.advanceTimersByTimeAsync(1);
-        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, newToken)?.phase).toBe('shutting_down');
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, newToken)).toBeNull();
     });
 
     it('coalesces overlapping resumes and releases every cache lease without stopping another owner', async () => {
@@ -147,6 +150,6 @@ describe('concurrent session cache reachability lease fencing', () => {
         await vi.advanceTimersByTimeAsync(1);
         expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('online');
         await observer.release();
-        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('shutting_down');
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)).toBeNull();
     });
 });
