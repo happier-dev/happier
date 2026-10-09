@@ -60,6 +60,13 @@ describe('plugin UI surface context', () => {
 
     expect(PluginUiSurfaceContextV1Schema.safeParse(surface).success).toBe(false);
     expect(PluginUiHostApiSurfaceContextV1Schema.parse(surface)).toEqual(surface);
+    const withStatusText = { ...surface, theme: { ...surface.theme, statusText: {
+      success: '#187733', warning: '#9a5c00', attention: '#945200', danger: '#c62828', info: '#4e5ba5', neutral: '#6c6c70',
+    } } };
+    expect(PluginUiHostApiSurfaceContextV1Schema.parse(withStatusText)).toEqual(withStatusText);
+    expect(PluginUiHostApiSurfaceContextV1Schema.safeParse({ ...withStatusText, theme: {
+      ...withStatusText.theme, statusText: { ...withStatusText.theme.statusText, extra: '#ffffff' },
+    } }).success).toBe(false);
     expect(PluginUiHostApiSurfaceContextV1Schema.safeParse({
       ...surface,
       unexpected: true,

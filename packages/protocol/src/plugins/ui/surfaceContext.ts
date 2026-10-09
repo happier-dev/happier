@@ -151,6 +151,15 @@ export const PluginUiHostApiSurfaceThemeV1Schema = z.object({
     controlDisabled: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     overlay: PluginUiHostApiSurfaceNonBlankStringV1Schema,
   }).strict(),
+  /** Text on tinted status surfaces; marker/icon colours remain in `colors`. Older snapshots omit it. */
+  statusText: z.object({
+    success: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    warning: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    attention: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    danger: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    info: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    neutral: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+  }).strict().optional(),
   spacing: z.object({
     xsmall: PluginUiHostApiSurfaceMetricV1Schema,
     small: PluginUiHostApiSurfaceMetricV1Schema,

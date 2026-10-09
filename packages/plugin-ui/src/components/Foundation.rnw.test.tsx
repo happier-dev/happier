@@ -32,6 +32,33 @@ function mountFoundation(children: React.ReactNode, hostApi = createHostApiStub(
 }
 
 describe('foundation presentation families', () => {
+  it('uses projected status text ink on tinted badges without changing the icon or outlined ink', () => {
+    const base = createSurfaceContext();
+    const context = { ...base, theme: { ...base.theme, statusText: {
+      // Deliberately low contrast: an explicit appearance value must not be corrected by Badge.
+      success: '#ffffff', warning: '#9a5c00', attention: '#945200', danger: '#c62828', info: '#4e5ba5', neutral: '#6c6c70',
+    } } };
+    // The native icon renderer is the platform boundary; Badge/tone/theme logic remains real.
+    const host: PluginUiPresentationHost = {
+      renderIcon: ({ color, testID }) => <span data-testid={testID} style={{ color }} />,
+      renderMarkdown: () => null,
+      renderCodeBlock: () => null,
+      renderPopover: () => null,
+    };
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProviderInternal hostApi={createHostApiStub(context)} context={context} presentationHost={host}>
+        <Badge value="Live" tone="success" variant="tinted" icon="check" testID="tinted" />
+        <Badge value="Live" tone="success" testID="outlined" />
+      </PluginUiProviderInternal>,
+    );
+    try {
+      const text = (id: string) => mount.container.querySelector<HTMLElement>(`[data-testid="${id}"] [dir="auto"]`)!;
+      expect(getComputedStyle(text('tinted')).color).toBe('rgb(255, 255, 255)');
+      expect(getComputedStyle(text('outlined')).color).toBe(getComputedStyle(withColor(context.theme.colors.success)).backgroundColor);
+      const icon = mount.container.querySelector<HTMLElement>('[data-testid="tinted:icon"]')!;
+      expect(getComputedStyle(icon).color).toBe(getComputedStyle(withColor(context.theme.colors.success)).backgroundColor);
+    } finally { mount.unmount(); }
+  });
   it('keeps a capacity meter silent while a named progress bar reports its value', () => {
     const context = createSurfaceContext();
     const mount = mountThroughReactNativeWeb(<>

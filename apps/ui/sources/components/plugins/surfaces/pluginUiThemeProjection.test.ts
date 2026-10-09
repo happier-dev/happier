@@ -23,6 +23,16 @@ function builtInProfile(index: number): ThemeProfileV1 {
 }
 
 describe('plugin UI semantic theme projection (§3.3, UI-D12)', () => {
+    it('projects status text ink separately from marker colors for same-realm and hosted badges', () => {
+        for (const mode of ['light', 'dark'] as const) {
+            const theme = themeFor(null, mode);
+            const projected = projectPluginUiTheme(theme);
+            expect(projected.statusText).toBeDefined();
+            for (const variant of ['success', 'warning', 'attention', 'danger', 'info', 'neutral'] as const) {
+                expect(projected.statusText?.[variant]).toBe(theme.colors.state[variant].textForeground);
+            }
+        }
+    });
     it('projects every colour field from the canonical token it names', () => {
         for (const profile of [null, builtInProfile(0), builtInProfile(1)]) {
             for (const mode of ['light', 'dark'] as const) {

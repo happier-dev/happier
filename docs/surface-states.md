@@ -37,6 +37,8 @@ Callers choose a scene; they do not draw their own empty-state illustrations.
 
 Notices above retained content share [`HappierBanner`](../packages/plugin-ui/src/presentation/content/Foundation.tsx): the app's `AttentionBanner` binds its theme, actions and diagnostic disclosure, and the public `Banner` binds plugin text and glyphs. The shared renderer owns the tint, outline and responsive action placement. Whole-surface states continue to use the state-card composition.
 
+Tinted status labels share `HappierBadge`: core's `StatusPill` and public Plugin UI `Badge` read the theme's `state.<status>.textForeground` role for their words and counts. Markers and icons retain `state.<status>.foreground`; plain and outlined labels retain their existing ink. The public theme snapshot projects the text role as optional `statusText`, so older snapshots keep their existing badge colour. Default light/dark text is AA on the tinted status surfaces. Appearance profiles remain unclamped: an existing foreground override also supplies the text ink unless the profile explicitly overrides the text role, and explicit component foregrounds remain exact.
+
 Progress and capacity bars share `HappierProgress` in the same presentation module. The app's `MeterBar` supplies the domain's fill and colours; a capacity meter stays silent while named progress reports its value. Numbered setup and checklist markers share [`HappierStep`](../packages/plugin-ui/src/presentation/content/Step.tsx) and its marker renderer. Adapters retain their own step decisions, labels, actions and details.
 
 ## Surface material (development)

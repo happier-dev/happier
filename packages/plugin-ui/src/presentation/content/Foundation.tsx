@@ -152,10 +152,11 @@ export function HappierBadge(
      * scaled text element (or a fragment of them), which renders as given.
      */
     children?: ReactNode;
-    /** A decorative mark before the words (a status dot, a reason's icon), in the badge's ink. */
+    /** A decorative mark before the words (a status dot, a reason's icon), retaining its own marker ink. */
     leading?: ReactNode;
     /** A trailing mark after the words (the caret of a badge that opens a popover). */
     trailing?: ReactNode;
+    /** Text ink, independent of supplied marks: adapters project the tinted-status text role here. */
     color: string;
     backgroundColor: string;
     /** A ring in this colour; omitted, the badge is background-only. */

@@ -15,6 +15,31 @@ const profile = (overrides: ThemeProfileV1['overrides'], updatedAt = '2026-05-11
 });
 
 describe('resolveThemeProfile', () => {
+    it('preserves custom status ink and tint without contrast clamps, including an explicit text override', () => {
+        const custom = profile({ light: {
+            'state.success.foreground': '#ffffff',
+            'state.success.background': '#ffffff',
+            'state.warning.foreground': '#eeeeee',
+            'state.warning.textForeground': '#dddddd',
+        }, dark: {} });
+        const effective = resolveThemeProfile({ mode: 'light', profile: custom });
+        expect(effective.colors.state.success.foreground).toBe('#ffffff');
+        expect(effective.colors.state.success.background).toBe('#ffffff');
+        expect(effective.colors.state.success.textForeground).toBe('#ffffff');
+        expect(effective.colors.state.warning.foreground).toBe('#eeeeee');
+        expect(effective.colors.state.warning.textForeground).toBe('#dddddd');
+
+        const explicitBaseInk = resolveThemeProfile({ mode: 'light', profile: profile({ light: {
+            'state.success.foreground': '#ffffff',
+            'state.success.textForeground': lightTheme.colors.state.success.textForeground,
+        }, dark: {} }) });
+        expect(explicitBaseInk.colors.state.success.textForeground).toBe(lightTheme.colors.state.success.textForeground);
+
+        const explicitMarkerInk = resolveThemeProfile({ mode: 'light', profile: profile({ light: {
+            'state.success.foreground': lightTheme.colors.state.success.foreground,
+        }, dark: {} }) });
+        expect(explicitMarkerInk.colors.state.success.textForeground).toBe(lightTheme.colors.state.success.foreground);
+    });
     it('preserves canonical visual values when no profile is active', () => {
         expect(resolveThemeProfile({ mode: 'light', profile: null })).toBe(lightTheme);
         expect(resolveThemeProfile({ mode: 'dark', profile: null })).toBe(darkTheme);

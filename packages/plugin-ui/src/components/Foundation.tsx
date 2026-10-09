@@ -85,7 +85,7 @@ export type BadgeProps = AuthorText & Readonly<{
    * ("Review requested"); a neutral tint stays on the elevated surface.
    */
   variant?: 'outlined' | 'tinted';
-  /** A leading icon in the badge's ink ("Review requested" with an eye). Decorative: the words carry the meaning. */
+  /** A leading icon in the tone's marker ink ("Review requested" with an eye). Decorative: the words carry the meaning. */
   icon?: IconName;
   testID?: string;
   children?: ReactNode;
@@ -98,6 +98,9 @@ export function Badge({ tone = 'neutral', variant = 'outlined', icon, testID, ch
   // The icon sits at the words' own line height, so a badge with an icon is exactly as tall as one without.
   const iconSize = useHappierTypeRoleStyle('caption', theme).lineHeight;
   const tinted = variant === 'tinted';
+  const textColor = tinted && tone !== 'accent' && tone !== 'secondary' && tone !== 'muted'
+    ? theme.statusText?.[tone] ?? color
+    : color;
   // The tint is the tone at the one strength the shared work-state tint uses; a theme colour with no
   // softened form (a custom rgba) keeps the elevated surface rather than guessing a mix.
   const tint = tinted && tone !== 'neutral' && tone !== 'secondary' && tone !== 'muted'
@@ -105,7 +108,7 @@ export function Badge({ tone = 'neutral', variant = 'outlined', icon, testID, ch
     : null;
   return (
     <HappierBadge
-      color={color}
+      color={textColor}
       backgroundColor={tint ?? theme.colors.elevatedSurface}
       // A tinted chip keeps the ring's geometry but not its ink: a translucent tint drawn twice at the edge reads as a ring.
       borderColor={tinted ? 'transparent' : tone === 'neutral' ? theme.colors.border : color}

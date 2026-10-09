@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { softenHappierWorkColor } from '../../../../packages/plugin-ui/src/presentation/work/workStatus';
 
 import { BUILT_IN_THEME_PROFILES } from './profiles/builtInThemeProfiles';
 import { resolveThemeProfile } from './profiles/resolveThemeProfile';
@@ -275,6 +276,31 @@ describe('browser and local-services corridor contrast', () => {
         expect(contrastRatio('#767676', '#ffffff', '#ffffff')).toBeCloseTo(4.54, 1);
         expect(contrastRatio('#000000', '#ffffff', '#ffffff')).toBeCloseTo(21, 5);
     });
+});
+
+describe('default tinted status text contrast', () => {
+    for (const [name, theme] of [['light', lightTheme], ['dark', darkTheme]] as const) {
+        it(`keeps small status labels readable in ${name} without darkening their markers`, () => {
+            const variants = ['success', 'warning', 'attention', 'danger', 'info', 'neutral'] as const;
+            const failures = variants.flatMap((variant) => {
+                const state = theme.colors.state;
+                const colors = state[variant];
+                const foreground = 'textForeground' in colors && typeof colors.textForeground === 'string'
+                    ? colors.textForeground : colors.foreground;
+                const background = readTokenPath(state, `${variant === 'attention' ? 'warning' : variant}.background`);
+                return ['surface.base', 'surface.elevated', 'edge.cardFill', 'edge.floatingFill'].flatMap((surface) => {
+                    const backdrop = readTokenPath(theme.colors, surface);
+                    // Public Badge uses the shared 10% work tint rather than the core status fill.
+                    const publicBackground = variant === 'neutral' ? theme.colors.surface.elevated : softenHappierWorkColor(colors.foreground, 0.1);
+                    return [background, publicBackground ?? theme.colors.surface.elevated].flatMap((fill) => {
+                        const ratio = contrastRatio(foreground, fill, backdrop);
+                        return ratio >= 4.5 ? [] : [`${name}/${variant} on ${surface} (${fill}) = ${ratio.toFixed(2)}:1 (needs 4.5:1)`];
+                    });
+                });
+            });
+            expect(failures).toEqual([]);
+        });
+    }
 });
 
 /**

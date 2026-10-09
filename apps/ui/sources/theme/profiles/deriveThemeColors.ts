@@ -60,12 +60,30 @@ const deriveRaisedEdgeInkForProfile = (theme: Theme, baseTheme: Theme): string =
         : deriveRaisedEdgeInk(theme.colors.text.primary, theme.dark)
 );
 
-export const deriveThemeColors = (theme: Theme, baseTheme: Theme): Theme => {
+export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverrides: ReadonlySet<string> = new Set()): Theme => {
     const raisedEdgeInk = deriveRaisedEdgeInkForProfile(theme, baseTheme);
+    // Existing profiles authored the shared foreground. Keep that choice exact unless they
+    // explicitly set the new text role, even when its value equals the default.
+    const statusText = (variant: 'success' | 'warning' | 'attention' | 'danger' | 'info' | 'neutral') => (
+        explicitOverrides.has(`state.${variant}.textForeground`)
+            ? theme.colors.state[variant].textForeground
+            : explicitOverrides.has(`state.${variant}.foreground`)
+                ? theme.colors.state[variant].foreground
+                : deriveStatusColor(theme.colors.state[variant].foreground, baseTheme.colors.state[variant].foreground, theme.colors.state[variant].textForeground)
+    );
     return {
         ...theme,
         colors: {
             ...theme.colors,
+            state: {
+                ...theme.colors.state,
+                success: { ...theme.colors.state.success, textForeground: statusText('success') },
+                warning: { ...theme.colors.state.warning, textForeground: statusText('warning') },
+                attention: { ...theme.colors.state.attention, textForeground: statusText('attention') },
+                danger: { ...theme.colors.state.danger, textForeground: statusText('danger') },
+                info: { ...theme.colors.state.info, textForeground: statusText('info') },
+                neutral: { ...theme.colors.state.neutral, textForeground: statusText('neutral') },
+            },
             effect: {
                 ...theme.colors.effect,
                 surfaceHighlight: raisedEdgeInk,

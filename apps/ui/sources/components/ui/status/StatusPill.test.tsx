@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -15,6 +16,23 @@ vi.mock('@/components/ui/text/Text', async () => {
 
 describe('StatusPill', () => {
     it('maps onboarding status states to green live, amber needs-attention, and neutral otherwise', async () => {
+    it('uses readable text ink for the label and count while preserving the status dot', async () => {
+        const { StatusPill } = await import('./StatusPill');
+        const screen = await renderScreen(<StatusPill variant="success" label="Live" count={2} testID="pill" />);
+        expect(flattenStyle(screen.findByTestId('pill:label')?.props.style).color).toBe(lightTheme.colors.state.success.textForeground);
+        expect(flattenStyle(screen.findByTestId('pill:count')?.props.style).color).toBe(lightTheme.colors.state.success.textForeground);
+        expect(flattenStyle(screen.findByTestId('pill:dot')?.props.style).backgroundColor).toBe(lightTheme.colors.state.success.foreground);
+        const plain = await renderScreen(<StatusPill variant="success" chrome="plain" label="Live" testID="plain" />);
+        expect(flattenStyle(plain.findByTestId('plain:label')?.props.style).color).toBe(lightTheme.colors.state.success.foreground);
+    });
+
+    it('applies an explicit foreground exactly, with the existing marker override precedence', async () => {
+        const { StatusPill } = await import('./StatusPill');
+        const screen = await renderScreen(<StatusPill variant="success" label="Live" count={2} foregroundColor="#ffffff" testID="pill" />);
+        expect(flattenStyle(screen.findByTestId('pill:label')?.props.style).color).toBe('#ffffff');
+        expect(flattenStyle(screen.findByTestId('pill:count')?.props.style).color).toBe('#ffffff');
+        expect(flattenStyle(screen.findByTestId('pill:dot')?.props.style).backgroundColor).toBe('#ffffff');
+    });
         const { StatusPill, resolveStatusPillVariantForState } = await import('./StatusPill');
 
         const live = await renderScreen(

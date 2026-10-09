@@ -65,11 +65,14 @@ const lightThemeBase = {
         state: {
             success: {
                 foreground: '#34C759',
+                // Lab status hues, deepened for small text on their tints; markers retain their ink.
+                textForeground: '#187733',
                 background: 'rgba(52, 199, 89, 0.12)',
                 border: '#34C759',
             },
             warning: {
                 foreground: '#FF9500',
+                textForeground: '#945700',
                 background: '#FFF8F0',
                 border: '#FF9500',
             },
@@ -78,19 +81,23 @@ const lightThemeBase = {
             // (the warning orange measured ~2:1 there). Contrast is asserted in `themeContrast.test.ts`.
             attention: {
                 foreground: PLANET_ATTENTION_HEX.light,
+                textForeground: PLANET_ATTENTION_HEX.light,
             },
             danger: {
                 foreground: '#FF3B30',
+                textForeground: '#BE2525',
                 background: '#FFF0F0',
                 border: '#FF3B30',
             },
             info: {
                 foreground: Platform.select({ ios: '#5856D6', default: '#5C6BC0' }),
+                textForeground: '#4E5BA5',
                 background: 'rgba(0, 122, 255, 0.10)',
                 border: '#007AFF',
             },
             neutral: {
                 foreground: '#8E8E93',
+                textForeground: '#6C6C70',
                 background: '#F2F2F7',
                 border: '#D1D1D6',
             },
@@ -426,11 +433,13 @@ const darkThemeBase = {
         state: {
             success: {
                 foreground: '#66DC7E',
+                textForeground: '#66DC7E',
                 background: 'rgba(102, 220, 126, 0.15)',
                 border: '#66DC7E',
             },
             warning: {
                 foreground: '#E0B65A',
+                textForeground: '#E0B65A',
                 background: 'rgba(224, 182, 90, 0.15)',
                 border: '#E0B65A',
             },
@@ -438,19 +447,23 @@ const darkThemeBase = {
             // value so the status cell and scene beacons paint the same amber.
             attention: {
                 foreground: PLANET_ATTENTION_HEX.dark,
+                textForeground: PLANET_ATTENTION_HEX.dark,
             },
             danger: {
                 foreground: '#EE6E6C',
+                textForeground: '#F58B89',
                 background: 'rgba(238, 110, 108, 0.15)',
                 border: '#EE6E6C',
             },
             info: {
                 foreground: '#9EB9FF',
+                textForeground: '#9EB9FF',
                 background: 'rgba(158, 185, 255, 0.14)',
                 border: '#9EB9FF',
             },
             neutral: {
                 foreground: '#8A817C',
+                textForeground: '#9A918C',
                 background: '#2A2222',
                 border: '#302727',
             },

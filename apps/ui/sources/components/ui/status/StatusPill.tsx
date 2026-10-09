@@ -21,7 +21,7 @@ export type StatusPillVariant = (typeof STATUS_PILL_VARIANTS)[number];
 
 type HappierBadgeStyle = React.ComponentProps<typeof HappierBadge>['style'];
 
-type StateColors = Readonly<{ foreground: string; background: string; border: string }>;
+type StateColors = Readonly<{ foreground: string; textForeground?: string; background: string; border: string }>;
 
 /**
  * "Needs you" (DESIGN.md, "One attention colour"): the Brand-owned attention amber for its ink and ring.
@@ -30,10 +30,10 @@ type StateColors = Readonly<{ foreground: string; background: string; border: st
  * the Work status treatment both draw it from here.
  */
 export function resolveAttentionStateColors(state: Readonly<{
-    attention: Readonly<{ foreground: string }>;
+    attention: Readonly<{ foreground: string; textForeground?: string }>;
     warning: Readonly<{ background: string }>;
 }>): StateColors {
-    return { foreground: state.attention.foreground, background: state.warning.background, border: state.attention.foreground };
+    return { foreground: state.attention.foreground, textForeground: state.attention.textForeground, background: state.warning.background, border: state.attention.foreground };
 }
 
 export function resolveStatusPillVariantForState(
@@ -140,9 +140,9 @@ export function StatusPill(props: StatusPillProps): React.ReactElement {
         : theme.colors.state[props.variant];
     const chrome = props.chrome ?? 'pill';
     const plain = chrome === 'plain';
-    const foregroundColor = props.foregroundColor ?? state.foreground;
+    const foregroundColor = props.foregroundColor ?? (plain ? state.foreground : state.textForeground ?? state.foreground);
     const labelVariantStyle = props.labelVariant === 'phrase' ? styles.phraseLabel : null;
-    const dotColor = props.dotColor ?? foregroundColor;
+    const dotColor = props.dotColor ?? props.foregroundColor ?? state.foreground;
     const leading = props.leading ?? (props.hideDot ? null : (
         <StatusDot
             testID={props.testID ? `${props.testID}:dot` : undefined}

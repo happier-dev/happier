@@ -180,6 +180,14 @@ export function projectPluginUiTheme(theme: Theme): PluginUiThemeV1 {
     const code = Typography.keyHint();
     return Object.freeze({
         version: 1,
+        statusText: Object.freeze({
+            success: theme.colors.state.success.textForeground,
+            warning: theme.colors.state.warning.textForeground,
+            attention: theme.colors.state.attention.textForeground,
+            danger: theme.colors.state.danger.textForeground,
+            info: theme.colors.state.info.textForeground,
+            neutral: theme.colors.state.neutral.textForeground,
+        }),
         colors: Object.freeze({
             canvas: theme.colors.background.canvas,
             surface: theme.colors.surface.base,
