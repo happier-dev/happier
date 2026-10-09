@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WorkspaceSyncController } from './workspaceSyncController';
-import { AccountSettingsSchema } from '@happier-dev/protocol';
 import { deriveWorkspaceSyncConflictAsidePaths } from '@happier-dev/protocol';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1, type WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 import { deriveWorkspaceSyncEndpointId } from './transport/workspaceSyncBrokerProtocol';
@@ -14,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { createWorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
 import { createWorkspaceSyncMutagenAdapter } from './workspaceSyncMutagenAdapter';
 import { createWorkspaceSyncTargetAuthority } from './workspaceSyncTargetAuthority';
-import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 
 const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
 const definition = { v: 1 as const, relationshipId: 'r1', controllerMachineId: 'm1', alphaWorkspaceRefId: 'a', betaWorkspaceRefId: 'b', mode: 'keep_synced' as const, contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, enabled: true, createdAtMs: 1, updatedAtMs: 1 };
@@ -41,6 +40,48 @@ function fixtureWorkspaceRef(id: string) {
 }
 
 describe('WorkspaceSyncController', () => {
+  it('projects accepted Sync preparation and queued flush, settling a clean watcher without material custody', async () => {
+    let release!: () => void;
+    const completion = new Promise<void>(resolve => { release = resolve; });
+    const controller = new WorkspaceSyncController({
+      adapter: completeAdapter({ flush: async () => { await completion; return status; } }),
+      lifecycle: lifecycle(), rootOwnershipManager: rootOwnership(), localMachineId: 'm1',
+      resolveWorkspaceRef: fixtureWorkspaceRef, resolveAllRelationshipDefinitions: () => [definition],
+    });
+    const edges: unknown[] = [];
+    const unsubscribe = controller.activity.subscribe(() => edges.push(true));
+    try {
+      const preparing = controller.ensure(definition);
+      expect(await controller.activity.read()).toMatchObject({ coverage: 'complete', items: expect.arrayContaining([
+        expect.objectContaining({ category: 'sync', state: 'active' }),
+      ]) });
+      await preparing;
+      expect(await controller.activity.read()).toMatchObject({ coverage: 'complete', items: [
+        { category: 'sync', ownerRef: 'r1', state: 'settled' },
+      ] });
+      const flushing = controller.flush('r1');
+      expect(await controller.activity.read()).toMatchObject({ items: [
+        { category: 'sync', ownerRef: 'r1', state: 'active' },
+      ] });
+      release();
+      await flushing;
+      expect(await controller.activity.read()).toMatchObject({ items: [
+        { category: 'sync', ownerRef: 'r1', state: 'settled' },
+      ] });
+      expect(edges.length).toBeGreaterThan(0);
+      const edgesBeforeShutdown = edges.length;
+      await controller.shutdown();
+      expect(await controller.activity.read()).toMatchObject({ coverage: 'unknown' });
+      expect(edges.length).toBeGreaterThan(edgesBeforeShutdown);
+    } finally { release(); unsubscribe(); await controller.shutdown(); }
+  });
+
+  it('cannot prove Sync inactivity without its current relationship scope', async () => {
+    const controller = new WorkspaceSyncController({ adapter: completeAdapter(), lifecycle: lifecycle(),
+      rootOwnershipManager: rootOwnership(), localMachineId: 'm1', resolveWorkspaceRef: fixtureWorkspaceRef });
+    try { expect(await controller.activity.read()).toEqual({ items: [], coverage: 'unknown' }); }
+    finally { await controller.shutdown(); }
+  });
   it('preserves the reviewed hub alternative before installing a selected spoke file', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-resolution-keep-both-'));
     const hubRoot = join(fixture, 'hub');
@@ -745,7 +786,7 @@ describe('WorkspaceSyncController', () => {
     });
 
     await expect(controller.ensure(definition)).rejects.toMatchObject({
-      code: 'workspace_machine_not_enrolled',
+      code: 'workspace_sync_topology_invalid',
     });
     expect(prepareRelationshipTarget).not.toHaveBeenCalled();
     expect(adapter.ensure).not.toHaveBeenCalled();
@@ -1233,6 +1274,7 @@ describe('WorkspaceSyncController', () => {
       },
       rootOwnershipManager: { tryAcquire: vi.fn(async (owner) => ({
         owner: { ...owner, rootFingerprint: null },
+        assertCurrentRootIdentity: async () => undefined,
         bindCurrentRootIdentity: vi.fn(async () => undefined),
         release,
       })) },
@@ -1310,6 +1352,7 @@ describe('WorkspaceSyncController', () => {
       rootOwnershipManager: {
         tryAcquire: vi.fn(async (owner) => ({
           owner: { ...owner, rootFingerprint: null },
+          assertCurrentRootIdentity: async () => undefined,
           bindCurrentRootIdentity: vi.fn(async () => undefined),
           release,
         })),
@@ -1511,6 +1554,7 @@ describe('WorkspaceSyncController', () => {
           events.push('fence');
           return {
             owner: { ...owner, rootFingerprint: null },
+            assertCurrentRootIdentity: async () => undefined,
             bindCurrentRootIdentity: vi.fn(async () => undefined),
             release: vi.fn(async () => { events.push('release'); }),
           };
@@ -1820,6 +1864,7 @@ describe('WorkspaceSyncController', () => {
     const release = vi.fn(async () => undefined);
     const tryAcquire = vi.fn(async (owner) => ({
       owner: { ...owner, rootFingerprint: null },
+      assertCurrentRootIdentity: async () => undefined,
       bindCurrentRootIdentity: vi.fn(async () => undefined),
       release,
     }));
@@ -1907,6 +1952,7 @@ describe('WorkspaceSyncController', () => {
       lifecycle: lifecycle(),
       rootOwnershipManager: { tryAcquire: vi.fn(async (owner) => ({
         owner: { ...owner, rootFingerprint: null },
+        assertCurrentRootIdentity: async () => undefined,
         bindCurrentRootIdentity: vi.fn(async () => undefined),
         release,
       })) },
@@ -1940,6 +1986,7 @@ describe('WorkspaceSyncController', () => {
         operation: 'handoff' as const,
         rootFingerprint: null,
       },
+      assertCurrentRootIdentity: async () => undefined,
       bindCurrentRootIdentity: vi.fn(async () => undefined),
       release: carriedRelease,
     });
@@ -2030,6 +2077,7 @@ describe('WorkspaceSyncController', () => {
           events.push('fence');
           return {
             owner: { ...owner, rootFingerprint: null },
+            assertCurrentRootIdentity: async () => undefined,
             bindCurrentRootIdentity: vi.fn(async () => undefined),
             release: vi.fn(async () => undefined),
           };
@@ -2080,29 +2128,28 @@ describe('WorkspaceSyncController', () => {
       betaWorkspaceRefId: 'enabled-beta',
     };
     let disabledEnabled = false;
-    let settingsReady = false;
-    const settingsSnapshot = (): ActiveAccountSettingsSnapshot => ({
+    let projectsReady = false;
+    const projectSnapshot = (): ActiveProjectAccountRowsSnapshot => ({
       source: 'network',
-      settings: AccountSettingsSchema.parse({
-        workspaceRefsV1: [
-          { id: 'disabled-alpha', serverId: 'server-1', machineId: 'm1', rootPath: roots.disabledAlpha, createdAtMs: 1 },
-          { id: 'disabled-beta', serverId: 'server-1', machineId: 'm2', rootPath: roots.disabledBeta, createdAtMs: 1 },
-          { id: 'enabled-alpha', serverId: 'server-1', machineId: 'm1', rootPath: roots.enabledAlpha, createdAtMs: 1 },
-          { id: 'enabled-beta', serverId: 'server-1', machineId: 'm2', rootPath: roots.enabledBeta, createdAtMs: 1 },
-        ],
-        workspaceSyncRelationshipsV1: settingsReady
-          ? [{ ...disabled, enabled: disabledEnabled }, enabled]
-          : [],
-      }),
-      settingsVersion: disabledEnabled ? 2 : 1,
+      workspaceRefs: [
+        { id: 'disabled-alpha', serverId: 'server-1', machineId: 'm1', rootPath: roots.disabledAlpha, createdAtMs: 1 },
+        { id: 'disabled-beta', serverId: 'server-1', machineId: 'm2', rootPath: roots.disabledBeta, createdAtMs: 1 },
+        { id: 'enabled-alpha', serverId: 'server-1', machineId: 'm1', rootPath: roots.enabledAlpha, createdAtMs: 1 },
+        { id: 'enabled-beta', serverId: 'server-1', machineId: 'm2', rootPath: roots.enabledBeta, createdAtMs: 1 },
+      ],
+      relationships: projectsReady
+        ? [{ ...disabled, enabled: disabledEnabled }, enabled]
+        : [],
+
+      graphRevision: disabledEnabled ? 2 : 1,
       loadedAtMs: 1,
-      settingsSecretsReadKeys: [],
+      organizations: [], rows: [], scopeKey: 'account-1',
     });
     const targetLockDirectory = join(fixture, 'target-locks');
     const initialAuthority = createWorkspaceSyncTargetAuthority({
       localServerId: 'server-1',
       localMachineId: 'm2',
-      getSettingsSnapshot: settingsSnapshot,
+      getProjectSnapshot: projectSnapshot,
       callMachineRpc: async () => { throw new Error('unexpected machine RPC'); },
       bootstrap: {
         materializationDirectory: join(fixture, 'target-staging'),
@@ -2151,13 +2198,13 @@ describe('WorkspaceSyncController', () => {
       targetMachineId: 'm2',
       reason: 'relationship_committed',
     });
-    settingsReady = true;
+    projectsReady = true;
     await initialAuthority.releaseAllRetainedBootstraps();
     const targetRootOwnership = createWorkspaceRootOwnershipManager({ lockDirectory: targetLockDirectory });
     const authority = createWorkspaceSyncTargetAuthority({
       localServerId: 'server-1',
       localMachineId: 'm2',
-      getSettingsSnapshot: settingsSnapshot,
+      getProjectSnapshot: projectSnapshot,
       callMachineRpc: async () => { throw new Error('unexpected machine RPC'); },
       bootstrap: {
         materializationDirectory: join(fixture, 'target-staging'),
@@ -2189,7 +2236,7 @@ describe('WorkspaceSyncController', () => {
     });
     let gitAvailable = false;
     const probeGitRuntimeDependency = vi.fn(async () => gitAvailable);
-    const refs = new Map(settingsSnapshot().settings.workspaceRefsV1.map((ref) => [ref.id, ref]));
+    const refs = new Map(projectSnapshot().workspaceRefs.map((ref) => [ref.id, ref]));
     const controllerRootOwnership = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'controller-locks') });
     const tryAcquire = vi.fn(async (input: Parameters<typeof controllerRootOwnership.tryAcquire>[0]) => (
       await controllerRootOwnership.tryAcquire(input)
@@ -2291,6 +2338,7 @@ describe('WorkspaceSyncController', () => {
           events.push('fence');
           return {
             owner: { ...owner, rootFingerprint: null },
+            assertCurrentRootIdentity: async () => undefined,
             bindCurrentRootIdentity: vi.fn(async () => undefined),
             release: vi.fn(async () => undefined),
           };
@@ -2323,6 +2371,7 @@ describe('WorkspaceSyncController', () => {
         releases.push(release);
         return {
           owner: { ...owner, rootFingerprint: null },
+          assertCurrentRootIdentity: async () => undefined,
           bindCurrentRootIdentity: vi.fn(async () => undefined),
           release,
         };
@@ -2732,6 +2781,7 @@ describe('WorkspaceSyncController', () => {
       rootOwnershipManager: {
         tryAcquire: vi.fn(async (owner) => ({
           owner: { ...owner, canonicalRoot: canonicalLocalRoot, rootFingerprint: null },
+          assertCurrentRootIdentity: async () => undefined,
           bindCurrentRootIdentity: vi.fn(async () => undefined),
           renew: vi.fn(async () => undefined),
           release,
@@ -3179,6 +3229,7 @@ describe('WorkspaceSyncController copy_once restart recovery', () => {
     const rootOwnershipManager = {
       tryAcquire: vi.fn(async (owner) => ({
         owner: { ...owner, rootFingerprint: null },
+        assertCurrentRootIdentity: async () => undefined,
         bindCurrentRootIdentity: vi.fn(async () => undefined),
         release: releaseRoot,
       })),
@@ -3229,6 +3280,7 @@ describe('WorkspaceSyncController copy_once restart recovery', () => {
       localMachineId: 'm1',
       rootOwnershipManager: { tryAcquire: vi.fn(async (owner) => ({
         owner: { ...owner, rootFingerprint: null },
+        assertCurrentRootIdentity: async () => undefined,
         bindCurrentRootIdentity: vi.fn(async () => undefined),
         release: releaseRoot,
       })) },
@@ -3264,6 +3316,7 @@ function lifecycle() { return { start: vi.fn(async () => undefined), stop: vi.fn
 function rootOwnership() {
   return { tryAcquire: vi.fn(async (owner) => ({
     owner: { ...owner, rootFingerprint: null },
+    assertCurrentRootIdentity: async () => undefined,
     bindCurrentRootIdentity: vi.fn(async () => undefined),
     release: vi.fn(async () => undefined),
   })) };

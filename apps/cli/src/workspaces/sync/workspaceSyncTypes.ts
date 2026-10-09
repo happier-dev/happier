@@ -41,8 +41,12 @@ export type WorkspaceSyncSourceRootLoan = Readonly<{
 
 /** Daemon-local lifecycle interface; wire shapes remain protocol-owned. */
 export interface ManagedWorkspaceSync {
+  /** Concrete lifecycle owners provide this; a missing applicable producer remains unknown. */
+  readonly activity?: import('@/daemon/lifecycle/managedActivity').LiveWorkProducerV1;
   /** Daemon-local retained root authority for a reviewed entry effect. */
   resolveLocalResolutionEndpoint(relationshipId: string, workspaceRefId: string): Promise<Readonly<{
+    /** Exact retained controller definition when proving initial recovery custody. */
+    relationship?: WorkspaceSyncRelationshipV1;
     canonicalRoot: string;
     assertCurrentAuthority(): Promise<void>;
   }> | null>;

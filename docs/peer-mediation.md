@@ -81,6 +81,14 @@ auth audience, reachability scope, and logging. The resolved transport therefore
 runtime origin (independent HTTPS, or the loopback origin a native lease binds) or a Home carrier
 that moves the bytes itself — never both.
 
+In unreleased 0.3 development source, finite workspace Action drivers share
+`packages/sync-client/src/machines/finiteTransferHandshake.ts` for the existing
+authenticated Account/client grant, ephemeral proof and exact target recheck.
+The headless CLI uses the native ephemeral endpoint contract; it does not reuse
+the daemon's persistent Machine endpoint identity. Both still use the prepared
+`happier/machine/1` carrier and its existing transfer capabilities. Preparation
+or export resource release is not proof of successful destination completion.
+
 When the client-local policy permits Iroh, selection is automatic and narrow. The browser carrier is chosen only on a plain browser host
 (never Tauri or Electron, which run the same bundle but keep the native direct-or-relay carrier),
 and only when the canonical Home descriptor names an exact EndpointId plus at least one explicitly
@@ -160,6 +168,22 @@ preview-sized file-transfer limit, browser synchronization engine, new carrier, 
 conflict-content store. Private stage/apply/release operations retain their explicit classifications
 in `packages/protocol/src/machines/peer/mediation/rpc/routePolicyV1.ts`; transport reachability is
 not a replacement for approval or root authority.
+
+Before starting or resuming the engine, the existing controller settles confined
+entry-replacement recovery through `workspaceSyncTargetAuthority.ts`. Initial
+relationship preparation keeps its durable graph disabled until commit. Settings
+reconciliation retains the live definition admitted by successful
+transient engine preparation; an unchanged disabled row remains restart intent,
+not a request to revoke that live transaction's fences. A cold controller without
+the live preparation marker still treats the disabled row as paused. Recovery
+may consume that disabled definition only with the current controller's exact
+retained member fence or the target's exact retained transient bootstrap and root
+identity. A remote controller proves its local member custody before routing; the
+receiver independently proves the selected target's custody. Even an empty
+recovery journal does not waive that proof. A paused row without custody, a changed
+definition or a replaced root cannot acquire recovery authority from its path.
+This development-source rule neither enables the relationship nor changes
+committed-READY cleanup into rollback.
 
 ## 1. The model
 
@@ -498,6 +522,46 @@ existing response-body budget, preserves CSP, and leaves non-HTML transport byte
 Same-preview redirects retain the navigation identity; external redirects never receive it.
 The loader and UI/native/desktop injection share one collector generator rather than copies.
 
+#### Sessionless managed-Service admission (0.3 development)
+
+Project Service previews reuse this registration and access owner rather than
+manufacturing a Session. The strict `serviceTarget` routes to the existing Local
+Services managed occurrence, retaining its Machine, workspace, declaration and
+cwd. Those caller fields are not authority: the protected
+`daemon.localServices.preview.admission` read/wait method verifies the current
+starter, exact service instance and current Machine installation through the
+same supervisor. Only a proof-attested current daemon can register that method;
+ordinary clients and an older installation cannot supply its witness.
+
+Private open/revoke and public-preview Actions keep an explicitly supplied,
+strict `serviceTarget` instead of inheriting the invoking Session's scope.
+Public status accepts that same qualifier with its registered `previewId`,
+checks the current service registration and returns only that occurrence's
+exposures. Existing Session-scoped preview requests retain their contextual
+defaults and Session-by-id status behavior.
+
+Final effective access loss retires serving authority immediately, even when a
+native Stop is unsupported or unconfirmed and custody remains. Another valid
+overlapping grant does not trigger retirement. Existing private/public streams
+close for the affected viewer, while unrelated viewers remain authorized; loss
+of the starter's serving admission retires the resource's exposures. Stop
+settlement and serving disclosure are separate facts.
+
+An already registered Browser target can request fresh `server_preview` access
+using its preview and Machine ids as routing identity, without a daemon snapshot
+or native descriptor. `BrowserViewHost`, `useNativeDirectPreview` and
+`nativeDirectAccess.ts#acquireServerPreviewAccess` retain the captured viewer's
+Account/Home credential; the server resolves and authorizes the registration.
+Web and native server fallback do not replay the custodian's snapshot URL.
+Native Iroh still requires the actual matching registration descriptor and its
+ordinary signed grant/proof. External navigation does not acquire preview access.
+
+Daemon operations needing requester HTTP credentials fail with
+`requester_credentials_unavailable` when a shared actor has no genuine private
+credential carrier; the custodian's bearer never substitutes for that actor.
+These owner and nonvisual caller contracts are source-tested, not a completed
+loaded Project journey, native-device qualification or released availability.
+
 #### Native private-preview access (0.3 development)
 
 This development implementation is not yet verified as a complete native preview flow.
@@ -553,9 +617,11 @@ server-only `previewToken` admissions are removed from native navigation.
 An unavailable native carrier falls back to the canonical server URL where one exists. A native
 viewer obtains a fresh one-use URL through the same access route's strict `server_preview` mode
 when it enters active fallback, rather than replaying an expired snapshot admission. This mode
-uses current Session READ authorization, not custodian-only Machine RPC authority. Native and
+uses current registration authorization (Session READ or the exact current Service witness),
+not custodian-only Machine RPC authority. Native and
 fallback requests retain the captured requester Account scope; a switched credential cannot
-silently admit another Account. Web viewers do not invoke this native fallback acquisition.
+silently admit another Account. Active web viewers acquire fresh server-preview access through
+that same captured Account/Home owner; they do not acquire the native carrier.
 Without either route, the existing typed runs-elsewhere state remains available.
 These are current development-source contracts, not iOS/Android device or release certification.
 The current guest listener has no allocated-Origin admission check. Foreign WebSocket Origins

@@ -2,9 +2,18 @@ import { ReadWorkspaceSyncFileResultV1Schema, ReadWorkspaceSyncFileV1Schema, Han
 import type { WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, WorkspaceSyncConflictResolveActionInputV1, ReadWorkspaceSyncFileResultV1, ReadWorkspaceSyncFileV1, HandoffTargetReplacementPreflightResultV1, HandoffTargetReplacementPreflightV1, WorkspaceSyncConflictPageRequestV1, WorkspaceSyncConflictPageV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncRelationshipCreateResultV1, WorkspaceSyncRelationshipCreateRpcRequestV1, WorkspaceContentPolicyV1, WorkspaceSyncStatusV1, WorkspaceSyncPrepareBetweenRequestV1, WorkspaceSyncPrepareBetweenResultV1, WorkspaceSyncLegacyStateInspectionV1, WorkspaceSyncTargetBootstrapPrepareResultV1, WorkspaceSyncTargetBootstrapPrepareV1, WorkspaceSyncTargetBootstrapReleaseResultV1, WorkspaceSyncTargetBootstrapReleaseV1, WorkspaceSyncTargetConflictStageV1, WorkspaceSyncConflictCaptureReleaseV1, WorkspaceSyncTargetConflictApplyV1, WorkspaceSyncTargetConflictApplyResultV1, WorkspaceSyncTargetConflictRecoverV1, WorkspaceSyncTargetConflictRecoverResultV1, WorkspaceSyncTargetFileReadV1, WorkspaceSyncTargetEntryObserveV1, WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import type { RpcHandler, RpcHandlerRegistrar } from '../rpc/types';
+import type { RpcHandler, RpcHandlerRegistrar, RpcHandlerContext } from '../rpc/types';
+import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncHandoffSourcePhaseResultV1Schema,
+  type WorkspaceSyncHandoffSourcePhaseRequestV1, type WorkspaceSyncHandoffSourcePhaseResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/directPeerTransport';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
+import type { WorkspaceSyncRelationshipOwner } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
+import { ProjectWorkerDependencyQueryV1Schema, ProjectWorkerDependencyV1Schema,
+  type ProjectWorkerDependencyQueryV1, type ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
+import { WorkspaceSyncCommittedCopyTargetV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema,
+  WorkspaceSyncCommittedCopyInspectV1Schema, WorkspaceSyncCommittedCopyPreviewResultV1Schema,
+  type WorkspaceSyncCommittedCopyInspectV1, type WorkspaceSyncCommittedCopyInspectResultV1,
+  type WorkspaceSyncCommittedCopyTargetV1, type WorkspaceSyncCommittedCopyTargetResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
 export type WorkspaceSyncRpcController = Readonly<{
   get(relationshipId: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1 | null>;
@@ -25,11 +34,12 @@ export type WorkspaceSyncRpcController = Readonly<{
 }>;
 
 export type MachineWorkspaceSyncRpcService = Readonly<{
+  handoffSourcePhase?(request: WorkspaceSyncHandoffSourcePhaseRequestV1, context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffSourcePhaseResultV1>;
   controller: WorkspaceSyncRpcController;
   prepareBetween(request: WorkspaceSyncPrepareBetweenRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncPrepareBetweenResultV1>;
   relationshipOwner: Readonly<{
     setEnabled(relationshipId: string, enabled: boolean, signal?: AbortSignal): Promise<void>;
-    stop(relationshipId: string, signal?: AbortSignal): Promise<void>;
+    stop: WorkspaceSyncRelationshipOwner['stop'];
     /** Direct Project linking; the same single relationship writer as handoff. */
     create(
       request: WorkspaceSyncRelationshipCreateRpcRequestV1,
@@ -52,14 +62,17 @@ export type MachineWorkspaceSyncRpcService = Readonly<{
   preflightHandoffTargetReplacement(
     request: HandoffTargetReplacementPreflightV1,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ): Promise<HandoffTargetReplacementPreflightResultV1>;
   prepareBootstrapAtTarget(
     request: WorkspaceSyncTargetBootstrapPrepareV1,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ): Promise<WorkspaceSyncTargetBootstrapPrepareResultV1>;
   releaseBootstrapAtTarget(
     request: WorkspaceSyncTargetBootstrapReleaseV1,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ): Promise<WorkspaceSyncTargetBootstrapReleaseResultV1>;
   prepareSourceSeedExport?(request: Readonly<{
     operationId: string;
@@ -76,6 +89,9 @@ export type MachineWorkspaceSyncRpcService = Readonly<{
     actionReceiptId: string,
     actionInput: WorkspaceSyncConflictResolveActionInputV1,
   ): Promise<void>;
+  inspectCommittedCopyHere?(request: WorkspaceSyncCommittedCopyInspectV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncCommittedCopyInspectResultV1>;
+  removeCommittedCopyHere?(request: WorkspaceSyncCommittedCopyTargetV1, signal?: AbortSignal): Promise<WorkspaceSyncCommittedCopyTargetResultV1>;
+  readProjectWorkerDependencies?(request: ProjectWorkerDependencyQueryV1, signal?: AbortSignal): Promise<readonly ProjectWorkerDependencyV1[]>;
 }>;
 
 function unavailable(): never {
@@ -96,6 +112,7 @@ function requireEmptyRequest(raw: unknown): void {
 const WORKSPACE_SYNC_RPC_ERROR_CODES: ReadonlySet<string> = new Set([
   'agent_unavailable',
   'approval_stale',
+  'approval_required',
   'bootstrap_definition_conflict',
   'cancelled',
   'conflict_changed',
@@ -126,11 +143,25 @@ const WORKSPACE_SYNC_RPC_ERROR_CODES: ReadonlySet<string> = new Set([
   'workspace_root_ownership_lost',
   'workspace_root_unsafe',
   'workspace_sync_controller_mismatch',
+  'workspace_sync_child_unavailable',
   'workspace_sync_settings_conflict',
   'workspace_sync_settings_invalid',
   'workspace_sync_settings_unavailable',
   'workspace_sync_unavailable',
   'workspace_sync_update_required',
+  'workspace_sync_operation_conflict',
+  'workspace_sync_prepare_missing',
+  'workspace_sync_finalize_missing',
+  'workspace_write_denied',
+  'workspace_write_escalation_denied',
+  'present_user_required',
+  'workspace_copy_not_owned',
+  'workspace_copy_preview_unavailable',
+  'workspace_copy_removal_unavailable',
+  'workspace_copy_removal_unknown',
+  'workspace_sync_relationship_in_use',
+  'workspace_sync_dependencies_unavailable',
+  'workspace_target_materialization_manual_recovery',
 ] as const);
 
 function projectWorkspaceSyncRpcError(error: unknown): unknown {
@@ -154,6 +185,21 @@ function createWorkspaceSyncRpcRegistrar(registrar: RpcHandlerRegistrar): RpcHan
   };
 }
 
+async function observeCommittedCopyResult(
+  action: () => Promise<WorkspaceSyncCommittedCopyTargetResultV1>,
+): Promise<WorkspaceSyncCommittedCopyTargetResultV1> {
+  try {
+    return WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(await action());
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'workspace_sync_relationship_in_use'
+      && 'dependencies' in error) {
+      const dependencies = ProjectWorkerDependencyV1Schema.array().safeParse(error.dependencies);
+      if (dependencies.success) return { ok: false, errorCode: 'workspace_sync_relationship_in_use', dependencies: dependencies.data };
+    }
+    throw error;
+  }
+}
+
 export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   service?: MachineWorkspaceSyncRpcService;
@@ -161,6 +207,38 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   const rpcHandlerManager = createWorkspaceSyncRpcRegistrar(params.rpcHandlerManager);
   const service = (): MachineWorkspaceSyncRpcService => params.service ?? unavailable();
   const signal = (value: AbortSignal | undefined): AbortSignal => value ?? new AbortController().signal;
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE, async (raw, context) => {
+    const request = WorkspaceSyncHandoffSourcePhaseRequestV1Schema.parse(raw);
+    const phase = service().handoffSourcePhase;
+    if (!phase) unavailable();
+    return WorkspaceSyncHandoffSourcePhaseResultV1Schema.parse(await phase(request, context));
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES, async (raw, context) => {
+    const request = ProjectWorkerDependencyQueryV1Schema.parse(raw);
+    const read = service().readProjectWorkerDependencies;
+    if (!read) unavailable();
+    return ProjectWorkerDependencyV1Schema.array().parse(await read(request, signal(context?.signal)));
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, async (raw, context) => {
+    const request = WorkspaceSyncCommittedCopyInspectV1Schema.parse(raw);
+    const inspect = service().inspectCommittedCopyHere;
+    if (!inspect) unavailable();
+    if ('kind' in request) {
+      return WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(await inspect(request, signal(context?.signal), context));
+    }
+    return await observeCommittedCopyResult(async () => WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(
+      await inspect(request, signal(context?.signal)),
+    ));
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE, async (raw, context) => {
+    const request = WorkspaceSyncCommittedCopyTargetV1Schema.parse(raw);
+    const remove = service().removeCommittedCopyHere;
+    if (!remove) unavailable();
+    return await observeCommittedCopyResult(() => remove(request, signal(context?.signal)));
+  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET, async (raw, context) => {
     const request = WorkspaceSyncRelationshipIdV1Schema.parse(raw);
@@ -297,19 +375,19 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT, async (raw, context) => {
     const request = HandoffTargetReplacementPreflightV1Schema.parse(raw);
     return HandoffTargetReplacementPreflightResultV1Schema.parse(
-      await service().preflightHandoffTargetReplacement(request, signal(context?.signal)),
+      await service().preflightHandoffTargetReplacement(request, signal(context?.signal), context),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, async (raw, context) => {
     const request = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(raw);
     return WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(
-      await service().prepareBootstrapAtTarget(request, signal(context?.signal)),
+      await service().prepareBootstrapAtTarget(request, signal(context?.signal), context),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE, async (raw, context) => {
     const request = WorkspaceSyncTargetBootstrapReleaseV1Schema.parse(raw);
     return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(
-      await service().releaseBootstrapAtTarget(request, signal(context?.signal)),
+      await service().releaseBootstrapAtTarget(request, signal(context?.signal), context),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_LEGACY_INSPECT, async (raw, context) => {

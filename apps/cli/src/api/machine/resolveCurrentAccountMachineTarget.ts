@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { z } from 'zod';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { AccessibleMachineAccessV1Schema, type AccessibleMachineAccessV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -10,7 +12,7 @@ import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/clie
 // `metadata` blob it genuinely needs. Labels remain a CLI projection of that
 // metadata and never alter machine identity.
 const ACCOUNT_MACHINE_ROW_SCHEMA = ExternalActionMachineBootstrapV1Schema
-  .extend({ metadata: z.string().optional() })
+  .extend({ metadata: z.string().optional(), access: AccessibleMachineAccessV1Schema.optional() })
   .passthrough();
 
 const ACCOUNT_MACHINE_INVENTORY_SCHEMA = z.array(ACCOUNT_MACHINE_ROW_SCHEMA);
@@ -22,6 +24,9 @@ export type CurrentAccountMachineTarget = Readonly<{
 export type CurrentAccountMachineInventoryItem = Readonly<{
   id: string; label: string; kind: 'persistent' | 'ephemeral_session_runner';
   active: boolean; revokedAt: number | null; replacedByMachineId: string | null;
+  access?: AccessibleMachineAccessV1;
+  operationProtocolCapabilities?: unknown;
+  operationProtocolCapabilitiesRevision?: unknown;
 }>;
 
 export type CurrentAccountMachineTargetResolution =
@@ -56,7 +61,9 @@ function projectCurrentMachineTarget(
 }
 
 export async function listCurrentAccountMachines(params: Readonly<{
-  token: string;
+  token?: string;
+  authorization?: ExternalActionExecutionAuthorizationV1;
+  effectActionId?: string;
   serverHttpBaseUrl?: string;
   signal?: AbortSignal;
 }>): Promise<readonly CurrentAccountMachineInventoryItem[]> {
@@ -64,18 +71,32 @@ export async function listCurrentAccountMachines(params: Readonly<{
   try {
     const serverHttpBaseUrl = params.serverHttpBaseUrl
       ? normalizeServerHttpBaseUrl(params.serverHttpBaseUrl)
-      : resolveServerHttpBaseUrl();
+      : params.authorization?.requesterHttpProjection?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+    const projection = params.authorization?.requesterHttpProjection;
+    if (params.authorization && (!projection || projection.accountId !== params.authorization.binding.accountId
+      || normalizeServerHttpBaseUrl(projection.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(serverHttpBaseUrl)
+      || !await projection.isCurrent())) throw new Error('Requester Machine inventory authority is unavailable');
+    if (!params.authorization && !params.token) throw new Error('Machine inventory authentication is unavailable');
+    const headers = projection ? await projection.createRequestHeaders({
+      effectActionId: params.effectActionId ?? params.authorization!.binding.actionId, method: 'GET', path: '/v1/machines',
+      ...(params.signal ? { signal: params.signal } : {}),
+    }) : { Authorization: `Bearer ${params.token}` };
+    if (!headers) throw new Error('Requester Machine inventory authority is unavailable');
     const response = await axios.get<unknown>(`${serverHttpBaseUrl}/v1/machines`, {
-      headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.token}` },
+      headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers },
       timeout: 20_000,
       ...(params.signal ? { signal: params.signal } : {}),
     });
     params.signal?.throwIfAborted();
+    if (projection && !await projection.isCurrent()) throw new Error('Requester Machine inventory authority retired');
     const inventory = ACCOUNT_MACHINE_INVENTORY_SCHEMA.safeParse(response.data);
     if (!inventory.success) throw new Error('invalid machine inventory');
     return inventory.data.map((row) => ({
       id: row.id, label: readMachineLabel(row.metadata, row.id), kind: row.kind, active: row.active,
       revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
+      ...(row.access ? { access: row.access } : {}),
+      ...(row.operationProtocolCapabilities === undefined ? {} : { operationProtocolCapabilities: row.operationProtocolCapabilities }),
+      ...(row.operationProtocolCapabilitiesRevision === undefined ? {} : { operationProtocolCapabilitiesRevision: row.operationProtocolCapabilitiesRevision }),
     }));
   } catch (error) {
     params.signal?.throwIfAborted();
@@ -118,6 +139,7 @@ export async function resolveCurrentAccountMachineTarget(params: Readonly<{
       .filter((row) => (
         row.kind === 'persistent'
         && row.active && row.revokedAt === null && row.replacedByMachineId === null
+        && (!row.access || row.access.accessState === 'ready')
       ))
       .map((row) => ({ machineId: row.id, machineLabel: row.label }));
     if (candidates.length === 0) return unavailable('no_current_machine', 'No current machine is available.');

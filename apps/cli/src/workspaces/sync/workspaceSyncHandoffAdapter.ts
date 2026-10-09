@@ -8,6 +8,7 @@ import type {
   HandoffWorkspaceActionV1,
   WorkspaceSyncPrepareBetweenResultV1,
   WorkspaceSyncStatusV1,
+  WorkspaceRefV1,
 } from '@happier-dev/protocol';
 import type { WorkspaceRootOwnershipHandle } from './workspaceSyncRootOwnership';
 import type {
@@ -15,6 +16,19 @@ import type {
   WorkspaceSyncRelationshipOwner,
 } from './workspaceSyncRelationshipOwner';
 import { assertWorkspaceSyncStatusClean, prepareWorkspaceSyncRelationship } from './workspaceSyncPreparation';
+import {
+  WorkspaceSyncHandoffSourceInputV1Schema,
+  WorkspaceSyncHandoffSourcePhaseResultV1Schema,
+  type WorkspaceSyncHandoffSourceInputV1,
+  type WorkspaceSyncHandoffSourcePhaseRequestV1,
+  type WorkspaceSyncHandoffSourcePhaseResultV1,
+  type WorkspaceSyncHandoffPreparedV1,
+  type WorkspaceSyncHandoffSettledV1,
+} from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { isDeepStrictEqual } from 'node:util';
+import type { WorkspaceSyncSourceContextV1 } from '@happier-dev/protocol/socketRpc';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 /**
  * Handoff's only workspace integration seam.  The adapter deliberately knows
@@ -24,10 +38,14 @@ import { assertWorkspaceSyncStatusClean, prepareWorkspaceSyncRelationship } from
 
 export type WorkspaceSyncHandoffAction = HandoffWorkspaceActionV1;
 
+/** Verified host admission retained only in the incumbent prepared operation. Never a wire credential. */
+export type WorkspaceSyncHandoffSourcePhaseAuthority = WorkspaceSyncSourceContextV1;
+
 export type PrepareWorkspaceSyncHandoffInput = Readonly<{
   operationId: string;
   /** Host-derived Account Home scope, required only for relationship creation. */
   accountServerId?: string;
+  sourceSessionId?: string;
   targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
   targetReplacementApprovalReceiptId?: string;
   targetReplacementApprovalActionInput?: unknown;
@@ -39,22 +57,15 @@ export type PrepareWorkspaceSyncHandoffInput = Readonly<{
   sourceRootPath: string;
   targetRootPath: string;
   signal?: AbortSignal;
+  /** Host-bound transport retains the actual caller authority; never serialized. */
+  callWorkspaceSourcePhase?: (descriptor: Readonly<{
+    machineId: string;
+    request: WorkspaceSyncHandoffSourcePhaseRequestV1;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
 }>;
 
-export type WorkspaceSyncHandoffPrepared = Readonly<{
-  kind: WorkspaceSyncHandoffAction['kind'];
-  operationId: string;
-  relationshipId?: string;
-  /**
-   * `true` when this operation persisted a new relationship definition, `false`
-   * when an exact existing definition was reused. Absent for actions that
-   * publish no relationship.
-   */
-  relationshipCreated?: boolean;
-  action: WorkspaceSyncHandoffAction;
-  status?: WorkspaceSyncStatusV1;
-  traversed?: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }>['traversed'];
-}>;
+export type WorkspaceSyncHandoffPrepared = Readonly<WorkspaceSyncHandoffPreparedV1>;
 
 export type CommitWorkspaceSyncHandoffInput = Readonly<{
   operationId: string;
@@ -62,14 +73,7 @@ export type CommitWorkspaceSyncHandoffInput = Readonly<{
   signal?: AbortSignal;
 }>;
 
-export type WorkspaceSyncHandoffCommitted = Readonly<{
-  kind: WorkspaceSyncHandoffAction['kind'];
-  operationId: string;
-  relationshipId?: string;
-  relationshipCreated?: boolean;
-  status?: WorkspaceSyncStatusV1;
-  traversed?: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }>['traversed'];
-}>;
+export type WorkspaceSyncHandoffCommitted = Readonly<WorkspaceSyncHandoffSettledV1>;
 export type FinalizeWorkspaceSyncHandoffInput = CommitWorkspaceSyncHandoffInput;
 export type WorkspaceSyncHandoffFinalized = WorkspaceSyncHandoffCommitted;
 
@@ -81,23 +85,50 @@ export type AbortWorkspaceSyncHandoffInput = Readonly<{
 
 export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
   sync: ManagedWorkspaceSync;
+  localMachineId?: string;
+  /** Production resolves native bind custody without changing admitted Session/Project placement. */
+  resolveExecutionInput?: (input: PrepareWorkspaceSyncHandoffInput, authority?: WorkspaceSyncHandoffSourcePhaseAuthority,
+    context?: RpcHandlerContext) => Promise<Readonly<{
+    input: PrepareWorkspaceSyncHandoffInput;
+    assertCurrent(): Promise<void>;
+  }>>;
   relationshipController?: Pick<ManagedWorkspaceSync, 'flush'>;
   prepareBetween?: (
     request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ) => Promise<WorkspaceSyncPrepareBetweenResultV1>;
   relationshipOwner?: Pick<WorkspaceSyncRelationshipOwner, 'materializeEndpoints' | 'prepareCreate'>;
-  bootstrap: (input: PrepareWorkspaceSyncHandoffInput) => Promise<Readonly<{
+  bootstrap: (input: PrepareWorkspaceSyncHandoffInput, admittedInput?: PrepareWorkspaceSyncHandoffInput,
+    authority?: WorkspaceSyncHandoffSourcePhaseAuthority, context?: RpcHandlerContext) => Promise<Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
     ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
+    targetWorkspace?: WorkspaceRefV1;
   }>>;
 }>;
 
 export interface WorkspaceSyncHandoffAdapter {
-  prepare(input: PrepareWorkspaceSyncHandoffInput): Promise<WorkspaceSyncHandoffPrepared>;
+  /** Exact accepted copy endpoint in the incumbent prepared operation only. */
+  resolvePreparedCopyTarget?(operationId: string, workspaceRefId: string): WorkspaceRefV1 | null;
+  applySourcePhase?(request: WorkspaceSyncHandoffSourcePhaseRequestV1, signal?: AbortSignal,
+    authority?: WorkspaceSyncHandoffSourcePhaseAuthority, context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffSourcePhaseResultV1>;
+  prepareBetween(
+    request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>,
+    signal?: AbortSignal,
+  ): Promise<WorkspaceSyncPrepareBetweenResultV1>;
+  prepare(input: PrepareWorkspaceSyncHandoffInput, authority?: WorkspaceSyncHandoffSourcePhaseAuthority,
+    context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffPrepared>;
   finalize(input: FinalizeWorkspaceSyncHandoffInput): Promise<WorkspaceSyncHandoffFinalized>;
   commit(input: CommitWorkspaceSyncHandoffInput): Promise<WorkspaceSyncHandoffCommitted>;
   abort(input: AbortWorkspaceSyncHandoffInput): Promise<void>;
+}
+
+/** One containing agent-free Open; the same adapter owns clean bytes, READY and commit custody. */
+export async function materializeWorkspaceSyncForOpen(adapter: WorkspaceSyncHandoffAdapter, request: PrepareWorkspaceSyncHandoffInput,
+  context?: RpcHandlerContext, authority?: WorkspaceSyncHandoffSourcePhaseAuthority): Promise<void> {
+  const prepared = await adapter.prepare(request, authority, context);
+  await adapter.finalize({ operationId: request.operationId, prepared, signal: request.signal });
+  await adapter.commit({ operationId: request.operationId, prepared, signal: request.signal });
 }
 
 type PreparedOperation = Readonly<{
@@ -105,15 +136,75 @@ type PreparedOperation = Readonly<{
   /** Retry identity remains the admitted request, before endpoint resolution. */
   admittedInput: PrepareWorkspaceSyncHandoffInput;
   executionInput: PrepareWorkspaceSyncHandoffInput;
+  assertExecutionCurrent?: () => Promise<void>;
   fence?: Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
     ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
+    targetWorkspace?: WorkspaceRefV1;
   }>;
   finalizedStatus?: WorkspaceSyncStatusV1;
   finalizedRoute?: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }>['traversed'];
   finalized?: boolean;
   relationshipTransaction?: PreparedWorkspaceSyncRelationship;
+  remoteSource?: Readonly<{ machineId: string; input: WorkspaceSyncHandoffSourceInputV1 }>;
+  sourcePhaseAuthority?: WorkspaceSyncHandoffSourcePhaseAuthority;
+  /** Original verified host context stays private; cleanup never replays its bearer or canceled callbacks. */
+  sourcePhaseContext?: RpcHandlerContext;
 }>;
+
+function sameAdmittedInput(left: PrepareWorkspaceSyncHandoffInput, right: PrepareWorkspaceSyncHandoffInput): boolean {
+  return (['operationId', 'accountServerId', 'sourceSessionId', 'sourceMachineId', 'targetMachineId',
+    'sourceWorkspaceRefId', 'targetWorkspaceRefId', 'sourceRootPath', 'targetRootPath',
+    'targetReplacementApprovalReceiptId'] as const).every(field => left[field] === right[field])
+    && isDeepStrictEqual(left.action, right.action)
+    && isDeepStrictEqual(left.targetReplacementApproval, right.targetReplacementApproval)
+    && isDeepStrictEqual(left.targetReplacementApprovalActionInput, right.targetReplacementApprovalActionInput);
+}
+
+export function sameExecutionWorkspace(input: Pick<PrepareWorkspaceSyncHandoffInput,
+  'sourceWorkspaceRefId' | 'targetWorkspaceRefId' | 'sourceMachineId' | 'targetMachineId' | 'sourceRootPath' | 'targetRootPath'>): boolean {
+  return input.sourceWorkspaceRefId !== undefined && input.sourceWorkspaceRefId === input.targetWorkspaceRefId
+    && input.sourceMachineId === input.targetMachineId && input.sourceRootPath === input.targetRootPath;
+}
+
+function sourcePhaseInput(input: PrepareWorkspaceSyncHandoffInput): WorkspaceSyncHandoffSourceInputV1 {
+  return WorkspaceSyncHandoffSourceInputV1Schema.parse({
+    operationId: input.operationId, accountServerId: input.accountServerId,
+    ...(input.sourceSessionId !== undefined ? { sourceSessionId: input.sourceSessionId } : {}),
+    action: input.action, sourceMachineId: input.sourceMachineId, targetMachineId: input.targetMachineId,
+    ...(input.sourceWorkspaceRefId !== undefined ? { sourceWorkspaceRefId: input.sourceWorkspaceRefId } : {}),
+    ...(input.targetWorkspaceRefId !== undefined ? { targetWorkspaceRefId: input.targetWorkspaceRefId } : {}),
+    sourceRootPath: input.sourceRootPath, targetRootPath: input.targetRootPath,
+    ...(input.targetReplacementApproval !== undefined ? { targetReplacementApproval: input.targetReplacementApproval } : {}),
+    ...(input.targetReplacementApprovalReceiptId !== undefined ? { targetReplacementApprovalReceiptId: input.targetReplacementApprovalReceiptId } : {}),
+    ...(input.targetReplacementApprovalActionInput !== undefined ? { targetReplacementApprovalActionInput: input.targetReplacementApprovalActionInput } : {}),
+  });
+}
+
+async function callSourcePhase(operation: Pick<PreparedOperation, 'admittedInput' | 'remoteSource'>,
+  request: WorkspaceSyncHandoffSourcePhaseRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncHandoffSourcePhaseResultV1> {
+  if (!operation.remoteSource || !operation.admittedInput.callWorkspaceSourcePhase) {
+    throw Object.assign(new Error('Physical source phase transport is unavailable'), { code: 'workspace_sync_update_required' });
+  }
+  try {
+    const result = WorkspaceSyncHandoffSourcePhaseResultV1Schema.parse(await operation.admittedInput.callWorkspaceSourcePhase({
+      machineId: operation.remoteSource.machineId, request, ...(signal ? { signal } : {}),
+    }));
+    const expected = { prepare: 'prepared', finalize: 'finalized', commit: 'committed', abort: 'aborted' } as const;
+    const settled = result.phase === 'prepared' ? result.prepared
+      : result.phase === 'finalized' || result.phase === 'committed' ? result.result : undefined;
+    if (result.phase !== expected[request.phase] || (settled !== undefined
+      && (settled.operationId !== request.input.operationId || settled.kind !== request.input.action.kind))) {
+      throw Object.assign(new Error('Source phase response identity mismatch'), { code: 'workspace_sync_operation_conflict' });
+    }
+    return result;
+  } catch (error) {
+    if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) {
+      throw Object.assign(new Error('Physical source controller requires an update'), { code: 'workspace_sync_update_required' });
+    }
+    throw error;
+  }
+}
 
 function copyOnceInput(input: PrepareWorkspaceSyncHandoffInput): WorkspaceSyncCopyOnceV1 {
   if (input.action.kind !== 'copy_once') throw new Error('workspace sync action is not copy_once');
@@ -133,6 +224,7 @@ function copyOnceInput(input: PrepareWorkspaceSyncHandoffInput): WorkspaceSyncCo
 async function prepareLinkedRoute(
   deps: WorkspaceSyncHandoffAdapterDeps,
   input: PrepareWorkspaceSyncHandoffInput,
+  context?: RpcHandlerContext,
 ): Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }>['traversed']> {
   if (!deps.prepareBetween) {
     throw Object.assign(new Error('Linked workspace preparation is unavailable'), { code: 'workspace_sync_unavailable' });
@@ -143,7 +235,7 @@ async function prepareLinkedRoute(
   const result = await deps.prepareBetween({
     sourceWorkspaceRefId: input.sourceWorkspaceRefId,
     targetWorkspaceRefId: input.targetWorkspaceRefId,
-  }, input.signal);
+  }, input.signal, context);
   if (!result.ok) {
     const completedIds = result.completed.map(({ relationshipId }) => relationshipId);
     const partial = completedIds.length > 0;
@@ -162,20 +254,54 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
   const preparedByOperation = new Map<string, PreparedOperation>();
   const relationshipController = deps.relationshipController ?? deps.sync;
 
-  return {
-    async prepare(input: PrepareWorkspaceSyncHandoffInput): Promise<WorkspaceSyncHandoffPrepared> {
+  const adapter: WorkspaceSyncHandoffAdapter = {
+    resolvePreparedCopyTarget(operationId, workspaceRefId) {
+      const operation = preparedByOperation.get(operationId);
+      const target = operation?.fence?.targetWorkspace;
+      return operation?.prepared.action.kind === 'copy_once' && target?.id === workspaceRefId ? target : null;
+    },
+    async applySourcePhase(request, signal, authority, context) {
+      const existing = preparedByOperation.get(request.input.operationId);
+      if (existing && (!sameAdmittedInput(existing.admittedInput, request.input)
+        || !isDeepStrictEqual(existing.sourcePhaseAuthority, authority)
+        || ('prepared' in request && request.prepared !== undefined
+          && !isDeepStrictEqual(existing.prepared, request.prepared)))) {
+        throw Object.assign(new Error('Source phase does not match the retained operation'), { code: 'workspace_sync_operation_conflict' });
+      }
+      if (request.phase === 'prepare') {
+        const prepared = await adapter.prepare({ ...request.input, ...(signal ? { signal } : {}) }, authority, context);
+        const operation = preparedByOperation.get(request.input.operationId);
+        if (operation) preparedByOperation.set(request.input.operationId, { ...operation,
+          ...(authority ? { sourcePhaseAuthority: authority } : {}),
+          ...(context ? { sourcePhaseContext: context } : {}) });
+        return { v: 1, phase: 'prepared', prepared };
+      }
+      if (!existing) {
+        if (request.phase === 'abort') return { v: 1, phase: 'aborted' };
+        throw Object.assign(new Error('Source preparation is unavailable'), { code: 'workspace_sync_prepare_missing' });
+      }
+      if (request.phase === 'abort') {
+        await adapter.abort({ operationId: request.input.operationId, prepared: existing.prepared });
+        return { v: 1, phase: 'aborted' };
+      }
+      const phaseInput = { operationId: request.input.operationId, prepared: existing.prepared, ...(signal ? { signal } : {}) };
+      if (request.phase === 'finalize') return { v: 1, phase: 'finalized', result: await adapter.finalize(phaseInput) };
+      return { v: 1, phase: 'committed', result: await adapter.commit(phaseInput) };
+    },
+    async prepareBetween(request, signal) {
+      if (!deps.prepareBetween) {
+        throw Object.assign(new Error('Linked workspace preparation is unavailable'), { code: 'workspace_sync_unavailable' });
+      }
+      signal?.throwIfAborted();
+      return await deps.prepareBetween(request, signal);
+    },
+    async prepare(input: PrepareWorkspaceSyncHandoffInput, authority?: WorkspaceSyncHandoffSourcePhaseAuthority,
+      context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffPrepared> {
       input.signal?.throwIfAborted();
       const existingOperation = preparedByOperation.get(input.operationId);
       if (existingOperation) {
         const existingInput = existingOperation.admittedInput;
-        const matches = existingInput.accountServerId === input.accountServerId
-          && existingInput.sourceMachineId === input.sourceMachineId
-          && existingInput.targetMachineId === input.targetMachineId
-          && existingInput.sourceWorkspaceRefId === input.sourceWorkspaceRefId
-          && existingInput.targetWorkspaceRefId === input.targetWorkspaceRefId
-          && existingInput.sourceRootPath === input.sourceRootPath
-          && existingInput.targetRootPath === input.targetRootPath
-          && JSON.stringify(existingInput.action) === JSON.stringify(input.action);
+        const matches = sameAdmittedInput(existingInput, input);
         if (!matches) {
           throw Object.assign(new Error('Workspace sync operation identity is already in use'), {
             code: 'workspace_sync_operation_conflict',
@@ -187,6 +313,24 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         throw Object.assign(new Error('workspace_root_unsafe'), { code: 'workspace_root_unsafe' });
       }
       if (input.action.kind === 'copy_once') validateWorkspaceSyncContentPolicy(input.action.contentPolicy);
+      const admittedInput = input;
+      const execution = input.action.kind !== 'none' ? await deps.resolveExecutionInput?.(input, authority, context) : undefined;
+      if (execution) input = execution.input;
+      await execution?.assertCurrent();
+      if ((input.action.kind === 'copy_once' || input.action.kind === 'create_relationship')
+        && admittedInput.sourceMachineId !== input.sourceMachineId
+        && deps.localMachineId !== undefined && input.sourceMachineId !== deps.localMachineId
+        && !sameExecutionWorkspace(input)) {
+        const remoteSource = { machineId: input.sourceMachineId, input: sourcePhaseInput(admittedInput) };
+        const result = await callSourcePhase({ admittedInput, remoteSource }, { v: 1, phase: 'prepare', input: remoteSource.input }, input.signal);
+        if (result.phase !== 'prepared' || result.prepared.operationId !== input.operationId
+          || !isDeepStrictEqual(result.prepared.action, input.action)) {
+          throw Object.assign(new Error('Physical source preparation is invalid'), { code: 'workspace_sync_operation_conflict' });
+        }
+        preparedByOperation.set(input.operationId, { prepared: result.prepared, admittedInput, executionInput: input,
+          remoteSource, ...(execution ? { assertExecutionCurrent: execution.assertCurrent } : {}) });
+        return result.prepared;
+      }
       if (input.action.kind === 'create_relationship') {
         if (!deps.relationshipOwner) {
           throw Object.assign(new Error('Workspace relationship owner is unavailable'), { code: 'workspace_sync_unavailable' });
@@ -238,7 +382,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           action: input.action,
           status: preparedStatus,
         };
-        preparedByOperation.set(input.operationId, { prepared, admittedInput: input, executionInput: input, relationshipTransaction });
+        preparedByOperation.set(input.operationId, { prepared, admittedInput, executionInput: input, relationshipTransaction,
+          ...(execution ? { assertExecutionCurrent: execution.assertCurrent } : {}) });
         return prepared;
       }
       let effectiveInput = input;
@@ -264,11 +409,15 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       if (input.action.kind !== 'none' && typeof deps.bootstrap !== 'function') {
         throw Object.assign(new Error('Workspace sync bootstrap authority is unavailable'), { code: 'workspace_sync_unavailable' });
       }
-      const sameLinkedWorkspace = input.action.kind === 'linked_workspace'
-        && input.sourceWorkspaceRefId !== undefined
-        && input.sourceWorkspaceRefId === input.targetWorkspaceRefId;
-      const fence = input.action.kind === 'none' || sameLinkedWorkspace ? undefined : await deps.bootstrap(effectiveInput);
+      const sameWorkspace = (input.action.kind === 'linked_workspace' || input.action.kind === 'copy_once')
+        && sameExecutionWorkspace(input);
+      const fence = input.action.kind === 'none' || sameWorkspace ? undefined : await deps.bootstrap(effectiveInput, admittedInput, authority, context);
       try {
+        if (input.action.kind === 'copy_once' && fence?.targetWorkspace) {
+          const target = fence.targetWorkspace;
+          effectiveInput = { ...effectiveInput, targetWorkspaceRefId: target.id,
+            targetMachineId: target.machineId, targetRootPath: target.rootPath };
+        }
         let status: WorkspaceSyncStatusV1 | undefined;
         let traversed: WorkspaceSyncHandoffPrepared['traversed'];
         if (input.action.kind === 'relationship') {
@@ -277,7 +426,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           // source has been quiesced.
           status = await prepareWorkspaceSyncRelationship(relationshipController, input.action.relationshipId, input.signal);
         } else if (input.action.kind === 'linked_workspace') {
-          traversed = await prepareLinkedRoute(deps, effectiveInput);
+          // Route barriers retain the actual aliases so native currentness is re-read at every flush.
+          traversed = await prepareLinkedRoute(deps, admittedInput, context);
         }
         const prepared: WorkspaceSyncHandoffPrepared = {
           kind: input.action.kind,
@@ -289,7 +439,9 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           ...(status === undefined ? {} : { status }),
           ...(traversed === undefined ? {} : { traversed }),
         };
-        preparedByOperation.set(input.operationId, { prepared, admittedInput: input, executionInput: effectiveInput, ...(fence ? { fence } : {}) });
+        preparedByOperation.set(input.operationId, { prepared, admittedInput, executionInput: effectiveInput,
+          ...(execution ? { assertExecutionCurrent: execution.assertCurrent } : {}), ...(fence ? { fence } : {}),
+          ...(context ? { sourcePhaseContext: context } : {}) });
         return prepared;
       } catch (error) {
         await fence?.release('abort');
@@ -305,13 +457,24 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       }
       const prepared = operation?.prepared ?? input.prepared;
       const preparedInput = operation?.executionInput;
+      await operation?.assertExecutionCurrent?.();
+      if (operation?.remoteSource) {
+        const result = await callSourcePhase(operation, { v: 1, phase: 'finalize', input: operation.remoteSource.input,
+          prepared: operation.prepared }, input.signal);
+        if (result.phase !== 'finalized') throw new Error('Source finalization response mismatch');
+        preparedByOperation.set(input.operationId, { ...operation, finalized: true,
+          finalizedStatus: result.result.status, finalizedRoute: result.result.traversed });
+        return result.result;
+      }
       let status = prepared.status;
       let traversed = prepared.traversed;
       if (prepared.action.kind === 'copy_once') {
         if (!preparedInput) throw Object.assign(new Error('Workspace sync preparation authority is unavailable'), { code: 'workspace_sync_prepare_missing' });
-        status = assertWorkspaceSyncStatusClean(
-          await deps.sync.copyOnce(copyOnceInput(preparedInput), input.signal, operation?.fence?.ownershipHandles),
-        );
+        if (!sameExecutionWorkspace(preparedInput)) {
+          status = assertWorkspaceSyncStatusClean(
+            await deps.sync.copyOnce(copyOnceInput(preparedInput), input.signal, operation?.fence?.ownershipHandles),
+          );
+        }
       } else if (prepared.action.kind === 'relationship' && prepared.action.flushBeforeCommit) {
         status = await prepareWorkspaceSyncRelationship(relationshipController, prepared.action.relationshipId, input.signal);
       } else if (prepared.action.kind === 'create_relationship' && prepared.relationshipId) {
@@ -323,7 +486,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         status = await prepareWorkspaceSyncRelationship(deps.sync, prepared.relationshipId, input.signal);
       } else if (prepared.action.kind === 'linked_workspace') {
         if (!preparedInput) throw Object.assign(new Error('Workspace sync preparation authority is unavailable'), { code: 'workspace_sync_prepare_missing' });
-        traversed = await prepareLinkedRoute(deps, preparedInput);
+        traversed = await prepareLinkedRoute(deps, operation!.admittedInput, operation!.sourcePhaseContext);
       }
       // After the final source-quiesced flush, the transaction publishes target
       // READY and settles replacement custody before enabling and reconciling
@@ -354,6 +517,13 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       if (action.kind !== 'none' && !operation?.finalized) {
         throw Object.assign(new Error('Workspace sync finalization is required before target resume'), { code: 'workspace_sync_finalize_missing' });
       }
+      if (operation?.remoteSource) {
+        const result = await callSourcePhase(operation, { v: 1, phase: 'commit', input: operation.remoteSource.input,
+          prepared: operation.prepared }, input.signal);
+        if (result.phase !== 'committed') throw new Error('Source commit response mismatch');
+        preparedByOperation.delete(input.operationId);
+        return result.result;
+      }
       const status = operation?.finalizedStatus ?? prepared.status;
       const traversed = operation?.finalizedRoute ?? prepared.traversed;
       // Target custody is already committed. This phase releases only the
@@ -376,8 +546,14 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
 
     async abort(input: AbortWorkspaceSyncHandoffInput): Promise<void> {
       const operation = preparedByOperation.get(input.operationId);
+      if (operation?.remoteSource) {
+        await callSourcePhase(operation, { v: 1, phase: 'abort', input: operation.remoteSource.input, prepared: operation.prepared });
+        preparedByOperation.delete(input.operationId);
+        return;
+      }
       const cleanup = await Promise.allSettled([
         ...(operation?.prepared.action.kind === 'copy_once'
+          && !sameExecutionWorkspace(operation.executionInput)
           ? [deps.sync.terminate(input.operationId)]
           : []),
         ...(operation?.relationshipTransaction
@@ -395,4 +571,5 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       preparedByOperation.delete(input.operationId);
     },
   };
+  return adapter;
 }
