@@ -470,7 +470,7 @@ recovery cannot substitute notes from the moving control checkout.
 On iOS, EAS submission uploads the binary to App Store Connect; it does not
 submit the production version for App Review. The follow-up resolves the exact
 processed build, creates or reuses its App Store version, applies the approved
-What’s New text, and submits App Review with `AFTER_APPROVAL` and no phased
+What’s New text on every existing version localization, and submits App Review with `AFTER_APPROVAL` and no phased
 release. Existing TestFlight groups and Beta App Review are separate optional
 distribution steps; no TestFlight group is required for production publication.
 [Expo's submission guide](https://docs.expo.dev/submit/ios/) distinguishes the
@@ -480,8 +480,9 @@ describe automatic publication after approval.
 On Android, the submit owner validates the Play API credential and the bound
 notes before EAS upload. EAS stages the exact AAB as a production-track draft;
 the Play Publisher owner then commits its approved localized notes and
-`status=completed` together, without a staged `userFraction`. Other releases and
-localizations are preserved. Google defines the full-rollout policy in the
+`status=completed` together, without a staged `userFraction` or country targeting.
+The track update contains only the new release, superseding the previous completed
+release; existing localized notes on the target release are preserved. Google defines the full-rollout policy in the
 [tracks API](https://developers.google.com/android-publisher/api-ref/rest/v3/edits.tracks).
 An accepted edit still reports public availability as unverified: Google review
 and [managed publishing](https://support.google.com/googleplay/android-developer/answer/9859654?hl=en)
@@ -546,6 +547,11 @@ sale/distribution. Processing waits reuse
 `APP_STORE_CONNECT_PRODUCTION_PROCESSING_TIMEOUT_SECONDS` (default 3,600 seconds).
 An unprocessed build when the wait ends, rejection, or required intervention
 fails the retry so it can be recovered visibly.
+
+Apple review-readiness failures report `status=failed`, `code=asc_review_not_ready`,
+the HTTP status, and associated validation errors with resource ids, error codes,
+and attribute pointers. Correct the named metadata and retry publication; partial
+localization updates are reused without rebuilding or uploading the binary.
 
 Android reports `publication_submitted` or `publication_already_submitted` with
 `releaseStatus=completed` and `publicAvailability=unverified`. A successful

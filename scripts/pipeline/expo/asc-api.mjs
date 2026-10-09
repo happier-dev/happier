@@ -61,21 +61,34 @@ export class AscApiError extends Error {
    * @param {{ status: number; method: string; url: string; body?: unknown }} input
    */
   constructor(input) {
-    const messages = Array.isArray(input.body?.errors)
-      ? input.body.errors
-          .map((error) =>
-            [error?.status, error?.code, error?.title, error?.detail].map((part) => String(part ?? '').trim()).filter(Boolean).join(' '),
-          )
-          .filter(Boolean)
-      : [];
+    const errors = Array.isArray(input.body?.errors) ? input.body.errors : [];
+    // Preserve Apple's associated resource, code and pointer without arbitrary metadata/details.
+    const associatedErrors = errors.flatMap((error) => Object.entries(error?.meta?.associatedErrors ?? {})
+      .flatMap(([resource, rows]) => (Array.isArray(rows) ? rows : []).flatMap((row) => {
+        if (!/^[A-Z][A-Z0-9_.]*$/u.test(row?.code ?? '')) return [];
+        return [{ ...(resource.startsWith('/') ? { resource } : {}), code: row.code,
+          ...(typeof row?.source?.pointer === 'string' && row.source.pointer.startsWith('/') ? { pointer: row.source.pointer } : {}) }];
+      })));
+    const messages = errors.map((error) => [error?.status, error?.code, error?.title, error?.detail]
+      .map((part) => String(part ?? '').trim()).filter(Boolean).join(' '));
     super(
-      [`App Store Connect API ${input.method} ${input.url} failed (${input.status}).`, ...messages]
+      [`App Store Connect API ${input.method} ${input.url} failed (${input.status}).`, ...messages,
+        ...associatedErrors.map((error) => [error.code, error.pointer].filter(Boolean).join(' '))]
         .filter(Boolean)
         .join('\n'),
     );
     this.name = 'AscApiError';
     this.status = input.status;
     this.body = input.body;
+    const route = new URL(input.url).pathname;
+    if (associatedErrors.length && errors.some((error) => error?.code === 'STATE_ERROR.ENTITY_STATE_INVALID')
+      && ((input.method === 'POST' && route === '/v1/reviewSubmissionItems')
+        || (input.method === 'PATCH' && /^\/v1\/reviewSubmissions\/[^/]+$/u.test(route)))) {
+      this.code = 'asc_review_not_ready';
+      this.httpStatus = input.status;
+      this.apiStatus = 'STATE_ERROR.ENTITY_STATE_INVALID';
+      this.associatedErrors = associatedErrors;
+    }
   }
 }
 
