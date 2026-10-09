@@ -15,6 +15,29 @@ function attachedSpec(id: string): ManagedServiceSpec {
 }
 
 describe('managed-service specification normalization', () => {
+    it('refuses an HTTP health check for an explicitly URL-less owned process', () => {
+        expect(() => normalizeManagedServiceSpec({
+            id: 'worker',
+            mode: { kind: 'spawn', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } }, endpoint: { kind: 'none' } },
+            healthCheck: { kind: 'http' },
+        })).toThrow(expect.objectContaining({ code: 'plugin_managed_service_unavailable' }));
+    });
+
+    it('rejects malformed native identity and retains an immutable exact resource identity', () => {
+        const nativeSpec: ManagedServiceSpec = {
+            id: 'compose',
+            mode: { kind: 'native', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } },
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'exact-project' } },
+        };
+        const normalized = normalizeManagedServiceSpec(nativeSpec);
+        expect(normalized.mode).toMatchObject({ kind: 'native', instance: { nativeResourceId: 'exact-project' } });
+        if (normalized.mode.kind !== 'native') throw new Error('Native mode was not retained');
+        expect(Object.isFrozen(normalized.mode.instance)).toBe(true);
+        expect(() => normalizeManagedServiceSpec({ ...nativeSpec, mode: {
+            ...nativeSpec.mode, kind: 'native', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } },
+            instance: { adapter: { pluginId: 'fixture.plugin', localId: '../retired' }, nativeResourceId: 'exact-project' },
+        } })).toThrow(expect.objectContaining({ code: 'plugin_managed_service_spec_invalid' }));
+    });
     it.each([
         'Gateway',
         'gateway_v2',
