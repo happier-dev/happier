@@ -239,6 +239,40 @@ describe('createActionExecutor (prompt library actions)', () => {
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(writes).toBe(3);
   });
+
+  it('restores archived memory through the admitted update Action and asks before shared restore', async () => {
+    const original = { id: 'original', text: 'Build with the repository script.', createdAtMs: 1, expiresAtMs: 100,
+      sourceSessionRef: { serverId: 'source-home', sessionId: 'source-session' } };
+    let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, index: [],
+        topics: [{ title: 'Build', summary: 'Build details', facts: [] }, { title: 'archive', summary: 'History', facts: [original] }] }) };
+    let shared = false;
+    const executor = createExecutor({ isActionApprovalRequired: undefined,
+      memoryLibrary: { serverId: 'home', nowMs: () => 10, randomId: () => 'wrong-new-id',
+        store: { read: async () => stored, update: async input => {
+          stored = { ...stored, body: input.body,
+            revision: { headerVersion: stored.revision.headerVersion + 1, bodyVersion: stored.revision.bodyVersion + 1 } };
+        } },
+        readExposure: async () => ({ grants: { artifactId: 'memory', ownerAccountId: 'owner', access: 'owner',
+          grants: shared ? [{ principal: { kind: 'account', accountId: 'other' }, accessLevel: 'edit',
+            createdByAccountId: 'owner', createdAt: 1, display: { name: null } }] : [] }, publicShares: { publicShares: [] } }),
+      }, approvalsCreate: async () => ({ artifactId: 'approval' }),
+    });
+    const ref = { kind: 'doc' as const, artifactId: 'memory', serverId: 'home' };
+    const restore = () => ({ ref, expectedRevision: stored.revision, factId: original.id,
+      topic: 'archive', restore: true, restoreTopic: 'Build' });
+    const context = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      actionRequestId: 'request', defaultSessionId: 'current-session', serverId: 'home' } as const;
+    expect(await executor.execute('memory.update', restore(), context)).toMatchObject({ ok: true, result: { factId: original.id } });
+    expect(JSON.parse(stored.body!)).toMatchObject({ topics: [{ title: 'Build', facts: [original] }, { title: 'archive', facts: [] }] });
+    expect(await executor.execute('memory.forget', { ref, expectedRevision: stored.revision, factId: original.id, topic: 'Build' }, context))
+      .toMatchObject({ ok: true });
+    shared = true;
+    const archived = stored;
+    expect(await executor.execute('memory.update', restore(), context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(stored).toBe(archived);
+  });
   it('creates memory only on first remember, reuses the reserved attachment and retains an attach-conflicted fact', async () => {
     const artifacts = new Map<string, PromptLibraryStoredArtifact>();
     let metadata: Record<string, unknown> = { bot: { kind: 'bot' }, work: { memoryEnabled: true, promptStack: [] } };
@@ -348,6 +382,77 @@ describe('createActionExecutor (prompt library actions)', () => {
     expect(await executor.execute('memory.remember', request, context)).toMatchObject({ ok: true, result: { artifactId: 'created-1' } });
     expect(creates).toBe(1); expect(accountAttachments).toBe(1); expect(sessionAttachments).toBe(0);
     expect(metadata.work.promptStack).toEqual([]);
+  });
+  it('creates and reuses explicit Account and Project scope memory without a Session, asking before shared creation', async () => {
+    const artifacts = new Map<string, PromptLibraryStoredArtifact>();
+    const entries = new Map<string, { id: string; ref: { kind: 'doc'; artifactId: string; serverId: string }; enabled: boolean; placement: 'system_append' }[]>();
+    let creates = 0;
+    let ids = 0;
+    let shared = false;
+    let conflict = false;
+    let approvedInput: unknown;
+    const executor = createExecutor({ isActionApprovalRequired: undefined,
+      memoryLibrary: { serverId: 'home', randomId: () => `scope-fact-${++ids}`,
+        store: { read: async id => artifacts.get(id) ?? null,
+          create: async input => { const id = `scope-memory-${++creates}`;
+            artifacts.set(id, { id, ...input, revision: { headerVersion: 1, bodyVersion: 1 } }); return id; },
+          update: async input => { const old = artifacts.get(input.artifactId)!;
+            artifacts.set(old.id, { ...old, body: input.body, revision: {
+              headerVersion: old.revision.headerVersion + 1, bodyVersion: old.revision.bodyVersion + 1 } }); },
+        },
+        readArtifactHeaders: async refs => refs.map(ref => artifacts.get(ref.artifactId)?.header ?? null),
+        ...{ readScopeContext: async (target: { scope: 'account' } | { scope: 'project'; projectRef: { serverId: string; projectKey: string } }) => {
+          const key = target.scope === 'account' ? 'account' : target.projectRef.projectKey;
+          return { entries: entries.get(key) ?? [], safety: shared ? 'danger' as const : 'safe' as const,
+            attachMemory: async (ref: { kind: 'doc'; artifactId: string; serverId?: string }) => {
+              if (conflict) return false;
+              entries.set(key, [{ id: `${key}.memory`, ref: { ...ref, serverId: ref.serverId ?? 'home' }, enabled: true, placement: 'system_append' }]);
+              return true;
+            } };
+        } },
+        readExposure: async artifactId => ({ grants: { artifactId, ownerAccountId: 'owner', access: 'owner', grants: [] },
+          publicShares: { publicShares: [] } }),
+      }, approvalsCreate: async args => { approvedInput = args.request; return { artifactId: 'approval' }; },
+    });
+    const context = { surface: 'agent', serverId: 'home', authority: 'account_automation', actionCaller: { kind: 'host' }, actionRequestId: 'scope-request' } as const;
+    for (const target of [{ scope: 'account' }, { scope: 'project', projectRef: { serverId: 'home', projectKey: 'personal' } }] as const) {
+      const first = await executor.execute('memory.remember', { ...target, text: 'First fact', topic: 'Preferences' }, context);
+      expect(first, JSON.stringify(first)).toMatchObject({ ok: true, result: { attachment: 'attached' } });
+      if (!first.ok) throw new Error('Expected scope creation');
+      const receipt = MemoryMutationResultV1Schema.parse(first.result);
+      expect(await executor.execute('memory.remember', { ...target, text: 'Second fact' }, context))
+        .toMatchObject({ ok: true, result: { artifactId: receipt.artifactId } });
+      expect(JSON.parse(artifacts.get(receipt.artifactId)!.body!).topics[0].facts[0].sourceSessionRef).toBeNull();
+    }
+    expect(creates).toBe(2);
+    const retargeted = await executor.prepare('memory.remember', { scope: 'project', projectRef: { serverId: 'home', projectKey: 'personal' }, text: 'Reviewed target' }, context);
+    if (retargeted.kind !== 'ready') throw new Error('Private scope preparation refused');
+    const personalEntries = entries.get('personal')!;
+    entries.set('personal', entries.get('account')!);
+    expect(await retargeted.invocation.run()).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    entries.set('personal', personalEntries);
+    shared = true;
+    const sharedRequest = { scope: 'project', projectRef: { serverId: 'home', projectKey: 'shared' }, text: 'Shared fact' };
+    expect(await executor.execute('memory.remember', sharedRequest, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(creates).toBe(2);
+    expect(JSON.stringify(approvedInput)).toContain('reviewedTarget');
+    expect(await executor.execute('memory.remember', { ...sharedRequest, reviewedTarget: null }, { ...context, bypassApprovals: true }))
+      .toMatchObject({ ok: true, result: { attachment: 'attached' } });
+    expect(creates).toBe(3);
+    shared = false;
+    const privateDraft = await executor.prepare('memory.remember', { scope: 'project', projectRef: { serverId: 'home', projectKey: 'newly-shared' }, text: 'Private draft' }, context);
+    if (privateDraft.kind !== 'ready') throw new Error('Private scope preparation refused');
+    shared = true;
+    expect(await privateDraft.invocation.run()).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    expect(creates).toBe(3);
+    shared = false; conflict = true;
+    expect(await executor.execute('memory.remember', { scope: 'project', projectRef: { serverId: 'home', projectKey: 'conflict' }, text: 'Retained fact' }, context))
+      .toMatchObject({ ok: true, result: { artifactId: 'scope-memory-4', attachment: 'conflict' } });
+    expect(artifacts.get('scope-memory-4')!.body).toContain('Retained fact');
+    expect(await executor.execute('memory.remember', { ...sharedRequest, projectRef: { serverId: 'foreign', projectKey: 'shared' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(creates).toBe(4);
   });
   it('returns the currently admitted memory version on a reviewed write conflict without changing it', async () => {
     const revision = { headerVersion: 4, bodyVersion: 7 };

@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { MemoryDocumentSource, MemoryDocumentView } from './useMemoryDocument';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,7 +47,7 @@ function sourceOf(view: Partial<MemoryDocumentView> | null, overrides: Partial<M
         status: full ? 'ready' : 'none',
         view: full,
         stale: false,
-        target: full ? { ref, serverId: 'home-a', expectedRevision: revision, ...(full.topic ? { topic: full.topic.title } : {}) } : null,
+        target: full ? { ref, serverId: 'home-a', expectedRevision: full.revision, ...(full.topic ? { topic: full.topic.title } : {}) } : null,
         refresh: vi.fn(async () => {}),
         ...overrides,
     };
@@ -136,5 +139,26 @@ describe('MemoryDocumentBody', () => {
         })} />);
         expect(screen.findByTestId('memory.fact.old')).toBeTruthy();
         expect(screen.findByTestId('memory.fact.old.more')).toBeNull();
+    });
+
+    it.each([null, { title: 'Build', summary: 'Build details' }])('Undo restores the forgotten id to its original section (%s)', async (topic) => {
+        execute.mockResolvedValue({ ok: true, result: { ok: true, artifactId: ref.artifactId, factId: 'original' } });
+        const afterForget = { headerVersion: 2, bodyVersion: 5 };
+        const source = sourceOf({ facts: [fact('original', 'Use the build script.')], topic });
+        const screen = await renderScreen(<Host source={source} />);
+        const actions: readonly ItemAction[] = screen.findByType(ItemRowActions).props.actions;
+        await React.act(async () => { actions.find(action => action.id === 'forget')!.onPress(); });
+        await settled();
+        expect(execute).toHaveBeenLastCalledWith('memory.forget', {
+            ref, expectedRevision: revision, factId: 'original', ...(topic ? { topic: topic.title } : {}),
+        }, expect.anything());
+        const refreshed = sourceOf({ facts: [], topic, revision: afterForget });
+        await React.act(async () => { screen.update(<Host source={refreshed} />); });
+        await React.act(async () => { screen.findByType(SurfaceStateCard).props.action.onPress(); });
+        await React.act(async () => { await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2)); });
+        expect(execute).toHaveBeenLastCalledWith('memory.update', {
+            ref, expectedRevision: afterForget, factId: 'original', topic: 'archive', restore: true,
+            ...(topic ? { restoreTopic: topic.title } : {}),
+        }, expect.anything());
     });
 });

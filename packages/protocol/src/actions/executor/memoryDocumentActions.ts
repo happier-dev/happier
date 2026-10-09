@@ -6,7 +6,7 @@ import { type MemoryFactV1 } from '../../prompts/library/memoryDocV1.js';
 import type { PromptDocArtifactRefV1 } from '../../prompts/library/promptArtifactRefsV1.js';
 import type { PromptStackEntryV1 } from '../../prompts/library/promptStacksV1.js';
 import { readSessionBotV1 } from '../../sessions/identity/sessionBotV1.js';
-import { MemoryRememberInputV1Schema, MemoryUpdateInputV1Schema, MemoryForgetInputV1Schema } from '../../prompts/library/memoryActionsV1.js';
+import { MemoryRememberInputV1Schema, MemoryUpdateInputV1Schema, MemoryForgetInputV1Schema, type MemoryScopeTargetV1 } from '../../prompts/library/memoryActionsV1.js';
 import { readMemoryDocInLibrary, readReviewedMemoryDocInLibrary, createMemoryDocInLibrary, rememberMemoryFactInLibrary, updateMemoryFactInLibrary, forgetMemoryFactInLibrary,
   type PromptLibraryArtifactStore, type MemoryDocMutationTargetV1 } from '../../prompts/library/promptLibraryActionOperations.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
@@ -23,6 +23,11 @@ export type MemoryInheritedContextV1 = Readonly<{
   projectEntries: readonly PromptStackEntryV1[];
   readAccountContext: () => Promise<MemoryAccountContextV1>;
 }>;
+export type MemoryScopeContextV1 = Readonly<{
+  entries: readonly PromptStackEntryV1[];
+  attachMemory: (ref: PromptDocArtifactRefV1) => Promise<boolean>;
+  safety: 'safe' | 'danger';
+}>;
 /** Real host boundaries only: Artifact storage/exposure and the exact Session owner view. */
 export type MemoryLibraryActionPortV1 = Readonly<{
   serverId: string; store: PromptLibraryArtifactStore; randomId: () => string; nowMs?: () => number;
@@ -33,18 +38,20 @@ export type MemoryLibraryActionPortV1 = Readonly<{
   }>>;
   readSession?: (ref: Readonly<{ serverId: string; sessionId: string }>, context: ActionExecutorContext) => Promise<MemorySessionSnapshotV1>;
   readInheritedContext?: (snapshot: MemorySessionSnapshotV1, context: ActionExecutorContext) => Promise<MemoryInheritedContextV1>;
+  readScopeContext?: (target: MemoryScopeTargetV1, context: ActionExecutorContext) => Promise<MemoryScopeContextV1>;
   /** One qualified reader per layer; results retain the requested reference order. */
   readArtifactHeaders?: (refs: readonly PromptDocArtifactRefV1[], context: ActionExecutorContext) => Promise<readonly (Readonly<Record<string, unknown>> | null)[]>;
 }>;
 export type MemoryWriteAdmissionV1 = Readonly<{
   safety: 'safe' | 'danger'; target: MemoryDocMutationTargetV1 | null;
-  createScope?: 'bot' | 'account'; attachAccountMemory?: MemoryAccountContextV1['attachAccountMemory'];
+  createScope?: 'bot' | 'account' | 'project'; attachAccountMemory?: MemoryAccountContextV1['attachAccountMemory'];
+  attachMemory?: MemoryScopeContextV1['attachMemory'];
 }>;
 /** Persist the resolved document/revision (or its absence) in the existing approval custody. */
 export function bindMemoryWriteApprovalInputV1(actionId: string, input: unknown, admission: MemoryWriteAdmissionV1): unknown {
   if (actionId !== 'memory.remember') return input;
   const request = MemoryRememberInputV1Schema.parse(input);
-  return 'sessionRef' in request ? { ...request, reviewedTarget: admission.target } : request;
+  return 'ref' in request ? request : { ...request, reviewedTarget: admission.target };
 }
 function refuse(code: string): never { throw Object.assign(new Error(code), { code }); }
 export function assertMemoryHomeV1(port: MemoryLibraryActionPortV1, serverId?: string | null): void {
@@ -65,13 +72,44 @@ async function readSafety(port: MemoryLibraryActionPortV1, artifactId: string, c
   const nowMs = (port.nowMs ?? Date.now)();
   return publication.data.publicShares.some(row => isStoredContentPublicShareActiveV1(row, nowMs)) ? 'danger' : 'safe';
 }
+async function findScopeMemory(port: MemoryLibraryActionPortV1, entries: readonly PromptStackEntryV1[], context: ActionExecutorContext) {
+  const docs = entries.filter(entry => entry.ref.kind === 'doc');
+  if (!docs.length) return undefined;
+  if (!port.readArtifactHeaders) refuse('memory_target_unavailable');
+  context.signal?.throwIfAborted();
+  for (const entry of docs) assertMemoryHomeV1(port, entry.ref.serverId);
+  const headers = await port.readArtifactHeaders(docs.map(entry => ({ ...entry.ref, kind: 'doc' as const })), context);
+  if (headers.length !== docs.length) refuse('memory_target_unavailable');
+  return docs.find((_, index) => headers[index]?.kind === 'memory_doc.v1');
+}
 
 export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1, actionId: string, input: unknown, context: ActionExecutorContext): Promise<MemoryWriteAdmissionV1> {
   assertMemoryHomeV1(port, context.serverId);
   const request = actionId === 'memory.remember' ? MemoryRememberInputV1Schema.parse(input)
     : actionId === 'memory.update' ? MemoryUpdateInputV1Schema.parse(input) : MemoryForgetInputV1Schema.parse(input);
   let target: MemoryDocMutationTargetV1;
-  if ('sessionRef' in request) {
+  let scopeSafety: 'safe' | 'danger' = 'safe';
+  if ('scope' in request) {
+    if (request.scope === 'project') assertMemoryHomeV1(port, request.projectRef.serverId);
+    if (!port.readScopeContext) refuse('memory_target_unavailable');
+    if (context.bypassApprovals === true && request.reviewedTarget === undefined) refuse('approval_stale');
+    const scope = await port.readScopeContext(request, context);
+    scopeSafety = scope.safety;
+    const attached = await findScopeMemory(port, scope.entries, context);
+    if (!attached) {
+      if (request.reviewedTarget != null) refuse('approval_stale');
+      return { safety: scopeSafety, target: null, createScope: request.scope, attachMemory: scope.attachMemory };
+    }
+    if (attached.ref.kind !== 'doc') refuse('memory_doc_invalid');
+    if (request.reviewedTarget !== undefined) {
+      if (request.reviewedTarget === null || request.reviewedTarget.ref.artifactId !== attached.ref.artifactId) refuse('approval_stale');
+      assertMemoryHomeV1(port, request.reviewedTarget.ref.serverId);
+      target = request.reviewedTarget;
+    } else {
+      const read = await readMemoryDocInLibrary({ store: port.store, artifactId: attached.ref.artifactId, signal: context.signal });
+      target = { ref: { ...attached.ref, kind: 'doc' }, expectedRevision: read.revision };
+    }
+  } else if ('sessionRef' in request) {
     assertMemoryHomeV1(port, request.sessionRef.serverId);
     if (!port.readSession) refuse('session_target_unavailable');
     const snapshot = await port.readSession(request.sessionRef, context);
@@ -91,23 +129,11 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
       }
     } else {
       if (!port.readInheritedContext || !port.readArtifactHeaders) refuse('memory_target_unavailable');
-      const readHeaders = port.readArtifactHeaders;
       const inherited = await port.readInheritedContext(snapshot, context);
-      const findMemory = async (entries: readonly PromptStackEntryV1[]) => {
-        const docs = entries.filter(entry => entry.ref.kind === 'doc');
-        if (!docs.length) return undefined;
-        context.signal?.throwIfAborted();
-        const headers = await readHeaders(docs.map(entry => ({ ...entry.ref, kind: 'doc' as const })), context);
-        if (headers.length !== docs.length) refuse('memory_target_unavailable');
-        for (let index = 0; index < docs.length; index++) {
-          if (headers[index]?.kind === 'memory_doc.v1') return docs[index];
-        }
-        return undefined;
-      };
-      attached = await findMemory(inherited.projectEntries);
+      attached = await findScopeMemory(port, inherited.projectEntries, context);
       if (!attached) {
         const account = await inherited.readAccountContext();
-        attached = await findMemory(account.accountEntries);
+        attached = await findScopeMemory(port, account.accountEntries, context);
         if (!attached) {
           if (request.reviewedTarget != null) refuse('approval_stale');
           return { safety: 'safe', target: null, createScope: 'account', attachAccountMemory: account.attachAccountMemory };
@@ -129,7 +155,8 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
     target = request;
   }
   await readReviewedMemoryDocInLibrary({ store: port.store, request: target, signal: context.signal });
-  return { target, safety: await readSafety(port, target.ref.artifactId, context) };
+  const safety = await readSafety(port, target.ref.artifactId, context);
+  return { target, safety: scopeSafety === 'danger' ? 'danger' : safety };
 }
 
 export async function executeMemoryWriteV1(args: Readonly<{
@@ -149,22 +176,26 @@ export async function executeMemoryWriteV1(args: Readonly<{
   } };
   if (args.actionId === 'memory.remember') {
     const request = MemoryRememberInputV1Schema.parse(args.input);
-    if ('sessionRef' in request && admission.target === null) {
-      if (!port.store.create || (admission.createScope === 'bot' ? !args.sessionStateFieldSet : !admission.attachAccountMemory)) refuse('memory_target_unavailable');
+    if (!('ref' in request) && admission.target === null) {
+      if (!port.store.create || (admission.createScope === 'bot' ? !args.sessionStateFieldSet : !(admission.attachMemory ?? admission.attachAccountMemory))) refuse('memory_target_unavailable');
       // Re-read the Session and selected scope before creating anything; their incumbent writers own attachment CAS.
       const current = await readMemoryWriteAdmissionV1(port, args.actionId, request, context);
       if (current.target !== null || current.createScope !== admission.createScope) refuse('version_mismatch');
+      if (admission.safety === 'safe' && current.safety === 'danger') refuse('approval_stale');
       const { artifactId, factId } = await createMemoryDocInLibrary({ store: port.store, request: {
-        title: current.createScope === 'bot' ? 'Bot memory' : 'Account memory', text: request.text,
+        title: current.createScope === 'bot' ? 'Bot memory' : current.createScope === 'project' ? 'Project memory' : 'Account memory', text: request.text,
         ...(request.topic === undefined ? {} : { topic: request.topic }),
         ...(request.expiresAtMs === undefined ? {} : { expiresAtMs: request.expiresAtMs }),
       }, ...author, signal: context.signal });
-      const ref = { kind: 'doc' as const, artifactId, serverId: request.sessionRef.serverId };
+      const ref = { kind: 'doc' as const, artifactId, serverId: port.serverId };
       let attachment: 'attached' | 'conflict' = 'conflict';
       try {
-        if (current.createScope === 'account') {
+        if (current.attachMemory) {
+          if (await current.attachMemory(ref)) attachment = 'attached';
+        } else if (current.createScope === 'account') {
           if (await current.attachAccountMemory!(ref)) attachment = 'attached';
         } else {
+          if (!('sessionRef' in request)) refuse('memory_target_unavailable');
           const result = await args.sessionStateFieldSet!({ actionId: 'session.context.update', context,
             sessionId: request.sessionRef.sessionId, serverId: request.sessionRef.serverId, fieldId: 'intent.context',
             expectedMetadataRevision: request.expectedMetadataRevision,

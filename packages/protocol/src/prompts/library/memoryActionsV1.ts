@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PromptDocArtifactRefV1Schema } from './promptArtifactRefsV1.js';
 import { MemoryDocArtifactHeaderV1Schema, MemoryDocIndexV1Schema, MemoryTopicV1Schema } from './memoryDocV1.js';
+import { QualifiedProjectKeyV1Schema } from '../../workspaces/workspaceRefV1.js';
 
 export const MEMORY_DOCUMENT_ACTION_IDS_V1 = ['memory.remember', 'memory.update', 'memory.forget', 'memory.read', 'memory.list'] as const;
 export type MemoryDocumentActionIdV1 = typeof MEMORY_DOCUMENT_ACTION_IDS_V1[number];
@@ -15,14 +16,25 @@ export const MemoryDocReadInputV1Schema = lazyZodSchema(() => z.object({ ref: Pr
 const target = lazyZodSchema(() => MemoryDocReadInputV1Schema.extend({ expectedRevision: revision }).strict());
 const text = () => z.string().min(1);
 const until = () => z.number().int().nonnegative();
+const reviewedTarget = lazyZodSchema(() => z.object({ ref: PromptDocArtifactRefV1Schema.strict(), expectedRevision: revision }).strict().nullable().optional());
+const accountScope = lazyZodSchema(() => z.object({ scope: z.literal('account') }).strict());
+const projectScope = lazyZodSchema(() => z.object({ scope: z.literal('project'), projectRef: QualifiedProjectKeyV1Schema }).strict());
+export const MemoryScopeTargetV1Schema = lazyZodSchema(() => z.union([accountScope, projectScope]));
+export type MemoryScopeTargetV1 = z.infer<typeof MemoryScopeTargetV1Schema>;
 export const MemoryRememberInputV1Schema = lazyZodSchema(() => z.union([
   target.extend({ text: text(), expiresAtMs: until().optional() }).strict(),
   z.object({ sessionRef: z.object({ serverId: z.string().min(1), sessionId: z.string().min(1) }).strict(),
     expectedMetadataRevision: until(), text: text(), expiresAtMs: until().optional(), topic: topic(),
-    reviewedTarget: z.object({ ref: PromptDocArtifactRefV1Schema.strict(), expectedRevision: revision }).strict().nullable().optional(),
+    reviewedTarget,
   }).strict(),
+  accountScope.extend({ text: text(), expiresAtMs: until().optional(), topic: topic(), reviewedTarget }).strict(),
+  projectScope.extend({ text: text(), expiresAtMs: until().optional(), topic: topic(), reviewedTarget }).strict(),
 ]));
-export const MemoryUpdateInputV1Schema = lazyZodSchema(() => target.extend({ factId: z.string().min(1), text: text(), expiresAtMs: until().nullable().optional() }).strict());
+export const MemoryUpdateInputV1Schema = lazyZodSchema(() => z.union([
+  target.extend({ factId: z.string().min(1), text: text(), expiresAtMs: until().nullable().optional() }).strict(),
+  target.extend({ topic: z.literal('archive'), factId: z.string().min(1), restore: z.literal(true), restoreTopic: topic() }).strict(),
+]));
+export type MemoryUpdateInputV1 = z.infer<typeof MemoryUpdateInputV1Schema>;
 export const MemoryForgetInputV1Schema = lazyZodSchema(() => target.extend({ factId: z.string().min(1) }).strict());
 export const MemoryListInputV1Schema = lazyZodSchema(() => z.object({ serverId: z.string().min(1).optional(), cursor: z.string().min(1).optional(), limit: z.number().int().positive().optional() }).strict());
 export const MemoryMutationResultV1Schema = lazyZodSchema(() => z.object({

@@ -42,8 +42,7 @@ const OVERFLOW_ONLY_WIDTH_PX = 1;
 
 type Notice = 'pending' | 'conflict' | null;
 type Forgotten = Readonly<{
-  text: string;
-  expiresAtMs?: number;
+  factId: string;
   topic?: string;
 }>;
 
@@ -202,10 +201,7 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
           );
           if (applied) {
             setForgotten({
-              text: fact.text,
-              ...(fact.expiresAtMs === undefined
-                ? {}
-                : { expiresAtMs: fact.expiresAtMs }),
+              factId: fact.id,
               ...(topic ? { topic: topic.title } : {}),
             });
           }
@@ -219,10 +215,13 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
   const undoForget = React.useCallback(() => {
     const restored = forgotten;
     if (!restored || !target) return;
-    setForgotten(null);
-    const { topic: _topic, ...fact } = restored;
     fireAndForget(
-      settle(() => memoryDocumentActions.remember(target, fact)),
+      (async () => {
+        const applied = await settle(() =>
+          memoryDocumentActions.restore(target, restored.factId, restored.topic),
+        );
+        if (applied) setForgotten(null);
+      })(),
       { tag: 'MemoryDocumentBody.undoForget' },
     );
   }, [forgotten, settle, target]);

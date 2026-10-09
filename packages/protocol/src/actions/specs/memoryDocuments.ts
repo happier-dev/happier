@@ -8,12 +8,12 @@ const common = {
 } as const;
 export const MEMORY_DOCUMENT_ACTION_SPECS_V1 = [
   { ...common, id: 'memory.remember', title: 'Remember a fact', safety: 'danger', sideEffectClass: 'write',
-    description: 'Remember sanitized text in the index, or in an optional named topic created within the same memory document. A Bot defaults to its own memory; an ordinary Session uses Project memory when present, else Account memory. Private writes are allowed; shared writes ask first and retain the reviewed document and revision without rebasing.',
+    description: 'Remember sanitized text in the index or an optional topic. Target a reviewed document, a Session, or an explicit Account or qualified Project scope without a Session. A missing scope document is created and attached lazily. A Bot defaults to its own memory; an ordinary Session uses Project memory when present, else Account memory. Private writes are allowed; shared writes ask first and retain the reviewed document and revision without rebasing.',
     bindings: { mcpToolName: 'memory_remember', voiceClientToolName: 'memoryRemember' },
     cli: { acceptsServerId: true, commands: [{ path: ['memory', 'remember'], visibility: 'canonical' }] },
     inputSchema: inputs['memory.remember'], outputSchema: outputs['memory.remember'] },
   { ...common, id: 'memory.update', title: 'Update a remembered fact', safety: 'danger', sideEffectClass: 'write',
-    description: 'Replace a fact at the reviewed Artifact revision and move its replacement to the optional destination topic (omitted means index). Preserve the previous fact in archive with host-derived provenance. Conflicts return the current version without rebasing.',
+    description: 'Replace a fact at the reviewed Artifact revision and move its replacement to the optional destination topic (omitted means index). Preserve the previous fact in archive with host-derived provenance. With topic archive and restore true, move an archived fact unchanged into restoreTopic (omitted means index), retaining its original id and source; refuse if a replacement still references it. Conflicts return the current version without rebasing.',
     bindings: { mcpToolName: 'memory_update', voiceClientToolName: 'memoryUpdate' },
     cli: { acceptsServerId: true, commands: [{ path: ['memory', 'update'], visibility: 'canonical' }] },
     inputSchema: inputs['memory.update'], outputSchema: outputs['memory.update'] },

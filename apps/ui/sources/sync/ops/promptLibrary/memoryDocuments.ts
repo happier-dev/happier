@@ -3,7 +3,9 @@ import {
   type ActionExecuteResult,
 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
+import { MEMORY_ARCHIVE_TOPIC_TITLE_V1 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import type { SessionContextIntentV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
 
 export type MemoryDocumentRevision = Readonly<{
   headerVersion: number;
@@ -79,6 +81,13 @@ type FactDraft = Readonly<{ text: string; expiresAtMs?: number }>;
  * Context pages and the topic page never write an Artifact body or Session metadata themselves.
  */
 export const memoryDocumentActions = {
+  /** Account and Project Context use the same lazy memory Action without a Session. */
+  rememberInScope: (
+    target: MemoryScopeTargetV1,
+    draft: FactDraft & Readonly<{ topic?: string }>,
+    serverId: string,
+    signal?: AbortSignal,
+  ) => execute('memory.remember', { ...target, ...draft }, target.scope === 'project' ? target.projectRef.serverId : serverId, signal),
   remember: (
     target: MemoryDocumentTarget,
     draft: FactDraft,
@@ -114,6 +123,24 @@ export const memoryDocumentActions = {
     execute(
       'memory.update',
       { ...documentInput(target), ...input },
+      target.serverId,
+      signal,
+    ),
+  restore: (
+    target: MemoryDocumentTarget,
+    factId: string,
+    restoreTopic?: string,
+    signal?: AbortSignal,
+  ) =>
+    execute(
+      'memory.update',
+      {
+        ...documentInput(target),
+        topic: MEMORY_ARCHIVE_TOPIC_TITLE_V1,
+        factId,
+        restore: true,
+        ...(restoreTopic === undefined ? {} : { restoreTopic }),
+      },
       target.serverId,
       signal,
     ),
