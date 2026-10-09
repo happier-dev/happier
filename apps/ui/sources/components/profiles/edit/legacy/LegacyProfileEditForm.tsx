@@ -9,6 +9,11 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { Switch } from '@/components/ui/forms/Switch';
 import { getBuiltInProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
 import { EnvironmentVariablesList } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
@@ -47,14 +52,13 @@ export interface LegacyProfileEditFormProps {
     profile: AIBackendProfile;
     machineId: string | null;
     /**
-     * Return true when the profile was successfully saved.
-     * Return false when saving failed (e.g. validation error).
+     * Resolve true when the profile was acknowledged, or false when saving failed.
      */
-    onSave: (profile: AIBackendProfile, secretBindings: Readonly<Record<string, string>>) => boolean;
+    onSave: (profile: AIBackendProfile, secretBindings: Readonly<Record<string, string>>) => boolean | Promise<boolean>;
     onCancel: () => void;
     onDirtyChange?: (isDirty: boolean) => void;
     containerStyle?: ViewStyle;
-    saveRef?: React.MutableRefObject<(() => boolean) | null>;
+    saveRef?: React.MutableRefObject<(() => boolean | Promise<boolean>) | null>;
     /**
      * The host's page header (entity header with Save). When present the host owns saving and
      * leaving, so the editor renders no action row of its own.
@@ -62,9 +66,32 @@ export interface LegacyProfileEditFormProps {
     header?: React.ReactNode;
     /** The name as it is typed, for a host that shows it (a collection's draft row). */
     onNameChange?: (name: string) => void;
+    /** A captured compatibility clone permits only source-preserving Save As. */
+    sourcePreservingClone?: boolean;
 }
 
-export function LegacyProfileEditForm({
+function catalogAvailability(catalog: AcpCatalogSnapshotV1 | undefined) {
+    const loading = !catalog || catalog.status === 'loading';
+    return <SurfaceStateCard testID="profile-legacy-catalog-availability" kind={loading ? 'loading' : 'unavailable'}
+        title={t(loading ? 'common.loading' : 'common.error')}
+        diagnosticCode={catalog && 'reason' in catalog ? catalog.reason : undefined} />;
+}
+
+export function LegacyProfileEditForm(props: LegacyProfileEditFormProps) {
+    const scope = useAccountSettingsScope();
+    const { snapshot } = useAcpCatalog(scope);
+    const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
+    const mountedScope = React.useRef<string | null>(null);
+    // Initial field defaults require a real catalog. Subsequent refreshes must
+    // keep that same editor mounted so an unsaved draft is never replaced.
+    if (snapshot?.catalog.status === 'ready' && !snapshot.stale) mountedScope.current = scopeKey;
+    if (!scopeKey || mountedScope.current !== scopeKey) {
+        return <ItemList>{props.header}{catalogAvailability(snapshot?.catalog)}</ItemList>;
+    }
+    return <LegacyProfileEditFormReady key={scopeKey} {...props} acpCatalogSnapshot={snapshot?.catalog} />;
+}
+
+function LegacyProfileEditFormReady({
     profile,
     machineId,
     onSave,
@@ -74,7 +101,9 @@ export function LegacyProfileEditForm({
     saveRef,
     header,
     onNameChange,
-}: LegacyProfileEditFormProps) {
+    sourcePreservingClone = false,
+    acpCatalogSnapshot,
+}: LegacyProfileEditFormProps & Readonly<{ acpCatalogSnapshot: AcpCatalogSnapshotV1 | undefined }>) {
     const { theme, rt } = useUnistyles();
     const router = useRouter();
     const routeParams = useLocalSearchParams<{
@@ -130,10 +159,12 @@ export function LegacyProfileEditForm({
         staleMs: 60_000,
     });
     const backendEnabledByTargetKey = settings.backendEnabledByTargetKey;
+    const backendCatalogAvailable = acpCatalogSnapshot?.status === 'ready';
     const resolvedBackendEntries = React.useMemo(() => {
+        if (!acpCatalogSnapshot || acpCatalogSnapshot.status !== 'ready') return [];
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            acpCatalogSnapshot,
             backendEnabledByTargetKey,
             discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
             mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
@@ -145,7 +176,7 @@ export function LegacyProfileEditForm({
         daemonMergedProjection.inputs?.mergedBackendProjectionById,
         daemonMergedProjection.inputs?.mergedProviderProjectionById,
         enabledAgentIds,
-        settings.acpCatalogSettingsV1,
+        acpCatalogSnapshot,
     ]);
     const machineAgents = useMachineAgents({
         machineId: resolvedMachineId,
@@ -231,7 +262,7 @@ export function LegacyProfileEditForm({
         getDefaultSecretNameForSourceVar,
         openDefaultSecretModalForSourceVar,
         updateSourceRequirement,
-    } = useLegacyProfileSecretRequirements({ profile, profileName: name, environmentVariables });
+    } = useLegacyProfileSecretRequirements({ profile, profileName: name, environmentVariables, preserveSourceDefinition: sourcePreservingClone });
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const newSessionDefaultPersistenceModeV1 = useSetting('newSessionDefaultPersistenceModeV1');
     const newSessionDefaultPersistenceModeByTargetKeyV1 = useSetting('newSessionDefaultPersistenceModeByTargetKeyV1');
@@ -403,6 +434,7 @@ export function LegacyProfileEditForm({
     }, []);
 
     React.useEffect(() => {
+        if (sourcePreservingClone || !backendCatalogAvailable) return;
         if (authMode === 'machineLogin' && !canSelectMachineLogin) {
             setAuthMode(undefined);
         }
@@ -415,48 +447,24 @@ export function LegacyProfileEditForm({
         if (requiresMachineLogin !== machineLoginRequirement.machineLoginKey) {
             setRequiresMachineLogin(machineLoginRequirement.machineLoginKey);
         }
-    }, [authMode, canSelectMachineLogin, effectiveAuthMode, machineLoginRequirement.machineLoginKey, requiresMachineLogin]);
+    }, [authMode, canSelectMachineLogin, effectiveAuthMode, machineLoginRequirement.machineLoginKey, requiresMachineLogin, sourcePreservingClone, backendCatalogAvailable]);
 
-    const initialSnapshotRef = React.useRef<string | null>(null);
-    if (initialSnapshotRef.current === null) {
-        initialSnapshotRef.current = JSON.stringify({
-            name,
-            environmentVariables,
-            defaultPermissionModesByTargetKey,
-            defaultTranscriptStorageModesByTargetKey,
-            compatibilityByTargetKeyState,
-            authMode,
-            requiresMachineLogin,
-            derivedEnvVarRequirements,
-            // Bindings are settings-level but edited here; include for dirty tracking.
-            secretBindings: profileSecretBindings,
-        });
-    }
-
-    const isDirty = React.useMemo(() => {
-        const currentSnapshot = JSON.stringify({
-            name,
-            environmentVariables,
-            defaultPermissionModesByTargetKey,
-            defaultTranscriptStorageModesByTargetKey,
-            compatibilityByTargetKeyState,
-            authMode,
-            requiresMachineLogin,
-            derivedEnvVarRequirements,
-            secretBindings: profileSecretBindings,
-        });
-        return currentSnapshot !== initialSnapshotRef.current;
-    }, [
+    const bodySnapshot = React.useMemo(() => JSON.stringify({ environmentVariables, defaultPermissionModesByTargetKey,
+        defaultTranscriptStorageModesByTargetKey, compatibilityByTargetKeyState, authMode, requiresMachineLogin,
+        derivedEnvVarRequirements, secretBindings: profileSecretBindings }), [
         authMode,
         compatibilityByTargetKeyState,
         defaultPermissionModesByTargetKey,
         defaultTranscriptStorageModesByTargetKey,
         environmentVariables,
-        name,
         derivedEnvVarRequirements,
         requiresMachineLogin,
         profileSecretBindings,
     ]);
+    const initialBodySnapshotRef = React.useRef(bodySnapshot);
+    const initialNameRef = React.useRef(name);
+    const bodyUnchanged = bodySnapshot === initialBodySnapshotRef.current;
+    const isDirty = !bodyUnchanged || name !== initialNameRef.current;
 
     React.useEffect(() => {
         onDirtyChange?.(isDirty);
@@ -488,7 +496,8 @@ export function LegacyProfileEditForm({
         }
     }, [profileDocs?.setupGuideUrl]);
 
-    const handleSave = React.useCallback((): boolean => {
+    const handleSave = React.useCallback((): boolean | Promise<boolean> => {
+        if (!backendCatalogAvailable) return false;
         if (!name.trim()) {
             Modal.alert(t('common.error'), t('profiles.nameRequired'));
             return false;
@@ -506,6 +515,7 @@ export function LegacyProfileEditForm({
             defaultTranscriptStorageModesByTargetKey,
             compatibilityByTargetKey: compatibilityByTargetKeyState,
             updatedAt: Date.now(),
+            preserveSourceDefinition: sourcePreservingClone && bodyUnchanged,
         }), profileSecretBindings);
     }, [
         compatibilityByTargetKeyState,
@@ -521,6 +531,9 @@ export function LegacyProfileEditForm({
         profileSecretBindings,
         resolvedBackendEntries,
         supportedDirectBackendEntries,
+        sourcePreservingClone,
+        bodyUnchanged,
+        backendCatalogAvailable,
     ]);
 
     React.useEffect(() => {
@@ -532,6 +545,8 @@ export function LegacyProfileEditForm({
             saveRef.current = null;
         };
     }, [handleSave, saveRef]);
+
+    if (!backendCatalogAvailable) return <ItemList>{header}{catalogAvailability(acpCatalogSnapshot)}</ItemList>;
 
     return (
         <ItemList ref={popoverBoundaryRef} style={containerStyle} keyboardShouldPersistTaps="handled">

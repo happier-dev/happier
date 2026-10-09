@@ -31,7 +31,10 @@ export function buildLegacyProfileSave(input: Readonly<{
     defaultTranscriptStorageModesByTargetKey: Readonly<Record<string, SessionTranscriptStorageMode | null>>;
     compatibilityByTargetKey: Readonly<Record<string, boolean>>;
     updatedAt: number;
+    /** Only an unchanged captured clone may retain its source definition verbatim. */
+    preserveSourceDefinition?: boolean;
 }>): AIBackendProfile {
+    if (input.preserveSourceDefinition) return { ...input.profile, name: input.name.trim(), updatedAt: input.updatedAt };
     const {
         codingPromptBehaviorOverrides: _canonicalCodingPromptBehaviorOverrides,
         defaultPermissionModeClaude: _legacyClaude,

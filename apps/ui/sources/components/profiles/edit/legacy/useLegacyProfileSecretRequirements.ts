@@ -3,7 +3,7 @@ import * as React from 'react';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { Modal } from '@/modal';
-import { useSetting } from '@/sync/domains/state/storage';
+import type { AiLaunchProfileSourceV1 } from '@happier-dev/protocol/profiles/read';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { t } from '@/text';
 import { parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
@@ -13,16 +13,16 @@ type EnvironmentVariable = { name: string; value: string; isSecret?: boolean };
 type RequirementState = { required: boolean; useSecretVault: boolean };
 
 export function useLegacyProfileSecretRequirements(params: Readonly<{
-    profile: AIBackendProfile;
+    profile: AIBackendProfile & AiLaunchProfileSourceV1;
     profileName: string;
     environmentVariables: readonly EnvironmentVariable[];
+    preserveSourceDefinition?: boolean;
 }>) {
     const { profile, profileName, environmentVariables } = params;
     const [secrets, setSecrets] = useSavedSecretsMutable();
     const savedSecretCatalog = useSavedSecretCatalog();
-    const bindingsByProfileId = useSetting('currentSecretBindingsByProfileId');
     const [profileSecretBindings, setProfileSecretBindings] = React.useState<Record<string, string>>(() => ({
-        ...(bindingsByProfileId[profile.id] ?? {}),
+        ...(profile.secretBindings ?? {}),
     }));
     const [sourceRequirementsByName, setSourceRequirementsByName] = React.useState<Record<string, RequirementState>>(() => {
         const requirements: Record<string, RequirementState> = {};
@@ -44,13 +44,15 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
     })), [environmentVariables]);
 
     React.useEffect(() => {
+        if (params.preserveSourceDefinition) return;
         setSourceRequirementsByName((previous) => {
             const next = Object.fromEntries(Object.entries(previous).filter(([name]) => usedRequirementVarNames.has(name)));
             return Object.keys(next).length === Object.keys(previous).length ? previous : next;
         });
-    }, [usedRequirementVarNames]);
+    }, [params.preserveSourceDefinition, usedRequirementVarNames]);
 
     React.useEffect(() => {
+        if (params.preserveSourceDefinition) return;
         setProfileSecretBindings((existing) => {
             const next = Object.fromEntries(Object.entries(existing).filter(([name, secretId]) => (
                 typeof secretId === 'string'
@@ -59,7 +61,7 @@ export function useLegacyProfileSecretRequirements(params: Readonly<{
             )));
             return Object.keys(next).length === Object.keys(existing).length ? existing : next;
         });
-    }, [sourceRequirementsByName, usedRequirementVarNames]);
+    }, [params.preserveSourceDefinition, sourceRequirementsByName, usedRequirementVarNames]);
 
     const derivedEnvVarRequirements = React.useMemo<NonNullable<AIBackendProfile['envVarRequirements']>>(() => (
         Object.entries(sourceRequirementsByName)
