@@ -28,9 +28,9 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { Modal } from '@/modal';
 import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
 import { t } from '@/text';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import {
   useObservedWorkerSetting,
@@ -44,6 +44,8 @@ type ReadyPreference = Extract<
   WorkspaceWorkerPreferenceReadResultV1,
   { status: 'ready' }
 >;
+export type WorkspaceWorkerPreferenceDraft = Readonly<{ kind: 'set'; value: WorkspaceWorkerPreferenceV1 }>
+  | Readonly<{ kind: 'reset' }>;
 
 /** A declared script as the project file states it: only explicitly portable scripts may leave. */
 export type WorkspaceWorkerScript = Readonly<{
@@ -57,7 +59,7 @@ export function useWorkspaceWorkerPreference(workspace: WorkspaceAddressV1, opti
     () => ({ serverId: workspace.serverId, refId: workspace.workspaceId }),
     [workspace.serverId, workspace.workspaceId],
   );
-  const setting = useObservedWorkerSetting<ReadyPreference>({
+  const setting = useObservedWorkerSetting<ReadyPreference, WorkspaceWorkerPreferenceDraft>({
     enabled: options?.enabled,
     serverId: address.serverId,
     scopeKey: JSON.stringify([
@@ -83,7 +85,7 @@ export function useWorkspaceWorkerPreference(workspace: WorkspaceAddressV1, opti
   // The observed entry is the compare-and-set expectation: a default provenance has no saved finite entry.
   const save = React.useCallback(
     (next: WorkspaceWorkerPreferenceV1) =>
-      mutate((accountId, current) =>
+      mutate((_accountId, current, approvalOptions) =>
         executeProjectWorkerActionV1(
           'projects.worker.preferences.set',
           {
@@ -95,14 +97,15 @@ export function useWorkspaceWorkerPreference(workspace: WorkspaceAddressV1, opti
                 : { kind: 'value', value: current.preference },
             next,
           },
-          { expectedAccountId: accountId },
+          approvalOptions,
         ),
+        { kind: 'set', value: next },
       ),
     [address, mutate],
   );
   const reset = React.useCallback(
     () =>
-      mutate((accountId, current) =>
+      mutate((_accountId, current, approvalOptions) =>
         executeProjectWorkerActionV1(
           'projects.worker.preferences.reset',
           {
@@ -113,8 +116,9 @@ export function useWorkspaceWorkerPreference(workspace: WorkspaceAddressV1, opti
                 ? { kind: 'absent' }
                 : { kind: 'value', value: current.preference },
           },
-          { expectedAccountId: accountId },
+          approvalOptions,
         ),
+        { kind: 'reset' },
       ),
     [address, mutate],
   );
@@ -162,6 +166,57 @@ function withoutOverride(
   const next = { ...overrides };
   delete next[name];
   return next;
+}
+
+type ScriptOverride = 'default' | 'primary' | 'workers';
+
+/**
+ * One portable script's override (lab PREFS / PREFSp): Default | This machine | Workers, all visible on
+ * wide screens; on a phone the row shows its value with a chevron and opens the same three choices.
+ */
+function ScriptOverrideRow(props: Readonly<{
+  testID: string;
+  name: string;
+  subtitle: string;
+  disabled: boolean;
+  value: ScriptOverride;
+  onChange: (next: ScriptOverride) => void;
+}>) {
+  const compact = useViewportClass() === 'compact';
+  const [open, setOpen] = React.useState(false);
+  const options = [
+    { id: 'default' as const, label: t('projectWorkers.overrideDefault') },
+    { id: 'primary' as const, label: t('projectWorkers.primary') },
+    { id: 'workers' as const, label: t('projectWorkers.overrideWorkers') },
+  ];
+  if (!compact) {
+    return (
+      <SegmentedChoiceItem<ScriptOverride>
+        testIDPrefix={props.testID}
+        title={props.name}
+        subtitle={props.subtitle}
+        disabled={props.disabled}
+        value={props.value}
+        options={options}
+        onChange={props.onChange}
+      />
+    );
+  }
+  return (
+    <DropdownMenu
+      testID={props.testID}
+      open={open}
+      onOpenChange={setOpen}
+      items={options.map((option) => ({ id: option.id, title: option.label, testID: `${props.testID}:${option.id}` }))}
+      selectedId={props.value}
+      search={false}
+      itemTrigger={{ title: props.name, subtitle: props.subtitle, showSelectedSubtitle: false, itemProps: { disabled: props.disabled } }}
+      onSelect={(id) => {
+        setOpen(false);
+        props.onChange(id as ScriptOverride);
+      }}
+    />
+  );
 }
 
 /**
@@ -427,10 +482,10 @@ export function WorkspaceWorkerSettings(
             const override = value.scriptOverrides[script.name];
             const current = override ?? 'default';
             return (
-              <SegmentedChoiceItem<'default' | 'primary' | 'workers'>
+              <ScriptOverrideRow
                 key={script.name}
-                testIDPrefix={`${testID}.script:${script.name}`}
-                title={script.name}
+                testID={`${testID}.script:${script.name}`}
+                name={script.name}
                 subtitle={
                   override === 'workers'
                     ? t('projectWorkers.alwaysWorker')
@@ -444,11 +499,6 @@ export function WorkspaceWorkerSettings(
                 }
                 disabled={disabled}
                 value={current}
-                options={[
-                  { id: 'default', label: t('projectWorkers.overrideDefault') },
-                  { id: 'primary', label: t('projectWorkers.primary') },
-                  { id: 'workers', label: t('projectWorkers.overrideWorkers') },
-                ]}
                 onChange={(next) => {
                   if (next === current) return;
                   void preference.save({
@@ -482,15 +532,7 @@ export function WorkspaceWorkerSettings(
             display="inverted"
             title={t('projectWorkers.reset')}
             disabled={disabled}
-            onPress={() => {
-              void (async () => {
-                const confirmed = await Modal.confirm(
-                  t('projectWorkers.resetConfirm'),
-                  t('projectWorkers.resetDetail'),
-                );
-                if (confirmed) await preference.reset();
-              })();
-            }}
+            onPress={() => { void preference.reset(); }}
           />
           <Text
             style={[styles.resetNote, { color: theme.colors.text.secondary }]}

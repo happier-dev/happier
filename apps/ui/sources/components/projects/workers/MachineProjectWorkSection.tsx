@@ -56,7 +56,7 @@ function noticeText(notice: ObservedWorkerSettingNotice): string | null {
 
 /** The Machine's own finite work policy, read and changed through `machines.worker.policy.*` (30s1). */
 export function useMachineWorkerPolicy(serverId: string, machineId: string) {
-  const setting = useObservedWorkerSetting<ReadyPolicy>({
+  const setting = useObservedWorkerSetting<ReadyPolicy, ReadyPolicy['policy']>({
     serverId,
     scopeKey: JSON.stringify(['machines.worker.policy', serverId, machineId]),
     read: (accountId) =>
@@ -80,7 +80,7 @@ export function useMachineWorkerPolicy(serverId: string, machineId: string) {
   const { mutate } = setting;
   const save = React.useCallback(
     (policy: ReadyPolicy['policy']) =>
-      mutate((accountId, current) =>
+      mutate((_accountId, current, approvalOptions) =>
         executeProjectWorkerActionV1(
           'machines.worker.policy.set',
           {
@@ -90,8 +90,9 @@ export function useMachineWorkerPolicy(serverId: string, machineId: string) {
             expectedMetadataVersion: current.metadataVersion,
             policy,
           },
-          { expectedAccountId: accountId },
+          approvalOptions,
         ),
+        policy,
       ),
     [machineId, mutate, serverId],
   );

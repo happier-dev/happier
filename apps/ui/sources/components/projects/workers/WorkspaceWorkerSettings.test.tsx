@@ -230,4 +230,10 @@ describe('Workspace worker settings through the preference Actions', () => {
     );
     expect(home.writes).toEqual([]);
   });
+
+  it('resets through the waived dangerous Action without an unconditional local confirmation', async () => {
+    const { home, screen } = await setup({ row: { revision: 2, value: { ...base, allowAdHoc: true } } });
+    await screen.pressByTestIdAsync('workers.reset');
+    await vi.waitFor(() => expect(home.writes).toEqual([base]));
+  });
 });

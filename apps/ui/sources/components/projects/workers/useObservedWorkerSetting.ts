@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { ProjectWorkerActionError } from '@/sync/ops/actions/projectWorkerActions';
+import { ProjectWorkerActionError, type ProjectWorkerActionOptions } from '@/sync/ops/actions/projectWorkerActions';
 
 type ReadyObservation = Readonly<{ status: 'ready' }>;
 type RefusedRead = Readonly<{ status: 'locked' | 'invalid' | 'unavailable' }>;
@@ -35,7 +35,7 @@ type MutationReceipt = Readonly<{ status: string }>;
  * only changes on an observed outcome; a pending, unknown or conflicting write never paints the
  * attempted value as saved. Scope loss retires every pending result.
  */
-export function useObservedWorkerSetting<TReady extends ReadyObservation>(
+export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft = unknown>(
   input: Readonly<{
     serverId: string;
     /** Identity of the observed object; a new key starts a fresh observation. */
@@ -60,6 +60,9 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation>(
     notice: ObservedWorkerSettingNotice;
   }> | null>(null);
   const [readToken, setReadToken] = React.useState(0);
+  // Unsaved intent is not authority. A refreshed/conflicting receipt may replace the observed
+  // value without discarding what the person was trying to change.
+  const [draft, setDraft] = React.useState<Readonly<{ key: string; value: TDraft }> | null>(null);
   const readRef = React.useRef(input.read);
   readRef.current = input.read;
   const receiptRef = React.useRef(input.observedFromReceipt);
@@ -81,6 +84,11 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation>(
   });
   const requestApprovalRef = React.useRef(approval.requestApproval);
   requestApprovalRef.current = approval.requestApproval;
+  const lifetime = React.useMemo(() => new AbortController(), [binding, key]);
+  React.useEffect(() => {
+    const retirement = binding?.onRetire(() => lifetime.abort());
+    return () => { retirement?.dispose(); lifetime.abort(); };
+  }, [binding, lifetime]);
 
   React.useEffect(() => {
     if (!binding || !accountId || !enabled) return;
@@ -112,18 +120,28 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation>(
 
   const mutate = React.useCallback(
     async (
-      run: (accountId: string, current: TReady) => Promise<MutationReceipt>,
+      run: (accountId: string, current: TReady, options: ProjectWorkerActionOptions) => Promise<MutationReceipt>,
+      intended?: TDraft,
     ): Promise<void> => {
       const state = observation?.key === key ? observation.state : null;
-      if (!binding || !accountId || state?.kind !== 'ready') return;
+      if (!binding?.isCurrent() || !accountId || lifetime.signal.aborted || state?.kind !== 'ready') return;
       const scopedKey = key;
+      if (intended !== undefined) setDraft({ key: scopedKey, value: intended });
       const setScopedNotice = (next: ObservedWorkerSettingNotice) => {
         if (keyRef.current === scopedKey)
           setNotice({ key: scopedKey, notice: next });
       };
       setScopedNotice('saving');
       try {
-        const receipt = await run(accountId, state.value);
+        const receipt = await run(accountId, state.value, {
+          expectedAccountId: accountId,
+          signal: lifetime.signal,
+          onApprovalPending: (registration) => {
+            if (!binding.isCurrent() || keyRef.current !== scopedKey) return;
+            setScopedNotice('approval');
+            requestApprovalRef.current(registration);
+          },
+        });
         if (!binding.isCurrent() || keyRef.current !== scopedKey) return;
         const observed = receiptRef.current(receipt);
         if (observed)
@@ -135,6 +153,7 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation>(
           case 'applied':
           case 'satisfied':
           case 'unchanged':
+            setDraft(null);
             setScopedNotice(null);
             return;
           case 'conflict':
@@ -165,7 +184,7 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation>(
         setScopedNotice('failed');
       }
     },
-    [accountId, binding, key, observation, refresh],
+    [accountId, binding, key, lifetime, observation, refresh],
   );
 
   const state: ObservedWorkerSettingState<TReady> =
@@ -173,6 +192,8 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation>(
   const currentNotice = notice?.key === key ? notice.notice : null;
   return {
     state,
+    draft: binding?.isCurrent() && draft?.key === key ? draft.value : null,
+    approvalId: approval.approvalId,
     notice:
       currentNotice === 'approval' &&
       !approval.approvalPending &&
