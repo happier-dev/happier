@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
+import { writeFileSync } from 'node:fs';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PtyProcess } from './provider';
@@ -101,7 +103,8 @@ async function loadProviderWithModules(
   const debug = vi.fn();
   const requireCalls: string[] = [];
   if (packageJsonByPath) {
-    vi.doMock('node:fs', () => ({
+    vi.doMock('node:fs', async (importOriginal) => ({
+      ...await importOriginal<typeof import('node:fs')>(),
       readFileSync: (path: string) => {
         if (!(path in packageJsonByPath)) {
           throw new Error(`missing file: ${path}`);
@@ -145,6 +148,86 @@ afterEach(() => {
 });
 
 describe('createNodePtyProvider', () => {
+  it('keeps one finite Job when a native backend falls back to the real Node relay', async () => {
+    const { createNodePtyRelayProvider } = await import('./nodeRelay');
+    const child = Object.assign(new EventEmitter(), { pid: 5001,
+      stdin: Object.assign(new EventEmitter(), { write: vi.fn(), end: vi.fn() }),
+      stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn() });
+    const spawnRelay = vi.fn((_command: string, args: readonly string[]) => {
+      const job = args.find(value => value.startsWith('--job='))?.slice('--job='.length);
+      const handshake = args.find(value => value.startsWith('--handshake='))?.slice('--handshake='.length);
+      if (job && handshake) writeFileSync(handshake, JSON.stringify({ v: 1, pid: 5002, job }));
+      // The fixture represents only the external relay child-process boundary.
+      return child as unknown as ChildProcessWithoutNullStreams;
+    });
+    const relayOptions = { platform: 'win32' as const, resolveNodeExecutable: () => 'C:\\managed\\node.exe',
+      relayScriptPath: 'C:\\scripts\\node_pty_relay.cjs', spawnProcess: spawnRelay,
+      resolveCommandInvocation: (input: { command: string; args: readonly string[] }) => ({ command: input.command, args: [...input.args] }),
+      resolveProcessCustodyRuntimeExecutable: () => 'C:\\tools\\happier-process-custody.exe' };
+    const fallbackProvider = createNodePtyRelayProvider(relayOptions)!;
+    const createOptions = { platform: 'win32' as const, fallbackProvider,
+      resolveProcessCustodyRuntimeExecutable: () => 'C:\\tools\\happier-process-custody.exe' };
+    const { provider } = await loadProviderWithModules({ 'node-pty': { spawn: () => { throw new Error('OS native backend unavailable before launch'); } } }, createOptions);
+    const input = { file: 'C:\\target.exe', args: ['argument'], options: {}, finiteProcess: true as const };
+    const pty = provider.spawn(input);
+    const args = spawnRelay.mock.calls[0]![1];
+    expect(args.filter(value => value === 'C:\\tools\\happier-process-custody.exe')).toHaveLength(1);
+    expect(args.filter(value => value === '--wait-for-job-empty')).toHaveLength(1);
+    expect(args.filter(value => value.startsWith('--job='))).toHaveLength(1);
+    expect(args.slice(-2)).toEqual([input.file, 'argument']);
+    const custody: unknown = Reflect.get(pty, 'windowsJobCustody');
+    if (custody && typeof custody === 'object' && 'established' in custody) await custody.established;
+  });
+
+  it('preserves a finite Windows literal command-line tail through the Job helper', async () => {
+    const spawn = vi.fn((_file: string, args: string[] | string) => {
+      if (Array.isArray(args)) {
+        const job = args.find(value => value.startsWith('--job='))?.slice('--job='.length);
+        const handshake = args.find(value => value.startsWith('--handshake='))?.slice('--handshake='.length);
+        if (job && handshake) writeFileSync(handshake, JSON.stringify({ v: 1, pid: 5002, job }));
+      }
+      return createFakeProcess();
+    });
+    const options = { platform: 'win32' as const, fallbackProvider: null,
+      resolveProcessCustodyRuntimeExecutable: () => 'C:\\tools\\happier-process-custody.exe' };
+    const { provider } = await loadProviderWithModules({ 'node-pty': { spawn } }, options);
+    // ensure() produces a string from the existing Windows-verbatim command
+    // invocation, so treating this tail as one CRT argument changes cmd grammar.
+    const literalTail = '/d /s /c ""C:\\Program Files\\tool.cmd" "quoted & value""';
+    const input = { file: 'C:\\Windows\\System32\\cmd.exe', args: literalTail,
+      options: { cwd: 'C:\\project' }, finiteProcess: true as const };
+    const pty = provider.spawn(input);
+    expect(spawn.mock.calls[0]![0]).toBe('C:\\tools\\happier-process-custody.exe');
+    const args = spawn.mock.calls[0]![1];
+    expect(args).toContain('--target-windows-verbatim');
+    expect(Array.isArray(args) ? args.slice(-2) : args).toEqual([input.file, literalTail]);
+    const custody: unknown = Reflect.get(pty, 'windowsJobCustody');
+    if (custody && typeof custody === 'object' && 'established' in custody) await custody.established;
+  });
+
+  it('starts finite Windows native PTY work through the existing Job helper with exact target arguments', async () => {
+    const spawn = vi.fn((_file: string, args: string[] | string) => {
+      if (Array.isArray(args)) {
+        const job = args.find(value => value.startsWith('--job='))?.slice('--job='.length);
+        const handshake = args.find(value => value.startsWith('--handshake='))?.slice('--handshake='.length);
+        if (job && handshake) writeFileSync(handshake, JSON.stringify({ v: 1, pid: 5002, job }));
+      }
+      return createFakeProcess();
+    });
+    const options = { platform: 'win32' as const, fallbackProvider: null,
+      resolveProcessCustodyRuntimeExecutable: () => 'C:\\tools\\happier-process-custody.exe' };
+    const { provider } = await loadProviderWithModules({ 'node-pty': { spawn } }, options);
+    const input = { file: 'C:\\target.exe', args: ['literal argument'], options: { cwd: 'C:\\project' }, finiteProcess: true as const };
+    const pty = provider.spawn(input);
+    expect(spawn.mock.calls[0]![0]).toBe('C:\\tools\\happier-process-custody.exe');
+    const args = spawn.mock.calls[0]![1];
+    expect(args).toContain('--wait-for-job-empty');
+    expect(Array.isArray(args) ? args.slice(-2) : args).toEqual(['C:\\target.exe', 'literal argument']);
+    const custody: unknown = Reflect.get(pty, 'windowsJobCustody');
+    expect(custody).toMatchObject({ executablePath: 'C:\\tools\\happier-process-custody.exe', established: expect.any(Promise) });
+    if (custody && typeof custody === 'object' && 'established' in custody) await custody.established;
+  });
+
   it('uses the compiled binary path as the require base inside embedded bun bundles', async () => {
     vi.resetModules();
     const { resolvePtyProviderRequireBase } = await import('./provider');

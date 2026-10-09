@@ -8,9 +8,11 @@ import {
 
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { resolveJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/resolveJavaScriptRuntimeExecutable';
+import type { resolveProcessCustodyRuntimeExecutable } from '@/subprocess/supervision/processCustody';
 
 import { createUtf8StreamDecoder } from './decode';
 import type { Disposable, PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from './provider';
+import { withWindowsFiniteCustody } from './windowsCustody';
 
 type NodeRelaySpawnProcess = (
   command: string,
@@ -158,6 +160,8 @@ function childToPtyProcess(child: ChildProcessWithoutNullStreams): PtyProcess {
 
   return {
     pid: typeof child.pid === 'number' && Number.isInteger(child.pid) && child.pid > 0 ? child.pid : 0,
+    // This Windows-only carrier PID is not the PTY child or a POSIX group.
+    ownedProcessGroupId: null,
     write: (data) => {
       assertRelayInputWritable(child, relayInputClosed);
       child.stdin.write(encodeRelayWriteFrame(data));
@@ -238,6 +242,7 @@ export function createNodePtyRelayProvider(params?: Readonly<{
   resolveNodeExecutable?: () => string | null;
   spawnProcess?: NodeRelaySpawnProcess;
   resolveCommandInvocation?: typeof resolveWindowsCommandInvocation;
+  resolveProcessCustodyRuntimeExecutable?: typeof resolveProcessCustodyRuntimeExecutable;
 }>): PtyProvider | null {
   const platform = params?.platform ?? process.platform;
   if (platform !== 'win32') return null;
@@ -261,7 +266,7 @@ export function createNodePtyRelayProvider(params?: Readonly<{
     spawnChildProcess(command, [...args], options));
   const resolveCommandInvocation = params?.resolveCommandInvocation ?? resolveWindowsCommandInvocation;
 
-  return {
+  return withWindowsFiniteCustody({
     spawn: (spawnParams: PtySpawnParams) => {
       const relayInvocation = buildNodePtyRelaySpawnCommand({
         nodeExecutable,
@@ -288,5 +293,5 @@ export function createNodePtyRelayProvider(params?: Readonly<{
       });
       return childToPtyProcess(child);
     },
-  };
+  }, { platform, resolveProcessCustodyRuntimeExecutable: params?.resolveProcessCustodyRuntimeExecutable });
 }

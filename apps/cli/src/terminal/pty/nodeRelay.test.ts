@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { writeFileSync } from 'node:fs';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -97,6 +98,30 @@ describe('buildNodePtyRelaySpawnCommand', () => {
 });
 
 describe('createNodePtyRelayProvider', () => {
+  it('launches a finite Windows target inside the existing Job helper before the relay can start it', async () => {
+    const fakeChild = createFakeChildProcess();
+    const spawnProcess = vi.fn((_command: string, args: readonly string[]) => {
+      const job = args.find(value => value.startsWith('--job='))?.slice('--job='.length);
+      const handshake = args.find(value => value.startsWith('--handshake='))?.slice('--handshake='.length);
+      if (job && handshake) writeFileSync(handshake, JSON.stringify({ v: 1, pid: 5002, job }));
+      return fakeChild as unknown as ChildProcessWithoutNullStreams;
+    });
+    const options = { platform: 'win32' as const, resolveNodeExecutable: () => 'C:\\managed\\node.exe',
+      relayScriptPath: 'C:\\happier\\scripts\\node_pty_relay.cjs', spawnProcess,
+      resolveCommandInvocation: passthroughCommandInvocation,
+      resolveProcessCustodyRuntimeExecutable: () => 'C:\\tools\\happier-process-custody.exe' };
+    const provider = createNodePtyRelayProvider(options);
+    const input = { file: 'C:\\target.exe', args: ['literal argument'], options: { cwd: 'C:\\project' }, finiteProcess: true as const };
+    const pty = provider!.spawn(input);
+    const invocation = spawnProcess.mock.calls[0]![1];
+    expect(invocation).toContain('C:\\tools\\happier-process-custody.exe');
+    expect(invocation).toContain('--wait-for-job-empty');
+    expect(invocation.slice(-2)).toEqual(['C:\\target.exe', 'literal argument']);
+    const custody: unknown = Reflect.get(pty, 'windowsJobCustody');
+    expect(custody).toMatchObject({ executablePath: 'C:\\tools\\happier-process-custody.exe', established: expect.any(Promise) });
+    if (custody && typeof custody === 'object' && 'established' in custody) await custody.established;
+  });
+
   it('propagates requested PTY dimensions to the managed relay environment', () => {
     const fakeChild = createFakeChildProcess();
     const spawnProcess = vi.fn(() => fakeChild as unknown as ChildProcessWithoutNullStreams);
