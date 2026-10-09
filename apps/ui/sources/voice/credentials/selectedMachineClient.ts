@@ -1,4 +1,7 @@
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
   resolveVoiceExecutionMachineId,
   type VoiceExecutionMachineOverride,
@@ -27,7 +30,7 @@ export type SelectedVoiceMachineClientDeps = Readonly<{
 }>;
 
 /**
- * One composite Voice operation pinned to the machine it started on.
+ * One composite Voice operation pinned to its admitted Home, Account and machine.
  *
  * Every phase of an upload, a synthesis download, or a diagnostics export names
  * daemon-side state (`uploadId`, `downloadId`) that exists only on the machine
@@ -50,17 +53,36 @@ export function createSelectedVoiceMachineClient(deps?: Partial<SelectedVoiceMac
     ...deps,
   };
 
+  const captureScope = () => {
+    const serverId = getAppliedActiveServerSnapshot().serverId;
+    const lifetime = captureActiveServerAccountScopeCurrentness();
+    return Object.freeze({
+      serverId,
+      ...('scope' in lifetime ? { accountId: lifetime.scope.accountId } : {}),
+      isCurrent: () => lifetime.isCurrent()
+        && areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerSnapshot().serverId),
+    });
+  };
+
   const dispatch = async (
+    scope: ReturnType<typeof captureScope>,
     machineId: string,
     method: string,
     payload: unknown,
     signal?: AbortSignal | null,
-  ): Promise<unknown> => await resolved.machineRpc({
-    machineId,
-    method,
-    payload,
-    ...(signal ? { signal } : {}),
-  });
+  ): Promise<unknown> => {
+    if (!scope.isCurrent()) throw new VoiceCredentialClientError('cancelled');
+    const response = await resolved.machineRpc({
+      machineId,
+      serverId: scope.serverId,
+      ...('accountId' in scope ? { accountId: scope.accountId } : {}),
+      method,
+      payload,
+      ...(signal ? { signal } : {}),
+    });
+    if (!scope.isCurrent()) throw new VoiceCredentialClientError('cancelled');
+    return response;
+  };
 
   return Object.freeze({
     /**
@@ -73,12 +95,14 @@ export function createSelectedVoiceMachineClient(deps?: Partial<SelectedVoiceMac
      * machine had already produced successfully, which surfaced as
      * `credential_unavailable` — an absent credential — for a purely local
      * ordering change. Attempt currency is enforced by the caller's
-     * `isCurrent()`, not by re-resolving the target.
+     * `isCurrent()`, not by re-resolving the machine target. This carrier also
+     * fences the canonical Home/Account lifetime before and after dispatch.
      */
     async invoke(method: string, payload: unknown, signal?: AbortSignal | null): Promise<unknown> {
+      const scope = captureScope();
       const machineId = resolved.resolveMachineId();
       if (!machineId) throw new VoiceCredentialClientError('machine_unavailable');
-      return await dispatch(machineId, method, payload, signal);
+      return await dispatch(scope, machineId, method, payload, signal);
     },
 
     /**
@@ -90,6 +114,7 @@ export function createSelectedVoiceMachineClient(deps?: Partial<SelectedVoiceMac
      * closed here rather than mid-transfer.
      */
     bindOperation(originMachineId?: string | null): BoundVoiceMachineOperation {
+      const scope = captureScope();
       const requested = typeof originMachineId === 'string' && originMachineId.trim()
         ? originMachineId.trim()
         : null;
@@ -101,7 +126,7 @@ export function createSelectedVoiceMachineClient(deps?: Partial<SelectedVoiceMac
           method: string,
           payload: unknown,
           signal?: AbortSignal | null,
-        ): Promise<unknown> => await dispatch(machineId, method, payload, signal),
+        ): Promise<unknown> => await dispatch(scope, machineId, method, payload, signal),
       });
     },
   });

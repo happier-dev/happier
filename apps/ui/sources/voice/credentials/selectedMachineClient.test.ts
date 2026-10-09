@@ -4,6 +4,12 @@ import {
   createSelectedVoiceMachineClient,
   type VoiceCredentialMachineRpc,
 } from './selectedMachineClient';
+import { storage } from '@/sync/domains/state/storage';
+import {
+  getAppliedActiveServerSnapshot,
+  isAppliedActiveServerRuntimeAvailable,
+  publishAppliedActiveServerSnapshot,
+} from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 /**
  * Test double for the machine-RPC system boundary. The real transport is
@@ -25,6 +31,34 @@ function createRecordingMachineRpc(reply: unknown): Readonly<{
 }
 
 describe('selected Voice machine client', () => {
+  it.each([
+    { serverId: 'home-b', accountId: 'account-b' },
+    { serverId: 'home-a', accountId: 'account-b' },
+  ])('captures the admitted Home and Account and refuses retired phases for $serverId/$accountId', async (replacement) => {
+    const originalHome = getAppliedActiveServerSnapshot();
+    const originalAvailable = isAppliedActiveServerRuntimeAvailable();
+    const originalScope = storage.getState().profileScope;
+    const dispatched: unknown[] = [];
+    const machineRpc: VoiceCredentialMachineRpc = async <R,>(request: Parameters<VoiceCredentialMachineRpc>[0]): Promise<R> => {
+      dispatched.push(request);
+      publishAppliedActiveServerSnapshot({ serverId: replacement.serverId, serverUrl: `https://${replacement.serverId}.test`, generation: 2 });
+      storage.setState({ profileScope: replacement });
+      // The only mock is the generic network transport response boundary.
+      return { ok: true } as R;
+    };
+    try {
+      publishAppliedActiveServerSnapshot({ serverId: 'home-a', serverUrl: 'https://home-a.test', generation: 1 });
+      storage.setState({ profileScope: { serverId: 'home-a', accountId: 'account-a' } });
+      const operation = createSelectedVoiceMachineClient({ resolveMachineId: () => 'machine-a', machineRpc }).bindOperation();
+      await expect(operation.invoke('daemon.voice.speech.synthesize', {})).rejects.toMatchObject({ code: 'cancelled' });
+      await expect(operation.invoke('daemon.voice.speech.download.chunk', {})).rejects.toMatchObject({ code: 'cancelled' });
+      expect(dispatched).toEqual([expect.objectContaining({ serverId: 'home-a', accountId: 'account-a', machineId: 'machine-a' })]);
+    } finally {
+      storage.setState({ profileScope: originalScope });
+      publishAppliedActiveServerSnapshot(originalHome, originalAvailable);
+    }
+  });
+
   it('fails closed when no Voice execution machine is resolvable', async () => {
     const { machineRpc, dispatchedMachineIds } = createRecordingMachineRpc({ ok: true });
     const client = createSelectedVoiceMachineClient({
