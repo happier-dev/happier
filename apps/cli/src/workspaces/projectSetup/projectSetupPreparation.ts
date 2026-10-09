@@ -6,6 +6,7 @@ import type { ProjectCommandSourceV1, ProjectEnvironmentSelectionV1, ProjectMani
 import type { ProjectManifestFileSnapshot } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import { QualifiedProjectTrustProjectV1Schema, type QualifiedProjectTrustProjectV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import type { ProjectSetupSuccessV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupSuccessV1';
+import type { ProjectSetupReadinessV1 } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { SecretReferenceOverlayV1Schema, listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference, type SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 
 import { LaunchSecretReferenceOverlayError, resolveProjectSecretReferenceEnvironment, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
@@ -354,6 +355,32 @@ export async function reviewProjectSetupEffect(input: ProjectSetupPreparationInp
         if (error instanceof LaunchSecretReferenceOverlayError) return refuse('project_environment_binding_unavailable');
         if (error instanceof Error && 'code' in error && typeof error.code === 'string') return refuse(error.code);
         return refuse('project_setup_effect_unavailable');
+    }
+}
+
+/** Passive target readiness, inside the admitted requester's review/native lifetime. Trust is separate. */
+export async function inspectProjectSetupReadiness(input: ProjectSetupPreparationInput): Promise<ProjectSetupReadinessV1> {
+    if (input.purpose !== 'setup') return { kind: 'unknown', code: 'project_setup_review_unavailable' };
+    const reviewed = await reviewProjectSetupEffect(input);
+    if (reviewed.kind === 'refused') return { kind: 'needsReview', code: reviewed.code };
+    const plan = reviewed.plan;
+    if (plan.commands.length === 0 && plan.environment.kind === 'host') {
+        return { kind: 'notRequired', reviewedEffectDigest: plan.reviewedEffectDigest };
+    }
+    if (!input.successHomeDir) return { kind: 'unknown', code: 'project_setup_success_unavailable' };
+    try {
+        const success = await createProjectSetupSuccessStore({ homeDir: input.successHomeDir }).readMatching({
+            serverId: plan.workspace.serverId, machineId: plan.workspace.machineId, workspaceRefId: plan.workspace.id,
+        }, plan.successBasis);
+        if (input.signal?.aborted) return { kind: 'unknown', code: 'project_setup_cancelled' };
+        if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()
+            || plan.commands.some(command => command.kind === 'pluginNative' && !command.lease.isCurrent())) {
+            return { kind: 'needsReview', code: 'native_adapter_retired' };
+        }
+        return success ? { kind: 'current', reviewedEffectDigest: plan.reviewedEffectDigest, completedAtMs: success.completedAtMs }
+            : { kind: 'unprepared', reviewedEffectDigest: plan.reviewedEffectDigest };
+    } catch {
+        return { kind: 'unknown', code: 'project_setup_success_unavailable' };
     }
 }
 

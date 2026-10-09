@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,12 +8,14 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ProjectNativeCommandIo } from '@/workspaces/projectSetup/projectNativeResolution';
+import { inspectProjectSetupReadiness, reviewProjectSetupEffect, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
+import { createProjectSetupSuccessStore } from '@/workspaces/projectSetup/projectSetupSuccess';
 import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from './projectDefinitions';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
-async function setup(nativeIo?: ProjectNativeCommandIo) {
+async function setup(nativeIo?: ProjectNativeCommandIo, reviewInput?: (root: string) => ProjectSetupPreparationInput) {
   const root = await mkdtemp(join(tmpdir(), 'happier-project-definition-rpc-'));
   roots.push(root);
   const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: root };
@@ -23,6 +26,7 @@ async function setup(nativeIo?: ProjectNativeCommandIo) {
     serverId: workspace.serverId, machineId: workspace.machineId, workingDirectory: root,
     accessPolicy: { kind: 'restrictedRoots', roots: [root] },
     ...(nativeIo ? { nativeIo } : {}),
+    ...(reviewInput ? { inspectSetupReadiness: async () => inspectProjectSetupReadiness(reviewInput(root)) } : {}),
   }) });
   registerProjectDefinitionHandlers({
     rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
@@ -32,6 +36,35 @@ async function setup(nativeIo?: ProjectNativeCommandIo) {
 }
 
 describe('project definition Actions through registered Machine RPC', () => {
+  it('reports current readiness as unknown when captured requester review inputs are unavailable', async () => {
+    const { workspace, handlers } = await setup();
+    expect(await handlers.get('daemon.projects.inspect.v1')!({ workspace })).toMatchObject({
+      setupReadiness: { kind: 'unknown', code: 'project_setup_requester_review_unavailable' },
+    });
+  });
+  it('projects reviewed target-local completion through inspect without evaluating setup or disclosing its basis', async () => {
+    const reviewInput = (root: string): ProjectSetupPreparationInput => {
+      const workspace = { id: 'workspace-a', serverId: 'home-a', machineId: 'machine-a', rootPath: root, projectKey: 'project', createdAtMs: 1 };
+      return { workspace, projectAssociation: { workspace, project: { serverId: 'home-a', projectId: 'project' } },
+        requester: { credentials: { token: 'fixture-requester', encryption: null }, serverHttpBaseUrl: 'https://requester.example' },
+        purpose: 'setup', platform: { os: process.platform, arch: process.arch }, nativeIo: { resolveTool: async () => null }, successHomeDir: root };
+    };
+    const { root, workspace, handlers } = await setup(undefined, reviewInput);
+    await mkdir(join(root, '.happier'));
+    await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'touch must-not-execute' }] } }));
+    const inspect = handlers.get('daemon.projects.inspect.v1')!;
+    expect(await inspect({ workspace })).toMatchObject({ setupReadiness: { kind: 'unprepared' } });
+    const reviewed = await reviewProjectSetupEffect(reviewInput(root));
+    if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
+    await createProjectSetupSuccessStore({ homeDir: root }).recordCompletion({ serverId: workspace.serverId, machineId: workspace.machineId, workspaceRefId: workspace.workspaceId },
+      { v: 1, workspaceRefId: workspace.workspaceId, completedAtMs: 123, ...reviewed.plan.successBasis });
+    const result = ProjectDefinitionInspectOutputSchema.parse(await inspect({ workspace }));
+    expect(result).toMatchObject({ setupReadiness: { kind: 'current', completedAtMs: 123, reviewedEffectDigest: reviewed.plan.reviewedEffectDigest } });
+    expect(JSON.stringify(result)).not.toContain('environmentBindingReferences');
+    await expect(readFile(join(root, 'must-not-execute'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'touch changed' }] } }));
+    expect(await inspect({ workspace })).toMatchObject({ setupReadiness: { kind: 'unprepared' } });
+  });
   it('projects canonical runner argv and actual installed tool facts without copying scripts or presenting requested versions as installed', async () => {
     // Installed-tool lookup is an OS boundary; native parsing/resolution and DTO validation stay real.
     const { root, workspace, handlers } = await setup({ resolveTool: async tool => tool === 'yarn'
@@ -70,6 +103,63 @@ describe('project definition Actions through registered Machine RPC', () => {
       { source: { tool: 'make', target: 'check' }, availability: 'available', preselected: true },
       { source: { tool: 'just', target: 'other' }, availability: 'unavailable', preselected: false },
     ] });
+  });
+  it('publishes selected command and environment execution inputs before tool availability without freezing ordinary data', async () => {
+    // Installed lookup is the OS boundary; selected-file resolution and strict
+    // public Action output validation remain the real production owners.
+    const { root, workspace, handlers } = await setup({ resolveTool: async () => null });
+    const make = 'check:\n\ttouch must-not-execute\n';
+    const environment = '[tools]\nnode="22"\n';
+    await writeFile(join(root, 'Makefile'), make);
+    await writeFile(join(root, 'mise.toml'), environment);
+    await writeFile(join(root, 'input.txt'), 'ordinary input');
+    await mkdir(join(root, '.happier'));
+    await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
+      environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+      scripts: { verify: { execution: 'portable', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } },
+    }));
+    const inspect = handlers.get('daemon.projects.inspect.v1')!;
+    const hash = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
+    const initial = await inspect({ workspace });
+    expect(initial).toEqual(expect.objectContaining({ commands: [expect.objectContaining({ name: 'verify', usage: 'script', availability: 'unavailable',
+      executionInputs: [{ file: 'Makefile', hash: hash(make) }] })],
+      environmentExecutionInputs: [{ file: 'mise.toml', hash: hash(environment) }],
+    }));
+    expect(ProjectDefinitionInspectOutputSchema.safeParse(initial).success).toBe(true);
+    await writeFile(join(root, 'input.txt'), 'fresh ordinary input');
+    expect(await inspect({ workspace })).toEqual(initial);
+    const changed = 'check:\n\ttouch changed-must-not-execute\n';
+    await writeFile(join(root, 'Makefile'), changed);
+    expect(await inspect({ workspace })).toMatchObject({ commands: [{ executionInputs: [{ file: 'Makefile', hash: hash(changed) }] }],
+      environmentExecutionInputs: [{ file: 'mise.toml', hash: hash(environment) }],
+    });
+    await expect(readFile(join(root, 'must-not-execute'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(root, 'changed-must-not-execute'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('includes only contained selected toolchain executable bytes in the passive environment basis', async () => {
+    let executablePath: string | undefined;
+    const { root, workspace, handlers } = await setup({ resolveTool: async tool => tool === 'mise' && executablePath
+      ? { executablePath, version: '1' } : null });
+    executablePath = join(root, 'project-mise');
+    const config = '[env]\nMODE="selected"\n';
+    await writeFile(join(root, 'mise.toml'), config);
+    await writeFile(executablePath, 'original selected executable');
+    await mkdir(join(root, '.happier'));
+    await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
+      environment: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+      scripts: { verify: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } },
+    }));
+    const hash = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
+    const inspect = handlers.get('daemon.projects.inspect.v1')!;
+    expect(await inspect({ workspace })).toEqual(expect.objectContaining({ environmentExecutionInputs: [
+      { file: 'mise.toml', hash: hash(config) }, { file: 'project-mise', hash: hash('original selected executable') },
+    ] }));
+    await writeFile(executablePath, 'changed selected executable');
+    expect(await inspect({ workspace })).toMatchObject({ environmentExecutionInputs: [
+      { file: 'mise.toml', hash: hash(config) }, { file: 'project-mise', hash: hash('changed selected executable') },
+    ] });
+    executablePath = join(tmpdir(), 'system-mise');
+    expect(await inspect({ workspace })).toMatchObject({ environmentExecutionInputs: [{ file: 'mise.toml', hash: hash(config) }] });
   });
   it('inspects native references and preserves exact raw bytes while refusing a stale or absent basis', async () => {
     const { root, workspace, handlers } = await setup();

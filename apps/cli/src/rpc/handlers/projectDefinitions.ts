@@ -1,5 +1,5 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS, type ProjectDefinitionWorkspace, type ProjectSetupReadinessV1 } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import type { ProjectDefinitionDetectionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { inspectProjectDefinitions, inspectProjectDefinitionExecutionFacts } from '@/workspaces/projectSetup/projectDefinitionInspection';
@@ -74,6 +74,8 @@ export function createProjectDefinitionAction(params: Readonly<{
   serverId: string; machineId: string; workingDirectory: string; accessPolicy: FilesystemAccessPolicy;
   acquirePluginRuntime?: () => Promise<NativeInspectionRuntimeLease>;
   nativeIo?: ProjectNativeCommandIo;
+  /** Captured requester/private-review boundary; the host owns its native lifetime and uses inspectProjectSetupReadiness. */
+  inspectSetupReadiness?: (input: Readonly<{ workspace: ProjectDefinitionWorkspace; root: string; context: ActionExecutorContext }>) => Promise<ProjectSetupReadinessV1>;
 }>): NonNullable<ActionExecutorDeps['projectDefinitionAction']> {
   return async ({ actionId, input, context }) => {
     const parsed = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS[actionId].safeParse(input);
@@ -100,7 +102,13 @@ export function createProjectDefinitionAction(params: Readonly<{
       ...(definition.document?.status === 'valid' ? { manifest: definition.document.manifest } : {}),
       ...(context.signal ? { signal: context.signal } : {}) });
     context.signal?.throwIfAborted();
-    return { definition, detection, ...facts };
+    let setupReadiness: ProjectSetupReadinessV1 = { kind: 'unknown', code: 'project_setup_requester_review_unavailable' };
+    if (params.inspectSetupReadiness) {
+      try { setupReadiness = await params.inspectSetupReadiness({ workspace, root, context }); }
+      catch { context.signal?.throwIfAborted(); }
+    }
+    context.signal?.throwIfAborted();
+    return { definition, detection, ...facts, setupReadiness };
   };
 }
 

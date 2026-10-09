@@ -34,16 +34,20 @@ export function createProjectSetupSuccessStore(input: Readonly<{ homeDir: string
             return value;
         } catch { throw new ProjectSetupSuccessUnavailableError(); }
     }
+    async function readMatching(target: ProjectSetupSuccessTarget, basis: Omit<ProjectSetupSuccessV1, 'v' | 'workspaceRefId' | 'completedAtMs'>): Promise<ProjectSetupSuccessV1 | null> {
+        const value = await read(target);
+        return value !== null && value.cwd === basis.cwd
+            && value.platform.os === basis.platform.os && value.platform.arch === basis.platform.arch
+            && value.reviewedEffectDigest === basis.reviewedEffectDigest && value.setupInputsDigest === basis.setupInputsDigest
+            && value.environmentBindingReferences.length === basis.environmentBindingReferences.length
+            && value.environmentBindingReferences.every((reference, index) => reference === basis.environmentBindingReferences[index]) ? value : null;
+    }
     return {
         pathFor,
         read,
+        readMatching,
         async matches(target: ProjectSetupSuccessTarget, basis: Omit<ProjectSetupSuccessV1, 'v' | 'workspaceRefId' | 'completedAtMs'>): Promise<boolean> {
-            const value = await read(target);
-            return value !== null && value.cwd === basis.cwd
-                && value.platform.os === basis.platform.os && value.platform.arch === basis.platform.arch
-                && value.reviewedEffectDigest === basis.reviewedEffectDigest && value.setupInputsDigest === basis.setupInputsDigest
-                && value.environmentBindingReferences.length === basis.environmentBindingReferences.length
-                && value.environmentBindingReferences.every((reference, index) => reference === basis.environmentBindingReferences[index]);
+            return await readMatching(target, basis) !== null;
         },
         async recordCompletion(target: ProjectSetupSuccessTarget, success: ProjectSetupSuccessV1): Promise<void> {
             const value = ProjectSetupSuccessV1Schema.parse(success);

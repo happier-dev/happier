@@ -22,7 +22,7 @@ import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/
 import { pixiAdapter, pixiPlugin, pixiRuntime, importedPixiEnvironment } from '../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/project-native-source';
 
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
-import { prepareProjectSetup, reviewProjectSetupEffect, type ProjectSetupPreparationInput } from './projectSetupPreparation';
+import { prepareProjectSetup, reviewProjectSetupEffect, inspectProjectSetupReadiness, type ProjectSetupPreparationInput } from './projectSetupPreparation';
 import { projectNativeSystemIo } from './projectNativeSystemIo';
 
 describe('current Project setup effect and preparation admission', () => {
@@ -70,6 +70,25 @@ describe('current Project setup effect and preparation admission', () => {
         if (result.kind !== 'reviewed') throw new Error(result.code);
         return result.plan;
     }
+
+    it('projects current target completion from reviewed inputs rather than retained operation success', async () => {
+        const f = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }], setupInputs: ['input.txt'] } }, { 'input.txt': 'first' });
+        const input = { ...f.input, successHomeDir: f.root };
+        const plan = await reviewed(input);
+        const target = { serverId: input.workspace.serverId, machineId: input.workspace.machineId, workspaceRefId: input.workspace.id };
+        const store = createProjectSetupSuccessStore({ homeDir: f.root });
+        expect(await inspectProjectSetupReadiness(input)).toMatchObject({ kind: 'unprepared', reviewedEffectDigest: plan.reviewedEffectDigest });
+        await store.recordCompletion(target, { v: 1, workspaceRefId: target.workspaceRefId, completedAtMs: 123, ...plan.successBasis });
+        expect(await inspectProjectSetupReadiness(input)).toEqual({ kind: 'current', reviewedEffectDigest: plan.reviewedEffectDigest, completedAtMs: 123 });
+        await writeFile(join(f.root, 'input.txt'), 'changed');
+        expect(await inspectProjectSetupReadiness(input)).toMatchObject({ kind: 'unprepared' });
+        await writeFile(join(f.root, 'input.txt'), 'first');
+        await store.invalidate(target);
+        expect(await inspectProjectSetupReadiness(input)).toMatchObject({ kind: 'unprepared' });
+        expect(await inspectProjectSetupReadiness({ ...input, successHomeDir: undefined })).toEqual({ kind: 'unknown', code: 'project_setup_success_unavailable' });
+        await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1, environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }] }));
+        expect(await inspectProjectSetupReadiness(input)).toMatchObject({ kind: 'needsReview', code: 'project_environment_binding_unavailable' });
+    });
 
     it.skipIf(process.platform === 'win32')('reviews installed package-manager identity without binding cross-Machine trust to runtime prefix paths or host PATH', async () => {
         const manifest = { version: 1, workspace: { setup: [{ kind: 'native', tool: 'package_script', file: 'package.json', target: 'setup' }] } };
