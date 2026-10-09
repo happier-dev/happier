@@ -7,6 +7,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import {
     SESSION_DRAFT_V2_SOCKET_EVENT,
     SessionDraftChangeHintV1Schema,
+    SessionDraftPrivatePayloadV2Schema,
 } from '@happier-dev/protocol';
 
 import { db } from '@/storage/db';
@@ -24,6 +25,7 @@ import { kvGet } from '@/app/kv/kvGet';
 import { registerSessionDraftRoutes } from './registerSessionDraftRoutes';
 import {
     listSessionDrafts as listSessionDraftsWithAuthentication,
+    decodeSessionDraftContentFromKv,
     matchNewSessionDraftsAccountMigrationPostStateInTx,
     migrateNewSessionDraftsForAccountModeInTx,
     mutateSessionDraft as mutateSessionDraftWithAuthentication,
@@ -159,6 +161,53 @@ describe('sessionDraftService (SQLite integration)', () => {
     });
 
     afterAll(async () => harness.close());
+
+    it('keeps Project Open drafts Account-owned across CAS, V1 filtering, Session deletion and mode conversion', async () => {
+        const account = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode: 'plain' } });
+        const address = { kind: 'projectOpen' as const, draftId: randomUUID() };
+        const document = {
+            v: 2, target: { kind: 'projectOpen' },
+            selection: { mutationId, value: null }, uncertainInputs: { mutationId, value: [] },
+            result: { mutationId, value: null }, retiredAttempt: { mutationId, value: null },
+        };
+        const content = { t: 'plain' as const, v: SessionDraftPrivatePayloadV2Schema.parse({ v: 2, address, document }) };
+        const storedBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+        expect(decodeSessionDraftContentFromKv(storedBytes({
+            ...content, futureEnvelope: true, v: { ...content.v, futurePayload: true, document: { ...document, futureDocument: true } },
+        }))).toEqual(content);
+        expect(() => decodeSessionDraftContentFromKv(storedBytes({
+            ...content, v: { ...content.v, document: { ...document, uncertainInputs: { mutationId, value: 'invalid' } } },
+        }))).toThrow();
+        expect(await mutateSessionDraft({ accountId: account.id, address, expectedRevision: 'absent', content, epoch: 'v2' }))
+            .toMatchObject({ status: 'updated', record: { revision: 0, content } });
+        expect(await mutateSessionDraft({ accountId: account.id, address, expectedRevision: 'absent', content, epoch: 'v2' }))
+            .toMatchObject({ status: 'conflict', current: { revision: 0 } });
+        expect(await mutateSessionDraft({
+            accountId: account.id, address, expectedRevision: 0,
+            content: { t: 'encrypted', v: 2, c: 'wrong-Account-mode' }, epoch: 'v2',
+        })).toEqual({ status: 'invalidContentMode' });
+        expect(await readSessionDraft({ accountId: other.id, address, epoch: 'v2' })).toEqual({ status: 'absent' });
+        expect(await listSessionDrafts({ accountId: account.id, epoch: 'v1' })).toEqual({ items: [] });
+        expect(await listSessionDrafts({ accountId: account.id, epoch: 'v2', addressKinds: ['projectOpen'] }))
+            .toMatchObject({ items: [{ address, content }] });
+        expect(await mutateSessionDraft({ accountId: account.id, address, expectedRevision: 0, content: null, epoch: 'v1' }))
+            .toEqual({ status: 'epochUnavailable' });
+        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({ recipientFilter: { type: 'user-scoped-only' } }));
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await inTx(tx => tombstoneSessionDraftForLifecycleInTx(tx, { accountId: account.id, sessionId: session.id }));
+        expect(await readSessionDraft({ accountId: account.id, address, epoch: 'v2' })).toMatchObject({ status: 'present' });
+        expect(await inTx(tx => migrateNewSessionDraftsForAccountModeInTx(tx, { accountId: account.id, toMode: 'e2ee' })))
+            .toEqual({ status: 'requires_upgrade' });
+        const directive = { v: 2 as const, items: [{ address, expectedRevision: 0, content: { t: 'encrypted' as const, v: 2 as const, c: 'project-open-ciphertext' } }] };
+        expect(await inTx(tx => migrateNewSessionDraftsForAccountModeInTx(tx, { accountId: account.id, toMode: 'e2ee', directive })))
+            .toMatchObject({ status: 'applied', records: [{ address, revision: 1 }] });
+        expect(await inTx(tx => matchNewSessionDraftsAccountMigrationPostStateInTx(tx, { accountId: account.id, toMode: 'e2ee', directive })))
+            .toMatchObject({ status: 'matched', records: [{ address, revision: 1 }] });
+        expect(await inTx(tx => migrateNewSessionDraftsForAccountModeInTx(tx, {
+            accountId: account.id, toMode: 'plain', directive: { v: 2, items: [{ address, expectedRevision: 1, content }] },
+        }))).toMatchObject({ status: 'applied', records: [{ address, revision: 2, content }] });
+    });
 
     it.each(['plain', 'e2ee'] as const)('isolates V2 exact-Machine newSession content from V1 reads, writes, conflicts and hints (%s)', async (encryptionMode) => {
         const account = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode } });

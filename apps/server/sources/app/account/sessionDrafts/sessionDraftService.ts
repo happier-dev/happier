@@ -1,14 +1,14 @@
 import {
     SESSION_DRAFT_SOCKET_EVENT,
     SESSION_DRAFT_V2_SOCKET_EVENT,
-    SessionDraftStoredContentEnvelopeV2Schema,
+    SessionDraftStoredContentEnvelopeV2StoredSchema,
     canonicalSessionDraftAddressV1,
     canonicalSessionDraftAddressV2,
     isSessionDraftAddressV1,
     isSessionDraftContentV1,
+    isAccountOwnedDraftAddressV2,
     pluginJsonValuesEqual,
     type SessionDraftAddressKindV2,
-    type SessionDraftAddressV1,
     type SessionDraftAddressV2,
     type SessionDraftExpectedRevisionV1,
     type SessionDraftListResponseV2,
@@ -17,6 +17,7 @@ import {
     type SessionDraftRecordV2,
     type SessionDraftStoredContentEnvelopeV2,
     type AccountEncryptionMigrateSessionDraftsDirective,
+    type AccountOwnedDraftAddressV2,
 } from "@happier-dev/protocol";
 import * as privacyKit from "privacy-kit";
 
@@ -56,7 +57,7 @@ export type SessionDraftAccountMigrationResult =
     }>
     | Readonly<{
         status: "source_mismatch";
-        address?: Extract<SessionDraftAddressV1, { kind: "newSession" }>;
+        address?: AccountOwnedDraftAddressV2;
         currentRevision?: number;
     }>;
 
@@ -100,7 +101,7 @@ export function decodeSessionDraftContentFromKv(
     } catch {
         throw new Error("Stored session draft content is malformed");
     }
-    const parsed = SessionDraftStoredContentEnvelopeV2Schema.safeParse(raw);
+    const parsed = SessionDraftStoredContentEnvelopeV2StoredSchema.safeParse(raw);
     if (!parsed.success) throw new Error("Stored session draft content is malformed");
     return parsed.data;
 }
@@ -118,9 +119,8 @@ function mapRow(row: SessionDraftKvRow, address?: SessionDraftAddressV2): Sessio
 }
 
 /**
- * Every address kind except `newSession` binds one existing Session, so all
- * epochs consume the canonical readable-Session decision while retaining the
- * Account-private visibility of these drafts.
+ * Account-owned drafts follow Account mode. Session-bound drafts consume the
+ * canonical readable-Session decision and retain Account-private visibility.
  */
 async function resolveAddressMode(
     tx: Tx,
@@ -128,7 +128,7 @@ async function resolveAddressMode(
     address: SessionDraftAddressV2,
     authentication: SessionAccessAuthentication,
 ): Promise<"plain" | "e2ee" | null> {
-    if (address.kind === "newSession") {
+    if (isAccountOwnedDraftAddressV2(address)) {
         const account = await tx.account.findUnique({
             where: { id: accountId },
             select: { encryptionMode: true },
@@ -218,7 +218,7 @@ export async function publishDraftMutationInTx(
                 type: addressV1 ? SESSION_DRAFT_SOCKET_EVENT : SESSION_DRAFT_V2_SOCKET_EVENT,
                 ...hint,
             },
-            recipientFilter: params.address.kind === "newSession"
+            recipientFilter: isAccountOwnedDraftAddressV2(params.address)
                 ? { type: "user-scoped-only" }
                 : { type: "all-interested-in-session", sessionId: params.address.sessionId },
         });
@@ -263,7 +263,7 @@ export async function tombstoneSessionDraftForLifecycleInTx(
     const targets: Array<{ row: SessionDraftKvRow; address: SessionDraftAddressV2 }> = [];
     for (const row of rows) {
         const address = parseSessionDraftPhysicalKey(row.key);
-        if (!address || address.kind === "newSession" || address.sessionId !== params.sessionId) continue;
+        if (!address || isAccountOwnedDraftAddressV2(address) || address.sessionId !== params.sessionId) continue;
         targets.push({ row, address });
     }
     if (targets.length === 0) return false;
@@ -287,9 +287,33 @@ export async function tombstoneSessionDraftForLifecycleInTx(
     return true;
 }
 
+/** Conversion and exact replay consume the same Account-owned draft census. */
+async function readAccountOwnedDraftRowsInTx(tx: Tx, accountId: string): Promise<SessionDraftKvRow[]> {
+    return await tx.userKVStore.findMany({
+        where: {
+            accountId,
+            OR: [
+                { key: { startsWith: `${ACCOUNT_SESSION_DRAFT_KV_PREFIX}new-session/` } },
+                { key: { startsWith: `${ACCOUNT_SESSION_DRAFT_KV_PREFIX}project-open/` } },
+            ],
+            value: { not: null },
+        },
+        orderBy: { key: "asc" },
+        select: SESSION_DRAFT_ROW_SELECT,
+    });
+}
+
+function hasSuccessorDraftRows(rows: readonly SessionDraftKvRow[]): boolean {
+    return rows.some((row) => {
+        const address = parseSessionDraftPhysicalKey(row.key);
+        return !address || !isSessionDraftAddressV1(address)
+            || !isSessionDraftContentV1(decodeSessionDraftContentFromKv(row.value));
+    });
+}
+
 /**
- * Rewrites only Account-owned new-session drafts in the incumbent atomic
- * Account migration transaction. Existing-session drafts remain Session-owned.
+ * Rewrites Account-owned new-session and project-open drafts in the incumbent
+ * atomic Account migration transaction. Session-bound drafts keep their owner.
  */
 export async function migrateNewSessionDraftsForAccountModeInTx(
     tx: Tx,
@@ -299,19 +323,11 @@ export async function migrateNewSessionDraftsForAccountModeInTx(
         directive?: AccountEncryptionMigrateSessionDraftsDirective;
     }>,
 ): Promise<SessionDraftAccountMigrationResult> {
-    const rows = await tx.userKVStore.findMany({
-        where: {
-            accountId: params.accountId,
-            key: { startsWith: `${ACCOUNT_SESSION_DRAFT_KV_PREFIX}new-session/` },
-            value: { not: null },
-        },
-        orderBy: { key: "asc" },
-        select: SESSION_DRAFT_ROW_SELECT,
-    });
+    const rows = await readAccountOwnedDraftRowsInTx(tx, params.accountId);
     // Only the explicitly capable directive may replace successor content;
     // the unversioned writer cannot safely preserve its authoring intent.
     if (!(params.directive && "v" in params.directive && params.directive.v === 2)
-        && rows.some((row) => !isSessionDraftContentV1(decodeSessionDraftContentFromKv(row.value)))) {
+        && hasSuccessorDraftRows(rows)) {
         return { status: "requires_upgrade" };
     }
     if (!params.directive) {
@@ -390,18 +406,10 @@ export async function matchNewSessionDraftsAccountMigrationPostStateInTx(
         directive?: AccountEncryptionMigrateSessionDraftsDirective;
     }>,
 ): Promise<SessionDraftAccountMigrationPostStateResult> {
-    const rows = await tx.userKVStore.findMany({
-        where: {
-            accountId: params.accountId,
-            key: { startsWith: `${ACCOUNT_SESSION_DRAFT_KV_PREFIX}new-session/` },
-            value: { not: null },
-        },
-        orderBy: { key: "asc" },
-        select: SESSION_DRAFT_ROW_SELECT,
-    });
+    const rows = await readAccountOwnedDraftRowsInTx(tx, params.accountId);
     // Replay must honor the same content epoch as the original transition.
     if (!(params.directive && "v" in params.directive && params.directive.v === 2)
-        && rows.some((row) => !isSessionDraftContentV1(decodeSessionDraftContentFromKv(row.value)))) {
+        && hasSuccessorDraftRows(rows)) {
         return { status: "requires_upgrade" };
     }
     if (!params.directive) {
@@ -526,7 +534,7 @@ export async function listSessionDrafts(params: Readonly<{
             candidates.push({ row, address });
         }
         const sessionIds = candidates.flatMap(({ address }) => (
-            address.kind === "newSession" ? [] : [address.sessionId]
+            isAccountOwnedDraftAddressV2(address) ? [] : [address.sessionId]
         ));
         const reachableSessions = new Set(sessionIds.length === 0 ? [] : (await inTx(async (tx) => {
             const accessWhere = await buildSessionAccessWhere({
@@ -542,7 +550,7 @@ export async function listSessionDrafts(params: Readonly<{
             });
         })).map((session) => session.id));
         for (const { row, address } of candidates) {
-            if (address.kind !== "newSession" && !reachableSessions.has(address.sessionId)) continue;
+            if (!isAccountOwnedDraftAddressV2(address) && !reachableSessions.has(address.sessionId)) continue;
             const record = mapRow(row, address);
             if (epoch === "v1" && !isSessionDraftContentV1(record.content)) continue;
             collected.push(record);
@@ -572,7 +580,7 @@ export async function mutateSessionDraft(params: Readonly<{
         if (params.epoch === "v1" && (!isSessionDraftAddressV1(params.address) || !isSessionDraftContentV1(params.content))) {
             return { status: "epochUnavailable" };
         }
-        if (params.address.kind === "newSession") {
+        if (isAccountOwnedDraftAddressV2(params.address)) {
             const account = await tx.account.findUnique({ where: { id: params.accountId }, select: { id: true } });
             if (!account) return { status: "sessionUnavailable" };
             await acquireAccountSessionOwnerMetadataFenceInTx(tx, params.accountId);

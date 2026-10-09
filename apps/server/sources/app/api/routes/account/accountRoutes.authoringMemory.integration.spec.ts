@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { sealAccountScopedBlobCiphertext } from "@happier-dev/protocol";
+import { buildProjectLastOpenedMemoryKeyV1, sealAccountScopedBlobCiphertext } from "@happier-dev/protocol";
 
 import type { Fastify as ServerFastify } from "@/app/api/types";
 import { db } from "@/storage/db";
@@ -23,6 +23,27 @@ describe("Account authoring-memory reserved rows", () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-authoring-memory-" });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('retains qualified Project recency in the memory row and refuses invalid plain timestamps before mutation or disclosure', async () => {
+        const account = await db.account.create({ data: { id: randomUUID(), encryptionMode: 'plain' } });
+        const key = buildProjectLastOpenedMemoryKeyV1({ serverId: 'home:one', projectKey: 'project/one' });
+        const physicalKey = `@happier/account/authoring-memory/v1/${key}`;
+        const app = createTestApp();
+        try {
+            const headers = { 'x-test-user-id': account.id };
+            const url = `/v1/account/authoring-memory/${encodeURIComponent(key)}`;
+            const accepted = await app.inject({ method: 'POST', url, headers, payload: { expectedRevision: 'absent', content: { t: 'plain', v: 42 } } });
+            expect(accepted.statusCode).toBe(200);
+            expect((await app.inject({ method: 'GET', url, headers })).json()).toEqual({ status: 'present', revision: 0, content: { t: 'plain', v: 42 } });
+            const invalid = await app.inject({ method: 'POST', url, headers, payload: { expectedRevision: 0, content: { t: 'plain', v: -1 } } });
+            expect(invalid.statusCode).toBe(503);
+            expect((await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: physicalKey } } })).version).toBe(0);
+            await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: physicalKey } }, data: { value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: -1 })) } });
+            for (const readUrl of [url, '/v1/account/authoring-memory']) {
+                expect((await app.inject({ method: 'GET', url: readUrl, headers })).statusCode).toBe(503);
+            }
+        } finally { await app.close(); }
+    });
 
     it("reads additive stored envelope fields without admitting them in new mutations", async () => {
         const account = await db.account.create({ data: { id: randomUUID(), encryptionMode: "plain" } });
