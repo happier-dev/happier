@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { readdir, stat } from 'node:fs/promises';
 import { z } from 'zod';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema, normalizeScmDiffSummaryModelOutput, ScmReviewExplanationTargetsSchema, ScmReviewExplanationRequesterSchema, ScmDiffSummaryModelOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { ScmDiffSummaryResultSchema, ScmDiffSummaryResultEditSchema, ScmWalkthroughProvenanceSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { ScmCommitPlanAcceptanceSchema, ScmCommitPlanApplicationSchema, isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
@@ -31,16 +32,17 @@ const storedSchema = z.object({
   undoOutput: ScmDiffSummaryGenerateOutputSchema.optional(), inputs: z.array(pendingInputSchema),
   undoWalkthroughProvenance: ScmWalkthroughProvenanceSchema.optional(),
   reviewFindingCitations: reviewFindingCitationsSchema.optional(),
-  generation: z.object({ key: z.string().min(1), runId: z.string().min(1).optional() }).strict().optional(),
+  generation: z.object({ key: z.string().min(1), runId: z.string().min(1).optional(), inputId: z.string().min(1).optional() }).strict().optional(),
 }).strict();
 type Stored = z.infer<typeof storedSchema>;
+const storedReadSchema = createStoredReadSchema(storedSchema);
 export type ScmDiffSummaryResultStore = Readonly<{
   admitGeneration(input: Readonly<{ cwd: string; sessionId?: string; key: string; outputs: readonly ScmDiffSummaryOutputKind[]; bypass?: boolean; signal?: AbortSignal }>,
     generate: () => Promise<ScmDiffSummaryGenerateOutput>): Promise<ScmDiffSummaryGenerateOutput>;
-  list(): Promise<Readonly<{ results: readonly ScmDiffSummarySavedResultItem[]; count: number; bytes: number }>>;
+  list(options?: Readonly<{ admitScope?: (scope: Readonly<{ cwd: string; sessionId?: string; sourceSessionId?: string }>) => Promise<boolean> }>): Promise<Readonly<{ results: readonly ScmDiffSummarySavedResultItem[]; count: number; bytes: number }>>;
   create(input: Readonly<{ cwd: string; sessionId?: string; output: ScmDiffSummaryGenerateOutput; generator?: ScmDiffSummaryGeneratorSelection }>): Promise<ScmDiffSummaryResult>;
   read(scope: ScmDiffSummaryResultScope): Promise<ScmDiffSummaryResultResponse>;
-  readStoredScope(scope: ScmDiffSummaryResultScope): Promise<Readonly<{ cwd: string; sessionId?: string; reviewFindingCitations?: ReviewFindingCitations }> | null>;
+  readStoredScope(scope: ScmDiffSummaryResultScope): Promise<Readonly<{ cwd: string; sessionId?: string; sourceSessionId?: string; reviewFindingCitations?: ReviewFindingCitations }> | null>;
   edit(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number; edit: ScmDiffSummaryResultEdit }>): Promise<ScmDiffSummaryResultResponse>;
   undo(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number }>): Promise<ScmDiffSummaryResultResponse>;
   delete(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number }>): Promise<ScmDiffSummaryResultDeleteResponse>;
@@ -89,7 +91,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
   }
   async function load(scope: ScmDiffSummaryResultScope): Promise<Stored | null> {
     try {
-      const stored = storedSchema.parse(JSON.parse(await readProtectedLocalStateFile(path(scope.resultId))));
+      const stored = storedReadSchema.parse(JSON.parse(await readProtectedLocalStateFile(path(scope.resultId))));
       if (stored.result.resultId !== scope.resultId || stored.cwd !== resolve(scope.cwd)
         || (scope.sessionId !== undefined && stored.sessionId !== scope.sessionId)) return null;
       return stored;
@@ -211,19 +213,21 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
             // Start can return before the profile binds its run. This is the actual
             // admission receipt, never authority to retry or provision another run.
             return ScmDiffSummaryGenerateOutputSchema.parse({ ...stored.result.output,
+              ...(stored.result.output.success && stored.generation.inputId ? { inputId: stored.generation.inputId } : {}),
               ...(!stored.result.output.runId && stored.generation.runId ? { runId: stored.generation.runId } : {}) });
           }
         }
         const output = await generate();
         if (output.resultId) {
           await locked({ ...input, resultId: output.resultId }, async (stored) => {
-            if (stored) await save({ ...stored, generation: { key: input.key, ...(output.runId ? { runId: output.runId } : {}) } });
+            if (stored) await save({ ...stored, generation: { key: input.key, ...(output.runId ? { runId: output.runId } : {}),
+              ...(output.success && output.inputId ? { inputId: output.inputId } : {}) } });
           });
         }
         return output;
       });
     },
-    async list() {
+    async list(options) {
       let entries: string[];
       try { entries = await readdir(directory); }
       catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return { results: [], count: 0, bytes: 0 }; throw error; }
@@ -234,9 +238,13 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
         let updatedAtMs: number;
         try { raw = await readProtectedLocalStateFile(join(directory, entry)); updatedAtMs = Math.floor((await stat(join(directory, entry))).mtimeMs); }
         catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue; throw error; }
-        const stored = storedSchema.parse(JSON.parse(raw));
+        const stored = storedReadSchema.parse(JSON.parse(raw));
         const { result } = stored;
         if (`${result.resultId}.json` !== entry || !result.output.comparison) throw new Error('Saved result inventory identity is invalid');
+        const source = result.output.comparison.source;
+        const sourceSessionId = typeof source.sessionId === 'string' ? source.sessionId : undefined;
+        if (options?.admitScope && !await options.admitScope({ cwd: stored.cwd,
+          ...(stored.sessionId ? { sessionId: stored.sessionId } : {}), ...(sourceSessionId ? { sourceSessionId } : {}) })) continue;
         results.push({ cwd: stored.cwd, ...(stored.sessionId ? { sessionId: stored.sessionId } : {}),
           resultId: result.resultId, revision: result.revision, comparisonId: result.output.comparison.id,
           ...(result.output.outputs?.walkthrough?.value ? { title: result.output.outputs.walkthrough.value.title } : {}),
@@ -256,11 +264,18 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
     },
     async read(scope) {
       const stored = await load(scope);
-      return stored ? { success: true, result: stored.result } : failure('result_not_found', 'Saved result is unavailable in this repository/session.');
+      if (!stored) return failure('result_not_found', 'Saved result is unavailable in this repository/session.');
+      const generation = stored.generation;
+      const output = stored.result.output;
+      return { success: true, result: output.success && generation?.inputId && (!output.runId || output.runId === generation.runId)
+        ? { ...stored.result, output: { ...output, inputId: generation.inputId } } : stored.result };
     },
     async readStoredScope(scope) {
       const stored = await load(scope);
+      const source = stored?.result.output.comparison?.source;
+      const sourceSessionId = typeof source?.sessionId === 'string' ? source.sessionId : undefined;
       return stored ? { cwd: stored.cwd, ...(stored.sessionId ? { sessionId: stored.sessionId } : {}),
+        ...(sourceSessionId ? { sourceSessionId } : {}),
         ...(stored.reviewFindingCitations ? { reviewFindingCitations: stored.reviewFindingCitations } : {}) } : null;
     },
     async edit(input) {
@@ -591,12 +606,18 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
 }
 
 let defaultStore: ScmDiffSummaryResultStore | undefined;
+let defaultStoreDirectory: string | undefined;
 function currentStore() {
-  return defaultStore ??= createScmDiffSummaryResultStore({ directory: join(configuration.activeServerDir, 'runtime', 'scm', 'results') });
+  const directory = join(configuration.activeServerDir, 'runtime', 'scm', 'results');
+  if (!defaultStore || defaultStoreDirectory !== directory) {
+    defaultStore = createScmDiffSummaryResultStore({ directory });
+    defaultStoreDirectory = directory;
+  }
+  return defaultStore;
 }
 export const scmDiffSummaryResultStore: ScmDiffSummaryResultStore = {
   admitGeneration: (input, generate) => currentStore().admitGeneration(input, generate),
-  list: () => currentStore().list(),
+  list: (options) => currentStore().list(options),
   create: (input) => currentStore().create(input), read: (input) => currentStore().read(input),
   readStoredScope: (input) => currentStore().readStoredScope(input), edit: (input) => currentStore().edit(input),
   undo: (input) => currentStore().undo(input), delete: (input) => currentStore().delete(input),

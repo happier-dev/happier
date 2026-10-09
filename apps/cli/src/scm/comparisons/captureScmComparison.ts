@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { ScmComparisonSchema, ScmComparisonSourceSchema, buildScmComparisonIdentity, classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
 import { ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
 import type { ScmComparison, ScmComparisonFile, ScmComparisonSource, ScmDiffSummaryMetadata } from '@happier-dev/protocol';
@@ -40,6 +41,7 @@ const StoredComparisonSchema = z.object({
   sessionId: z.string().optional(), metadata: ScmDiffSummaryMetadataSchema, comparison: ScmComparisonSchema,
   retainedRefs: z.array(z.object({ ref: z.string(), oid: z.string() }).strict()),
 }).strict();
+const StoredComparisonReadSchema = createStoredReadSchema(StoredComparisonSchema);
 
 function comparisonNamespace(sessionId?: string): string {
   return sessionId ? encodeRepositoryCheckpointScope(sessionId) : 'repository';
@@ -65,7 +67,7 @@ export async function readCapturedScmComparison(input: Readonly<{
   turnId?: string; checkpointReceiptId?: string; turnEvidenceMode?: ScmDiffSummaryTurnEvidenceMode;
 }>): Promise<CapturedScmComparison> {
   let stored: z.infer<typeof StoredComparisonSchema>;
-  try { stored = StoredComparisonSchema.parse(JSON.parse(await readFile(comparisonPath(input.comparisonId, input.sessionId), 'utf8'))); }
+  try { stored = StoredComparisonReadSchema.parse(JSON.parse(await readFile(comparisonPath(input.comparisonId, input.sessionId), 'utf8'))); }
   catch (error) { throw Object.assign(new Error('Captured comparison evidence is unavailable', { cause: error }), { code: 'DIFF_UNAVAILABLE' }); }
   const projectedSourceIdentity = (source: ScmComparisonSource) => buildScmComparisonIdentity({ source,
     repositoryRootPath: stored.comparison.repository.rootPath, beforeOid: stored.comparison.endpoints.before,
@@ -94,7 +96,7 @@ export async function deleteCapturedScmComparison(input: Readonly<{
 }>): Promise<void> {
   await readCapturedScmComparison(input);
   const path = comparisonPath(input.comparisonId, input.sessionId);
-  const stored = StoredComparisonSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+  const stored = StoredComparisonReadSchema.parse(JSON.parse(await readFile(path, 'utf8')));
   const prefix = `refs/happier/comparisons/${comparisonNamespace(input.sessionId)}/${input.comparisonId}/`;
   // Validate every target before deleting any of them; session checkpoint pins are never targets.
   for (const retained of stored.retainedRefs) {

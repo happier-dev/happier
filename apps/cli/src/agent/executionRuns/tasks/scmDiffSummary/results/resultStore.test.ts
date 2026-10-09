@@ -61,6 +61,42 @@ async function setupPartialApplication() {
 }
 
 describe('saved SCM result owner', () => {
+  it('normalizes additive stored fields across read, inventory and canonical edit writes without relaxing known fields or model inputs', async () => {
+    const { directory, store, request } = await setup();
+    const file = join(directory, `${request.resultId}.json`);
+    const renamed = await store.edit({ ...request, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'Stored title' } });
+    if (!renamed.success) throw new Error(renamed.error);
+    await store.beginInput({ ...request, inputId: 'pending', expectedRevision: 1, outputs: ['summary'] });
+    const canonical = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    const withExtras = { ...canonical, future: true,
+      result: { ...renamed.result, future: true, output: { ...renamed.result.output, future: true,
+        comparison: { ...comparison, future: true, repository: { ...comparison.repository, future: true },
+          inventory: { ...comparison.inventory, future: true, files: comparison.inventory.files.map(file => ({ ...file,
+            future: true, evidence: { ...file.evidence, future: true },
+            occurrences: file.occurrences.map(occurrence => ({ ...occurrence, future: true, before: { ...occurrence.before, future: true } })),
+          })) } },
+      }, walkthroughProvenance: { ...renamed.result.walkthroughProvenance, future: true } },
+      undoOutput: { ...output, future: true },
+      inputs: [{ inputId: 'pending', baseRevision: 1, outputs: ['summary'], future: true }],
+      generation: { key: 'stored-key', future: true },
+    };
+    await writeFile(file, JSON.stringify(withExtras));
+    expect(await store.read(request)).toEqual(renamed);
+    expect(await store.list()).toMatchObject({ count: 1, results: [{ resultId: request.resultId, title: 'Stored title', revision: 1 }] });
+    expect(await store.readInput({ ...request, inputIds: ['pending'] })).toEqual({ inputId: 'pending', baseRevision: 1, outputs: ['summary'] });
+    expect(await store.read({ ...request, cwd: '/another-repo' })).toMatchObject({ success: false, errorCode: 'result_not_found' });
+    expect(await store.read({ ...request, sessionId: 'another-session' })).toMatchObject({ success: false, errorCode: 'result_not_found' });
+    expect(await store.edit({ ...request, expectedRevision: 0, edit: { kind: 'renameWalkthrough', title: 'Stale' } }))
+      .toMatchObject({ success: false, errorCode: 'revision_conflict' });
+    expect(await store.publish({ ...request, inputId: 'pending', modelOutput: { summaryMarkdown: 'Invalid', future: true } }))
+      .toMatchObject({ success: false, errorCode: 'invalid_output' });
+    expect(await store.edit({ ...request, expectedRevision: 1, edit: { kind: 'renameWalkthrough', title: 'Current' } }))
+      .toMatchObject({ success: true, result: { revision: 2 } });
+    expect(await readFile(file, 'utf8')).not.toContain('"future"');
+    await writeFile(file, JSON.stringify({ ...withExtras, result: { ...withExtras.result, revision: -1 } }));
+    await expect(store.read(request)).rejects.toThrow();
+    await expect(store.list()).rejects.toThrow();
+  });
   it('keeps the admitted revision basis when only same-input multipart admission progress changes', async () => {
     const store = createScmDiffSummaryResultStore({ directory: await mkdtemp(join(tmpdir(), 'scm-part-admission-')) });
     const created = await store.create({ cwd: '/repo', output });
