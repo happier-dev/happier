@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ProjectExecutionChoiceResolutionV1, WorkerDestinationV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
 import {
   readProjectSetupAgentGuidance,
@@ -14,6 +15,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { describeMachineDestinationWorkerFacts } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
 
 const RUN_COMMAND = 'happier project script run <name> [--on <machine>]';
 const EXEC_COMMAND = 'happier project compute exec -- <argv>';
@@ -38,7 +40,58 @@ export function describeProjectAgentGuidance(
     Math.max(portable.join(', ').length, primary.join(', ').length) + 2;
   const line = (names: readonly string[], note: string) =>
     `${names.join(', ').padEnd(width)}${note}`;
-  const adHocOn = guidance.adHoc.resolution.status === 'resolved';
+  const destinationLabel = (destination: WorkerDestinationV1) => destination.kind === 'machine'
+    ? destination.machineId
+    : t(destination.selection === 'ask' ? 'projectWorkers.poolAsk' : 'projectWorkers.poolAutomatic', { pool: destination.poolId });
+  const resolutionLabel = (resolution: ProjectExecutionChoiceResolutionV1) => {
+    if (resolution.status === 'resolved') return resolution.choice.kind === 'primary'
+      ? t('projectWorkers.primary') : destinationLabel(resolution.choice.destination);
+    switch (resolution.reason) {
+      case 'ad_hoc_disabled': return t('projectWorkers.guideAdHocOff');
+      case 'preferences_unavailable': return t('projectWorkers.policyUnavailable');
+      case 'destination_missing': return t('projectWorkers.destinationMissing');
+      case 'primary_only': return t('projectWorkers.primaryOnly');
+      case 'override_requires_review': return t('projectWorkers.changed');
+    }
+  };
+  const targetLines: string[] = [];
+  const destination = guidance.destination;
+  if (destination && 'configured' in destination) {
+    targetLines.push(`${t('projectWorkers.destination')}: ${destinationLabel(destination.configured)}`);
+    const observation = destination.observation;
+    if ('eligible' in observation) {
+      const facts = describeMachineDestinationWorkerFacts(observation.eligible
+        ? { eligible: true, worker: observation }
+        : { eligible: false, reason: 'worker_refused', worker: observation });
+      if (facts) targetLines.push(facts);
+      if (!observation.eligible) {
+        if (observation.explanation === 'not_accepting') targetLines.push(t('projectWorkers.notAcceptingDetail'));
+        if (observation.explanation === 'worker_copy_missing') targetLines.push(t('projectWorkers.setUpCopy', {
+          machine: observation.workerCopy?.targetMachineId ?? destinationLabel(destination.configured),
+        }));
+        else targetLines.push(t('common.retry'));
+      }
+    } else if ('kind' in observation) {
+      targetLines.push(observation.kind === 'resolved'
+        ? `${t('projectWorkers.destination')}: ${observation.machineId}`
+        : t(observation.reason === 'empty' || observation.reason === 'no_available_machine'
+          ? 'projectWorkers.empty' : 'projectWorkers.statusUnavailable'));
+      if (observation.kind === 'unavailable') targetLines.push(t('projectWorkers.emptyDetail'));
+    } else {
+      targetLines.push(t('projectWorkers.statusUnavailable'), t('common.retry'));
+    }
+  }
+  const preferences = guidance.workerPreferences;
+  if ('status' in preferences && preferences.status === 'ready') {
+    const fallback = preferences.preference.unavailable;
+    targetLines.push(`${t('projectWorkers.whenUnavailable')}: ${t(fallback === 'primary'
+      ? 'projectWorkers.fallbackPrimary' : fallback === 'fail' ? 'projectWorkers.fallbackFail' : 'projectWorkers.fallbackAsk')}`);
+  } else {
+    targetLines.push(t('projectWorkers.policyUnavailable'));
+    targetLines.push('status' in preferences && preferences.status === 'locked'
+      ? t('projectWorkers.settingsLocked') : t('common.retry'));
+  }
+  const adHoc = guidance.adHoc.resolution;
   return [
     `# ${t('projectWorkers.guideHeader', { project })}`,
     ...(portable.length > 0
@@ -47,7 +100,10 @@ export function describeProjectAgentGuidance(
     ...(primary.length > 0
       ? [line(primary, t('projectWorkers.guidePrimary'))]
       : []),
-    ...(scripts.length === 0 ? [t('projectWorkers.guideNoScripts')] : []),
+    ...(guidance.scripts === null ? [t('projectWorkers.guideUnavailable'), t('common.retry')]
+      : scripts.length === 0 ? [t('projectWorkers.guideNoScripts')] : []),
+    ...scripts.map(script => `${script.name}: ${t('projectWorkers.defaultSummary', { destination: resolutionLabel(script.resolution) })}`),
+    ...targetLines,
     '',
     `${t('projectWorkers.guideRunOne')}  ${RUN_COMMAND}`,
     `  · ${t('projectWorkers.guideOutput')}`,
@@ -55,7 +111,7 @@ export function describeProjectAgentGuidance(
     `  · ${t('projectWorkers.guideExit')}`,
     '',
     `${t('projectWorkers.guideOther')}  ${EXEC_COMMAND}`,
-    `  · ${adHocOn ? t('projectWorkers.guideAdHocOn') : t('projectWorkers.guideAdHocOff')}`,
+    `  · ${adHoc.status === 'resolved' ? t('projectWorkers.guideAdHocOn') : resolutionLabel(adHoc)}`,
   ].join('\n');
 }
 

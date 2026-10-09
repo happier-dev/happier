@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createDefaultWorkspaceWorkerPreferenceV1, resolveProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
 vi.mock('@/text', async () =>
   (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key) => key,
+    translate: (key, options) => options ? `${key} ${JSON.stringify(options)}` : key,
   }),
 );
 
@@ -11,24 +12,25 @@ const { describeProjectAgentGuidance } =
 type Guidance = Parameters<typeof describeProjectAgentGuidance>[0];
 
 function guidance(adHoc: 'resolved' | 'refused'): Guidance {
-  // Only the facts the disclosure reads; the reader's other advisory facts are irrelevant here.
+  const preference = { ...createDefaultWorkspaceWorkerPreferenceV1(), allowAdHoc: adHoc === 'resolved' };
+  const resolve = (execution: 'portable' | 'primary', scriptName?: string) => resolveProjectExecutionChoiceV1({
+    execution, ...(scriptName ? { scriptName } : { adHoc: true }), preference: { status: 'ready', value: preference },
+  });
   return {
+    advisory: true,
+    sourceWorkspace: { serverId: 'home', workspaceId: 'source', machineId: 'primary', rootPath: '/repo' },
+    definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, status: 'valid', diagnostics: [] },
+    workerPreferences: { status: 'ready', preference, revision: 'absent', provenance: 'default' },
+    destination: null,
     scripts: [
-      { name: 'test', execution: 'portable' },
-      { name: 'typecheck', execution: 'portable' },
-      { name: 'lint', execution: 'primary' },
+      { name: 'test', source: { kind: 'command', command: 'test' }, execution: 'portable', resolution: resolve('portable', 'test') },
+      { name: 'typecheck', source: { kind: 'command', command: 'typecheck' }, execution: 'portable', resolution: resolve('portable', 'typecheck') },
+      { name: 'lint', source: { kind: 'command', command: 'lint' }, execution: 'primary', resolution: resolve('primary', 'lint') },
     ],
     adHoc: {
-      resolution:
-        adHoc === 'resolved'
-          ? {
-              status: 'resolved',
-              choice: { kind: 'primary' },
-              provenance: 'workspace',
-            }
-          : { status: 'refused', reason: 'ad_hoc_disabled' },
+      actionId: 'projects.compute.exec', approval: 'configured_action_policy', resolution: resolve('portable'),
     },
-  } as unknown as Guidance;
+  };
 }
 
 describe('describeProjectAgentGuidance', () => {
@@ -53,5 +55,39 @@ describe('describeProjectAgentGuidance', () => {
     expect(
       describeProjectAgentGuidance(guidance('resolved'), 'happier'),
     ).toContain('projectWorkers.guideAdHocOn');
+  });
+
+  it.each(['locked', 'unavailable'] as const)('does not describe %s reads as an empty project or ad-hoc opt-out', status => {
+    const facts: Guidance = { ...guidance('refused'), scripts: null,
+      definition: { ok: false, errorCode: 'unavailable', error: 'unavailable' },
+      workerPreferences: { status }, destination: { status },
+      adHoc: { actionId: 'projects.compute.exec', approval: 'configured_action_policy',
+        resolution: resolveProjectExecutionChoiceV1({ execution: 'portable', adHoc: true, preference: { status } }) } };
+    const text = describeProjectAgentGuidance(facts, 'happier');
+    expect(text).not.toContain('projectWorkers.guideNoScripts');
+    expect(text).not.toContain('projectWorkers.guideAdHocOff');
+    expect(text).toContain('projectWorkers.guideUnavailable');
+    expect(text).toContain('projectWorkers.policyUnavailable');
+  });
+
+  it('distinguishes actual empty declarations from an unavailable read', () => {
+    expect(describeProjectAgentGuidance({ ...guidance('refused'), scripts: [] }, 'happier'))
+      .toContain('projectWorkers.guideNoScripts');
+  });
+
+  it('presents effective script targets separately from declaration permission and shows current refusal guidance', () => {
+    const base = guidance('resolved');
+    const destination = { kind: 'machine', machineId: 'worker-b' } as const;
+    const facts: Guidance = { ...base, scripts: base.scripts!.map(script => ({ ...script,
+      resolution: script.name === 'test'
+        ? { status: 'resolved', choice: { kind: 'workers', destination }, provenance: 'script' }
+        : script.resolution })),
+      destination: { configured: destination, observation: { eligible: false, load: { kind: 'unknown' }, candidate: null,
+        explanation: 'not_accepting', lastCleanSyncAtMs: null } } };
+    const text = describeProjectAgentGuidance(facts, 'happier');
+    expect(text).toContain('worker-b');
+    expect(text).toContain('projectWorkers.defaultSummary');
+    expect(text).toContain('projectWorkers.notAccepting');
+    expect(text).toContain('projectWorkers.notAcceptingDetail');
   });
 });
