@@ -15,6 +15,7 @@ import { createTerminalPtySessionManager as createRealTerminalPtySessionManager,
 import { createTerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { waitForProcessCustodyHandshake } from '@/subprocess/supervision/processCustody';
+import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { Disposable, PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from './provider';
 
 // These fixtures replace the genuine OS PTY and group probe, not the manager.
@@ -442,6 +443,36 @@ describe('TerminalPtySessionManager', () => {
       expect(manager.list()).toMatchObject([{ terminalId: admitted.terminalId, cwd: invocation.cwd, ended: false }]);
       expect(provider.spawned[0]?.params.options.cwd).toBe(invocation.cwd);
     } finally { manager.dispose(); }
+  });
+
+  it('consumes a host-finalized interactive native tuple without rewriting its cwd or restoring removed environment values', async () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, config: defaultConfig({ idleTimeoutMs: 0 }),
+      env: { ...BASH_ENV, OMITTED_BY_NATIVE_ENV: 'ambient' } });
+    const custody = { serverId: 'home', machineId: 'machine', installationId: 'installation', workspaceRefId: 'accepted',
+      projectKey: 'project', rootPath: '/project', requesterAccountId: 'bob' };
+    const authorizedProjectLaunch = await authorizeResolvedProjectExecLaunchForHost({
+      launch: { command: '/managed/native-wrapper', args: ['exec', '/bin/bash'], cwd: '/project/native-workdir', env: { PATH: '/native/bin' } },
+      projectLaunch: { status: 'ready', reviewedEffectDigest: 'reviewed', environment: { selection: { kind: 'host' }, root: custody.rootPath,
+        platform: 'linux', io: { resolveTool: async () => null, run: async () => { throw new Error('Host environment must not spawn native tooling'); } } } },
+      signal: new AbortController().signal, assertCurrent() {},
+    });
+    const tuple = { terminalKey: 'shell', cwd: custody.rootPath, custody, authorizedProjectLaunch } as const;
+    try {
+      expect(manager.ensure({ ...tuple, requesterAccountId: 'cara' })).toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      const admitted = manager.ensure(tuple);
+      expect(admitted).toMatchObject({ ok: true, reused: false });
+      if (!admitted.ok) throw new Error('Finalized interactive tuple must launch');
+      expect(manager.getCustody(admitted.terminalId)).toEqual(custody);
+      expect(manager.isFiniteHeld(admitted.terminalId)).toBe(false);
+      expect(provider.spawned[0]!.params).toMatchObject({ file: authorizedProjectLaunch.command, args: authorizedProjectLaunch.args,
+        options: { cwd: authorizedProjectLaunch.cwd, env: { PATH: '/native/bin' } } });
+      expect(provider.spawned[0]!.params.options.env).not.toHaveProperty('OMITTED_BY_NATIVE_ENV');
+      expect(manager.list()).toMatchObject([{ terminalId: admitted.terminalId, cwd: authorizedProjectLaunch.cwd }]);
+      expect(manager.ensure({ terminalKey: tuple.terminalKey, cwd: custody.rootPath, custody }))
+        .toEqual({ ok: true, terminalId: admitted.terminalId, reused: true });
+      expect(provider.spawned).toHaveLength(1);
+    } finally { manager.dispose(); await authorizedProjectLaunch.release(); }
   });
 
   it('never evicts another requester or an active finite hold when a scoped shell reaches existing capacity', () => {
