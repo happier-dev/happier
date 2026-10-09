@@ -4474,6 +4474,11 @@
       "types": "./dist/mcp/servers/settingsV1.d.ts",
       "default": "./dist/mcp/servers/settingsV1.js"
     },
+    "./mcp/servers/serverActionsV1": {
+      "happier-source": "./src/mcp/servers/serverActionsV1.ts",
+      "types": "./dist/mcp/servers/serverActionsV1.d.ts",
+      "default": "./dist/mcp/servers/serverActionsV1.js"
+    },
     "./plugins/settingsAdministration": {
       "happier-source": "./src/plugins/settingsAdministration.ts",
       "types": "./dist/plugins/settingsAdministration.d.ts",
