@@ -4,7 +4,7 @@ import { ProjectDefinitionInspectOutputSchema } from '../projectDefinitionAction
 import { ProjectWorkerActionOutputSchemasV1 } from '../specs/projectWorkers.js';
 import { resolveProjectExecutionChoiceV1 } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { MachinePoolResolveResultV1Schema } from '../../machines/pools/v1.js';
-import type { ProjectMemoryDemandV1 } from '../../workspaces/projectSetup/projectManifestV1.js';
+import { resolveProjectMemoryDemandV1 } from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
 
@@ -31,9 +31,10 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
   const choice = 'choice' in parsed.data ? parsed.data.choice : undefined;
   let machineId = choice?.kind === 'workers' && choice.destination.kind === 'machine'
     ? choice.destination.machineId : workspace.machineId;
-  // Explicit exact intent retains its incumbent carrier. Defaults/pools and a
-  // frozen Workflow baseline require current SOURCE facts before transport.
+  // Script worker intent requires current SOURCE declaration permission, even
+  // for an exact target. Exact ad-hoc intent retains its incumbent carrier.
   if (actionId !== 'projects.prepare' && (!choice || choice.kind === 'workers' && choice.destination.kind === 'pool'
+    || actionId === 'projects.script.run' && choice?.kind === 'workers'
     || context.executionRunTargetMachineId !== undefined)) {
     const executeRead = args.executeCanonicalAction;
     if (!executeRead) return failure('project_placement_unavailable');
@@ -62,7 +63,7 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
       return failure(unavailableReason(reason), details?.success ? details.data : undefined);
     };
     const execution = actionId === 'projects.compute.exec' ? 'portable'
-      : named ? named.execution ?? 'primary' : choice?.kind === 'workers' ? 'portable' : 'primary';
+      : named?.execution ?? 'primary';
     const resolved = resolveProjectExecutionChoiceV1({ execution, sourceMachineId: workspace.machineId,
       adHoc: actionId === 'projects.compute.exec', invocation: choice,
       ...(script?.selection.kind === 'named' ? { scriptName: script.selection.name } : {}),
@@ -72,10 +73,8 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
     if (resolved.status === 'refused') return failure(resolved.reason);
     if (resolved.choice.kind === 'primary') machineId = workspace.machineId;
     else {
-      const demands: readonly (ProjectMemoryDemandV1 | undefined)[] = ['memoryDemand' in parsed.data ? parsed.data.memoryDemand : undefined,
-        named?.memoryDemand, manifest?.workspace?.memoryDemand];
-      const memoryDemand = demands.reduce<ProjectMemoryDemandV1 | undefined>((largest, demand) =>
-        demand && (!largest || demand.bytes > largest.bytes) ? demand : largest, undefined);
+      const memoryDemand = resolveProjectMemoryDemandV1('memoryDemand' in parsed.data ? parsed.data.memoryDemand : undefined,
+        named?.memoryDemand, manifest?.workspace?.memoryDemand);
       const destination = resolved.choice.destination;
       if (destination.kind === 'pool') {
         if (destination.selection === 'ask') return failure('choice_required');
