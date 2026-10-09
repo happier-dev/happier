@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+
+import { ManagedResourceDispositionV1Schema } from "../machines/managed/managedDependencyV1.js";
 
 import {
   QualifiedConnectedAccountConfigurationTargetV4Schema,
@@ -30,6 +33,21 @@ function readFastifyStyleQueryValue(url: URL, name: string): unknown {
 }
 
 describe("qualified Connected Account V4 query codec", () => {
+  it("round-trips schema-validated managed resource disposition arrays", () => {
+    const schema = z.array(ManagedResourceDispositionV1Schema);
+    const dispositions = [{
+      managedId: "managed-credential",
+      expectedIntentRevision: 0,
+      responsibility: "manual",
+      expectedAllocation: "confirmed-absent",
+    }];
+    const encoded = encodeQualifiedConnectedAccountV4StructuredQueryValue(schema, dispositions);
+    expect(parseQualifiedConnectedAccountV4StructuredQueryValue(schema, encoded)).toEqual(dispositions);
+    expect(() => parseQualifiedConnectedAccountV4StructuredQueryValue(schema, JSON.stringify([
+      { ...dispositions[0], responsibility: "unknown" },
+    ]))).toThrow();
+  });
+
   it.each([
     ["service", service, QualifiedConnectedAccountServiceRefSchema],
     ["ref", ref, QualifiedConnectedAccountRefSchema],

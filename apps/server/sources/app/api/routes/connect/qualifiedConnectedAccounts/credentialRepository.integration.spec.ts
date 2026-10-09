@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
@@ -64,8 +66,66 @@ describe("qualified Connected Account credential repository", () => {
     });
 
     afterEach(async () => {
+        await db.managedMachine.deleteMany();
+        await db.machine.deleteMany();
         await db.serviceAccountToken.deleteMany();
         await db.account.deleteMany();
+    });
+
+    it("reviews retained managed resources for ordinary removal while emergency revoke remains unconditional", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const ref = { service, accountId: "retained-cloud-credential" };
+        const written = await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id, ref, expectedCredentialRevision: null, authenticationModeId: "api-key",
+            content: { t: "plain", v: { token: "private-provider-token" } }, metadata,
+        });
+        if (written.status !== "written") throw new Error("Expected fixture credential");
+        const controller = await db.machine.create({ data: {
+            id: "credential-retention-controller", accountId: account.id, metadata: '{"t":"plain","v":{}}', installationId: "credential-installation",
+        } });
+        const provider = { pluginId: "fixture.compute", localId: "cloud" };
+        const managed = await db.managedMachine.create({ data: {
+            homeId: "credential-review-home", custodianAccountId: account.id, controllerMachineId: controller.id,
+            controllerInstallationId: controller.installationId!, admittedActionRequestId: "credential-review-request", admittedInput: {},
+            launch: { provider, schemaVersion: 1, name: "Retained", choices: {}, credentials: [{
+                purpose: { consumer: provider, purpose: "compute" }, account: ref,
+            }] },
+            allocation: "bound", resource: { contributionRef: provider, schemaVersion: 1, value: { id: "native-credential" } },
+            retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false,
+            recovery: { reference: "native-credential", reason: "manual_recovery" },
+        } });
+        const remove = { accountId: account.id, ref, expectedCredentialRevision: written.credentialRevision, cleanupGroupReferences: true };
+        const review = await deleteQualifiedConnectedServiceCredential(remove);
+        expect(review).toMatchObject({ status: "managed_resources_review_required", resources: [{ managedId: managed.id,
+            resource: { value: { id: "native-credential" } }, recovery: { reference: "native-credential" } }] });
+        expect(JSON.stringify(review)).not.toContain("private-provider-token");
+        await expect(deleteQualifiedConnectedServiceCredential({ ...remove, reviewOnly: true,
+            managedResourceDispositions: [{ managedId: managed.id, expectedIntentRevision: 0, responsibility: "manual", expectedAllocation: 'bound',
+                expectedResource: { contributionRef: provider, schemaVersion: 1, value: { id: 'native-credential' } },
+                expectedRecovery: { reference: 'native-credential', reason: 'manual_recovery' } }],
+        })).resolves.toEqual({ status: "ready" });
+        expect(await readQualifiedConnectedServiceCredential({ accountId: account.id, ref })).toMatchObject({ status: "resolved", credential: { credentialRevision: written.credentialRevision } });
+        const app = createAuthenticatedTestApp();
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
+        await app.ready();
+        try {
+            const query = new URLSearchParams({ ref: JSON.stringify(ref), expectedCredentialRevision: written.credentialRevision,
+                cleanupGroupReferences: 'true', reviewOnly: 'true',
+                managedResourceDispositions: JSON.stringify([{ managedId: managed.id, expectedIntentRevision: 0, responsibility: 'manual', expectedAllocation: 'bound',
+                    expectedResource: { contributionRef: provider, schemaVersion: 1, value: { id: 'native-credential' } },
+                    expectedRecovery: { reference: 'native-credential', reason: 'manual_recovery' } }]),
+            });
+            const reviewed = await app.inject({ method: 'DELETE', url: `/v4/connect/qualified/credential?${query}`,
+                headers: { 'x-test-user-id': account.id } });
+            expect(reviewed.statusCode).toBe(200);
+            expect(reviewed.json()).toEqual({ status: 'ready' });
+            query.delete('reviewOnly'); query.delete('managedResourceDispositions'); query.set('emergencyRevoke', 'true');
+            const revoked = await app.inject({ method: 'DELETE', url: `/v4/connect/qualified/credential?${query}`,
+                headers: { 'x-test-user-id': account.id } });
+            expect(revoked.statusCode).toBe(200);
+            expect(revoked.json()).toEqual({ success: true });
+        } finally { await app.close(); }
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: managed.id } })).toMatchObject({ allocation: "bound" });
     });
 
     it("resolves only the opaque Connected Account record within its owning Account", async () => {
@@ -740,7 +800,7 @@ describe("qualified Connected Account credential repository", () => {
         );
     });
 
-    it("projects V4 health without rotating credential or configuration revisions", async () => {
+    it("projects and updates additive V4 stored metadata without echoing extras or rotating revisions", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
@@ -767,6 +827,18 @@ describe("qualified Connected Account credential repository", () => {
         ) {
             throw new Error("Expected configured credential create");
         }
+
+        const stored = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: account.id } });
+        await db.serviceAccountToken.update({ where: { id: stored.id }, data: { metadata: {
+            v: 4, storage: "stored_envelope_v1", credentialRevision: created.credentialRevision, future: true,
+            values: { ...metadata, accessToken: "must-not-echo", providerIdentity: { email: "operator@example.test", future: true } },
+            health: { v: 1, status: "connected", reconnectRequired: false, future: true },
+        } } });
+        await expect(readQualifiedConnectedServiceCredential({ accountId: account.id, ref })).resolves.toMatchObject({
+            status: "resolved", credential: { metadata: { ...metadata, providerIdentity: { email: "operator@example.test" } } },
+        });
+        const opened = await readQualifiedConnectedServiceCredential({ accountId: account.id, ref });
+        expect(JSON.stringify(opened)).not.toMatch(/future|must-not-echo/);
 
         await expect(mutateQualifiedConnectedServiceCredentialHealth({
             accountId: account.id,
@@ -795,6 +867,8 @@ describe("qualified Connected Account credential repository", () => {
                 configurationRevision: created.configurationRevision,
             }),
         ]);
+        const updated = await db.serviceAccountToken.findUniqueOrThrow({ where: { id: stored.id } });
+        expect(JSON.stringify(updated.metadata)).not.toMatch(/future|must-not-echo/);
     });
 
     it("rejects health mutation before changing credential metadata or publishing a profile change when Account currentness is inconsistent", async () => {

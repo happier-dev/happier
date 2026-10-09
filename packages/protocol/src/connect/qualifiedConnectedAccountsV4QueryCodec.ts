@@ -55,10 +55,9 @@ export function parseQualifiedConnectedAccountV4StructuredQueryValue<T>(
   if (
     decoded === null
     || typeof decoded !== "object"
-    || Array.isArray(decoded)
   ) {
     throw new Error(
-      "Qualified Connected Account structured query field must be a record",
+      "Qualified Connected Account structured query field must be an object or array",
     );
   }
   return schema.parse(decoded);
