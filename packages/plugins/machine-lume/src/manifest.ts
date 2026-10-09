@@ -1,4 +1,5 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import {
   defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
@@ -59,6 +60,7 @@ async function runtime(context: PluginInvocationContext) {
 
 export const LUME_MACHINE_PROVISIONER = {
   title: 'Lume', icon: 'server', resourceKind: 'lume-vm', schemaVersion: 1,
+  kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: LumeLaunchV1Schema.jsonSchema, resourceSchema: LumeResourceV1Schema.jsonSchema,
   platforms: ['darwin'], prerequisites: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }],
   billing: LUME_BILLING, retention: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -91,8 +93,8 @@ export const LUME_PLUGIN = definePlugin({
       async run(_input, context) {
         try {
           await context.services.exec.systemTools.resolve({ toolId: 'ssh-keyscan', purpose: 'Observe the native SSH host key', signal: context.signal });
-          return await (await runtime(context)).provider.check();
-        } catch (error) { return { available: false, code: errorCode(error) }; }
+          return machineCheckPresentation(await (await runtime(context)).provider.check());
+        } catch (error) { return machineCheckPresentation({ available: false, code: errorCode(error) }); }
       },
     },
     options: { ...defaults, hostAccess: [...defaults.hostAccess, registryAccess], title: 'Read Lume image and storage choices', dangerLevel: 'safe',

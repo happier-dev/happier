@@ -113,7 +113,7 @@ const lifecycleMessages = {
   ja: ['再開時にコールドスタートが必要な場合があります。重要なデータはボリュームに保存してください。', '停止するとルートファイルシステムがリセットされます。ボリュームは保持されます。'],
 } as const satisfies Record<keyof typeof FLY_CONFIGURATION_LABELS, readonly [string, string]>;
 
-export const FLY_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = Object.entries(FLY_CONFIGURATION_LABELS).map(([locale, labels]) => ({
+const CONFIGURATION_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = Object.entries(FLY_CONFIGURATION_LABELS).map(([locale, labels]) => ({
   locale,
   messages: {
     ...Object.fromEntries(Object.entries(labels).map(([id, value]) => [`machineFly.configure.${id}`, value])),
@@ -121,3 +121,37 @@ export const FLY_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = Object.en
     'machineFly.stop.rootfs': lifecycleMessages[locale as keyof typeof lifecycleMessages][1],
   },
 }));
+
+export const MACHINE_PRESENTATION_LABELS = {
+  "en": {"kind":"machine","description":"Machines with a persistent volume, billed while running.","ready":"Account connected","unavailable":"Account unavailable"},
+  "de": {"kind":"Maschine","description":"Maschinen mit dauerhaftem Volume, abgerechnet während des Betriebs.","ready":"Konto verbunden","unavailable":"Konto nicht verfügbar"},
+  "ru": {"kind":"машина","description":"Машины с постоянным томом и оплатой во время работы.","ready":"Аккаунт подключён","unavailable":"Аккаунт недоступен"},
+  "pl": {"kind":"maszyna","description":"Maszyny z trwałym woluminem, rozliczane podczas pracy.","ready":"Konto połączone","unavailable":"Konto niedostępne"},
+  "es": {"kind":"máquina","description":"Máquinas con volumen persistente, facturadas mientras funcionan.","ready":"Cuenta conectada","unavailable":"Cuenta no disponible"},
+  "fr": {"kind":"machine","description":"Des machines avec un volume persistant, facturées pendant leur fonctionnement.","ready":"Compte connecté","unavailable":"Compte indisponible"},
+  "it": {"kind":"macchina","description":"Macchine con volume persistente, fatturate durante l’esecuzione.","ready":"Account collegato","unavailable":"Account non disponibile"},
+  "pt": {"kind":"máquina","description":"Máquinas com volume persistente, cobradas enquanto funcionam.","ready":"Conta conectada","unavailable":"Conta indisponível"},
+  "ca": {"kind":"màquina","description":"Màquines amb volum persistent, facturades mentre funcionen.","ready":"Compte connectat","unavailable":"Compte no disponible"},
+  "zh-Hans": {"kind":"机器","description":"拥有持久卷、按运行时间计费的机器。","ready":"账户已连接","unavailable":"账户不可用"},
+  "zh-Hant": {"kind":"機器","description":"擁有持久磁碟區、按執行時間計費的機器。","ready":"帳戶已連接","unavailable":"帳戶不可用"},
+  "ja": {"kind":"マシン","description":"永続ボリュームを持ち、稼働中のみ課金されるマシン。","ready":"アカウント接続済み","unavailable":"アカウント利用不可"},
+} as const;
+
+export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_LABELS.en): PresentationLocalizedString {
+  return { key: 'machineFly.presentation.' + id, fallback: MACHINE_PRESENTATION_LABELS.en[id] };
+}
+
+/** Native check codes and their human vocabulary stay owned by this leaf. */
+export function machineCheckPresentation(result: MachineProvisionerCheckResultV1): MachineProvisionerCheckResultV1 {
+  const code = result.code;
+  const id = result.available ? 'ready' : code && Object.hasOwn(MACHINE_PRESENTATION_LABELS.en, code)
+    ? code as keyof typeof MACHINE_PRESENTATION_LABELS.en : 'unavailable';
+  return { ...result, status: result.status ?? machinePresentationLabel(id) };
+}
+
+export const FLY_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = CONFIGURATION_TRANSLATION_BUNDLES.map(bundle => ({
+  ...bundle, messages: { ...bundle.messages, ...Object.fromEntries(Object.entries(MACHINE_PRESENTATION_LABELS[bundle.locale as keyof typeof MACHINE_PRESENTATION_LABELS])
+    .map(([id, value]) => ['machineFly.presentation.' + id, value])) },
+}));
+import type { PluginLocalizedStringV2 as PresentationLocalizedString } from '@happier-dev/plugin-sdk/manifest';
+import type { MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';

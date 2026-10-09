@@ -11,9 +11,10 @@ import { launchPluginSurfaceAction } from '@/components/plugins/surfaces/launchP
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 type Provisioner = MachineProvisionersListResultV1['provisioners'][number];
-function provisionerMark(provisioner?: Provisioner) {
+function provisionerMark(provisioner?: Pick<Provisioner, 'contribution' | 'descriptor'>) {
     return <Icon name={resolvePluginContributedActionIconName(provisioner?.descriptor.icon)} size={28} />;
 }
 
@@ -21,10 +22,15 @@ function provisionerMark(provisioner?: Provisioner) {
 export function useManagedProvisionerPresentation(input: Readonly<{
     serverId: string; controller?: ManagedControllerV1;
     provisioner?: MachineProvisionersListResultV1['provisioners'][number];
+    provider?: Provisioner['contribution']; schemaVersion?: number;
 }>) {
     const projection = useDaemonMergedProjectionInputs({ serverId: input.serverId, machineId: input.controller?.machineId, enabled: !!input.controller });
     const uiProjection = React.useMemo(() => normalizePluginUiProjection(projection.inputs?.pluginProjectionV2 ?? null), [projection.inputs?.pluginProjectionV2]);
     const locale = getPreferredLanguage();
+    const projected = input.provider ? projection.inputs?.pluginProjectionV2?.familiesById.machineProvisioners?.entriesById[
+        buildQualifiedPluginContributionKey(input.provider)] : undefined;
+    const provisioner = input.provisioner ?? (projected && projected.definition.schemaVersion === input.schemaVersion
+        ? { contribution: { pluginId: projected.pluginId, localId: projected.definition.id }, descriptor: projected.definition } : undefined);
     const localized = React.useMemo(() => createPluginLocalizedTextResolver({
         projection: uiProjection,
         locale,
@@ -44,7 +50,9 @@ export function useManagedProvisionerPresentation(input: Readonly<{
         });
         return result.outcome;
     };
-    return { localized, title: input.provisioner ? localized(input.provisioner.contribution.pluginId, input.provisioner.descriptor.title) : null,
-        mark: provisionerMark(input.provisioner), markFor: provisionerMark,
+    return { localized, title: provisioner ? localized(provisioner.contribution.pluginId, provisioner.descriptor.title) : null,
+        kindTitle: provisioner?.descriptor.kindTitle ? localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) : null,
+        description: provisioner?.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : null,
+        mark: provisionerMark(provisioner), markFor: provisionerMark,
         projection: uiProjection, projectionReady: projection.phase === 'ready', repair };
 }

@@ -1,4 +1,5 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
@@ -37,6 +38,7 @@ async function directProvider(context: PluginInvocationContext) {
 
 export const CRABBOX_MACHINE_PROVISIONER = {
   title: 'Crabbox', icon: 'server', resourceKind: 'crabbox-lease', schemaVersion: 1,
+  kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: CrabboxLaunchV1Schema.jsonSchema, resourceSchema: CrabboxResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
   billing: { location: 'cloud', stoppedBilling: 'unknown' }, retention: { supportedIntents: ['delete'] },
@@ -104,10 +106,10 @@ export const CRABBOX_PLUGIN = definePlugin({
     check: { ...defaults, hostAccess: [processAccess], title: 'Check Crabbox availability', dangerLevel: 'safe',
       inputSchema: CRABBOX_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
-        try { await inspectedProvider(context); return { available: true }; }
+        try { await inspectedProvider(context); return machineCheckPresentation({ available: true }); }
         catch {
-          try { await directProvider(context); return { available: true }; }
-          catch { return { available: false, code: 'credential_unavailable' }; }
+          try { await directProvider(context); return machineCheckPresentation({ available: true }); }
+          catch { return machineCheckPresentation({ available: false, code: 'credential_unavailable' }); }
         }
       } },
     options: { ...defaults, title: 'List Crabbox native routes', dangerLevel: 'safe',

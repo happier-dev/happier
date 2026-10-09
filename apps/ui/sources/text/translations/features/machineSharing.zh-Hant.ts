@@ -3,7 +3,7 @@ export const machineSharing = createMachineSharingTranslations({
     terminals: { projectEmpty: '在此專案中開啟終端。', opening: '正在開啟終端。', sharedOsLead: '此終端以 {machine} 的作業系統使用者身分執行。', sharedOsDetail: '該使用者可以讀取本機憑證和加密金鑰。建議使用團隊專用機器進行共享工作。', denied: '你已無權存取此終端。', rootDenied: '此工作區無法用於終端。', offline: '此機器離線。正在顯示最後已知的輸出。', openUnknown: '終端可能已開啟。請先檢查現有終端，再重試。', unavailable: '此機器不支援終端。', failed: '無法開啟此終端。' },
     revoked: '{owner} 已停止共享 {machine}。你在這裡執行中的工作正在停止。工作階段仍保留在歷史記錄中，但你無法在這裡開始新工作。',
     recipientEncryptionIncompatible: '這台端對端加密機器需要使用端對端加密帳戶。',
-    destinations: { yours: '你的機器', created: '由 Happier 建立', shared: '共享給你 · {team}', owner: '{owner} 的機器 · {platform}', pendingKey: '正在等候安全存取', sharedPurposeUnsupported: '此工作需要使用你自己的機器。' },
+    destinations: { yours: '你的機器', created: '由 Happier 建立', shared: '共享給你 · {team}', sharedWithoutOwner: '共享給你', owner: '{owner} 的機器 · {platform}', pendingKey: '正在等候安全存取', sharedPurposeUnsupported: '此工作需要使用你自己的機器。' },
     title: '共享', description: '新增的人員和團隊可以在 {machine} 的工作區啟動工作階段、執行指令碼和開啟終端機。',
     trustedOsLead: '擁有 {machine} 終端機或代理存取權的人會以你的作業系統使用者身分執行。',
     trustedOsDetail: '他們可以取得本機憑證以及帳戶加密金鑰（如有）。Happier API 不會讀取或匯出擁有者的憑證或金鑰，但共享終端機的輸出可能包含這些內容。建議共享團隊專用機器。',

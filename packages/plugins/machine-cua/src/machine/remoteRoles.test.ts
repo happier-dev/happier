@@ -6,6 +6,7 @@ import type { PluginExecSpawnRequest, PluginProcessResult } from '@happier-dev/p
 import { CUA_PLUGIN } from '../manifest.js';
 import type { ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { connectedAccountRuntime } from './remoteConnection.js';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 
 const managedId = 'ac2c7f10-2a41-4af1-88ac-d64eeb18bdc7';
 const name = `happier-${managedId}`;
@@ -112,6 +113,15 @@ async function harness(options: { lostCreateReply?: boolean; cleanupFailure?: 'r
 }
 
 describe('activated Cua remote contributions', () => {
+    it('admits all four native provisioners with localized kind and purpose at the public authoring boundary', () => {
+        expect(parsePluginManifest(CUA_PLUGIN.manifest)).toMatchObject({ ok: true });
+        const provisioners = CUA_PLUGIN.manifest.contributes.machineProvisioners ?? [];
+        expect(provisioners.map(provisioner => provisioner.id).sort()).toEqual(['byoc', 'fleet', 'local-sandbox', 'local-space']);
+        for (const provisioner of provisioners) {
+            expect(provisioner.kindTitle).toMatchObject({ key: expect.stringMatching(/^machineCua\.presentation\./) });
+            expect(provisioner.description).toMatchObject({ key: expect.stringMatching(/^machineCua\.presentation\./) });
+        }
+    });
     it('selects native setup from revision-tracked configuration, never a rotating credential field', async () => {
         const context = { configuration: { values: { nativeHome: '/native/selected' } },
             credentials: { async get(key: string) { return key === 'native-home' ? '/native/different' : null; } } } as unknown as ConnectedAccountReadContext;
@@ -122,6 +132,7 @@ describe('activated Cua remote contributions', () => {
     });
     it('acquires and privately bootstraps exact BYOC compute with both captured purposes and deletes only that created identity', async () => {
         const h = await harness();
+        expect(await h.invoke('byoc-check', {})).toMatchObject({ available: true, status: { key: 'machineCua.presentation.ready' } });
         const options = await h.invoke('byoc-options', { cloud: 'aws' });
         expect(options).toMatchObject({ choices: [{ launch: byocLaunch, nativeFacts: {
             size: { id: 't3.medium' }, image: { id: 'linux' }, location: { id: 'us-west-2' },
@@ -143,6 +154,7 @@ describe('activated Cua remote contributions', () => {
     });
     it('keeps a pending Fleet claim, binds by reads without renewal, and releases the claim and its private Secret while retaining the pool', async () => {
         const h = await harness();
+        expect(await h.invoke('fleet-check', {})).toMatchObject({ available: true, status: { key: 'machineCua.presentation.ready' } });
         expect(await h.invoke('fleet-options', { namespace: 'pool', nativeLease: fleetLaunch.nativeLease })).toMatchObject({ choices: [{ nativeFacts: {
             size: { cpuCores: 4 }, image: { id: 'image' }, location: { id: 'pool' },
         } }] });

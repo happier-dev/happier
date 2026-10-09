@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ActionContribution } from '@happier-dev/plugin-sdk/actions';
@@ -57,6 +58,7 @@ function bytes(value: string) {
 }
 export const MACHINE_PROVISIONER = {
   title: 'Fly Machines', icon: 'server', resourceKind: 'fly-machine', schemaVersion: 1,
+  kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: FlyLaunchV1Schema.jsonSchema, resourceSchema: FlyResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
   billing, retention: { supportedIntents: ['start', 'stop', 'resume', 'suspend', 'delete'] },
@@ -91,7 +93,7 @@ export const PLUGIN = definePlugin({
     check: { ...defaults, title: 'Check Fly API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
-        return await runtime(context).check({ organizationSlug: await organization(context) });
+        return machineCheckPresentation(await runtime(context).check({ organizationSlug: await organization(context) }));
       },
     },
     options: { ...defaults, title: 'Discover Fly options', dangerLevel: 'safe',

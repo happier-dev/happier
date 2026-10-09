@@ -16,6 +16,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { View } from 'react-native';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), navigate: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -54,7 +55,8 @@ describe('mounted provisioner repair', () => {
         const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
         await harness.addHome({ name: 'Other', serverUrl: 'https://other.example', serverIdentityId: 'srv_other', accountId: 'other' });
         const { storage } = await import('@/sync/domains/state/storage');
-        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'controller', installationId: 'installation' })] } });
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'controller', installationId: 'installation', activeAt: Date.now() })] },
+            machineListStatusByServerId: { [serverId]: 'idle' } });
         const contribution = { pluginId: 'custom.compute', localId: 'native' };
         const action = { pluginId: 'custom.compute', localId: 'repair' };
         const provisioner: MachineProvisionersListResultV1['provisioners'][number] = { contribution, occurrenceId: 'native-occurrence', credentialPurposes: [], descriptor: {
@@ -105,15 +107,10 @@ describe('mounted provisioner repair', () => {
         const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const { ModalProvider } = await import('@/modal');
-        const screen = await renderScreen(<ModalProvider><ProjectionReadiness serverId={serverId} />{surface === 'picker' ? <MachineProvisionerPicker serverId={serverId} />
+        const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><ProjectionReadiness serverId={serverId} />{surface === 'picker' ? <MachineProvisionerPicker serverId={serverId} />
             : <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
-                initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ModalProvider>);
-        if (surface === 'picker') {
-            await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.controller:controller')
-                || screen.findByTestId('managed-picker.unavailable')).not.toBeNull());
-            expect(screen.findByTestId('managed-picker.controller:controller')).not.toBeNull();
-            await act(async () => screen.pressByTestId('managed-picker.controller:controller'));
-        }
+                initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ListPresentationProvider></ModalProvider>);
+        // The picker preselects the Home's one controller; the configurator was handed it.
         const card = surface === 'picker' ? `managed-picker.provisioners.local.${buildQualifiedPluginContributionKey(contribution)}.action`
             : 'managed-config.repair:systemTool:native-vm';
         // A sent check is not a settled surface. Press only the actual declared repair, not its prior Choose action.

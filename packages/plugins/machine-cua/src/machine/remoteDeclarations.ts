@@ -1,5 +1,5 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { PluginConnectedAccountDefinition, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, type ConnectedAccountAuthenticationModeRuntime, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema, MachineProvisionerNativeExecResultV1Schema,
     MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema,
     MachineProvisionerPutFileResultV1Schema, type MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -8,6 +8,7 @@ import { ByocLaunchV1Schema, ByocResourceV1Schema, ByocNativeOperationV1Schema, 
 import { ByocProvisionerSchemas, ByocReconciliationSchemas, FleetProvisionerSchemas, FleetReconciliationSchemas,
     byocReconciliationOperation, fleetReconciliationOperation } from './remoteProvisionerSchemas.js';
 import type { CuaRemoteRole } from './remoteProvisioner.js';
+import { machinePresentationLabel, machineCheckPresentation } from '../ui/translations.js';
 
 const cloudPurpose = 'cloud-account', cuaPurpose = 'cua-account';
 export function remoteRoles(id: 'byoc' | 'fleet') {
@@ -19,8 +20,8 @@ export function remoteRoles(id: 'byoc' | 'fleet') {
         (await import('./remoteProvisioner.js')).invokeCuaRemoteRole(id, role, input, context);
     return {
         check: { ...defaults, title: `Check Cua ${id} access`, dangerLevel: 'safe' as const, inputSchema: schemas.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
-            async run(input: unknown, context: PluginInvocationContext) { try { return MachineProvisionerCheckResultV1Schema.parse(await run('check', input, context)); }
-                catch { return { available: false, code: 'cua_connection_unavailable' }; } } },
+            async run(input: unknown, context: PluginInvocationContext) { try { return machineCheckPresentation(MachineProvisionerCheckResultV1Schema.parse(await run('check', input, context))); }
+                catch { return machineCheckPresentation({ available: false, code: 'cua_connection_unavailable' }); } } },
         options: { ...defaults, title: `Read Cua ${id} native choices`, dangerLevel: 'safe' as const,
             inputSchema: id === 'byoc' ? ByocOptionsQueryV1Schema : FleetOptionsQueryV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { return MachineProvisionerOptionsResultV1Schema.parse(await run('options', input, context)); } },
@@ -63,6 +64,8 @@ export function remoteRoles(id: 'byoc' | 'fleet') {
 export function remoteProvisioner(id: 'byoc' | 'fleet'): MachineProvisionerAuthorDefinitionV1 {
     const fleet = id === 'fleet';
     return { title: fleet ? 'Cua Fleet' : 'Cua BYOC', icon: 'server', resourceKind: fleet ? 'cua-fleet-claim' : 'cua-byoc-resource', schemaVersion: 1,
+        kindTitle: machinePresentationLabel(fleet ? 'fleetKind' : 'byocKind'),
+        description: machinePresentationLabel(fleet ? 'fleetDescription' : 'byocDescription'),
         launchSchema: (fleet ? FleetLaunchV1Schema : ByocLaunchV1Schema).jsonSchema,
         resourceSchema: (fleet ? FleetResourceV1Schema : ByocResourceV1Schema).jsonSchema,
         platforms: ['darwin', 'linux', 'win32'], prerequisites: fleet ? [] : [{ kind: 'managedDependency', id: 'cua-cli' }],
@@ -85,7 +88,7 @@ function lazyAccount(kind: 'cloud' | 'cua'): ConnectedAccountRuntime {
             const mode = (await runtime()).authentication.modes.token;
             if (mode.kind !== 'manual') throw new Error('cua_auth_mode_mismatch');
             return mode.complete(input, context, options);
-        } } } : {}) } },
+        } } satisfies Extract<ConnectedAccountAuthenticationModeRuntime, { kind: 'manual' }> } : {}) } },
         async status(context, options) { return (await runtime()).status(context, options); },
         async refresh(context, options) { return (await runtime()).refresh(context, options); },
         async revoke(context, options) { return (await runtime()).revoke(context, options); },
@@ -102,5 +105,5 @@ export const remoteAccounts = {
         fields: [{ id: 'token', title: 'Fleet API token', schema: { type: 'string', minLength: 1 }, secret: true }],
         configuration: { scope: 'account' as const, changeBehavior: 'reconnect' as const, fields: [{ id: 'endpoint', title: 'Fleet gateway URL',
             semantic: 'connectedAccountBase' as const, schema: { type: 'string', minLength: 1 }, required: true, secret: false }] },
-    }] } }, runtime: lazyAccount('cua') },
+    } satisfies Extract<PluginConnectedAccountDefinition['declaration']['authentication']['modes'][number], { kind: 'manual' }>] } }, runtime: lazyAccount('cua') },
 };

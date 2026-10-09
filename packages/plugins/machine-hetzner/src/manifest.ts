@@ -1,4 +1,5 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
@@ -29,6 +30,7 @@ function priceLabel(id: keyof typeof HETZNER_PRICE_LABELS.en) {
 
 export const MACHINE_PROVISIONER = {
   title: 'Hetzner', icon: 'server', resourceKind: 'hetzner-server', schemaVersion: 1,
+  kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: HetznerLaunchV1Schema.jsonSchema, resourceSchema: HetznerResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],
   billing, retention: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -71,7 +73,7 @@ export const PLUGIN = definePlugin({
     },
     check: { ...defaults, title: 'Check Hetzner API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
-      async run(_input, context) { try { return await (await runtime(context)).check(); } catch { return { available: false, code: 'provider_unavailable' }; } },
+      async run(_input, context) { try { return machineCheckPresentation(await (await runtime(context)).check()); } catch { return machineCheckPresentation({ available: false, code: 'provider_unavailable' }); } },
     },
     options: { ...defaults, title: 'Discover Hetzner options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,

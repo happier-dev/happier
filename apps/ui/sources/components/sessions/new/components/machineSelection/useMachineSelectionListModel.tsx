@@ -9,7 +9,7 @@ import type {
 import { t } from '@/text';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
-import { buildMachineOwnershipGroups, describeMachineSharedOwnership } from '@/sync/domains/machines/machineOwnershipGroups';
+import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
 import type {
     ServerScopedMachineGroup,
     ServerScopedMachinePresentation,
@@ -170,6 +170,8 @@ export type BuildMachineSelectionListModelParams<TMachine extends MachineDisplay
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
     /** Commits local reviewed intent only; explicit admission owns resource acquisition. */
     onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
+    /** Opens the Machines presets (the managed group's trailing "Presets" destination). */
+    onOpenManagedPresets?: () => void;
     favoriteGroupPlacement?: MachineSelectionFavoriteGroupPlacement;
     testIdPrefix?: string;
     disableOfflineMachines?: boolean;
@@ -284,7 +286,7 @@ function bucketTitle(bucketId: MachineSelectionBucketId): string {
         case 'all':
             return t('newSession.machinePicker.allTitle');
         case 'shared':
-            return t('machines.destinations.shared', { team: t('common.unknown') });
+            return describeMachineSharedGroupTitle(undefined);
     }
 }
 
@@ -349,6 +351,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         temporaryComputers: params.temporaryComputers,
         managedMachines: params.managedMachines,
         onSelectManagedMachine: params.onSelectManagedMachine,
+        onOpenManagedPresets: params.onOpenManagedPresets,
         onRefreshMachines: params.onRefreshMachines,
         onRefreshPools: params.onRefreshPools,
         onOpenPoolSettings: params.onOpenPoolSettings,
@@ -364,6 +367,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             temporaryComputers: params.temporaryComputers,
             managedMachines: params.managedMachines,
             onSelectManagedMachine: params.onSelectManagedMachine,
+            onOpenManagedPresets: params.onOpenManagedPresets,
             onRefreshMachines: params.onRefreshMachines,
             onRefreshPools: params.onRefreshPools,
             onOpenPoolSettings: params.onOpenPoolSettings,
@@ -393,6 +397,9 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     }, []);
     const dismissPoolSelection = React.useCallback(() => {
         handlersRef.current.onDismissPoolSelection?.();
+    }, []);
+    const openManagedPresets = React.useCallback(() => {
+        handlersRef.current.onOpenManagedPresets?.();
     }, []);
     const selectManagedMachine = React.useCallback((offerId: string) => {
         if (handlersRef.current.purpose !== 'session') return;
@@ -440,6 +447,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     const hasOpenPoolSettings = typeof params.onOpenPoolSettings === 'function';
     const hasDismissPoolSelection = typeof params.onDismissPoolSelection === 'function';
     const hasSelectManagedMachine = typeof params.onSelectManagedMachine === 'function';
+    const hasOpenManagedPresets = typeof params.onOpenManagedPresets === 'function';
 
     return React.useMemo(() => {
         const inputPlaceholder = params.showSearch
@@ -597,12 +605,17 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 kind: 'static',
                 id: 'managed-machines',
                 title: t('newSession.managedMachine.title'),
+                ...(hasOpenManagedPresets ? { action: {
+                    label: t('machinePresets.short'), onPress: openManagedPresets,
+                    testID: params.testIdPrefix ? `${params.testIdPrefix}-managed-presets` : undefined,
+                } } : {}),
                 options: managedMachines.map((offer) => ({
                     id: offer.id,
                     testID: params.testIdPrefix ? `${params.testIdPrefix}-${offer.id}` : undefined,
                     label: offer.title,
                     subtitle: offer.unavailableText ?? offer.subtitle,
-                    icon: <Icon name="desktop" size={24} color={theme.colors.text.secondary} />,
+                    // A preset reads as a saved recipe; "One-off machine…" as making a new one.
+                    icon: <Icon name={offer.kind === 'one-off' ? 'plus' : 'stack'} size={24} color={theme.colors.text.secondary} />,
                     disabled: offer.disabled === true || (offer.draft
                         ? !hasSelectManagedMachine
                         : !offer.onSelect),
@@ -818,7 +831,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 kind: 'static',
                 id: bucket.key ?? bucket.id,
                 title: bucket.id === 'shared'
-                    ? t('machines.destinations.shared', { team: bucket.custodian?.displayName || t('common.unknown') })
+                    ? describeMachineSharedGroupTitle(bucket.custodian)
                     : params.sectionTitles?.[bucket.id] ?? bucketTitle(bucket.id),
                 options: bucket.machines.map((machine) => {
                     const availability = resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject);
@@ -956,8 +969,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 ? ownershipGroups.map((ownership) => ({
                     kind: 'static',
                     id: `server:${group.serverId}:${ownership.key}`,
-                    title: `${group.serverName} · ${ownership.custodian
-                        ? t('machines.destinations.shared', { team: ownership.custodian.displayName })
+                    title: `${group.serverName} · ${ownership.key.startsWith('shared:')
+                        ? describeMachineSharedGroupTitle(ownership.custodian)
                         : t('machines.destinations.yours')}`,
                     count: ownership.machines.length,
                     options: ownership.machines.flatMap((machine) => {
@@ -1021,6 +1034,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         selectScopedMachine,
         selectPool,
         selectManagedMachine,
+        openManagedPresets,
         selectTemporaryComputer,
         params.recentMachines,
         params.resolveMachineAvailability,
@@ -1042,6 +1056,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         params.managedMachines,
         params.selectedManagedMachine,
         hasSelectManagedMachine,
+        hasOpenManagedPresets,
         pendingExpiry,
         theme.colors.text.secondary,
     ]);

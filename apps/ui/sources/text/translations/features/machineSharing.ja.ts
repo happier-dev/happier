@@ -3,7 +3,7 @@ export const machineSharing = createMachineSharingTranslations({
     terminals: { projectEmpty: 'このプロジェクトでターミナルを開きます。', opening: 'ターミナルを開いています。', sharedOsLead: 'このターミナルは{machine}のOSユーザーとして実行されます。', sharedOsDetail: 'そのユーザーはローカルの認証情報や暗号化キーを読み取れます。共有作業にはチーム専用のマシンを使用してください。', denied: 'このターミナルへのアクセス権がなくなりました。', rootDenied: 'このワークスペースではターミナルを利用できません。', offline: 'このマシンはオフラインです。最後に取得した出力を表示しています。', openUnknown: 'ターミナルが開かれた可能性があります。再試行する前に既存のターミナルを確認してください。', unavailable: 'このマシンではターミナルを利用できません。', failed: 'このターミナルを開けませんでした。' },
     revoked: '{owner} が {machine} の共有を停止しました。ここで実行中の作業は停止処理中です。セッションは履歴に残りますが、ここで新しい作業は開始できません。',
     recipientEncryptionIncompatible: 'このエンドツーエンド暗号化されたマシンには、エンドツーエンド暗号化されたアカウントが必要です。',
-    destinations: { yours: '自分のマシン', created: 'Happier で作成', shared: '共有されたマシン · {team}', owner: '{owner} のマシン · {platform}', pendingKey: '安全なアクセスを準備中', sharedPurposeUnsupported: 'この作業には自分のマシンが必要です。' },
+    destinations: { yours: '自分のマシン', created: 'Happier で作成', shared: '共有されたマシン · {team}', sharedWithoutOwner: '共有されたマシン', owner: '{owner} のマシン · {platform}', pendingKey: '安全なアクセスを準備中', sharedPurposeUnsupported: 'この作業には自分のマシンが必要です。' },
     title: '共有', description: '追加したユーザーやチームは、{machine} のワークスペースでセッションを開始し、スクリプトを実行し、ターミナルを開けます。',
     trustedOsLead: '{machine} のターミナルやエージェントにアクセスできる人は、あなたのOSユーザーとして操作します。',
     trustedOsDetail: 'ローカル認証情報や、存在する場合はアカウント暗号化キーを取得できます。Happier API は所有者の認証情報やキーを読み取ったりエクスポートしたりしませんが、共有シェルの出力に含まれる場合があります。チーム専用マシンの共有を推奨します。',

@@ -3,6 +3,7 @@ import { buildManagedConfigurationReceipt } from './managedConfigurationPresenta
 import { ValidatedLaunchSnapshotV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
+import { formatProviderAmount, formatPriceUnit } from './managedMachineDisplay';
 
 const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Original guest', choices: { cpu: 2 } };
 const reviewedFacts = { launch: { ...launch, name: 'Unrelated later name' }, controller: { machineId: 'original-host', installationId: 'installation' },
@@ -10,6 +11,14 @@ const reviewedFacts = { launch: { ...launch, name: 'Unrelated later name' }, con
     retentionCapabilities: { supportedIntents: ['delete' as const] }, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
     prices: [{ amount: '0.0119', currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 }] };
 describe('one managed configuration receipt projection', () => {
+    it('formats stopped compute and attachment charges through the same native price presenter', () => {
+        const charges = [reviewedFacts.prices[0]!, { amount: '0.04', currency: 'USD', unit: 'GiB-month', source: 'volume', observedAt: 20 }];
+        const receipt = buildManagedConfigurationReceipt({ launch, providerTitle: 'Compute', reviewedFacts: { ...reviewedFacts,
+            billing: { ...reviewedFacts.billing, storageCharges: charges } } });
+        expect(receipt.facts.find(fact => fact.id === 'stopped-storage')?.value).toBe(t('managedMachines.billing.stopped', {
+            charges: charges.map(price => `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`).join(' · '),
+        }));
+    });
     it('discloses each retained credential purpose and captured controller with explicit unavailable Account names and no opaque IDs', () => {
         const selected = ValidatedLaunchSnapshotV1Schema.parse({ ...launch, credentials: [
             { purpose: { consumer: launch.provider, purpose: 'provision' }, account: { service: { pluginId: 'custom.accounts', localId: 'compute' }, accountId: 'opaque-work-id' } },

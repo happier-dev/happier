@@ -2,7 +2,7 @@ import type * as React from 'react';
 import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
-import type { ManagedReceiptCost } from './managedMachineDisplay';
+import { formatProviderAmount, formatPriceUnit, type ManagedReceiptCost } from './managedMachineDisplay';
 import type { ManagedLocalResourceFactsV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { formatByteCapacity } from '@/utils/files/formatByteSize';
 import type { MachineRetentionOverrideV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
@@ -89,7 +89,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
             }) });
         }
         if (facts.billing.storageCharges?.length) rows.push({ id: 'stopped-storage', label: t('managedRetention.keepIt'),
-            value: t('managedMachines.billing.stopped', { charges: facts.billing.storageCharges.map(price => `${price.amount} ${price.currency} / ${price.unit}`).join(' · ') }) });
+            value: t('managedMachines.billing.stopped', { charges: facts.billing.storageCharges.map(price => `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`).join(' · ') }) });
     }
     else if (input.presetPolicy && !input.created) {
         rows.push({ id: 'retention', label: t('managedRetention.keepIt'),

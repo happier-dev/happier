@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { machinePresentationLabel, machineCheckPresentation, CUA_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
     MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
@@ -43,8 +44,8 @@ function roles(id: CuaLocalProvisionerId) {
             inputSchema: schemas.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
             async run(_input: Readonly<Record<string, never>>, context: PluginInvocationContext) {
                 const requirement = { kind: 'managedDependency' as const, id: { pluginId, localId: dependencyId } };
-                try { return { ...await (await provider(id, context)).check(), prerequisites: [{ requirement, status: 'available' as const }] }; }
-                catch { return { available: false, code: 'cua_native_unavailable', prerequisites: [{ requirement, status: 'unavailable' as const }] }; }
+                try { return machineCheckPresentation({ ...await (await provider(id, context)).check(), prerequisites: [{ requirement, status: 'available' as const }] }); }
+                catch { return machineCheckPresentation({ available: false, code: 'cua_native_unavailable', prerequisites: [{ requirement, status: 'unavailable' as const }] }); }
             } },
         options: { ...defaults, title: 'Read Cua local image and runtime choices', dangerLevel: 'safe' as const,
             inputSchema: CuaLocalOptionsQueryV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
@@ -121,6 +122,8 @@ function provisioner(id: CuaLocalProvisionerId): MachineProvisionerAuthorDefinit
     const prefix = id === 'local-space' ? 'space' : 'sandbox';
     return { title: id === 'local-space' ? 'Cua local Space' : 'Cua local sandbox', icon: 'server',
         resourceKind: id === 'local-space' ? 'cua-local-space' : 'cua-local-sandbox', schemaVersion: 1,
+        kindTitle: machinePresentationLabel(id === 'local-space' ? 'spaceKind' : 'kind'),
+        description: machinePresentationLabel(id === 'local-space' ? 'spaceDescription' : 'description'),
         launchSchema: CuaLocalLaunchV1Schema.jsonSchema, resourceSchema: CuaLocalResourceV1Schema.jsonSchema,
         platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'managedDependency', id: dependencyId }],
         billing: { location: 'local', stoppedBilling: 'not-billed' },
@@ -147,6 +150,7 @@ export const CUA_PLUGIN = definePlugin({
     managedDependencies: { [dependencyId]: { id: dependencyId, title: 'Cua', executable: 'cua',
         description: 'User-installed native Cua CLI; native components retain their own license and runtime prerequisites.',
         sources: [{ kind: 'system', executableNames: ['cua'], versionArguments: ['--version'] }] } },
+    ui: { translations: CUA_UI_TRANSLATION_BUNDLES },
     machineProvisioners: { 'local-sandbox': provisioner('local-sandbox'), 'local-space': provisioner('local-space'),
         byoc: remoteProvisioner('byoc'), fleet: remoteProvisioner('fleet') },
     actions: {

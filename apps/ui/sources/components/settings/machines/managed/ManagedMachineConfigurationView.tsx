@@ -41,15 +41,17 @@ import type { MachinePresetCollectionOptions, MachinePresetCollectionSettledResu
 import { useMachinePresetQuery, isMachinePresetAccessLost } from './useMachinePresets';
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
-import { ManagedMachineStateRow } from './ManagedMachineStateRow';
+import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
+import { useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, describeLocalHeadroom, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { MachineEnvironmentSection } from './MachineEnvironmentSection';
+import { ManagedFieldRow } from './MachinePresetDetail';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice,
     managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, setManagedConfiguratorCredentials, managedConfiguratorCredentialSelections,
     type ManagedConfiguratorDraft } from './managedConfiguratorModel';
-import { describeRetention, retentionCategoryTitle } from './managedRetentionPresentation';
+import { describeRetentionConsequence, retentionCategoryTitle } from './managedRetentionPresentation';
 import { countryName, formatProviderAmount, formatPriceUnit } from './managedMachineDisplay';
 import { ManagedImagePreview, useManagedImagePreviews } from './useManagedImagePreviews';
 import { ManagedSizeTable, ManagedImageTiles, ManagedLocationGroup } from './ManagedChoiceSections';
@@ -59,6 +61,11 @@ import { createManagedMachineSelectionDraft, type ManagedMachineSelectionDraft }
 import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatRetentionDuration } from './managedRetentionPresentation';
+
+/** The common simultaneous limits offered in one tap; any other positive number stays one choice away. */
+const LIMIT_CHOICES: readonly number[] = [1, 2, 3, 4, 5, 10];
+const MORE_TEAMS = '__more-teams';
+const OTHER_LIMIT = '__other-limit';
 
 export type ManagedMachineConfigurationViewProps = Readonly<{
     serverId: string; provisioner: string; presetId?: string; presetOnly?: boolean; initialController?: ManagedControllerV1;
@@ -77,8 +84,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const [draft, setDraft] = React.useState<ManagedConfiguratorDraft | null>(null);
     const [preset, setPreset] = React.useState<ManagedMachinePresetV1 | null>(null);
     const loadedPreset = React.useRef<ManagedMachinePresetV1 | null>(null);
-    const [selectedController, setSelectedController] = React.useState(props.initialController);
-    const requestedController = draft?.controller ?? selectedController ?? preset?.controller;
+    const [busy, setBusy] = React.useState(false);
+    // "Managed from" is the page's scope: the header chip, starting on the handed-off or preset controller.
+    const scope = useManagedControllerScope({ serverId: props.serverId, preferred: props.initialController ?? preset?.controller,
+        disabled: busy, testIDPrefix: 'managed-config.controller',
+        onSelect: React.useCallback((next: ManagedControllerV1) => setDraft(current => current
+            ? { ...current, controller: next, check: undefined, optionStatus: 'loading' } : current), []) });
+    const requestedController = draft?.controller ?? scope.controller;
     const catalogController = requestedController && machines.some(machine => machine.id === requestedController.machineId
         && machine.installationId === requestedController.installationId) ? requestedController : undefined;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, catalogController);
@@ -86,8 +98,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const [teamId, setTeamId] = React.useState('');
     const [limit, setLimit] = React.useState<number | undefined>();
     const [error, setError] = React.useState<string | null>(null);
-    const [busy, setBusy] = React.useState(false);
-    const [saved, setSaved] = React.useState(false);
+    const [saved, setSaved] = React.useState<Readonly<{ id: string; name: string; serverId: string }> | null>(null);
     const [readRevision, retry] = React.useReducer(value => value + 1, 0);
     const approval = useActionApprovalContinuation({ serverId: props.serverId,
         scopeKey: JSON.stringify([props.serverId, catalog.binding?.accountId, props.provisioner]), onExecuted: () => {} });
@@ -149,7 +160,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     }, []);
     const clearProtectedPreset = React.useCallback((code: string) => {
         retirePending(); reviewed.current = null; loadedPreset.current = null;
-        setDraft(null); setPreset(null); setSelectedController(undefined); setLimit(undefined); setSaved(false); setError(code);
+        setDraft(null); setPreset(null); setLimit(undefined); setSaved(null); setError(code);
     }, [retirePending]);
     const readPreset = React.useMemo(() => presetClient && catalog.homeId && props.presetId
         ? async (options: MachinePresetCollectionOptions<ManagedMachinePresetV1>): Promise<MachinePresetCollectionSettledResult<ManagedMachinePresetV1>> => {
@@ -297,7 +308,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const completedSave = (value: PresetMutationResultV1) => {
         if (!activeBinding?.isCurrent()) return;
         setBusy(false);
-        if (value.kind === 'saved') { setSaved(true); setError(null); if (props.presetOnly) router.replace(`/settings/machines/presets/${encodeURIComponent(value.preset.id)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never); }
+        if (value.kind === 'saved') { setSaved({ id: value.preset.id, name: value.preset.name, serverId: activeBinding.serverId }); setError(null); if (props.presetOnly) router.replace(`/settings/machines/presets/${encodeURIComponent(value.preset.id)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never); }
         else if (value.kind === 'refused' && props.presetId && isMachinePresetAccessLost(value.code)) presetQuery.withdraw(value.code);
         else setError(value.kind === 'conflict' ? 'conflict' : value.code);
     };
@@ -398,11 +409,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             ...(nativeExpiry ? { nativeExpiry: t('managedRetention.nativeExpiry', { provider: title,
                 time: nativeExpiry.kind === 'deadline' ? formatAsOfTime(nativeExpiry.at) : formatRetentionDuration(nativeExpiry.afterMs) }) } : {}),
             effects: provisioner?.descriptor.retention.supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
-            canWake: provisioner?.descriptor.retention.supportedIntents.includes('start'), consequence: describeRetention,
+            canWake: provisioner?.descriptor.retention.supportedIntents.includes('start'),
+            consequence: retention => describeRetentionConsequence(retention, { ...(provisioner?.descriptor.billing ?? { location: 'unknown', stoppedBilling: 'unknown' }), provider: title }),
             onChange: policy => setDraft(current => current ? { ...current, override: policy } : current),
             onReset: () => setDraft(current => current ? { ...current, override: undefined,
                 preset: props.presetOnly && current.preset ? { id: current.preset.id, revision: current.preset.revision, name: current.preset.name } : current.preset } : current), disabled: !catalogController || !catalogProvisioner || busy } : undefined,
-        primary: { label: props.presetOnly ? t('common.save') : props.onUse ? t('common.use') : t('managedMachines.receipt.createKind', { kind: provisioner?.descriptor.resourceKind ?? '' }),
+        primary: { label: props.presetOnly ? t('common.save') : props.onUse ? t('common.use') : provisioner?.descriptor.kindTitle
+            ? t('managedMachines.receipt.createKind', { kind: localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) }) : t('managedMachines.add.create'),
             onPress: () => { if (props.presetOnly) void save(); else if (props.onUse) commitUse(); else void create(); },
             disabled: props.presetOnly ? !maySave : !mayCreate, loading: busy, testID: props.onUse && !props.presetOnly ? 'managed-config.use' : 'managed-config.create' },
         secondary: !props.presetOnly ? [{ label: t('managedMachines.receipt.saveAsPreset'), onPress: () => { void save(); }, disabled: !maySave, testID: 'managed-config.save-preset', tone: 'text' }] : undefined,
@@ -410,8 +423,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     };
 
     const creationDisabledNotice = accountSettings.settings?.managedMachineCreationEnabled === false && !props.presetOnly
-        ? <ManagedMachineStateRow name={title || t('managedMachines.add.createPath')} mark={mark} state={{ kind: 'creationDisabled' }}
-            handlers={{}} testID="managed-config.creation-disabled" /> : null;
+        ? <ManagedCreationDisabledBanner testID="managed-config.creation-disabled" /> : null;
     const summaryPrice = receipt.cost.kind === 'price' ? receipt.cost.prices[0] : undefined;
     const selectedTitle = draft?.selected ? localized(provisioner?.contribution.pluginId ?? '', draft.selected.title) : title;
     const summaryLabel = summaryPrice?.label ? localized(provisioner?.contribution.pluginId ?? '', summaryPrice.label) : null;
@@ -419,27 +431,36 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         return <SurfaceStateCard kind="denied" title={t('machinePresets.accessLost')} testID="managed-config.error"
             action={{ label: t('managedMachines.actions.tryAgain'), onPress: retry }} />;
     if (!provisioner) return <>
-        {creationDisabledNotice ? <ItemGroup>{creationDisabledNotice}</ItemGroup> : null}
-        <ItemGroup title={t('managedMachines.config.managedFrom')}>
-            {machines.filter(machine => !!machine.installationId).map(machine => <Item key={machine.id} testID={`managed-config.controller:${machine.id}`}
-                title={getMachineDisplayName(machine) ?? machine.id} selected={machine.id === controller?.machineId} showChevron={false}
-                onPress={() => { if (machine.installationId) setSelectedController({ machineId: machine.id, installationId: machine.installationId }); }} />)}
+        {creationDisabledNotice}
+        <ItemGroup title={t('managedMachines.config.managedFrom')} action={scope.chip} surface="none">
+            <SurfaceStateCard kind={catalog.loading ? 'loading' : catalog.error ? 'error' : 'empty'} size="line"
+                title={t(catalog.loading ? 'managedMachines.providers.loading' : 'managedMachines.providers.unavailable')}
+                diagnosticCode={catalog.error} testID="managed-config.catalog" />
         </ItemGroup>
-        <SurfaceStateCard kind={catalog.loading ? 'loading' : catalog.error ? 'error' : 'empty'} title={t(catalog.loading ? 'managedMachines.providers.loading' : 'managedMachines.providers.unavailable')}
-            diagnosticCode={catalog.error} testID="managed-config.catalog" />
     </>;
-    return <ManagedMachineConfigurator title={title} description={props.presetOnly ? t('machinePresets.futureOnly') : t('managedMachines.add.createPath')} mark={mark}
-        compact={compact} testID="managed-config" receipt={receipt} summary={{ value: summaryPrice ? formatProviderAmount(summaryPrice) : receiptFacts?.billing.location === 'local' ? t('managedMachines.price.noBill') : t('managedMachines.price.unavailable', { provider: title }),
+    // Choices the provider returned without a native size, image, place or duration (those have their own sections).
+    const otherChoices = draft ? draft.choices.filter(choice => !choice.nativeFacts?.size && !choice.nativeFacts?.image
+        && !choice.nativeFacts?.location && !choice.nativeFacts?.duration) : [];
+    const retainedChoice = draft?.selected && !draft.choices.some(choice => choice.id === draft.selected?.id && pluginJsonValuesEqual(choice.launch, draft.selected?.launch))
+        ? draft.selected : undefined;
+    const repairs = draft?.check?.prerequisites?.filter(prerequisite => prerequisite.status !== 'available' && prerequisite.repairAction) ?? [];
+    const choiceState = !draft ? null : facts?.optionStatus === 'unavailable' ? <SurfaceStateCard kind="warning" size="line" title={t('managedMachines.options.unavailable')} />
+        : draft.optionStatus === 'loading' ? <SurfaceStateCard kind="loading" size="line" title={t('managedMachines.options.loading', { provider: title })} />
+        : draft.optionStatus === 'current' && draft.choices.length === 0 ? <SurfaceStateCard kind="empty" size="line" title={t('managedMachines.options.empty', { provider: title })} />
+        : draft.check?.available === false ? <SurfaceStateCard kind="warning" size="line" title={t('managedMachines.providers.unavailable')} />
+        : null;
+    const kindTitle = presentation.kindTitle;
+    const pageTitle = props.presetOnly || !kindTitle ? title : t('managedMachines.config.newKind', { provider: title, kind: kindTitle });
+    // Unpriced, the bar's value stays short; the sentence belongs to the receipt.
+    const summaryValue = summaryPrice ? formatProviderAmount(summaryPrice) : receiptFacts?.billing.location === 'local' ? t('managedMachines.price.noBill') : '—';
+    const limitChoices = [...new Set([...LIMIT_CHOICES, ...(limit ? [limit] : [])])].sort((left, right) => left - right);
+    return <ManagedMachineConfigurator title={pageTitle} description={props.presetOnly ? t('machinePresets.futureOnly') : compact ? undefined : t('managedMachines.config.description')} mark={mark}
+        actions={scope.chip}
+        compact={compact} testID="managed-config" receipt={receipt} summary={{ value: summaryValue,
             unit: summaryPrice ? formatPriceUnit(summaryPrice.unit) : '', spec: summaryLabel ? `${summaryLabel} · ${selectedTitle}` : selectedTitle }}>
-        <ItemGroup title={t('managedMachines.config.managedFrom')}>
-            {machines.filter(machine => !!machine.installationId).map(machine => <Item key={machine.id} testID={`managed-config.controller:${machine.id}`}
-                title={getMachineDisplayName(machine) ?? machine.id} selected={machine.id === controller?.machineId} showChevron={false} disabled={busy}
-                onPress={() => { if (!machine.installationId) return; setSelectedController({ machineId: machine.id, installationId: machine.installationId }); setDraft(current => current ? { ...current, controller: { machineId: machine.id, installationId: machine.installationId }, check: undefined, optionStatus: 'loading' }
-                    : createManagedConfiguratorDraft({ provisioner, controller: { machineId: machine.id, installationId: machine.installationId }, name: title })); }} />)}
-        </ItemGroup>
         {approval.approvalId ? <AttentionBanner title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
-        {creationDisabledNotice ? <ItemGroup>{creationDisabledNotice}</ItemGroup> : null}
+        {creationDisabledNotice}
         {draft && credentialFields.length ? <ItemGroup title={t('connectedServices.title')}>
             <ActionInputFields fields={credentialFields} input={credentialInput}
                 editable={!!catalogProvisioner && !!catalogController && !busy && (!preset || props.presetOnly === true)} busy={busy}
@@ -463,18 +484,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 onPatch={patch => setDraft(current => current ? setManagedConfiguratorOptionsSelectors(current, { ...fieldInput, ...patch }) : current)} />
             {selectors === null ? <SurfaceStateCard kind="warning" size="line" title={t('managedMachines.options.unavailable')} diagnosticCode="invalid_parameters" /> : null}
         </ItemGroup> : null}
-        {draft ? <ItemGroup title={t('managedMachines.detail.recipeTitle')}>
-            {draft.choices.filter(choice => !choice.nativeFacts?.size && !choice.nativeFacts?.image && !choice.nativeFacts?.location && !choice.nativeFacts?.duration).map(choice => <Item key={choice.id} testID={`managed-config.choice:${choice.id}`} title={localized(provisioner.contribution.pluginId, choice.title)}
+        {draft && (otherChoices.length || retainedChoice || choiceState || repairs.length) ? <ItemGroup title={otherChoices.length || retainedChoice ? t('managedMachines.config.otherChoices') : undefined}>
+            {otherChoices.map(choice => <Item key={choice.id} testID={`managed-config.choice:${choice.id}`} title={localized(provisioner.contribution.pluginId, choice.title)}
                 selected={choice.id === draft.selected?.id && pluginJsonValuesEqual(choice.launch, draft.selected?.launch)} showChevron={false} disabled={!catalogProvisioner || !catalogController || busy || choice.available === false || !!preset && !props.presetOnly}
                 onPress={() => setDraft(current => current ? selectManagedConfiguratorChoice(current, choice.id) : current)} />)}
-            {draft.selected && !draft.choices.some(choice => choice.id === draft.selected?.id && pluginJsonValuesEqual(choice.launch, draft.selected?.launch))
-                ? <Item testID="managed-config.retained-choice" mode="info" title={localized(provisioner.contribution.pluginId, draft.selected.title)}
-                    subtitle={t('managedMachines.options.unavailable')} selected showChevron={false} /> : null}
-            {facts?.optionStatus === 'unavailable' ? <SurfaceStateCard kind="warning" title={t('managedMachines.options.unavailable')} /> : null}
-            {draft.optionStatus === 'loading' ? <SurfaceStateCard kind="loading" title={t('managedMachines.options.loading', { provider: title })} /> : null}
-            {draft.optionStatus === 'current' && draft.choices.length === 0 ? <SurfaceStateCard kind="empty" title={t('managedMachines.options.empty', { provider: title })} /> : null}
-            {draft.check?.available === false ? <SurfaceStateCard kind="warning" title={t('managedMachines.providers.unavailable')} /> : null}
-            {draft.check?.prerequisites?.filter(prerequisite => prerequisite.status !== 'available' && prerequisite.repairAction).map(prerequisite => {
+            {retainedChoice ? <Item testID="managed-config.retained-choice" mode="info" title={localized(provisioner.contribution.pluginId, retainedChoice.title)}
+                subtitle={t('managedMachines.options.unavailable')} selected showChevron={false} /> : null}
+            {choiceState}
+            {repairs.map(prerequisite => {
                 const id = typeof prerequisite.requirement.id === 'string' ? prerequisite.requirement.id
                     : buildQualifiedPluginContributionKey(prerequisite.requirement.id);
                 return <Item key={`${prerequisite.requirement.kind}:${id}`}
@@ -489,19 +506,31 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         {draft && props.presetOnly ? <MachineEnvironmentSection testID="managed-config.environment" environment={draft.environment}
             editable={!!catalogProvisioner && !!catalogController && !busy} scope={activeBinding?.scope ?? null}
             onChange={environment => setDraft(current => current ? { ...current, environment } : current)} /> : null}
-        {draft ? <ItemGroup title={t('machinePresets.audience')}>
-            <Item title={t('machinePresets.ownerPersonal')} selected={!teamId} disabled={!!preset || busy} onPress={() => setTeamId('')} />
-            {teams.rows.map(row => <Item key={row.team.id} title={row.team.name} selected={row.team.id === teamId}
-                disabled={!!preset || busy || !row.team.capabilities.manageSettings || teams.stale} onPress={() => setTeamId(row.team.id)} />)}
-            {teams.hasMore ? <Item title={t('common.next')} onPress={teams.loadMore} /> : null}
-            <Item title={t('machinePresets.runningAtOnce')} subtitle={limit ? String(limit) : t('machinePresets.limitNone')} onPress={async () => {
-                const value = await Modal.prompt(t('machinePresets.runningAtOnce'), t('machinePresets.limitHelp'), { defaultValue: limit ? String(limit) : '', inputType: 'numeric' });
-                if (value !== null && activeBinding?.isCurrent()) { const parsed = Number(value); if (!value.trim()) setLimit(undefined); else if (Number.isSafeInteger(parsed) && parsed > 0) setLimit(parsed); }
-            }} />
+        {/* Who can use it and how many may run belong to a preset, never to a one-off machine (lab m-presets). */}
+        {draft && props.presetOnly ? <ItemGroup title={t('machinePresets.audience')}>
+            <ManagedFieldRow testID="managed-config.audience" row={{ title: t('machinePresets.canUse'),
+                choices: [{ id: '', title: t('machinePresets.ownerPersonal') },
+                    ...teams.rows.filter(row => row.team.capabilities.manageSettings).map(row => ({ id: row.team.id, title: row.team.name })),
+                    ...(teams.hasMore ? [{ id: MORE_TEAMS, title: t('machinePresets.moreTeams') }] : [])],
+                value: teamId, disabled: !!preset || busy || teams.stale,
+                onChange: id => { if (id === MORE_TEAMS) teams.loadMore(); else setTeamId(id); } }} />
+        </ItemGroup> : null}
+        {draft && props.presetOnly ? <ItemGroup title={t('machinePresets.runningAtOnce')} description={t('machinePresets.limitHelp')}>
+            <ManagedFieldRow testID="managed-config.limit" row={{ title: t('machinePresets.atMost'), subtitle: limit ? t('machinePresets.limitWaits') : undefined,
+                choices: [{ id: 'none', title: t('machinePresets.noLimit') }, ...limitChoices.map(value => ({ id: String(value), title: String(value) })),
+                    { id: OTHER_LIMIT, title: t('machinePresets.otherLimit') }],
+                value: limit ? String(limit) : 'none', disabled: busy,
+                onChange: async id => {
+                    if (id === 'none') { setLimit(undefined); return; }
+                    if (id !== OTHER_LIMIT) { setLimit(Number(id)); return; }
+                    const value = await Modal.prompt(t('machinePresets.runningAtOnce'), t('machinePresets.limitHelp'), { defaultValue: limit ? String(limit) : '', inputType: 'numeric' });
+                    if (value !== null && activeBinding?.isCurrent()) { const parsed = Number(value); if (!value.trim()) setLimit(undefined); else if (Number.isSafeInteger(parsed) && parsed > 0) setLimit(parsed); }
+                } }} />
         </ItemGroup> : null}
         {error ? <SurfaceStateCard kind="error" title={error === 'conflict' ? t('machinePresets.conflict') : t('managedMachines.options.error')}
             testID="managed-config.error" action={{ label: t('managedMachines.actions.tryAgain'), onPress: retry }} /> : null}
-        {saved ? <SurfaceStateCard kind="success" title={t('machinePresets.title')} /> : null}
+        {saved && !props.presetOnly ? <SurfaceStateCard testID="managed-config.saved" kind="success" size="line" title={t('machinePresets.saved', { name: saved.name })}
+            action={{ label: t('machinePresets.openPreset'), onPress: () => router.push(`/settings/machines/presets/${encodeURIComponent(saved.id)}?serverId=${encodeURIComponent(saved.serverId)}` as never) }} /> : null}
     </ManagedMachineConfigurator>;
 }
 

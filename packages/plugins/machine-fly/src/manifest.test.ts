@@ -291,7 +291,8 @@ describe('public fly machine provisioner', () => {
     const runtime = await activated(request => request.url.includes('/apps?')
       ? { total_apps: 1, apps: [{ id: 'app-1', name: 'managed', machine_count: 0, volume_count: 0 }] }
       : request.url.endsWith('/volumes') ? { id: 'vol-new', state: 'created', region: 'ams', attached_machine_id: null } : { id: resource.machineId });
-    expect(await runtime.handlers.get('check')!({}, runtime.context)).toEqual({ available: true });
+    expect(await runtime.handlers.get('check')!({}, runtime.context)).toMatchObject({ available: true,
+      status: { key: 'machineFly.presentation.ready' } });
     const { imageReference: _image, ...withoutImage } = launch;
     expect(exports.ROLE_SCHEMAS.acquireInput.safeParse({ launch: { ...withoutImage, volume: { kind: 'create', sizeGb: 1 } }, managedId: 'managed-1' }).success).toBe(true);
     await runtime.handlers.get('acquire')!({ launch: { ...withoutImage, volume: { kind: 'create', sizeGb: 1 } }, managedId: 'managed-1' }, runtime.context);

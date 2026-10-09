@@ -17,6 +17,12 @@ export type MachineOwnershipGroup<T extends MachineDisplayRenderable> = Readonly
     machines: readonly T[];
 }>;
 
+/** A shared group names its actual custodian only when that public name is available. */
+export function describeMachineSharedGroupTitle(custodian: MachineOwnershipGroup<MachineDisplayRenderable>['custodian'] | undefined): string {
+    const owner = custodian?.displayName?.trim();
+    return owner ? t('machines.destinations.shared', { team: owner }) : t('machines.destinations.sharedWithoutOwner');
+}
+
 /** One inventory grouping for the Machines collection and destination picker, within an exact Home. */
 export function buildMachineOwnershipGroups<T extends MachineDisplayRenderable>(machines: readonly T[]): readonly MachineOwnershipGroup<T>[] {
     const owned: T[] = [];

@@ -54,7 +54,8 @@ describe('activated public Lima actions', () => {
       request.args?.[0] === '--version' ? 'limactl version 2.1.0'
         : JSON.stringify({ hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'] }))) };
     const unavailable = await activatedAction('check', exec, ['lima-cli', 'qemu-x86-64']);
-    expect(await unavailable.handler({}, unavailable.context)).toMatchObject({ available: false, code: 'qemu_unavailable' });
+    expect(await unavailable.handler({}, unavailable.context)).toMatchObject({ available: false, code: 'qemu_unavailable',
+      status: { key: 'machineLima.presentation.qemu_unavailable' } });
     const ready = await activatedAction('check', exec, ['lima-cli', 'qemu-x86-64', 'qemu-img']);
     expect(await ready.handler({}, ready.context)).toMatchObject({ available: true,
       prerequisites: [{ requirement: { id: { localId: 'qemu-x86-64' } }, status: 'available' },

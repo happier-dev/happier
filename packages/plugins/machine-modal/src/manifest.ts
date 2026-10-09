@@ -1,4 +1,5 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import type { ActionContribution } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
@@ -28,6 +29,7 @@ function configurationLabel(id: keyof typeof MODAL_CONFIGURATION_LABELS.en) {
 
 export const MODAL_MACHINE_PROVISIONER = {
   title: 'Modal', icon: 'cloud', resourceKind: 'modal-sandbox', schemaVersion: 1,
+  kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: ModalLaunchV1Schema.jsonSchema, resourceSchema: ModalResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
   billing: MODAL_BILLING, retention: { supportedIntents: ['delete'], finiteOnly: true },
@@ -62,8 +64,8 @@ export const MODAL_PLUGIN = definePlugin({
   actions: {
     check: { ...defaults, title: 'Check Modal availability', dangerLevel: 'safe', inputSchema: MODAL_ROLE_SCHEMAS.checkInput,
       resultSchema: MachineProvisionerCheckResultV1Schema, async run(input, context) {
-        try { return MachineProvisionerCheckResultV1Schema.parse(await invokeScopedModalRole('check', input, context)); }
-        catch (error) { return { available: false, code: code(error) }; }
+        try { return machineCheckPresentation(MachineProvisionerCheckResultV1Schema.parse(await invokeScopedModalRole('check', input, context))); }
+        catch (error) { return machineCheckPresentation({ available: false, code: code(error) }); }
       } },
     options: { ...defaults, title: 'Read Modal choices', dangerLevel: 'safe', inputSchema: ModalOptionsInputV1Schema,
       inputHints: { fields: [

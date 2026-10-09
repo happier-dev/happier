@@ -10,6 +10,7 @@ import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -45,9 +46,22 @@ import { useActionApprovalContinuation } from '@/components/approvals/useActionA
 import type { MachinePresetQueryState } from '../managed/useMachinePresets';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { ManagedMachineReadApprovalNotice } from '../managed/ManagedMachineReadApprovalNotice';
+import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
+import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 
 /** The collection offers a search field only once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 8;
+
+/** The directory batches known owners; an owner beyond its current page uses the same exact Team reader as detail. */
+function MachinePresetTeamCollectionRow(props: Readonly<{
+    serverId: string; teamId: string; knownName?: string; render: (audience: string) => React.ReactElement;
+}>) {
+    const binding = useTeamBinding(props.serverId, props.knownName ? '' : props.teamId);
+    const state = binding.kind === 'bound' ? binding.state : null;
+    const name = props.knownName ?? (state?.kind === 'ready' && state.team.capabilities.viewTeam ? state.team.name
+        : state?.kind === 'unavailable' ? t('common.unavailable') : t('common.loading'));
+    return props.render(name);
+}
 
 function readParam(value: string | string[] | undefined): string | null {
     const raw = Array.isArray(value) ? value[0] : value;
@@ -173,6 +187,14 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         [viewModel.visibleMachineGroups, viewModel.showMachinesGroupedByServer, viewModel.managedByServerId, viewModel.presetsByServerId],
     );
     const searchable = total > SEARCH_THRESHOLD;
+    const teamServerIds = React.useMemo(() => Object.entries(viewModel.presetsByServerId ?? {})
+        .filter(([, presets]) => presets.some(preset => preset.owner.kind === 'team')).map(([serverId]) => serverId), [viewModel.presetsByServerId]);
+    const teams = useTeamsDirectory({ serverIds: teamServerIds, enabled: teamServerIds.length > 0, archived: 'all' });
+    const teamNamesByServerId = React.useMemo(() => {
+        const names: Record<string, Record<string, string>> = {};
+        for (const row of [...teams.rows, ...teams.archivedRows]) (names[row.address.serverId] ??= {})[row.team.id] = row.team.name;
+        return names;
+    }, [teams.rows, teams.archivedRows]);
     const collection = React.useMemo(() => buildMachineCollection({
         nowMs,
         groups: viewModel.visibleMachineGroups,
@@ -180,7 +202,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         query: searchable ? query : '',
         managedByServerId: viewModel.managedByServerId,
         presetsByServerId: viewModel.presetsByServerId,
-    }), [nowMs, query, searchable, viewModel.showMachinesGroupedByServer, viewModel.visibleMachineGroups, viewModel.managedByServerId, viewModel.presetsByServerId]);
+        teamNamesByServerId,
+    }), [nowMs, query, searchable, viewModel.showMachinesGroupedByServer, viewModel.visibleMachineGroups, viewModel.managedByServerId, viewModel.presetsByServerId, teamNamesByServerId]);
 
     React.useEffect(() => {
         const selected = collection.sections.flatMap(section => section.rows).find(row => isMachineCollectionRowSelected(selectedKey, row));
@@ -438,7 +461,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
 });
 
 /** Accessible recipes remain separate from resources, with exact-Home read and approval custody. */
-function MachinePresetCollectionSectionView(props: Readonly<{
+export function MachinePresetCollectionSectionView(props: Readonly<{
     section: MachinePresetCollectionSection;
     state?: MachinePresetQueryState<readonly ManagedMachinePresetV1[]>;
     rail: boolean;
@@ -449,14 +472,17 @@ function MachinePresetCollectionSectionView(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const [expanded, setExpanded] = React.useState(true);
     const scopeKey = JSON.stringify([props.section.serverId, props.state?.approval]);
     const approval = useActionApprovalContinuation({ scopeKey, serverId: props.section.serverId, onExecuted: () => {} });
     React.useEffect(() => {
         if (props.state?.approval) approval.requestApproval(props.state.approval);
     }, [props.state?.approval, approval.requestApproval]);
-    const title = [t('machinePresets.title'), props.section.title].filter(Boolean).join(' · ');
+    const title = [t('machinePresets.short'), props.section.title].filter(Boolean).join(' · ');
     const newHref = `/settings/machines/presets/new?serverId=${encodeURIComponent(props.section.serverId)}`;
+    // The group's own "+" creates a preset (lab `m-presets`); it waits until the list is readable.
+    const add = !props.state?.loading && !props.state?.error ? <IconButton testID={`settings.machines.presets.new.${props.section.serverId}`}
+        iconName="plus" accessibilityLabel={t('machinePresets.newPreset')} variant="plain"
+        onPress={() => openHref(router, newHref, props.replacing, 'MachinePresetCollection.new')} /> : null;
     const rows = <>
         {approval.approvalId ? <Item testID={`settings.machines.presets.approval.${props.section.serverId}`}
             title={t('approvals.status.open')} density={props.rail ? 'compact' : undefined}
@@ -465,28 +491,28 @@ function MachinePresetCollectionSectionView(props: Readonly<{
             size="line" kind={props.state.error === 'permission_denied' || props.state.error === 'signed_out' ? 'denied' : 'unavailable'}
             title={props.state.error === 'permission_denied' || props.state.error === 'signed_out' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
             diagnosticCode={props.state.error} action={props.refresh ? { label: t('common.retry'), onPress: props.refresh } : undefined} /> : null}
-        {props.section.rows.map(row => <Item key={machineCollectionRowKey(row)} testID={`settings.machines.preset.${row.serverId}.${row.presetId}`}
-            title={row.title} subtitle={row.preset.archivedAt !== undefined ? t('machinePresets.archived')
-                : row.preset.owner.kind === 'account' ? t('machinePresets.ownerPersonal') : t('machinePresets.canUse')}
+        {props.section.rows.map(row => {
+            const render = (audience: string) => <Item key={machineCollectionRowKey(row)} testID={`settings.machines.preset.${row.serverId}.${row.presetId}`}
+            title={row.title} subtitle={row.preset.archivedAt !== undefined ? `${audience} · ${t('machinePresets.archived')}` : audience}
             icon={<HappierCollectionListMark><Icon name="stack" color={theme.colors.text.secondary} /></HappierCollectionListMark>}
             density={props.rail ? 'compact' : undefined} selected={props.rail ? isMachineCollectionRowSelected(props.selectedKey, row) : undefined}
             showChevron={!props.rail} pressableStyle={props.rail ? collectionListStyles.row : undefined}
             onPress={() => { recordMachineCollectionVisit({ ...row, query: props.query });
-                openHref(router, machineCollectionHref(row), props.replacing, 'MachinePresetCollection.open'); }} />)}
-        {props.section.rows.length === 0 && !props.state?.error ? <Item testID={`settings.machines.presets.empty.${props.section.serverId}`}
-            title={props.state?.loading ? t('machinePresets.loading') : props.query.trim() ? t('common.noMatches') : t('machinePresets.empty')}
-            mode="info" density={props.rail ? 'compact' : undefined} showChevron={false} /> : null}
-        {!props.state?.loading && !props.state?.error ? <Item testID={`settings.machines.presets.new.${props.section.serverId}`}
-            title={t('machinePresets.newPreset')} icon={<Icon name="plus" color={theme.colors.text.secondary} />}
-            density={props.rail ? 'compact' : undefined} showChevron={!props.rail}
-            pressableStyle={props.rail ? collectionListStyles.row : undefined}
-            onPress={() => openHref(router, newHref, props.replacing, 'MachinePresetCollection.new')} /> : null}
+                openHref(router, machineCollectionHref(row), props.replacing, 'MachinePresetCollection.open'); }} />;
+            return row.preset.owner.kind === 'team' ? <MachinePresetTeamCollectionRow key={machineCollectionRowKey(row)}
+                serverId={row.serverId} teamId={row.preset.owner.teamId} knownName={row.teamName} render={render} /> : render(row.audience);
+        })}
+        {props.section.rows.length === 0 && !props.state?.error ? (props.state?.loading
+            ? <Item testID={`settings.machines.presets.empty.${props.section.serverId}`} title={t('machinePresets.loading')}
+                mode="info" density={props.rail ? 'compact' : undefined} showChevron={false} />
+            : <EmptyState testID={`settings.machines.presets.empty.${props.section.serverId}`} layout="line"
+                title={props.query.trim() ? t('common.noMatches') : t('machinePresets.empty')}
+                lineDensity={props.rail ? 'compact' : undefined} lineRowStyle={props.rail ? collectionListStyles.row : undefined} />) : null}
     </>;
-    if (!props.rail) return <ItemGroup title={title}>{rows}</ItemGroup>;
-    return <><CollectionListGroupLabel title={title} count={props.section.rows.length}
-        trailing={<IconButton testID={`settings.machines.presets.toggle.${props.section.serverId}`} iconName={expanded ? 'caret-up' : 'caret-down'}
-            accessibilityLabel={expanded ? t('common.collapse') : t('common.expand')} variant="plain" onPress={() => setExpanded(value => !value)} />} />
-        {expanded || props.query.trim() ? rows : null}</>;
+    if (!props.rail) return <ItemGroup title={title} action={add}>{rows}</ItemGroup>;
+    return <><CollectionListGroupLabel title={title} {...(props.section.rows.length > 0 ? { count: props.section.rows.length } : {})}
+        trailing={add} />
+        {rows}</>;
 }
 
 /**

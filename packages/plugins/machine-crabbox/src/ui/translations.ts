@@ -313,7 +313,41 @@ const bundles = [
   { locale: 'ja', messages: CRABBOX_UI_TRANSLATIONS.ja },
 ] as const;
 
-export const CRABBOX_UI_TRANSLATION_BUNDLES = Object.freeze(bundles.map(bundle => ({
+const CONFIGURATION_TRANSLATION_BUNDLES = Object.freeze(bundles.map(bundle => ({
   ...bundle,
   messages: { ...bundle.messages, ...configurationMessages(CRABBOX_CONFIGURATION_LABELS[bundle.locale]) },
 })) satisfies readonly UiTranslationBundle[]);
+
+export const MACHINE_PRESENTATION_LABELS = {
+  "en": {"kind":"machine","description":"Development machines from a coordinator or local container.","ready":"Ready","unavailable":"Account unavailable"},
+  "de": {"kind":"Maschine","description":"Entwicklungsmaschinen über einen Koordinator oder lokalen Container.","ready":"Bereit","unavailable":"Konto nicht verfügbar"},
+  "ru": {"kind":"машина","description":"Машины разработки через координатор или локальный контейнер.","ready":"Готово","unavailable":"Аккаунт недоступен"},
+  "pl": {"kind":"maszyna","description":"Maszyny programistyczne z koordynatora lub lokalnego kontenera.","ready":"Gotowe","unavailable":"Konto niedostępne"},
+  "es": {"kind":"máquina","description":"Máquinas de desarrollo de un coordinador o contenedor local.","ready":"Listo","unavailable":"Cuenta no disponible"},
+  "fr": {"kind":"machine","description":"Des machines de développement via un coordinateur ou un conteneur local.","ready":"Prêt","unavailable":"Compte indisponible"},
+  "it": {"kind":"macchina","description":"Macchine di sviluppo da un coordinatore o container locale.","ready":"Pronto","unavailable":"Account non disponibile"},
+  "pt": {"kind":"máquina","description":"Máquinas de desenvolvimento de um coordenador ou contêiner local.","ready":"Pronto","unavailable":"Conta indisponível"},
+  "ca": {"kind":"màquina","description":"Màquines de desenvolupament d’un coordinador o contenidor local.","ready":"A punt","unavailable":"Compte no disponible"},
+  "zh-Hans": {"kind":"机器","description":"来自协调器或本地容器的开发机器。","ready":"就绪","unavailable":"账户不可用"},
+  "zh-Hant": {"kind":"機器","description":"來自協調器或本地容器的開發機器。","ready":"就緒","unavailable":"帳戶不可用"},
+  "ja": {"kind":"マシン","description":"コーディネーターまたはローカルコンテナーによる開発マシン。","ready":"準備完了","unavailable":"アカウント利用不可"},
+} as const;
+
+export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_LABELS.en): PresentationLocalizedString {
+  return { key: 'machineCrabbox.presentation.' + id, fallback: MACHINE_PRESENTATION_LABELS.en[id] };
+}
+
+/** Native check codes and their human vocabulary stay owned by this leaf. */
+export function machineCheckPresentation(result: MachineProvisionerCheckResultV1): MachineProvisionerCheckResultV1 {
+  const code = result.code;
+  const id = result.available ? 'ready' : code && Object.hasOwn(MACHINE_PRESENTATION_LABELS.en, code)
+    ? code as keyof typeof MACHINE_PRESENTATION_LABELS.en : 'unavailable';
+  return { ...result, status: result.status ?? machinePresentationLabel(id) };
+}
+
+export const CRABBOX_UI_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = CONFIGURATION_TRANSLATION_BUNDLES.map(bundle => ({
+  ...bundle, messages: { ...bundle.messages, ...Object.fromEntries(Object.entries(MACHINE_PRESENTATION_LABELS[bundle.locale as keyof typeof MACHINE_PRESENTATION_LABELS])
+    .map(([id, value]) => ['machineCrabbox.presentation.' + id, value])) },
+}));
+import type { PluginLocalizedStringV2 as PresentationLocalizedString } from '@happier-dev/plugin-sdk/manifest';
+import type { MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';

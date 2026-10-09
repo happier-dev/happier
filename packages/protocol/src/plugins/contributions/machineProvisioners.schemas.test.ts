@@ -39,6 +39,16 @@ function nativeDurationManifest() {
 }
 
 describe('public machine provisioner role schemas', () => {
+  it('retains localized provisioner identity and native check vocabulary through the public schemas', () => {
+    const descriptor = { ...nativeDurationManifest().contributes.machineProvisioners[0],
+      kindTitle: { key: 'native.kind', fallback: 'Sandbox' },
+      description: { key: 'native.description', fallback: 'An isolated machine for coding.' } };
+    expect(provisioners.MachineProvisionerContributionV1Schema.safeParse(descriptor).success).toBe(true);
+    const check = { available: false, code: 'native_license_required', status: { key: 'native.license', fallback: 'License required' } };
+    expect(provisioners.MachineProvisionerCheckResultProtocolV1Schema.safeParse(check).success).toBe(true);
+    expect(provisioners.MachineProvisionerCheckResultProtocolV1Schema.parse(check)).toEqual(check);
+    expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({ ...descriptor, kindTitle: { arbitrary: true } }).success).toBe(false);
+  });
   it('admits an exact pending-cleanup observation role and rejects effectful or mismatched cleanup declarations', () => {
     const manifest = nativeDurationManifest();
     const descriptor = manifest.contributes.machineProvisioners[0];

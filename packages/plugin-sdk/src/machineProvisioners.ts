@@ -14,6 +14,9 @@ export type MachineProvisionerContributionV1 = Readonly<{
   title: PluginLocalizedStringV2;
   icon: string;
   resourceKind: string;
+  /** Human kind and purpose; resourceKind remains native identity, never copy. */
+  kindTitle?: PluginLocalizedStringV2;
+  description?: PluginLocalizedStringV2;
   launchSchema: PluginJsonSchema;
   resourceSchema: PluginJsonSchema;
   schemaVersion: number;
@@ -34,7 +37,7 @@ export type MachineProvisionerNativeIntentV1 = 'start' | 'stop' | 'suspend' | 'r
 export type MachineProvisionerPriceV1 = Readonly<{ label?: PluginLocalizedStringV2; amount: string; currency: string; unit: string; source: string; observedAt: number }>;
 export type MachineProvisionerAuthorDefinitionV1 = Omit<MachineProvisionerContributionV1, 'id'>;
 
-export type MachineProvisionerCheckResultV1 = Readonly<{ available: boolean; code?: string; prerequisites?: readonly Readonly<{ requirement: MachineProvisionerContributionV1['prerequisites'][number]; status: 'available' | 'unavailable' | 'unknown'; reason?: string; repairAction?: Readonly<{ action: PluginContributionRef; input: ProtocolJsonValue }> }>[]; localResources?: Readonly<{ observedAt: number; availableCpuCores?: number; availableMemoryBytes?: number; availableDiskBytes?: number }> }>;
+export type MachineProvisionerCheckResultV1 = Readonly<{ available: boolean; code?: string; status?: PluginLocalizedStringV2; prerequisites?: readonly Readonly<{ requirement: MachineProvisionerContributionV1['prerequisites'][number]; status: 'available' | 'unavailable' | 'unknown'; reason?: string; repairAction?: Readonly<{ action: PluginContributionRef; input: ProtocolJsonValue }> }>[]; localResources?: Readonly<{ observedAt: number; availableCpuCores?: number; availableMemoryBytes?: number; availableDiskBytes?: number }> }>;
 export type MachineProvisionerNativeOptionFactsV1 = Readonly<{
   size?: Readonly<{ id: string; title: PluginLocalizedStringV2; cpuCores?: number; memoryBytes?: number; diskBytes?: number }>;
   image?: Readonly<{ id: string; title: PluginLocalizedStringV2 }>;
@@ -49,7 +52,10 @@ export type DevcontainerEffectReviewV1 = Readonly<{
     title: string; details: readonly string[];
   }>[];
 }>;
-export type MachineProvisionerOptionsResultV1 = Readonly<{ choices: readonly Readonly<{ id: string; title: PluginLocalizedStringV2; launch?: ProtocolJsonValue; available?: boolean; prices?: readonly MachineProvisionerPriceV1[]; nativeFacts?: MachineProvisionerNativeOptionFactsV1; effectReview?: DevcontainerEffectReviewV1 }>[] }>;
+/** A named output keeps inferred author Action contracts portable during declaration emission. */
+export interface MachineProvisionerOptionsResultV1 {
+  readonly choices: readonly Readonly<{ id: string; title: PluginLocalizedStringV2; launch?: ProtocolJsonValue; available?: boolean; prices?: readonly MachineProvisionerPriceV1[]; nativeFacts?: MachineProvisionerNativeOptionFactsV1; effectReview?: DevcontainerEffectReviewV1 }>[];
+}
 export type DevcontainerNativeObservationV1 = Readonly<{
   nativeResourceId: string; user: string; workspaceFolder: string;
   storage: Readonly<{ kind: 'bind'; hostPath: string; childPath: string }> | Readonly<{ kind: 'child'; childPath: string }>;

@@ -125,6 +125,40 @@ export function lumeConfigurationLabel(id: keyof typeof LUME_CONFIGURATION_LABEL
   return { key: `machineLume.configure.${id}`, fallback: LUME_CONFIGURATION_LABELS.en[id] };
 }
 
-export const LUME_UI_TRANSLATION_BUNDLES = Object.freeze(Object.entries(LUME_CONFIGURATION_LABELS).map(([locale, labels]) => ({
+const CONFIGURATION_TRANSLATION_BUNDLES = Object.freeze(Object.entries(LUME_CONFIGURATION_LABELS).map(([locale, labels]) => ({
   locale, messages: Object.fromEntries(Object.entries(labels).map(([id, value]) => [`machineLume.configure.${id}`, value])),
 })) satisfies readonly UiTranslationBundle[]);
+
+export const MACHINE_PRESENTATION_LABELS = {
+  "en": {"kind":"VM","description":"A local macOS or Linux VM with your chosen image.","ready":"Installed","unavailable":"Runtime unavailable","lume_transport":"Connection unavailable","lume_http":"Connection unavailable","lume_response":"Runtime response unavailable"},
+  "de": {"kind":"VM","description":"Eine lokale macOS- oder Linux-VM mit deinem gewählten Image.","ready":"Installiert","unavailable":"Laufzeit nicht verfügbar","lume_transport":"Verbindung nicht verfügbar","lume_http":"Verbindung nicht verfügbar","lume_response":"Laufzeitantwort nicht verfügbar"},
+  "ru": {"kind":"ВМ","description":"Локальная ВМ macOS или Linux с выбранным образом.","ready":"Установлено","unavailable":"Среда недоступна","lume_transport":"Соединение недоступно","lume_http":"Соединение недоступно","lume_response":"Ответ среды недоступен"},
+  "pl": {"kind":"VM","description":"Lokalna maszyna macOS lub Linux z wybranym obrazem.","ready":"Zainstalowano","unavailable":"Środowisko niedostępne","lume_transport":"Połączenie niedostępne","lume_http":"Połączenie niedostępne","lume_response":"Odpowiedź środowiska niedostępna"},
+  "es": {"kind":"VM","description":"Una VM macOS o Linux local con la imagen elegida.","ready":"Instalado","unavailable":"Entorno no disponible","lume_transport":"Conexión no disponible","lume_http":"Conexión no disponible","lume_response":"Respuesta del entorno no disponible"},
+  "fr": {"kind":"VM","description":"Une VM macOS ou Linux locale avec l’image choisie.","ready":"Installé","unavailable":"Environnement indisponible","lume_transport":"Connexion indisponible","lume_http":"Connexion indisponible","lume_response":"Réponse de l’environnement indisponible"},
+  "it": {"kind":"VM","description":"Una VM macOS o Linux locale con l’immagine scelta.","ready":"Installato","unavailable":"Ambiente non disponibile","lume_transport":"Connessione non disponibile","lume_http":"Connessione non disponibile","lume_response":"Risposta dell’ambiente non disponibile"},
+  "pt": {"kind":"VM","description":"Uma VM macOS ou Linux local com a imagem escolhida.","ready":"Instalado","unavailable":"Ambiente indisponível","lume_transport":"Conexão indisponível","lume_http":"Conexão indisponível","lume_response":"Resposta do ambiente indisponível"},
+  "ca": {"kind":"VM","description":"Una VM macOS o Linux local amb la imatge triada.","ready":"Instal·lat","unavailable":"Entorn no disponible","lume_transport":"Connexió no disponible","lume_http":"Connexió no disponible","lume_response":"Resposta de l’entorn no disponible"},
+  "zh-Hans": {"kind":"虚拟机","description":"使用所选镜像的本地 macOS 或 Linux 虚拟机。","ready":"已安装","unavailable":"运行环境不可用","lume_transport":"连接不可用","lume_http":"连接不可用","lume_response":"运行环境响应不可用"},
+  "zh-Hant": {"kind":"虛擬機","description":"使用所選映像的本地 macOS 或 Linux 虛擬機。","ready":"已安裝","unavailable":"執行環境不可用","lume_transport":"連線不可用","lume_http":"連線不可用","lume_response":"執行環境回應不可用"},
+  "ja": {"kind":"VM","description":"選択したイメージを使うローカルの macOS または Linux VM。","ready":"インストール済み","unavailable":"ランタイム利用不可","lume_transport":"接続利用不可","lume_http":"接続利用不可","lume_response":"ランタイムの応答を取得できません"},
+} as const;
+
+export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_LABELS.en): PresentationLocalizedString {
+  return { key: 'machineLume.presentation.' + id, fallback: MACHINE_PRESENTATION_LABELS.en[id] };
+}
+
+/** Native check codes and their human vocabulary stay owned by this leaf. */
+export function machineCheckPresentation(result: MachineProvisionerCheckResultV1): MachineProvisionerCheckResultV1 {
+  const code = result.code;
+  const id = result.available ? 'ready' : code && Object.hasOwn(MACHINE_PRESENTATION_LABELS.en, code)
+    ? code as keyof typeof MACHINE_PRESENTATION_LABELS.en : 'unavailable';
+  return { ...result, status: result.status ?? machinePresentationLabel(id) };
+}
+
+export const LUME_UI_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = CONFIGURATION_TRANSLATION_BUNDLES.map(bundle => ({
+  ...bundle, messages: { ...bundle.messages, ...Object.fromEntries(Object.entries(MACHINE_PRESENTATION_LABELS[bundle.locale as keyof typeof MACHINE_PRESENTATION_LABELS])
+    .map(([id, value]) => ['machineLume.presentation.' + id, value])) },
+}));
+import type { PluginLocalizedStringV2 as PresentationLocalizedString } from '@happier-dev/plugin-sdk/manifest';
+import type { MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';

@@ -54,6 +54,7 @@ function nestedProjection(schema: PluginJsonSchemaV2): PluginJsonSchemaV2 {
 export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.object({
   id: local(), title: PluginLocalizedStringV2Schema, icon: PluginActionIconV2Schema,
   resourceKind: z.string().trim().min(1),
+  kindTitle: PluginLocalizedStringV2Schema.optional(), description: PluginLocalizedStringV2Schema.optional(),
   launchSchema: strictPortableSchema, resourceSchema: strictPortableSchema,
   schemaVersion: z.number().int().positive(),
   platforms: z.array(z.enum(['darwin', 'linux', 'win32'])).min(1).refine(values => new Set(values).size === values.length),
@@ -171,6 +172,7 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
 const text = () => mini.string().check(mini.trim(), mini.minLength(1));
 const machineProvisionerCheckResult = lazyDefinition(() => mini.strictObject({
   available: mini.boolean(), code: mini.optional(text()),
+  status: mini.optional(PluginLocalizedStringV2Schema),
   prerequisites: mini.optional(mini.array(ManagedPrerequisiteV1Schema)),
   localResources: mini.optional(ManagedLocalResourceFactsV1Schema),
 }));

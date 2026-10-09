@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { machinePresentationLabel, machineCheckPresentation, DOCKER_SANDBOXES_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
@@ -35,6 +36,7 @@ function privateBytes(value: string) {
 
 export const DOCKER_SANDBOXES_MACHINE_PROVISIONER = {
   title: 'Docker Sandboxes', icon: 'server', resourceKind: 'docker-sandbox', schemaVersion: 1,
+  kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema, resourceSchema: DockerSandboxesResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'managedDependency', id: DOCKER_SANDBOXES_DEPENDENCY_ID }],
   billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -55,13 +57,14 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
     description: 'User-installed sbx v0.46.0 under the Docker subscription license.',
     sources: [{ kind: 'system', executableNames: ['sbx'], versionArguments: ['version'] }],
   } },
+  ui: { translations: DOCKER_SANDBOXES_UI_TRANSLATION_BUNDLES },
   machineProvisioners: { [DOCKER_SANDBOXES_PROVISIONER_ID]: DOCKER_SANDBOXES_MACHINE_PROVISIONER },
   actions: {
     check: { ...actionDefaults, title: 'Check Docker Sandboxes', dangerLevel: 'safe',
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
-        try { return await (await provider(context)).check(); }
-        catch (error) { return { available: false, code: errorCode(error) }; }
+        try { return machineCheckPresentation(await (await provider(context)).check()); }
+        catch (error) { return machineCheckPresentation({ available: false, code: errorCode(error) }); }
       },
     },
     options: { ...actionDefaults, title: 'Discover Docker Sandbox templates', dangerLevel: 'safe',

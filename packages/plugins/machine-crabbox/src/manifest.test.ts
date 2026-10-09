@@ -127,7 +127,8 @@ describe('Crabbox lazy family authoring', () => {
       launch: { backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux', nativeImageId: 'ami-test',
         nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } } }, runtime.context)).toEqual({ kind: 'unknown',
       recovery: { reference: runtime.leaseId, reason: 'native_correlation_unqualified' } });
-    expect(await runtime.handlers.get('check')!({}, runtime.context)).toEqual({ available: true });
+    expect(await runtime.handlers.get('check')!({}, runtime.context)).toMatchObject({ available: true,
+      status: { key: 'machineCrabbox.presentation.ready' } });
     expect(runtime.requests).toHaveLength(0);
     const acquired = await runtime.handlers.get('acquire')!({ launch: { backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
       nativeImageId: 'ami-test', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 }, managedId: 'host-managed-row',

@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
@@ -23,7 +24,8 @@ const modalHost = vi.hoisted(() => ({
 installNewSessionComponentsCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
+        return createTextModuleMock({ translate: (key, params) => key === 'machines.destinations.shared'
+            ? `${key}:${String(params?.team)}` : key });
     },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -184,15 +186,17 @@ describe('useMachineSelectionListModel', () => {
         const onSelectManagedMachine = vi.fn();
         const onConfigure = vi.fn();
         const artifactSelect = vi.fn();
+        const onOpenManagedPresets = vi.fn();
         const rendered = await renderHook(() => useMachineSelectionListModel({
             ...buildParams(fixture, handlers),
             temporaryComputers: [{ serverId: 'server-a', artifactTarget: 'darwin-arm64', selected: false,
                 workspace: null, packageExpiresAt: 12345, onSelect: artifactSelect }],
-            managedMachines: [{ id: 'managed-machine:server-a:preset:recipe:3', homeId: 'server-a',
+            managedMachines: [{ id: 'managed-machine:server-a:preset:recipe:3', homeId: 'server-a', kind: 'preset',
                 title: 'Guest', subtitle: 'host · Keep', draft }, { id: 'managed-machine:server-a:one-off', homeId: 'server-a',
-                title: 'One-off', onSelect: onConfigure }],
+                kind: 'one-off', title: 'One-off', onSelect: onConfigure }],
             selectedManagedMachine: draft,
             onSelectManagedMachine,
+            onOpenManagedPresets,
         }));
         const model = rendered.getCurrent();
         const managed = model.rootStep.sections.find((section) => section.id === 'managed-machines');
@@ -203,6 +207,13 @@ describe('useMachineSelectionListModel', () => {
         expect(managed.options.map((row) => row.id)).toEqual([
             'managed-machine:server-a:preset:recipe:3', 'managed-machine:server-a:one-off',
         ]);
+        // "New machine" with a quiet trailing "Presets" destination; a preset reads as a preset, one-off as an add.
+        expect(managed.title).toBe('newSession.managedMachine.title');
+        expect(managed.action?.label).toBe('machinePresets.short');
+        managed.action?.onPress();
+        expect(onOpenManagedPresets).toHaveBeenCalledOnce();
+        expect((managed.options[0]?.icon as React.ReactElement<{ name: string }>).props.name).toBe('stack');
+        expect((managed.options[1]?.icon as React.ReactElement<{ name: string }>).props.name).toBe('plus');
         expect(model.selectedOptionId).toBe('managed-machine:server-a:preset:recipe:3');
         expect(managed.options[0]?.rightAccessory).toBeUndefined();
         expect(managed.options[0]?.subtitle).not.toContain('1.25');
@@ -274,6 +285,7 @@ describe('useMachineSelectionListModel', () => {
         const model = await renderHook(() => useMachineSelectionListModel(params('session')));
         const shared = model.getCurrent().rootStep.sections.find((section) => section.id === 'server:server-a:shared:alice');
         if (shared?.kind !== 'static') throw new Error('expected a scoped shared ownership section');
+        expect(shared.title).toBe('Server A · machines.destinations.shared:Alice');
         expect(shared.options.map((option) => option.id)).toEqual(['server-a::shared', 'server-a::pending']);
         expect(shared.options[0]?.subtitle).toContain('machines.destinations.owner');
         expect(model.getCurrent().selectedOptionId).toBe('server-a::pending');
@@ -291,6 +303,17 @@ describe('useMachineSelectionListModel', () => {
         triggerShared.options[0]?.onSelect?.();
         expect(scopedSelect).not.toHaveBeenCalled();
         await trigger.unmount();
+    });
+
+    it.each([true, false])('keeps a shared bucket distinct when its custodian name is unavailable (single Home: %s)', async singleHome => {
+        const shared = { ...createMachine('shared-without-owner'), isShared: true };
+        const group = { serverId: 'server-a', serverName: 'Server A', loading: false, signedOut: false, machines: [createScopedMachine(shared)] };
+        const model = await renderHook(() => useMachineSelectionListModel({ groups: singleHome ? [group] : [group, { ...group, serverId: 'server-b', machines: [] }],
+            selectedMachine: null, recentMachines: [], favoriteMachines: [], showFavorites: false, showRecent: false,
+            showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false, onSelectMachine: vi.fn() }));
+        const section = model.getCurrent().rootStep.sections.find(section => section.id === (singleHome ? 'shared:' : 'server:server-a:shared:'));
+        expect(section?.title).toBe(`${singleHome ? '' : 'Server A · '}machines.destinations.sharedWithoutOwner`);
+        await model.unmount();
     });
     it('keeps the selected unavailable machine visible without allowing activation', async () => {
         const machine = { ...createMachine('retired'), revokedAt: Date.now() };

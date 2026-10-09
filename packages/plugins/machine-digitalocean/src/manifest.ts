@@ -1,4 +1,5 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { machinePresentationLabel, machineCheckPresentation, DIGITALOCEAN_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
@@ -25,6 +26,7 @@ function unavailable() { return { observedAt: 0, availability: 'unavailable' as 
 
 export const MACHINE_PROVISIONER = {
   title: 'DigitalOcean', icon: 'server', resourceKind: 'digitalocean-droplet', schemaVersion: 1,
+  kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: dropletLaunchSchema.jsonSchema, resourceSchema: dropletResourceSchema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],
   billing, retention: { supportedIntents: ['start', 'stop', 'delete'] },
@@ -52,6 +54,7 @@ export const PLUGIN = definePlugin({
       fields: [{ id: 'token', title: 'API token', schema: { type: 'string', minLength: 1 }, secret: true }],
     }] } }, runtime: connectedAccountRuntime,
   } },
+  ui: { translations: DIGITALOCEAN_UI_TRANSLATION_BUNDLES },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {
     reconcile: { ...defaults, title: 'Recover exact DigitalOcean resource', dangerLevel: 'safe',
@@ -67,7 +70,7 @@ export const PLUGIN = definePlugin({
     },
     check: { ...defaults, title: 'Check DigitalOcean API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
-      async run(_input, context) { try { return await (await runtime(context)).check(); } catch { return { available: false, code: 'provider_unavailable' }; } },
+      async run(_input, context) { try { return machineCheckPresentation(await (await runtime(context)).check()); } catch { return machineCheckPresentation({ available: false, code: 'provider_unavailable' }); } },
     },
     options: { ...defaults, title: 'Discover DigitalOcean options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,

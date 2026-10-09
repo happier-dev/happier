@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { machinePresentationLabel, machineCheckPresentation, LIMA_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
@@ -43,6 +44,7 @@ function decodePrivateBytes(value: string) {
 
 export const LIMA_MACHINE_PROVISIONER = {
   title: 'Lima', icon: 'server', resourceKind: 'lima-vm', schemaVersion: 1,
+  kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: LimaLaunchSchema.jsonSchema, resourceSchema: LimaResourceSchema.jsonSchema,
   platforms: ['darwin', 'linux'],
   prerequisites: [{ kind: 'managedDependency', id: LIMA_DEPENDENCY_ID }],
@@ -74,14 +76,15 @@ export const LIMA_PLUGIN = definePlugin({
     id: 'qemu-img', title: 'QEMU disk image tool', executable: 'qemu-img',
     sources: [{ kind: 'system', executableNames: ['qemu-img'], versionArguments: ['--version'] }],
   } },
+  ui: { translations: LIMA_UI_TRANSLATION_BUNDLES },
   machineProvisioners: { [LIMA_PROVISIONER_ID]: LIMA_MACHINE_PROVISIONER },
   actions: {
     check: {
       ...actionDefaults, title: 'Check Lima availability', dangerLevel: 'safe',
       inputSchema: LIMA_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
-        try { return await (await provider(context)).check(); }
-        catch (error) { return { available: false, code: errorCode(error) }; }
+        try { return machineCheckPresentation(await (await provider(context)).check()); }
+        catch (error) { return machineCheckPresentation({ available: false, code: errorCode(error) }); }
       },
     },
     acquire: {

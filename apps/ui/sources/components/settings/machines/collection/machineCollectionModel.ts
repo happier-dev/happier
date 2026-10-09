@@ -3,7 +3,7 @@ import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLin
 import { describeMachineLockedReason, getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { resolveHappierCollectionInitialKey } from '@happier-dev/plugin-ui/presentation';
-import { buildMachineOwnershipGroups, describeMachineSharedOwnership } from '@/sync/domains/machines/machineOwnershipGroups';
+import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
 import { t } from '@/text';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
@@ -57,6 +57,8 @@ export type MachinePresetCollectionRow = Readonly<{
     serverId: string;
     title: string;
     preset: ManagedMachinePresetV1;
+    audience: string;
+    teamName?: string;
 }>;
 
 export type MachinePresetCollectionSection = Omit<MachineCollectionSection, 'rows'> & Readonly<{
@@ -90,6 +92,7 @@ export function buildMachineCollection(input: Readonly<{
     nowMs?: number;
     managedByServerId?: Readonly<Record<string, readonly ManagedMachineV1[]>>;
     presetsByServerId?: Readonly<Record<string, readonly ManagedMachinePresetV1[]>>;
+    teamNamesByServerId?: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }>): MachineCollection {
     const query = input.query?.trim().toLocaleLowerCase() ?? '';
     const nowMs = input.nowMs ?? Date.now();
@@ -138,7 +141,7 @@ export function buildMachineCollection(input: Readonly<{
             }
             count += rows.length;
             const ownershipTitle = ownershipGroup.key.startsWith('shared:')
-                ? t('machines.destinations.shared', { team: ownershipGroup.custodian?.displayName || t('common.unknown') })
+                ? describeMachineSharedGroupTitle(ownershipGroup.custodian)
                 : ownershipGroup.key === 'owned' && ownershipGroups.some(group => group.key.startsWith('shared:')) ? t('machines.destinations.yours') : null;
             return {
                 key: JSON.stringify([group.serverId, ownershipGroup.key]),
@@ -155,7 +158,10 @@ export function buildMachineCollection(input: Readonly<{
         const rows = (input.presetsByServerId?.[group.serverId] ?? [])
             .filter(preset => !query || preset.name.toLocaleLowerCase().includes(query))
             .map((preset): MachinePresetCollectionRow => ({ kind: 'preset', presetId: preset.id,
-                serverId: group.serverId, title: preset.name, preset }))
+                serverId: group.serverId, title: preset.name, preset,
+                audience: preset.owner.kind === 'account' ? t('machinePresets.ownerPersonal')
+                    : input.teamNamesByServerId?.[group.serverId]?.[preset.owner.teamId] ?? t('common.loading'),
+                ...(preset.owner.kind === 'team' ? { teamName: input.teamNamesByServerId?.[group.serverId]?.[preset.owner.teamId] } : {}) }))
             .sort((a, b) => Number(a.preset.archivedAt !== undefined) - Number(b.preset.archivedAt !== undefined)
                 || a.title.localeCompare(b.title) || machinePresetCollectionRowKey(a).localeCompare(machinePresetCollectionRowKey(b)));
         count += rows.length;

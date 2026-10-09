@@ -99,9 +99,43 @@ export const MODAL_CONFIGURATION_LABELS = {
   },
 } as const;
 
-export const MODAL_UI_TRANSLATION_BUNDLES = Object.freeze(
+const CONFIGURATION_TRANSLATION_BUNDLES = Object.freeze(
   Object.entries(MODAL_CONFIGURATION_LABELS).map(([locale, labels]) => ({
     locale,
     messages: Object.fromEntries(Object.entries(labels).map(([id, value]) => [`machineModal.configure.${id}`, value])),
   })),
 ) satisfies readonly UiTranslationBundle[];
+
+export const MACHINE_PRESENTATION_LABELS = {
+  "en": {"kind":"sandbox","description":"On-demand cloud sandboxes with a native lifetime.","ready":"Account connected","unavailable":"Account unavailable"},
+  "de": {"kind":"Sandbox","description":"Cloud-Sandboxes auf Abruf mit nativer Laufzeit.","ready":"Konto verbunden","unavailable":"Konto nicht verfügbar"},
+  "ru": {"kind":"песочница","description":"Облачные песочницы по запросу с нативным сроком работы.","ready":"Аккаунт подключён","unavailable":"Аккаунт недоступен"},
+  "pl": {"kind":"piaskownica","description":"Piaskownice w chmurze na żądanie z natywnym czasem działania.","ready":"Konto połączone","unavailable":"Konto niedostępne"},
+  "es": {"kind":"sandbox","description":"Sandboxes en la nube bajo demanda con duración nativa.","ready":"Cuenta conectada","unavailable":"Cuenta no disponible"},
+  "fr": {"kind":"sandbox","description":"Des sandboxes cloud à la demande avec une durée de vie native.","ready":"Compte connecté","unavailable":"Compte indisponible"},
+  "it": {"kind":"sandbox","description":"Sandbox cloud su richiesta con durata nativa.","ready":"Account collegato","unavailable":"Account non disponibile"},
+  "pt": {"kind":"sandbox","description":"Sandboxes na nuvem sob demanda com duração nativa.","ready":"Conta conectada","unavailable":"Conta indisponível"},
+  "ca": {"kind":"sandbox","description":"Sandboxes al núvol sota demanda amb durada nativa.","ready":"Compte connectat","unavailable":"Compte no disponible"},
+  "zh-Hans": {"kind":"沙盒","description":"按需提供并遵循原生运行期限的云沙盒。","ready":"账户已连接","unavailable":"账户不可用"},
+  "zh-Hant": {"kind":"沙盒","description":"隨需提供並遵循原生執行期限的雲端沙盒。","ready":"帳戶已連接","unavailable":"帳戶不可用"},
+  "ja": {"kind":"サンドボックス","description":"ネイティブの有効期間に従うオンデマンドのクラウドサンドボックス。","ready":"アカウント接続済み","unavailable":"アカウント利用不可"},
+} as const;
+
+export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_LABELS.en): PresentationLocalizedString {
+  return { key: 'machineModal.presentation.' + id, fallback: MACHINE_PRESENTATION_LABELS.en[id] };
+}
+
+/** Native check codes and their human vocabulary stay owned by this leaf. */
+export function machineCheckPresentation(result: MachineProvisionerCheckResultV1): MachineProvisionerCheckResultV1 {
+  const code = result.code;
+  const id = result.available ? 'ready' : code && Object.hasOwn(MACHINE_PRESENTATION_LABELS.en, code)
+    ? code as keyof typeof MACHINE_PRESENTATION_LABELS.en : 'unavailable';
+  return { ...result, status: result.status ?? machinePresentationLabel(id) };
+}
+
+export const MODAL_UI_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = CONFIGURATION_TRANSLATION_BUNDLES.map(bundle => ({
+  ...bundle, messages: { ...bundle.messages, ...Object.fromEntries(Object.entries(MACHINE_PRESENTATION_LABELS[bundle.locale as keyof typeof MACHINE_PRESENTATION_LABELS])
+    .map(([id, value]) => ['machineModal.presentation.' + id, value])) },
+}));
+import type { PluginLocalizedStringV2 as PresentationLocalizedString } from '@happier-dev/plugin-sdk/manifest';
+import type { MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';

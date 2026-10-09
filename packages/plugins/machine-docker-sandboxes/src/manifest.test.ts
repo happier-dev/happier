@@ -29,7 +29,8 @@ describe('activated Docker Sandboxes public role boundary', () => {
     try {
       expect(boundary.status).not.toHaveBeenCalled();
       expect(run).not.toHaveBeenCalled();
-      expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toEqual({ available: false, code: 'docker_sandbox_version_unqualified' });
+      expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false, code: 'docker_sandbox_version_unqualified',
+        status: { key: 'machineDocker.presentation.docker_sandbox_version_unqualified' } });
       expect(await kit.invokeAction('acquire', { launch: { name: 'happier', templateId: 'docker.io/example/template:1' }, managedId: 'managed-row-1' }, { surface: 'plugin' }))
         .toEqual({ kind: 'rejected', code: 'provider_unavailable' });
       expect(run).not.toHaveBeenCalled();

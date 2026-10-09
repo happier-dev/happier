@@ -18,7 +18,7 @@ import { ManagedMachineDetail } from './ManagedMachineDetail';
 import { t } from '@/text';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { ManagedCreationProgress } from './ManagedCreationProgress';
-import { ManagedEnrolledMachineSections } from './ManagedMachineSections';
+import { ManagedEnrolledMachineSections, useManagedMachineHeaderIdentity, type ManagedMachineHeaderIdentity } from './ManagedMachineSections';
 import { ManagedMachinePolicySection, ManagedMachineControllerSection, ManagedControllerMoveList, ManagedMachineRecipeSection } from './ManagedMachineDetailSections';
 import { MachineConfigurationReceipt } from './MachineConfigurationReceipt';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -718,6 +718,10 @@ describe('managed Machine detail', () => {
         expect(nativeRequests).toEqual([]);
         const confirm = screen.tree.findAll(node => node.props?.testID === 'managed-machine.delete-confirm' && typeof node.props.onPress === 'function')[0];
         expect(confirm).toBeDefined();
+        // The decision is one closing button row: the button names it, so no row repeats "Delete machine".
+        expect(screen.findByTestId('managed-machine.delete-decision')).not.toBeNull();
+        expect(screen.findByTestId('managed-machine.delete-decision.cancel')).not.toBeNull();
+        expect(screen.tree.findAll(node => node.props?.title === t('managedMachines.actions.deleteMachine') && node.props?.mode === 'info')).toHaveLength(0);
         await act(async () => confirm!.props.onPress());
         await flushHookEffects({ cycles: 20 });
         await expect(vi.mocked(Modal.confirm).mock.results.at(-1)?.value).resolves.toBe(true);
@@ -781,6 +785,7 @@ describe('managed Machine detail', () => {
         await flushHookEffects({ cycles: 30 });
         const keep = screen.tree.findByType(ManagedMachinePolicySection).props.keep;
         expect(keep.defaultPolicy).toMatchObject({ retention: { kind: 'unused', afterMs }, wakeOnAcceptedMessage: true });
+        expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.cost).toEqual({ kind: 'unpriced', provider: 'Virtual machine' });
         afterMs = 7_200_000;
         await act(async () => keep.onReset());
         await flushHookEffects({ cycles: 30 });
@@ -1038,8 +1043,9 @@ describe('managed Machine detail', () => {
                 optionStatus: 'current', billing: { location: 'cloud', stoppedBilling: 'not-billed' }, prerequisites: [],
                 retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-                nativeFacts: { size: { id: 'captured-size', title: 'Four-core guest', cpuCores: 4 }, image: { id: 'captured-image', title: 'Original Linux image' },
-                    location: { id: 'captured-location', title: 'Original region' } },
+                nativeFacts: { size: { id: 'captured-size', title: 'Four-core guest', cpuCores: 4 },
+                    image: { id: 'captured-image', title: 'Original Linux image', description: 'Long-term support' },
+                    location: { id: 'captured-location', title: 'Original region', countryCode: 'DE' } },
                 prices: [{ amount: '0.125', currency: 'USD', unit: 'hour', source: 'captured-price', observedAt: 5 }] } };
         const receiptController = createMachineFixture({ id: 'original-controller', installationId: 'original-installation',
             metadata: { ...createMachineFixture().metadata!, displayName: 'Original controller computer' } });
@@ -1071,8 +1077,9 @@ describe('managed Machine detail', () => {
             .toEqual(['managed-machine.start', 'managed-machine.stop', 'managed-machine.delete']);
         expect(screen.tree.findByType(ManagedMachineRecipeSection).props.rows).toEqual([
             expect.objectContaining({ id: 'size', title: 'Four-core guest', subtitle: t('managedMachines.receipt.cores', { count: 4 }) }),
-            expect.objectContaining({ id: 'image', title: 'Original Linux image' }),
-            expect.objectContaining({ id: 'location', title: 'Original region' }),
+            // Each value's own fact, never the category word ("Image", "Location") again.
+            expect.objectContaining({ id: 'image', title: 'Original Linux image', subtitle: 'Long-term support' }),
+            expect.objectContaining({ id: 'location', title: 'Original region', subtitle: expect.stringMatching(/ · captured-location$/) }),
         ]);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy').length).toBeGreaterThan(0);
         const controller = createMachineFixture({ id: machine.controller.machineId,
@@ -1101,6 +1108,34 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findAllByType(MachineConfigurationReceipt)).toHaveLength(0);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy')).toHaveLength(0);
         await act(async () => storage.getState().applyMachines([], true, machineSource));
+    });
+    it('names a created machine in its header by where it came from and its observed power, never by a guess', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-header-identity.test', scope: 'tab' });
+        setRuntimeFetch(async () => Response.json({ error: 'not_found' }, { status: 404 }));
+        const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
+            schemaVersion: 1, name: 'hz-build-2', choices: {} };
+        const machine: ManagedMachineV1 = { id: 'managed-identity', homeId: 'srv_identity', custodianAccountId: 'owner', launch,
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'enrolled',
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, allocation: 'bound', creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power: 'running' },
+            reviewedFacts: { launch, controller: { machineId: 'controller', installationId: 'installation' }, optionStatus: 'current',
+                billing: { location: 'cloud', stoppedBilling: 'billed' }, prerequisites: [], retentionCapabilities: { supportedIntents: ['stop'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, preset: { id: 'build', revision: 3, name: 'Build box' } } };
+        const seen: Array<ManagedMachineHeaderIdentity | null> = [];
+        function Probe(props: Readonly<{ machine?: ManagedMachineV1 }>) {
+            seen.push(useManagedMachineHeaderIdentity(props.machine, target.id));
+            return null;
+        }
+        const screen = await renderScreen(<Probe machine={machine} />);
+        expect(seen.at(-1)?.description).toBe(t('managedMachines.detail.madeFromPreset', { preset: 'Build box' }));
+        expect(seen.at(-1)?.meta).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'managed-power', text: t('managedMachines.detail.power.running') })]));
+        // Unknown power says nothing rather than "Running" on a guess.
+        await screen.update(<Probe machine={{ ...machine, observation: { availability: 'unavailable', observedAt: 2 } }} />);
+        expect(seen.at(-1)?.meta.some(fact => fact.key === 'managed-power')).toBe(false);
+        await screen.update(<Probe />);
+        expect(seen.at(-1)).toBeNull();
     });
     it('does not imply continuing billing after confirmed absence, even with a retained cleanup marker', async () => {
         const screen = await renderScreen(<ManagedCreationProgress machine={{ id: 'absent', homeId: 'home', custodianAccountId: 'owner',

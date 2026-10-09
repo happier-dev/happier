@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineActionOutputSchemasV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
@@ -12,6 +12,11 @@ import { useActionApprovalContinuation } from '@/components/approvals/useActionA
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { Item } from '@/components/ui/lists/Item';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { Typography } from '@/constants/Typography';
+import { Text } from '@/components/ui/text/Text';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { countryFlag, countryName } from './managedMachineDisplay';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -28,9 +33,10 @@ import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLin
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { ManagedReceiptColumns } from './ManagedReceiptPageLayout';
+import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { ManagedCreationScopeRuleSection } from './ManagedCreationScopeRuleSection';
 import { ManagedMachineKeepControl, type ManagedMachineKeepControlProps } from './ManagedMachineKeepControl';
 import { useLiveValue, useLiveValueChannel, type LiveValueChannel } from './liveValueChannel';
@@ -38,20 +44,21 @@ import { ManagedCreationProgress } from './ManagedCreationProgress';
 import { ManagedMachineControllerSection, ManagedMachinePolicySection, ManagedMachineRecipeSection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets, managedSizeDimensions } from './managedConfigurationPresentation';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
-import { describeRetention, formatRetentionDuration } from './managedRetentionPresentation';
+import { describeRetention, describeRetentionConsequence, formatRetentionDuration } from './managedRetentionPresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
-import { canRetryManagedInstallation, describeManagedCreation, managedCreationSetup } from './managedCreationPresentation';
+import { canRetryManagedInstallation, describeManagedCreation, managedCreationSetup, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { publishActionOperationObservation, reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { readManagedMachinePolicyParent, type ManagedMachinePolicyParent } from './managedMachinePolicyParent';
 import { useManagedMachineInventory, type ManagedMachineInventoryEntry } from './useManagedMachineInventory';
 import { ManagedMachineReadApprovalNotice } from './ManagedMachineReadApprovalNotice';
 import { currentManagedMoveController, readManagedMachineMoveCandidates, type ManagedMachineMoveCandidate } from './managedMachineMoveCandidates';
-import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics, useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { buildReviewedManagedMachineDeleteInput, qualifyManagedMachineDeleteReview, type ManagedMachineDeleteReview } from './managedMachineDeleteReview';
+import { useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
 
 const execute = createFrontDoorActionExecute();
 type Execute = ReturnType<typeof createFrontDoorActionExecute>;
@@ -88,7 +95,11 @@ export function ManagedMachineSections(props: SectionProps) {
     });
     const controllerPresence = controller ? describeMachinePresenceLine(controller) : null;
     const requiredController = controller?.installationId === machine.controller.installationId ? controller : null;
-    const mark = <Icon name="desktop" color={theme.colors.text.secondary} />;
+    const provisionerPresentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: machine.controller,
+        provider: machine.launch.provider, schemaVersion: machine.launch.schemaVersion });
+    const mark = provisionerPresentation.mark;
+    // The controller is a machine of yours: it keeps the device glyph, never the provider's mark.
+    const machineMark = <Icon name="desktop" />;
     const [pending, setPending] = React.useState<ManagedMachineActionIdV1 | null>(null);
     const pendingRef = React.useRef(false);
     const [error, setError] = React.useState<string | null>(null);
@@ -344,7 +355,9 @@ export function ManagedMachineSections(props: SectionProps) {
             loading: pending === 'machines.managed.references.get' || pending === 'machines.managed.delete', onPress: reviewDependencies }] : []),
     ] : [];
     const receipt: ManagedReceiptModel = { ...buildManagedConfigurationReceipt({ launch: machine.launch,
-        environment: machine.environmentSetup?.environment, reviewedFacts: machine.reviewedFacts, providerTitle: t('common.unknown'), mark,
+        environment: machine.environmentSetup?.environment, reviewedFacts: machine.reviewedFacts,
+        providerTitle: provisionerPresentation.title ?? policyParent?.providerTitle ?? t('common.machine'), mark,
+        localized: provisionerPresentation.localized,
         homeName: resolveHomeDisplayLabel(getServerProfileById(props.serverId), props.serverId), preset: machine.preset, created: true,
         controllerName: getMachineDisplayName(controllerMachines?.find(candidate =>
             candidate.id === (machine.reviewedFacts?.controller ?? machine.controller).machineId
@@ -353,12 +366,19 @@ export function ManagedMachineSections(props: SectionProps) {
         ...(receiptActions.length ? { secondary: receiptActions } : {}) };
     const credentialRowKeys = new Set(managedCredentialReceiptTargets(machine.launch).map(target => target.key));
     const credentialNames = receipt.facts.filter(fact => credentialRowKeys.has(fact.id)).map(fact => fact.value).join(', ');
-    const recipeRows = managedRecipeRows(machine, theme.colors.text.secondary);
+    const recipeRows = managedRecipeRows(machine, provisionerPresentation.localized);
     const nativeExpiry = policyParent?.capabilities.nativeExpiry;
     const nativeExpiryDescription = nativeExpiry && policyParent ? t('managedRetention.nativeExpiry', {
         provider: policyParent.providerTitle, time: nativeExpiry.kind === 'deadline' ? formatAsOfTime(nativeExpiry.at)
             : formatRetentionDuration(nativeExpiry.afterMs),
     }) : undefined;
+    const providerName = provisionerPresentation.title ?? policyParent?.providerTitle;
+    // The consequence says what the rule means for the bill, from the provider's own billing facts.
+    const consequence = (retention: MachineRetentionPolicyV1['retention']) => billing && providerName
+        ? describeRetentionConsequence(retention, { location: billing.location, stoppedBilling: billing.stoppedBilling, provider: providerName })
+        : describeRetention(retention);
+    const creationContext: ManagedCreationContext = { provider: providerName,
+        ...(controller && controllerPresence ? { controller: { name: controllerName, online: controllerPresence.online } } : {}) };
     const keep: ManagedKeepProps = { policy, inherited: false, defaultPolicy: policyParent?.policy,
         finiteOnly: policyParent?.capabilities.finiteOnly,
         nativeExpiry: nativeExpiryDescription,
@@ -366,7 +386,7 @@ export function ManagedMachineSections(props: SectionProps) {
         canWake: supportedIntents.includes('start') || supportedIntents.includes('resume'),
         // A live machine is where an explicit, reviewed deadline is set (plan 52); the Action still asks first.
         deadline: true,
-        consequence: describeRetention, disabled: !canMutate, onChange: changePolicy,
+        consequence, disabled: !canMutate, onChange: changePolicy,
         onReset: () => fireAndForget(resetPolicy(), { tag: 'ManagedMachineSections.resetPolicy' }) };
     const keepChannel = useLiveValueChannel(keep);
     const setup = managedCreationSetup(machine);
@@ -377,6 +397,10 @@ export function ManagedMachineSections(props: SectionProps) {
         ...(setup.recoveryActions.includes('continueWithoutSetup') ? { skip: () => fireAndForget(run('machines.managed.setup.skip',
             { ...target, expectedIntentRevision: machine.intentRevision }), { tag: 'ManagedMachineSections.skipSetup' }) } : {}),
     } : undefined;
+    const canCancelCreation = !machine.enrolledMachineId && machine.creationState === 'active' && machine.allocation !== 'confirmed-absent';
+    const cancelCreation = () => fireAndForget(run('machines.managed.cancel', { ...target, expectedIntentRevision: machine.intentRevision }),
+        { tag: 'ManagedMachineSections.cancel' });
+    const canCancelCreationRow = canCancelCreation && !describeManagedCreation(machine, creationContext).actions.includes('cancel');
     // Changed here means it differs from the default it would reset to; otherwise say what the rule governs.
     const policyDescription = policyParent && !sameStrictJsonValue(policyParent.policy,
         { retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage })
@@ -386,7 +410,9 @@ export function ManagedMachineSections(props: SectionProps) {
             title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(
                 `/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
-        <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} provider={policyParent?.providerTitle} handlers={{ checkNow: inspect,
+        <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} provider={providerName}
+            mark={mark} controller={creationContext.controller} handlers={{ checkNow: inspect,
+            ...(canCancelCreation && canMutate ? { cancel: cancelCreation } : {}),
             ...(recoveryConsoleUrl ? { openProvider: () => {
                 if (!props.binding?.isCurrent()) return;
                 fireAndForget(openExternalUrl(recoveryConsoleUrl), { tag: 'ManagedMachineSections.openConsole' });
@@ -402,7 +428,7 @@ export function ManagedMachineSections(props: SectionProps) {
                 onPress: () => showManagedKeepSheet(keepChannel, 'managed-machine.policy-sheet') } : undefined} />
         {requiredController ? <ManagedMachineControllerSection testID="managed-machine.controller"
             description={t('managedMachines.controller.required', { controller: controllerName })}
-            controller={{ name: controllerName, icon: mark, online: controllerPresence!.online,
+            controller={{ name: controllerName, icon: machineMark, online: controllerPresence!.online,
                 presence: controllerPresence!.label, move: billing?.location === 'local' ? { kind: 'fixed' }
                     : canMove ? { kind: 'movable', onPress: () => fireAndForget(reviewMove(), { tag: 'ManagedMachineSections.moveReview' }) }
                         : { kind: 'unavailable' } }} />
@@ -419,7 +445,7 @@ export function ManagedMachineSections(props: SectionProps) {
                 const current = row?.id === machine.controller.machineId && row.installationId === machine.controller.installationId;
                 const currentInstallation = currentManagedMoveController(row, machine.custodianAccountId);
                 const reachable = candidate.reachable && sameStrictJsonValue(currentInstallation, candidate.controller) && currentInstallation !== null;
-                return { id: candidate.id, name: getMachineDisplayName(row) ?? candidate.id, icon: mark,
+                return { id: candidate.id, name: getMachineDisplayName(row) ?? candidate.id, icon: machineMark,
                     subtitle: presence?.online && machine.launch.credentials?.length ? t(reachable ? 'managedController.reachableAccount'
                         : 'managedController.unavailableAccount', { account: credentialNames })
                         : presence?.label ?? t('common.unknown'), online: presence?.online ?? false, current, reachable };
@@ -428,8 +454,7 @@ export function ManagedMachineSections(props: SectionProps) {
         {compact ? null : <ManagedMachineRecipeSection testID="managed-machine.recipe" rows={recipeRows} />}
         {machine.observation ? <SurfaceFreshnessLine testID="managed-machine.observation" asOf={machine.observation.observedAt}
             action={{ label: t('managedMachines.inspect.checkNow'), onPress: inspect }} /> : null}
-        {reviewedDependencies ? <ItemGroup title={t('managedMachines.dependencies.title')}
-            description={t('managedMachines.dependencies.help')}>
+        {reviewedDependencies ? <ItemGroup title={t('managedMachines.dependencies.title')}>
             {reviewedDependencies.references.map(reference => <Item key={`${reference.kind}:${reference.id}`}
                 title={reference.name || reference.id} subtitle={reference.id} mode="info" showChevron={false}
                 testID={`managed-machine.delete-reference.${reference.kind}:${reference.id}`} />)}
@@ -437,49 +462,33 @@ export function ManagedMachineSections(props: SectionProps) {
                 title={t('managedMachines.dependencies.partial')} diagnosticCode={reviewedDependencies.unavailable.join(', ') || undefined}
                 testID="managed-machine.delete-coverage" /> : reviewedDependencies.references.length === 0 ?
                 <Item title={t('managedMachines.dependencies.empty')} mode="info" showChevron={false} /> : null}
-            <Item title={t('managedMachines.actions.deleteMachine')} mode="info" showChevron={false} rightElement={
-                <RoundButton title={t('managedMachines.actions.deleteMachine')} display="destructive" size="small"
-                    testID="managed-machine.delete-confirm" disabled={!canMutate} loading={pending === 'machines.managed.delete'}
-                    onPress={() => {
-                        if (!canMutate || !currentDeleteReview) return;
-                        const input = buildReviewedManagedMachineDeleteInput(machine, currentDeleteReview);
-                        if (!input) { setError('intent_changed'); return; }
-                        fireAndForget(run('machines.managed.delete', input), { tag: 'ManagedMachineSections.delete' });
-                    }} />
-            } />
-            <Item title={t('common.cancel')} mode="info" showChevron={false} rightElement={
-                <RoundButton title={t('common.cancel')} display="secondary" size="small" disabled={!canMutate}
-                    onPress={() => setDeleteReview(null)} />
-            } />
         </ItemGroup> : null}
-        {canRemove && !describeManagedCreation(machine).actions.includes('remove') ? <ItemGroup>
-            <Item title={t('managedMachines.actions.remove')} mode="info" showChevron={false} rightElement={
+        {/* The decision closes the page as one quiet button row: the way back, then the irreversible step last. */}
+        {reviewedDependencies ? <ManagedDecisionRow testID="managed-machine.delete-decision" footnote={t('managedMachines.dependencies.help')}
+            onCancel={canMutate ? () => setDeleteReview(null) : undefined}
+            confirm={{ label: t('managedMachines.actions.deleteMachine'), testID: 'managed-machine.delete-confirm', disabled: !canMutate,
+                loading: pending === 'machines.managed.delete', onPress: () => {
+                    if (!canMutate || !currentDeleteReview) return;
+                    const input = buildReviewedManagedMachineDeleteInput(machine, currentDeleteReview);
+                    if (!input) { setError('intent_changed'); return; }
+                    fireAndForget(run('machines.managed.delete', input), { tag: 'ManagedMachineSections.delete' });
+                } }} /> : null}
+        {canRemove && removeReviewKey !== deleteReviewKey && !describeManagedCreation(machine, creationContext).actions.includes('remove')
+            ? <ItemGroup surface="none"><SectionButtonRow testID="managed-machine.remove-row">
                 <RoundButton title={t('managedMachines.actions.remove')} display="secondary" size="small"
                     testID="managed-machine.remove" onPress={reviewRemoval} />
-            } />
-        </ItemGroup> : null}
-        {removeReviewKey === deleteReviewKey ? <ItemGroup description={machine.allocation === 'confirmed-absent'
-            || machine.observation?.availability === 'absent' ? t('managedPower.resourceAbsent') : t('managedCleanup.archiveReview')}>
-            <Item title={t('managedMachines.actions.remove')} mode="info" showChevron={false} rightElement={
-                <RoundButton title={t('managedMachines.actions.remove')} display="destructive" size="small"
-                    testID="managed-machine.remove-confirm" disabled={!canRemove} loading={pending === 'machines.managed.retire'}
-                    onPress={() => { if (canRemove) fireAndForget(run('machines.managed.retire', { ...target,
-                        expectedIntentRevision: machine.intentRevision, manualResponsibility: true }), { tag: 'ManagedMachineSections.remove' }); }} />
-            } />
-            <Item title={t('common.cancel')} mode="info" showChevron={false} rightElement={
-                <RoundButton title={t('common.cancel')} display="secondary" size="small" disabled={!canMutate}
-                    onPress={() => setRemoveReviewKey(null)} />
-            } />
-        </ItemGroup> : null}
-        {!machine.enrolledMachineId && machine.creationState === 'active' && machine.allocation !== 'confirmed-absent'
-            ? <ItemGroup description={t('managedMachines.detail.cancelDescription')}>
-                <Item title={t('common.cancel')} mode="info" showChevron={false} rightElement={
-                    <RoundButton title={t('common.cancel')} display="destructive" size="small"
-                        loading={pending === 'machines.managed.cancel'} disabled={!canMutate} testID="managed-machine.cancel"
-                        onPress={() => fireAndForget(run('machines.managed.cancel', { ...target, expectedIntentRevision: machine.intentRevision }),
-                            { tag: 'ManagedMachineSections.cancel' })} />
-                } />
-            </ItemGroup> : null}
+            </SectionButtonRow></ItemGroup> : null}
+        {removeReviewKey === deleteReviewKey ? <ManagedDecisionRow testID="managed-machine.remove-decision"
+            footnote={machine.allocation === 'confirmed-absent' || machine.observation?.availability === 'absent'
+                ? t('managedPower.resourceAbsent') : t('managedCleanup.archiveReview')}
+            onCancel={canMutate ? () => setRemoveReviewKey(null) : undefined}
+            confirm={{ label: t('managedMachines.actions.remove'), testID: 'managed-machine.remove-confirm', disabled: !canRemove,
+                loading: pending === 'machines.managed.retire', onPress: () => { if (canRemove) fireAndForget(run('machines.managed.retire', { ...target,
+                    expectedIntentRevision: machine.intentRevision, manualResponsibility: true }), { tag: 'ManagedMachineSections.remove' }); } }} /> : null}
+        {/* An offline controller's banner already carries Cancel; the closing row would say it twice. */}
+        {canCancelCreationRow ? <ManagedDecisionRow testID="managed-machine.cancel-decision" footnote={t('managedMachines.detail.cancelDescription')}
+            confirm={{ label: t('managedMachines.actions.cancelCreation'), testID: 'managed-machine.cancel', disabled: !canMutate,
+                loading: pending === 'machines.managed.cancel', onPress: cancelCreation }} /> : null}
         {error ? <SurfaceStateCard kind="error" size="line" title={error === 'intent_changed'
             ? t('managedRetention.conflict') : error === 'managed_binding_move_incomplete'
                 ? t('managedController.moveIncomplete') : t('managedMachines.detail.loadFailed')} diagnosticCode={error}
@@ -487,8 +496,11 @@ export function ManagedMachineSections(props: SectionProps) {
     </ManagedReceiptColumns>;
 }
 
-/** The enrolled association is derived from the same admitted managed inventory, never a Machine-side copy. */
-export function ManagedEnrolledMachineSections(props: Readonly<{ enrolledMachineId: string; serverId: string; executeAction?: Execute }>) {
+/**
+ * The enrolled association, derived from the same admitted managed inventory, never a Machine-side
+ * copy. A Machine page reads it once and gives it to both its header and its managed sections.
+ */
+export function useManagedEnrolledMachine(props: Readonly<{ enrolledMachineId: string | undefined; serverId: string; executeAction?: Execute }>) {
     const serverId = resolveServerProfileScopeIdForIdentifier(props.serverId) || props.serverId;
     const serverIds = React.useMemo(() => serverId && props.enrolledMachineId ? [serverId] : [], [serverId, props.enrolledMachineId]);
     const executeAction = props.executeAction ?? execute;
@@ -497,20 +509,83 @@ export function ManagedEnrolledMachineSections(props: Readonly<{ enrolledMachine
     const entryRef = React.useRef(entry);
     entryRef.current = entry;
     const [denial, setDenial] = React.useState<ManagedMachineInventoryEntry | null>(null);
-    const machine = inventory.machinesByEnrolledMachineIdByServerId[serverId]?.[props.enrolledMachineId];
+    const found = props.enrolledMachineId ? inventory.machinesByEnrolledMachineIdByServerId[serverId]?.[props.enrolledMachineId] : undefined;
+    const machine = !found || entry?.status === 'denied' || (denial && (entry?.status !== 'ready' || denial === entry)) ? undefined : found;
+    const deny = React.useCallback(() => setDenial(entryRef.current ?? null), []);
+    return { serverId, inventory, entry, machine, executeAction, deny };
+}
+export type ManagedEnrolledMachine = ReturnType<typeof useManagedEnrolledMachine>;
+
+export function ManagedEnrolledMachineSections(props: Readonly<{ enrolledMachineId: string; serverId: string; executeAction?: Execute }>) {
+    return <ManagedEnrolledMachineSectionsView enrolled={useManagedEnrolledMachine(props)} />;
+}
+
+export function ManagedEnrolledMachineSectionsView(props: Readonly<{ enrolled: ManagedEnrolledMachine }>) {
+    const { serverId, inventory, entry, machine, executeAction, deny } = props.enrolled;
     const readApproval = <ManagedMachineReadApprovalNotice serverId={serverId} entry={entry} />;
-    if (!machine || entry?.status === 'denied' || (denial && (entry?.status !== 'ready' || denial === entry))) return readApproval;
+    if (!machine) return readApproval;
     return <>
         {readApproval}
         {entry?.status !== 'ready' ? <SurfaceFreshnessLine asOf={entry?.asOf} reason={t('managedMachines.detail.loadFailed')}
             action={{ label: t('common.retry'), onPress: inventory.refresh }} testID="managed-machine.freshness" /> : null}
         <ManagedMachineSections key={JSON.stringify([serverId, machine.id])} machine={machine} serverId={serverId}
             binding={inventory.bindings.get(serverId)} current={entry?.status === 'ready'} executeAction={executeAction}
-            onChanged={inventory.refresh} onDenied={() => setDenial(entryRef.current ?? null)} />
+            onChanged={inventory.refresh} onDenied={deny} />
     </>;
 }
 
+export type ManagedMachineHeaderIdentity = Readonly<{
+    mark: React.ReactNode;
+    description: string | null;
+    meta: readonly PageHeaderMetaFact[];
+}>;
+
+/**
+ * Who a created machine is, for its page header (lab `m-detail`): the provider's mark, where it came
+ * from ("Made from the Build box preset."), and its observed power and kind beside the ordinary facts.
+ * Identity comes from the installed provisioner declaration, so the header asks no machine anything.
+ */
+export function useManagedMachineHeaderIdentity(machine: ManagedMachineV1 | undefined, serverId: string): ManagedMachineHeaderIdentity | null {
+    const presentation = useManagedProvisionerPresentation({ serverId, controller: machine?.controller,
+        provider: machine?.launch.provider, schemaVersion: machine?.launch.schemaVersion });
+    if (!machine) return null;
+    const provider = presentation.title;
+    const presetName = machine.reviewedFacts?.preset?.name;
+    const power = machine.observation?.availability === 'present' ? machine.observation.power : undefined;
+    const meta: PageHeaderMetaFact[] = [];
+    if (power === 'running' || power === 'stopped' || power === 'suspended') {
+        meta.push({ key: 'managed-power', text: t(`managedMachines.detail.power.${power}`), testID: 'machine-detail-managed-power' });
+    }
+    if (provider) meta.push({ key: 'managed-kind', text: presentation.kindTitle
+        ? t('managedMachines.detail.kindFact', { provider, kind: presentation.kindTitle }) : provider });
+    return { mark: presentation.mark,
+        description: presetName ? t('managedMachines.detail.madeFromPreset', { preset: presetName })
+            : provider ? t('managedMachines.detail.createdOn', { provider }) : null,
+        meta };
+}
+
 type ManagedKeepProps = Omit<ManagedMachineKeepControlProps, 'presentation' | 'testID' | 'showLabel'>;
+
+/**
+ * A reviewed decision closes the page as one quiet button row (anatomy: destructive actions): the way
+ * back stays quiet, the irreversible step is destructive and last, and its consequence is said once
+ * beneath. The button already names the decision, so no row repeats it.
+ */
+export function ManagedDecisionRow(props: Readonly<{
+    testID: string;
+    footnote: string;
+    onCancel?: () => void;
+    confirm: Readonly<{ label: string; testID: string; disabled: boolean; loading: boolean; onPress: () => void }>;
+}>) {
+    return <ItemGroup surface="none">
+        <SectionButtonRow testID={props.testID} footnote={props.footnote} footnoteTestID={`${props.testID}.footnote`}
+            trailing={<RoundButton title={props.confirm.label} display="destructive" size="small" testID={props.confirm.testID}
+                disabled={props.confirm.disabled} loading={props.confirm.loading} onPress={props.confirm.onPress} />}>
+            {props.onCancel ? <RoundButton title={t('common.cancel')} display="inverted" size="small" textStyle={Typography.default()}
+                testID={`${props.testID}.cancel`} onPress={props.onCancel} /> : null}
+        </SectionButtonRow>
+    </ItemGroup>;
+}
 
 function showManagedKeepSheet(channel: LiveValueChannel<ManagedKeepProps>, testID: string) {
     Modal.show({ component: ManagedKeepSheet, props: { channel, testID } });
@@ -530,23 +605,37 @@ function ManagedKeepSheet(props: Readonly<{ channel: LiveValueChannel<ManagedKee
     </ItemGroup>;
 }
 
-/** What it was made with, from the reviewed native facts: each value first, its details beneath. */
-function managedRecipeRows(machine: ManagedMachineV1, iconColor: string) {
+/**
+ * What it was made with, from the reviewed native facts: each value first, then the fact that tells it
+ * apart (its dimensions, what the system is, the country and region id). Glyphs are bare; the row owner
+ * sizes and colours them. A place leads with its country's flag, as in the configurator.
+ */
+function managedRecipeRows(machine: ManagedMachineV1, localized: PluginLocalizedTextResolver) {
     const native = machine.reviewedFacts?.nativeFacts;
-    const title = (value: string | Readonly<{ fallback: string }>) => typeof value === 'string' ? value : value.fallback;
+    const title = (value: unknown) => localized(machine.launch.provider.pluginId, value);
     const rows: { id: string; title: string; subtitle: string; leading: React.ReactNode }[] = [];
     if (native?.size) {
         const dimensions = managedSizeDimensions(native.size);
         rows.push({ id: 'size', title: title(native.size.title),
             subtitle: dimensions.length ? dimensions.join(' · ') : t('managedMachines.config.size'),
-            leading: <Icon name="cpu" size={20} color={iconColor} /> });
+            leading: <Icon name="cpu" /> });
     }
-    if (native?.image) rows.push({ id: 'image', title: title(native.image.title), subtitle: t('managedMachines.config.image'),
-        leading: <Icon name="image" size={20} color={iconColor} /> });
-    if (native?.location) rows.push({ id: 'location', title: title(native.location.title), subtitle: t('managedMachines.config.location'),
-        leading: <Icon name="map-pin" size={20} color={iconColor} /> });
+    if (native?.image) rows.push({ id: 'image', title: title(native.image.title),
+        subtitle: native.image.description ? title(native.image.description) : t('managedMachines.config.image'),
+        leading: <Icon name="image" /> });
+    if (native?.location) {
+        const flag = countryFlag(native.location.countryCode);
+        const country = countryName(native.location.countryCode, getPreferredLanguage());
+        rows.push({ id: 'location', title: title(native.location.title),
+            subtitle: [country, native.location.id].filter(Boolean).join(' · '),
+            leading: flag ? <Text style={recipeStyles.flag}>{flag}</Text> : <Icon name="map-pin" /> });
+    }
     if (native?.duration) rows.push({ id: 'duration', title: title(native.duration.title), subtitle: t('managedRetention.ends'),
-        leading: <Icon name="hourglass" size={20} color={iconColor} /> });
+        leading: <Icon name="hourglass" /> });
     return rows.length ? rows : [{ id: 'launch', title: machine.launch.name, subtitle: t('common.unknown'),
-        leading: <Icon name="desktop" size={20} color={iconColor} /> }];
+        leading: <Icon name="desktop" /> }];
 }
+
+const recipeStyles = StyleSheet.create({
+    flag: { ...happierPageTextMetrics('rowTitle') },
+});

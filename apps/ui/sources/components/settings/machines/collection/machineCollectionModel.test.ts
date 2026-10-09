@@ -43,6 +43,20 @@ function group(serverId: string, machines: Machine[], overrides: Partial<ActiveS
 }
 
 describe('buildMachineCollection', () => {
+    it('names preset audiences from the exact Home and owner rather than the operation label', () => {
+        const preset: ManagedMachinePresetV1 = { id: 'recipe', homeId: 'home-a', revision: 1, name: 'Build recipe',
+            owner: { kind: 'team', teamId: 'same-id' }, recipe: managed('m').launch, controller: managed('m').controller };
+        const collection = buildMachineCollection({ groups: [group('a', []), group('b', [])], groupedByHome: true,
+            presetsByServerId: { a: [preset, { ...preset, id: 'personal', owner: { kind: 'account', accountId: 'owner' } }], b: [preset] },
+            teamNamesByServerId: { a: { 'same-id': 'Design' }, b: { 'same-id': 'Engineering' } } });
+        expect(Object.fromEntries(collection.presetSections[0]!.rows.map(row => [row.presetId, row.audience])))
+            .toEqual({ recipe: 'Design', personal: t('machinePresets.ownerPersonal') });
+        expect(collection.presetSections[1]?.rows[0]?.audience).toBe('Engineering');
+    });
+    it('omits an unavailable custodian suffix instead of inventing an Unknown owner', () => {
+        const collection = buildMachineCollection({ groups: [group('a', [machine('shared', { isShared: true })])], groupedByHome: false });
+        expect(collection.sections[0]?.title).toBe(t('machines.destinations.sharedWithoutOwner'));
+    });
     it('keeps accessible recipes separate from actual machines and scopes archive/search navigation to their Home', () => {
         const preset: ManagedMachinePresetV1 = { id: 'recipe /', homeId: 'home-a', revision: 2, name: 'Build recipe',
             owner: { kind: 'account', accountId: 'owner' }, recipe: managed('m').launch, controller: managed('m').controller };
@@ -155,7 +169,8 @@ describe('buildMachineCollection', () => {
 
     it('lists a machine whose details cannot be read as locked, never by its id', () => {
         const collection = buildMachineCollection({
-            groups: [group('s1', [{ ...machine('f98b860d-63e0'), metadata: null } as unknown as Machine])],
+            groups: [group('s1', [machine('f98b860d-63e0', { metadata: null,
+                availability: { kind: 'locked', reason: 'encryption_material_unavailable' } })])],
             groupedByHome: false,
         });
         const row = collection.sections[0]!.rows[0]!;
