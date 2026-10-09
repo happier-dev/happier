@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { COMPANION_DRAG_THRESHOLD_PX } from '@/components/companion/interaction/companionPointerDragConfig';
+import { COMPANION_DRAG_THRESHOLD_PX } from '@happier-dev/plugin-ui/presentation';
 import {
     resolvePetDragAnimationState,
     resolvePetNativeDragAnimationState,

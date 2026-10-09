@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Pressable, Text } from 'react-native';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -47,6 +48,31 @@ async function renderFrame(props: Partial<React.ComponentProps<typeof WidgetFram
 }
 
 describe('WidgetFrame', () => {
+    it('retains domain body input and header actions across controlled disclosure', async () => {
+        let mounts = 0;
+        const about = vi.fn();
+        function Body() {
+            const [draft, setDraft] = React.useState('initial');
+            React.useEffect(() => { mounts += 1; }, []);
+            return <Pressable testID="domain-edit" onPress={() => setDraft('edited')}><Text>{draft}</Text></Pressable>;
+        }
+        function Frame() {
+            const [collapsed, setCollapsed] = React.useState(false);
+            return <WidgetFrame testID="controlled" frameStyle="plain" placement="companion" title="Notes"
+                disclosure={{ collapsed, onCollapsedChange: setCollapsed, expandLabel: 'Expand notes', collapseLabel: 'Collapse notes' }}
+                menu={<Pressable testID="domain-about" onPress={about}><Text>About</Text></Pressable>}
+                body={{ kind: 'content', children: <Body /> }} />;
+        }
+        const screen = await renderScreen(<Frame />);
+        await screen.pressByTestIdAsync('domain-edit');
+        await screen.pressByTestIdAsync('controlled.disclosure');
+        await screen.pressByTestIdAsync('domain-about');
+        expect(about).toHaveBeenCalledOnce();
+        expect(screen.findByTestId('controlled.disclosure')?.props.accessibilityState.expanded).toBe(false);
+        await screen.pressByTestIdAsync('controlled.disclosure');
+        expect(screen.getTextContent()).toContain('edited');
+        expect(mounts).toBe(1);
+    });
     it('recomposes a retained declarative chart from the measured frame viewport without dropping points', async () => {
         const document = { version: 1, root: { kind: 'chart', label: 'Checks', style: 'bar', rows: [],
             data: { kind: 'value', value: [{ x: 'Mon', y: 2 }, { x: 'Tue', y: 4 }, { x: 'Wed', y: 3 }] },

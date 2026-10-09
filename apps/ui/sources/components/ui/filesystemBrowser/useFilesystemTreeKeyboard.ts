@@ -1,70 +1,52 @@
 import * as React from 'react';
-import type { Pressable } from 'react-native';
+import { useHappierTreeInteraction, type HappierTreeNode } from '@happier-dev/plugin-ui/presentation';
 import type { ItemProps } from '@/components/ui/lists/Item';
 
-export type FilesystemTreeKeyboardNode = Readonly<{ path: string; depth: number; type: string; isExpanded: boolean }>;
-type FocusTarget = React.ComponentRef<typeof Pressable>;
+export type FilesystemTreeKeyboardNode = Readonly<{ path: string; parentPath?: string | null; depth: number; type: string; isExpanded: boolean }>;
+export type FilesystemTreeRowProps = Pick<ItemProps, 'webRole' | 'webTabIndex' | 'accessibilityLevel' | 'webKeyShortcuts' | 'accessibilityExpanded' | 'pressableRef' | 'onFocus' | 'onKeyDown'>;
+const ignoreActivation = () => {};
 
 /** One keyboard/focus owner for filesystem trees and their changed-file projection. */
 export function useFilesystemTreeKeyboard(nodes: readonly FilesystemTreeKeyboardNode[], onFocusIndex?: (index: number) => void) {
     const [focusedPath, setFocusedPath] = React.useState<string | null>(null);
-    const targets = React.useRef(new Map<string, FocusTarget>());
-    const pendingFocus = React.useRef<string | null>(null);
-    const navigable = React.useMemo(() => nodes.filter(node => node.type !== 'info'), [nodes]);
-    const activePath = navigable.some(node => node.path === focusedPath)
-        ? focusedPath
-        : navigable.slice().reverse().find(node => focusedPath?.startsWith(`${node.path}/`) && node.type === 'directory')?.path ?? navigable[0]?.path ?? null;
-    const focusPath = React.useCallback((path: string) => {
-        setFocusedPath(path);
-        pendingFocus.current = path;
-        const target = targets.current.get(path);
-        if (target) { target.focus?.(); pendingFocus.current = null; }
-        else onFocusIndex?.(nodes.findIndex(node => node.path === path));
-    }, [nodes, onFocusIndex]);
-    React.useEffect(() => {
-        if (focusedPath && activePath && focusedPath !== activePath) {
-            if (pendingFocus.current === focusedPath) focusPath(activePath);
-            else setFocusedPath(activePath);
+    const visibleNodes = React.useMemo(() => {
+        const ancestors: FilesystemTreeKeyboardNode[] = [];
+        const result: HappierTreeNode[] = [];
+        for (const node of nodes) {
+            if (node.type === 'info') continue;
+            while (ancestors.length && ancestors[ancestors.length - 1].depth >= node.depth) ancestors.pop();
+            result.push({ key: node.path,
+                parentKey: node.parentPath === undefined ? ancestors[ancestors.length - 1]?.path ?? null : node.parentPath,
+                depth: node.depth, kind: node.type === 'directory' ? 'branch' : 'leaf', expanded: node.isExpanded });
+            if (node.type === 'directory') ancestors.push(node);
         }
-    }, [activePath, focusedPath, focusPath]);
+        return result;
+    }, [nodes]);
+    const onRevealIndex = React.useCallback((index: number) => {
+        onFocusIndex?.(nodes.findIndex(node => node.path === visibleNodes[index]?.key));
+    }, [nodes, onFocusIndex, visibleNodes]);
+    const tree = useHappierTreeInteraction({ visibleNodes, focusedKey: focusedPath, onFocus: setFocusedPath,
+        onExpandedChange: ignoreActivation, onActivate: ignoreActivation, onRevealIndex });
 
-    const getRowProps = React.useCallback((node: FilesystemTreeKeyboardNode, activate?: () => void, pin?: () => void): Pick<ItemProps, 'webRole' | 'webTabIndex' | 'accessibilityLevel' | 'webKeyShortcuts' | 'accessibilityExpanded' | 'pressableRef' | 'onFocus' | 'onKeyDown'> => ({
+    const getRowProps = React.useCallback((node: FilesystemTreeKeyboardNode, onDisclosure?: () => void, pin?: () => void): FilesystemTreeRowProps => ({
         webRole: 'treeitem',
         webKeyShortcuts: pin ? 'P' : undefined,
-        webTabIndex: node.path === activePath ? 0 : -1,
+        webTabIndex: node.path === tree.activeKey ? 0 : -1,
         accessibilityLevel: node.depth + 1,
         accessibilityExpanded: node.type === 'directory' ? node.isExpanded : undefined,
-        pressableRef: target => {
-            if (!target) {
-                if (focusedPath === node.path) pendingFocus.current = node.path;
-                targets.current.delete(node.path);
-                return;
-            }
-            targets.current.set(node.path, target);
-            if (pendingFocus.current === node.path) { target.focus?.(); pendingFocus.current = null; }
-        },
+        pressableRef: target => tree.bindFocusTarget(node.path, target?.focus ? { focus: () => target.focus?.() } : null),
         onFocus: () => setFocusedPath(node.path),
         onKeyDown: event => {
             if (event.ctrlKey || event.metaKey || event.altKey) return;
             if (event.target && event.currentTarget && event.target !== event.currentTarget) return;
             const key = event.nativeEvent?.key ?? event.key;
-            const index = navigable.findIndex(entry => entry.path === node.path);
-            let next: FilesystemTreeKeyboardNode | undefined;
-            if (key === 'ArrowDown') next = navigable[index + 1];
-            else if (key === 'ArrowUp') next = navigable[index - 1];
-            else if (key === 'Home') next = navigable[0];
-            else if (key === 'End') next = navigable[navigable.length - 1];
-            else if (key === 'ArrowRight') {
-                if (node.type === 'directory' && !node.isExpanded) activate?.();
-                else if (node.type === 'directory' && navigable[index + 1]?.depth > node.depth) next = navigable[index + 1];
-            } else if (key === 'ArrowLeft') {
-                if (node.type === 'directory' && node.isExpanded) activate?.();
-                else next = navigable.slice(0, index).reverse().find(entry => entry.depth < node.depth);
-            } else if ((key === 'p' || key === 'P') && pin) pin();
-            else return; // Plain Enter remains owned by Pressable, avoiding double activation.
-            event.preventDefault?.();
-            if (next) focusPath(next.path);
+            if ((key === 'p' || key === 'P') && pin) {
+                pin();
+                event.preventDefault?.();
+            } else if (key && key !== 'Enter' && tree.onKeyDown(node.path, key, event, {
+                onExpandedChange: () => onDisclosure?.(), onActivate: ignoreActivation,
+            })) event.preventDefault?.(); // Plain Enter remains owned by Pressable, avoiding double activation.
         },
-    }), [activePath, focusPath, focusedPath, navigable]);
-    return { activePath, getRowProps, focusPath };
+    }), [tree.activeKey, tree.bindFocusTarget, tree.onKeyDown]);
+    return { activePath: tree.activeKey, getRowProps, focusPath: tree.focusKey };
 }

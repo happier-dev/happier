@@ -6,6 +6,7 @@ import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
 import type { FilesystemBrowserNode } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
+import { useFilesystemTreeKeyboard } from '@/components/ui/filesystemBrowser/useFilesystemTreeKeyboard';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
@@ -30,7 +31,6 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { FilesystemBrowserToolbarChrome, type FilesystemBrowserToolbarAction } from '@/components/ui/filesystemBrowser/FilesystemBrowserToolbarChrome';
@@ -712,6 +712,11 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         void toggleDirectory(path);
     }, [toggleDirectory]);
 
+    const revealTreeIndex = React.useCallback((index: number) => {
+        browserListRef.current?.scrollToIndex({ index, animated: false });
+    }, []);
+    const treeKeyboard = useFilesystemTreeKeyboard(nodes, revealTreeIndex);
+
     const browserRetryRoot = React.useCallback(() => {
         if (deepSearchEnabled) {
             setDeepSearchReloadNonce((n) => n + 1);
@@ -742,6 +747,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             onRetryDirectory={retryDirectory}
             onSelectPath={selectPath}
             onPickPathImmediately={pickPathImmediately}
+            getTreeRowProps={treeKeyboard.getRowProps}
         />
     ), [
         enableContextMenu,
@@ -754,6 +760,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         selectedPath,
         selectionMode,
         toggleDirectoryPath,
+        treeKeyboard.getRowProps,
     ]);
 
     const createFolderInDirectory = React.useCallback(async (directoryPath: string) => {
@@ -1000,8 +1007,11 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 ) : null}
                 <FilesystemBrowser
                     nodes={nodes}
+                    treeRole
+                    extraData={treeKeyboard.activePath}
                     rootLoading={deepSearchEnabled ? deepSearchLoading : rootLoading}
-                    rootError={toPathBrowserUserFacingError(deepSearchEnabled ? deepSearchError : rootError)}
+                    rootError={deepSearchEnabled ? deepSearch.error?.errorCode ?? null : rootError}
+                    rootErrorReason={deepSearchEnabled ? deepSearchError : undefined}
                     retryRoot={browserRetryRoot}
                     loadingLabel={t('common.loading')}
                     loadingLabelCentered={t('common.loading')}
@@ -1047,18 +1057,6 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
         </View>
     );
-}
-
-/**
- * `FilesystemBrowser` renders `rootError` verbatim and takes all of its copy from props, so this
- * modal owns the picker's wording. The machine RPC adapter reports an unreachable machine with the
- * canonical protocol constant rather than an exception message (`F-UI-2`); turn that constant into
- * the same localized unavailability line the source-control surfaces resolve for it, instead of
- * showing the user transport vocabulary.
- */
-function toPathBrowserUserFacingError(rootError: string | null): string | null {
-    if (rootError === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE) return t('errors.daemonUnavailableBody');
-    return rootError;
 }
 
 export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): React.ReactElement {

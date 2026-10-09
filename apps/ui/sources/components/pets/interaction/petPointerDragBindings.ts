@@ -1,6 +1,6 @@
 import type { CompanionPointerDragSelectors } from '@/components/companion/interaction/useCompanionPointerDragSession';
 import { PET_POSITION_SPRING_DAMPING_FRACTION, PET_POSITION_SPRING_RESPONSE } from '@/components/pets/animation/petAnimationPlaybackConfig';
-import type { CompanionReleaseMotion } from '@/components/companion/interaction/companionReleaseMotion';
+import type { CompanionReleaseMotion } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The pet's half of the shared companion drag contract.

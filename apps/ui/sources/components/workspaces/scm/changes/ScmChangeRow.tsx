@@ -9,7 +9,7 @@ import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 import { useIsActiveReviewFile } from '@/components/workspaces/scm/review/activeReviewFile';
-import { TREE_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { HAPPIER_TREE_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { ScmChangeMark } from './ScmChangeMark';
 import { resolveScmChangeRowDisplayText } from './scmChangeRowDisplayText';
@@ -63,7 +63,7 @@ const STACKED_ROW_PADDING_VERTICAL_PX = 6;
  * precise pointer, 36 under a finger, no gap between rows — so the list and the tree read alike.
  */
 function resolveCompactRowMinHeight(): number {
-    return isTouchPrimaryPointer() ? TREE_ROW_METRICS.minHeightPx.touch : TREE_ROW_METRICS.minHeightPx.precise;
+    return isTouchPrimaryPointer() ? HAPPIER_TREE_ROW_METRICS.minHeightPx.touch : HAPPIER_TREE_ROW_METRICS.minHeightPx.precise;
 }
 
 type ChangeDescriptor = Readonly<{

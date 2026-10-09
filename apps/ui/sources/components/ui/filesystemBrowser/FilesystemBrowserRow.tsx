@@ -6,9 +6,10 @@ import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import type { FilesystemBrowserNode, FilesystemBrowserWrapContentInput } from './filesystemBrowserTypes';
 import { Icon } from '@/components/ui/icons/Icon';
+import { HAPPIER_TREE_ROW_METRICS, HappierTreeDisclosure, resolveHappierTreeRowIndentPx } from '@happier-dev/plugin-ui/presentation';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveFilesystemErrorReason } from './filesystemErrorReason';
-import { TREE_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SelectionCheckGlyph, type SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
@@ -44,6 +45,19 @@ export type FilesystemBrowserRowProps = Readonly<{
     icon: React.ReactNode;
     /** Tree rows: a disclosure chevron before the leading control (a spacer on files, so names align). */
     disclosure?: boolean;
+    /**
+     * A folder's chevron as its own target (Code folder pages, plan 13 §2): pressing it opens or closes
+     * the folder in place, while pressing the row does `onPress` (navigate into the folder). Without it
+     * the chevron is decoration and the whole row toggles.
+     */
+    onDisclosurePress?: (() => void) | null;
+    /** The chevron target's accessible name ("Expand apps" / "Collapse apps"). */
+    disclosureAccessibilityLabel?: string;
+    /**
+     * `tree` (default): the sidebar rhythm. `table`: a row of a folder page's table, at the list row
+     * height with a regular-weight name, because the commit column beside it carries the scan.
+     */
+    rowPresentation?: 'tree' | 'table';
     /** A controlled checkbox in place of `icon`. */
     selection?: FilesystemBrowserRowSelection;
     /** With `selection`: a mark after the checkbox, in the icon slot (the Git tree's status letter). */
@@ -72,16 +86,24 @@ export type FilesystemBrowserRowProps = Readonly<{
     wrapContent?: ((input: FilesystemBrowserWrapContentInput) => React.ReactElement) | null;
 }>;
 
+/** A tree whose chevron is decoration (the row toggles) keeps the glyph's own width as its column. */
+const DECORATIVE_DISCLOSURE_COLUMN_PX = 12;
+
 const ROW_ACTIONS_OVERLAY_STYLE = { position: 'absolute', right: 0, top: 0, bottom: 0, justifyContent: 'center', borderRadius: 6 } as const;
 const ROW_ACTIONS_HIDDEN_ANCHOR_STYLE = { position: 'absolute', right: 0, width: 0, height: 0, overflow: 'visible' } as const;
 
 export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.ReactElement {
     const { theme } = useUnistyles();
     const phone = useDeviceType() === 'phone';
-    const paddingLeft = (props.basePaddingLeft ?? TREE_ROW_METRICS.basePaddingPx)
-        + Math.min(TREE_ROW_METRICS.maxIndentDepth, Math.max(0, props.node.depth)) * (props.depthIndent ?? TREE_ROW_METRICS.indentStepPx);
+    const reducedMotion = useReducedMotionPreference();
+    const paddingLeft = resolveHappierTreeRowIndentPx(props.node.depth, {
+        ...(props.basePaddingLeft === undefined ? {} : { basePaddingPx: props.basePaddingLeft }),
+        ...(props.depthIndent === undefined ? {} : { indentStepPx: props.depthIndent }),
+    });
+    const table = props.rowPresentation === 'table';
+    const treeRowHeights = table ? HAPPIER_TREE_ROW_METRICS.tableMinHeightPx : HAPPIER_TREE_ROW_METRICS.minHeightPx;
     const treeRowMinHeight = props.disclosure
-        ? (isTouchPrimaryPointer() || phone ? TREE_ROW_METRICS.minHeightPx.touch : TREE_ROW_METRICS.minHeightPx.precise)
+        ? (isTouchPrimaryPointer() || phone ? treeRowHeights.touch : treeRowHeights.precise)
         : undefined;
     const showDivider = props.showDivider === true;
 
@@ -117,9 +139,20 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
     const leading = props.disclosure || props.selection ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
             {props.disclosure ? (
-                props.node.type === 'directory'
-                    ? <Icon name={props.node.isExpanded ? 'caret-down' : 'caret-right'} size={12} color={theme.colors.text.secondary} />
-                    : <View style={{ width: 12 }} />
+                // The shared tree disclosure (plugin-ui): the one chevron that turns, its own target when the
+                // folder has one, the row's decoration otherwise. The row is the tree item, so the chevron
+                // stays out of the tab order. Files keep the column so names align with their folders.
+                <HappierTreeDisclosure
+                    kind={props.node.type === 'directory' ? 'branch' : 'leaf'}
+                    expanded={props.node.isExpanded === true}
+                    color={props.onDisclosurePress ? theme.colors.text.tertiary : theme.colors.text.secondary}
+                    activeColor={theme.colors.text.primary}
+                    onPress={props.node.type === 'directory' ? props.onDisclosurePress ?? null : null}
+                    accessibilityLabel={props.disclosureAccessibilityLabel ?? props.title}
+                    reducedMotion={reducedMotion}
+                    columnPx={props.onDisclosurePress !== undefined ? HAPPIER_TREE_ROW_METRICS.disclosureBoxPx : DECORATIVE_DISCLOSURE_COLUMN_PX}
+                    testID={props.testID ? `${props.testID}-disclosure` : undefined}
+                />
             ) : null}
             {props.selection ? (
                 <IconButton
@@ -188,7 +221,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                 // The fixed icon box fits one glyph, not disclosure + checkbox + status.
                 leftElement={props.disclosure || props.selection ? leading : undefined}
                 icon={props.disclosure || props.selection ? undefined : props.icon}
-                titleStyle={props.disclosure ? { ...(props.node.type === 'directory' ? Typography.default('semiBold') : null), ...(phone ? { fontSize: 14, lineHeight: 20 } : null) } : undefined}
+                titleStyle={props.disclosure ? { ...(props.node.type === 'directory' && !table ? Typography.default('semiBold') : null), ...(phone && !table ? { fontSize: 14, lineHeight: 20 } : null) } : undefined}
                 // A tree row is one line. A folder (or a merged chain) ellipsizes in the middle so its last
                 // folder stays whole; a file keeps its name's start and truncates its end.
                 titleLines={props.disclosure ? 1 : undefined}
@@ -210,7 +243,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                     {
                         paddingLeft,
                         paddingRight: props.paddingRight ?? 12,
-                        ...(treeRowMinHeight ? { minHeight: treeRowMinHeight, paddingVertical: 0 } : null),
+                        ...(treeRowMinHeight ? { minHeight: treeRowMinHeight, paddingVertical: table && phone ? 8 : 0 } : null),
                     },
                     props.style,
                 ]}

@@ -1,4 +1,5 @@
 import * as React from 'react';
+export { pointIntersectsCompanionNoDragRegions } from '@happier-dev/plugin-ui/presentation';
 import { Platform, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedRef, type AnimatedRef } from 'react-native-reanimated';
 
@@ -78,19 +79,6 @@ export function CompanionNoDragRegionProvider(props: Readonly<{
 
 export function useCompanionNoDragRegions(): readonly CompanionNoDragRegionRect[] {
     return React.useContext(CompanionNoDragRegionContext).regions;
-}
-
-export function pointIntersectsCompanionNoDragRegions(
-    point: Readonly<{ x: number; y: number }>,
-    regions: readonly CompanionNoDragRegionRect[],
-): boolean {
-    'worklet';
-    return regions.some((region) => (
-        point.x >= region.x
-        && point.x <= region.x + region.width
-        && point.y >= region.y
-        && point.y <= region.y + region.height
-    ));
 }
 
 export function CompanionNoDragRegion(props: Readonly<{

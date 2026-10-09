@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import type { FilesystemBrowserNode } from './filesystemBrowserTypes';
+import { t } from '@/text';
 
 // Loaded at the assertion, not at the top: an eager import would evaluate the spinner's module
 // graph before this file's mocks and per-test setup have run.
@@ -73,6 +74,54 @@ describe('FilesystemBrowserList', () => {
 
     beforeEach(() => {
         platformState.os = 'web';
+    });
+
+    it('names a root listing failure, explains its cause and keeps diagnostics behind Details', async () => {
+        const { FilesystemBrowser } = await import('./FilesystemBrowser');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const retry = vi.fn();
+        const screen = await renderScreen(<FilesystemBrowser
+            nodes={[]}
+            rootLoading={false}
+            rootError="EACCES"
+            errorTestID="filesystem-root-error"
+            emptyLabel="Empty"
+            loadingLabel="Loading"
+            inlineRetryLabel="Retry"
+            retryRoot={retry}
+            renderRow={() => <React.Fragment />}
+        />);
+        const state = screen.findByType(SurfaceStateCard);
+        expect(state.props).toMatchObject({
+            kind: 'error',
+            title: t('files.pane.rootErrorTitleUnnamed'),
+            reason: t('errors.permissionDenied'),
+            diagnosticCode: 'EACCES',
+        });
+        expect(screen.getTextContent()).not.toContain('EACCES');
+        await React.act(async () => { state.props.action.onPress(); });
+        expect(retry).toHaveBeenCalledOnce();
+    });
+
+    it('retains listed rows when a refresh fails and offers one cause with one retry', async () => {
+        const { FilesystemBrowserList } = await import('./FilesystemBrowserList');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const retry = vi.fn();
+        const screen = await renderScreen(<FilesystemBrowserList
+            nodes={nodes}
+            rootLoading={false}
+            rootError="RPC method not available"
+            listHeaderTestID="filesystem-refresh-error"
+            loadingLabel="Loading"
+            inlineRetryLabel="Retry"
+            retryRoot={retry}
+            renderRow={({ node }) => React.createElement('View', { testID: `row-${node.path}` })}
+        />);
+        expect(screen.findByTestId('row-src/index.ts')).toBeTruthy();
+        const state = screen.findByType(SurfaceStateCard);
+        expect(state.props).toMatchObject({ size: 'line', reason: t('errors.daemonUnavailableBody') });
+        await React.act(async () => { state.props.action.onPress(); });
+        expect(retry).toHaveBeenCalledOnce();
     });
 
     it('keeps rows mounted without an inline root loading header when loading is surfaced elsewhere', async () => {

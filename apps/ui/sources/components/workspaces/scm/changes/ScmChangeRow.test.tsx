@@ -366,7 +366,7 @@ describe('ScmChangeRow', () => {
 
   it('sits a compact row on the tree row rhythm (no row gap) and keeps the two-line row taller', async () => {
     const { ScmChangeRow } = await import('./ScmChangeRow');
-    const { TREE_ROW_METRICS } = await import('@/components/ui/lists/itemDensityMetrics');
+    const { HAPPIER_TREE_ROW_METRICS: TREE_ROW_METRICS } = await import('@happier-dev/plugin-ui/presentation');
     const file = { fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', status: 'modified', isIncluded: false, linesAdded: 1, linesRemoved: 0 } as any;
     const compact = await renderScreen(<ScmChangeRow theme={createScmChangeRowTheme()} file={file} onPress={() => {}} layout="compact" />);
     const compactStyle = flattenStyle(compact.findByTestId('scm-change-row-container:src_a.ts')?.props.style);

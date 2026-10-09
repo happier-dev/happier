@@ -1,8 +1,10 @@
 import * as React from 'react';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
 
 import { FilesystemBrowserList } from './FilesystemBrowserList';
+import { resolveFilesystemErrorReason } from './filesystemErrorReason';
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 import type { IconName } from '@/components/ui/icons/Icon';
 
@@ -30,7 +32,9 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
             <SurfaceStateCard
                 testID={props.errorTestID}
                 kind="error"
-                title={props.rootError}
+                title={t('files.pane.rootErrorTitleUnnamed')}
+                reason={props.rootErrorReason ?? resolveFilesystemErrorReason(props.rootError)}
+                diagnosticCode={props.rootError}
                 action={{ label: retryLabel, onPress: () => { void props.retryRoot(); } }}
             />
         );

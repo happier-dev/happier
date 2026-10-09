@@ -49,12 +49,14 @@ const repositoryTreeBrowserState = vi.hoisted(() => ({
     ] as any[],
 }));
 
+const toggleDirectorySpy = vi.hoisted(() => ({ current: null as null | ((path: string) => void) }));
+const treeBrowserInputs = vi.hoisted(() => ({ current: null as any }));
 vi.mock('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser', () => ({
-    useWorkspaceRepositoryTreeBrowser: () => ({
+    useWorkspaceRepositoryTreeBrowser: (input: any) => (treeBrowserInputs.current = input, {
         rootLoading: repositoryTreeBrowserState.rootLoading,
         rootError: repositoryTreeBrowserState.rootError,
         nodes: repositoryTreeBrowserState.nodes,
-        toggleDirectory: vi.fn(),
+        toggleDirectory: (path: string) => toggleDirectorySpy.current?.(path),
         retryRoot: vi.fn(),
         retryDirectory: vi.fn(),
     }),
@@ -94,6 +96,8 @@ vi.mock('@/components/ui/filesystemBrowser/FilesystemBrowserRow', () => ({
             title: props.title,
             onPress: props.onPress,
             onDoublePress: props.onDoublePress,
+            onDisclosurePress: props.onDisclosurePress,
+            rowPresentation: props.rowPresentation,
         });
         if (typeof props.wrapContent === 'function') {
             return props.wrapContent({ node: props.node, content });
@@ -273,6 +277,43 @@ describe('WorkspaceRepositoryTreeList', () => {
         });
         expect(onOpenFile).toHaveBeenCalledWith('README.md');
         expect(onOpenFilePinned).toHaveBeenCalledWith('README.md');
+    });
+
+    it('on a Code folder page goes into a folder by its name and opens it in place only by its chevron', async () => {
+        const toggled: string[] = [];
+        toggleDirectorySpy.current = (path) => { toggled.push(path); };
+        const onOpenFolder = vi.fn();
+        const onOpenFile = vi.fn();
+        const screen = await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                rootDirectoryPath="apps/ui"
+                folderPage={{ onOpenFolder }}
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={onOpenFile}
+            />,
+        );
+        // The folder page lists that folder, not the repository root.
+        expect(treeBrowserInputs.current?.rootDirectoryPath).toBe('apps/ui');
+        const row = (path: string) => screen.findAll((node) => (node.type as any) === 'FilesystemBrowserRow'
+            && node.props.testID === `repository-tree-row-${toTestIdSafeValue(path)}`)[0];
+        expect(row('src')?.props.rowPresentation).toBe('table');
+
+        await act(async () => { row('src')?.props.onDisclosurePress(); });
+        expect(toggled).toEqual(['src']);
+        expect(onOpenFolder).not.toHaveBeenCalled();
+
+        await act(async () => { row('src')?.props.onPress(); });
+        expect(onOpenFolder).toHaveBeenCalledWith('src');
+        expect(toggled).toEqual(['src']);
+
+        await act(async () => { row('README.md')?.props.onPress(); });
+        expect(onOpenFile).toHaveBeenCalledWith('README.md');
+        // A file row has no disclosure target of its own.
+        expect(row('README.md')?.props.onDisclosurePress).toBeNull();
+        toggleDirectorySpy.current = null;
     });
 
     it('redraws mounted rows when the change badges arrive after the first render', async () => {

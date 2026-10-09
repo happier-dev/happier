@@ -13,7 +13,8 @@ import type { CompanionNoDragRegionRect } from '@/components/companion/interacti
 import {
     projectCompanionRelease,
     resolveCompanionReleaseSpringConfig,
-} from '@/components/companion/interaction/companionReleaseMotion';
+    type FrameRect,
+} from '@happier-dev/plugin-ui/presentation';
 import {
     useCompanionNativePanGesture,
     type CompanionDragBounds,
@@ -72,12 +73,16 @@ export function useVoicePresenceDrag(input: Readonly<{
     /** Each container marks its handle and transport regions; physics stays shared. */
     pointerSelectors?: Readonly<{ noDrag: string; handle: string }>;
     anchors?: 'orb' | 'island';
+    containerSize?: Readonly<{ width: number; height: number }>;
+    avoidRects?: readonly FrameRect[];
 }>): VoicePresenceDrag {
     const isWeb = Platform.OS === 'web';
     const bounds = input.bounds;
     const initialPoint = input.initialPoint;
     const onDragRelease = input.onDragRelease;
     const anchors = input.anchors;
+    const containerSize = input.containerSize;
+    const avoidRects = input.avoidRects;
     const snapMotion = input.motionPolicy === 'snap';
 
     const pan = useCompanionNativePanGesture({
@@ -89,7 +94,7 @@ export function useVoicePresenceDrag(input: Readonly<{
         positionPublication: 'release',
         resolveReleaseTarget: (release) => {
             'worklet';
-            return resolveVoicePresenceReleaseTarget({ projected: release.projected, bounds: release.bounds, anchors });
+            return resolveVoicePresenceReleaseTarget({ projected: release.projected, bounds: release.bounds, anchors, containerSize, avoidRects });
         },
         onDragRelease: (release) => onDragRelease({
             velocityX: release.velocityX,
@@ -146,6 +151,8 @@ export function useVoicePresenceDrag(input: Readonly<{
             },
             bounds: boundsRef.current,
             anchors,
+            containerSize,
+            avoidRects,
         });
         webPointRef.current = target;
         webX.set(snapMotion
@@ -161,7 +168,7 @@ export function useVoicePresenceDrag(input: Readonly<{
                 resolveCompanionReleaseSpringConfig(VOICE_ORB_RELEASE_MOTION, release.velocityY),
             ));
         onDragRelease({ velocityX: release.velocityX, velocityY: release.velocityY, point: target });
-    }, [anchors, onDragRelease, snapMotion, webX, webY]);
+    }, [anchors, avoidRects, containerSize, onDragRelease, snapMotion, webX, webY]);
 
     const handleWebRelease = React.useCallback((release: CompanionPointerDragRelease) => {
         settleWebRelease(release);

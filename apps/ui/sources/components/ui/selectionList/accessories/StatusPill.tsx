@@ -28,13 +28,10 @@ export type StatusPillProps = Readonly<{
 }>;
 
 /**
- * Compact status indicator pill (used by worktree rows). Pill shape
- * (`borderRadius: 999`) so dynamic count widths don't introduce corner-radius
- * jitter as digits change.
+ * Compact worktree status adapter over the app's shared status badge geometry.
  *
  * The variant→accent token mapping is centralized; tests assert observable
- * structure (count/label text, fontVariant on count) rather than raw color
- * values to avoid brittle theme-token churn.
+ * structure and accessible names rather than private chrome or theme values.
  */
 export function StatusPill(props: StatusPillProps): React.ReactElement {
     return (

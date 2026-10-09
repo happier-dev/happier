@@ -26,7 +26,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
-import { TREE_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { HAPPIER_TREE_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import type { SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -38,6 +38,7 @@ import { ScmChangeMark } from '@/components/workspaces/scm/changes/ScmChangeMark
 import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
 
 export type WorkspaceRepositoryTreeWebDropTarget = RepositoryFileDropTarget;
+export type WorkspaceRepositoryDirectoryState = Readonly<{ loaded: boolean; loading: boolean; error: string | null }>;
 
 type WorkspaceRepositoryTreeNode = LazyDirectoryTreeNode;
 
@@ -96,6 +97,8 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
     renderRowActions?: ((node: WorkspaceRepositoryTreeNode, control: FilesystemBrowserRowActionsControl) => React.ReactNode) | null;
     /** Permanent trailing metadata, visible without hover or opening the row's actions. */
     renderRowMetadata?: ((node: WorkspaceRepositoryTreeNode) => React.ReactNode) | null;
+    /** A second line under the name (a Code folder page on a phone: the entry's latest commit subject). */
+    renderRowSubtitle?: ((node: WorkspaceRepositoryTreeNode) => React.ReactNode) | null;
     showInlineLoadingHeader?: boolean;
     onRootLoadingChange?: (loading: boolean) => void;
     /**
@@ -108,6 +111,17 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
     onShowAllFiles?: (() => void) | null;
     /** The file open in Details: its row stays selected (lab F1). */
     selectedPath?: string | null;
+    /** The folder the tree starts at (a Code folder page); the repository root by default. */
+    rootDirectoryPath?: string;
+    /**
+     * A Code folder page (plan 13 §2, lab p-code BROWSE): the rows are a table, a folder's name goes
+     * into that folder's page, and its chevron alone opens it in place.
+     */
+    folderPage?: Readonly<{ onOpenFolder: (path: string) => void }> | null;
+    /** What an empty folder says (default: the project's empty-files line). */
+    emptyLabel?: string;
+    /** The rows now shown (a Code folder page reads its README and demands their history from them). */
+    onNodesChange?: ((nodes: readonly WorkspaceRepositoryTreeNode[], directory: WorkspaceRepositoryDirectoryState) => void) | null;
     /** The machine the files live on, named by the root failure. */
     machineName?: string | null;
     /**
@@ -126,6 +140,8 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
      * file. The Git tree has no way back and shows only changes, so it asks the machine for nothing.
      */
     directoryListing?: boolean;
+    /** A qualified target is unavailable; cached rows remain usable, but an empty read is not an empty folder. */
+    directoryUnavailable?: boolean;
     /** Drawn after the last row, in the tree's own scroll. */
     listFooter?: React.ReactElement | null;
     /** `inline`: rows drawn in place inside an enclosing scroll (a turn card), see `FilesystemBrowserListProps`. */
@@ -211,7 +227,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         ...(props.revealedPaths ?? []),
         ...(props.scmSnapshot?.entries.flatMap(entry => entry.previousPath ? [entry.path, entry.previousPath] : [entry.path]) ?? []),
     ], [props.revealedPaths, props.scmSnapshot]);
-    const { rootLoading: treeRootLoading, rootError: treeRootError, nodes: treeNodes, toggleDirectory: toggleTreeDirectory, retryRoot, retryDirectory, gitIgnoreAvailable } = useWorkspaceRepositoryTreeBrowser({
+    const { rootLoading: treeRootLoading, rootError: treeRootError, rootLoaded, nodes: treeNodes, toggleDirectory: toggleTreeDirectory, retryRoot, retryDirectory, gitIgnoreAvailable } = useWorkspaceRepositoryTreeBrowser({
         scope: props.scope,
         enabled: props.directoryListing !== false,
         expandedPaths,
@@ -219,6 +235,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         reloadToken: props.reloadToken,
         visibilityMode: props.visibilityMode,
         preservedPaths,
+        rootDirectoryPath: props.rootDirectoryPath,
     });
 
     // Changed only is a presentation of the same tree: the one changed-file list (the header's and
@@ -247,6 +264,11 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     React.useEffect(() => {
         props.onRootLoadingChange?.(rootLoading);
     }, [props.onRootLoadingChange, rootLoading]);
+
+    const onNodesChange = props.onNodesChange;
+    React.useEffect(() => {
+        onNodesChange?.(nodes, { loaded: rootLoaded, loading: treeRootLoading, error: treeRootError });
+    }, [nodes, onNodesChange, rootLoaded, treeRootLoading, treeRootError]);
 
     React.useEffect(() => {
         props.onGitIgnoreAvailableChange?.(gitIgnoreAvailable);
@@ -279,6 +301,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         webFileDropEnabled: props.webFileDropEnabled,
         renderRowActions: props.renderRowActions,
         renderRowMetadata: props.renderRowMetadata,
+        renderRowSubtitle: props.renderRowSubtitle ?? null,
         rowSelection: props.rowSelection ?? null,
         rowProposal: props.rowProposal ?? null,
         changeRows: changedOnly && props.rowStyle === 'changes',
@@ -287,6 +310,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         theme,
         toggleDirectory,
         webDropHoverPath: props.webDropHoverPath,
+        folderPage: props.folderPage ?? null,
     }), [
         accountScope,
         props.scope.serverId,
@@ -303,6 +327,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         props.webFileDropEnabled,
         props.renderRowActions,
         props.renderRowMetadata,
+        props.renderRowSubtitle,
         props.rowSelection,
         props.rowProposal,
         props.rowStyle,
@@ -311,6 +336,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         theme,
         toggleDirectory,
         props.webDropHoverPath,
+        props.folderPage,
     ]);
     const rowRenderStateRef = React.useRef(rowRenderState);
     rowRenderStateRef.current = rowRenderState;
@@ -332,6 +358,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         props.rowSelection ? `select:${props.rowSelection.revision}` : 'no-select',
         props.rowProposal ? `proposal:${props.rowProposal.revision}` : 'no-proposal',
         props.rowStyle === 'changes' ? 'change-rows' : 'file-rows',
+        props.folderPage ? 'folder-page' : 'tree',
         props.webFileDropEnabled ? 'drop' : 'no-drop',
         props.webDropHoverPath ?? '',
         theme.colors.text?.secondary,
@@ -357,6 +384,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         props.rowSelection,
         props.rowProposal,
         props.rowStyle,
+        props.folderPage,
         props.webDropHoverPath,
         theme.colors.state?.danger?.foreground,
         theme.colors.state?.neutral?.foreground,
@@ -368,8 +396,9 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const rowVisualExtraData = React.useMemo(() => ({
         href: props.fileHref,
         metadata: props.renderRowMetadata,
+        subtitle: props.renderRowSubtitle,
         visual: rowVisualSignature,
-    }), [props.fileHref, props.renderRowMetadata, rowVisualSignature]);
+    }), [props.fileHref, props.renderRowMetadata, props.renderRowSubtitle, rowVisualSignature]);
 
     const renderRow = React.useCallback(({ node, showDivider }: FilesystemBrowserRowRenderInput) => {
         const rowState = rowRenderStateRef.current;
@@ -485,7 +514,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             </View>
         ) : undefined;
 
-        const subtitle = (() => {
+        const subtitle = rowState.renderRowSubtitle?.(node) ?? (() => {
             if (node.type === 'info') return undefined;
             if (!rowState.detailsMode || Platform.OS === 'web') return undefined;
             const parts: string[] = [];
@@ -534,6 +563,13 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                     ? <ScmChangeMark testID={`${rowTestId}-change`} code={badge.kindLetter} color={changeToneColor} size="compact" />
                     : renderEntryIcon(node, rowState.theme)}
                 disclosure
+                rowPresentation={rowState.folderPage ? 'table' : 'tree'}
+                onDisclosurePress={rowState.folderPage
+                    ? (node.type === 'directory' ? () => { void rowState.toggleDirectory(node.path); } : null)
+                    : undefined}
+                disclosureAccessibilityLabel={node.type === 'directory'
+                    ? t(node.isExpanded ? 'projects.code.collapseFolder' : 'projects.code.expandFolder', { name: node.name })
+                    : undefined}
                 rowActions={rowActions}
                 selection={rowState.rowSelection && rowState.rowSelection.isSelectable?.(node) !== false && (node.type === 'file' || node.type === 'directory')
                     ? {
@@ -559,13 +595,15 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                     }
                 }}
                 onPress={
-                    node.type === 'error'
+                    node.type !== 'file' && node.type !== 'directory'
                         ? undefined
                         : node.type === 'file'
                             ? () => rowState.onOpenFile(node.path)
-                            : () => {
-                                void rowState.toggleDirectory(node.path);
-                            }
+                            : rowState.folderPage
+                                ? () => rowState.folderPage?.onOpenFolder(node.path)
+                                : () => {
+                                    void rowState.toggleDirectory(node.path);
+                                }
                 }
                 onDoublePress={
                     node.type === 'file'
@@ -575,7 +613,8 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                 paddingRight={8}
                 style={{
                     backgroundColor: rowState.webDropHoverPath === node.path ? rowState.theme.colors.surface.pressed : undefined,
-                    borderRadius: 10,
+                    // A table row runs edge to edge between its hairlines; a tree row is a rounded pill.
+                    borderRadius: rowState.folderPage ? 0 : 10,
                 }}
                 wrapContent={
                     Platform.OS === 'web'
@@ -620,6 +659,9 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         );
     }
 
+    if (!changedOnly && props.directoryUnavailable && nodes.length === 0) {
+        return <RepositoryTreeRootErrorState kind="unavailable" machineName={props.machineName} onRetry={() => props.onRequestRefresh?.()} />;
+    }
     if (rootError && nodes.length === 0) {
         return (
             <View testID="workspace-repository-tree-error" style={{ flex: 1 }}>
@@ -645,7 +687,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             listFooter={props.listFooter}
             rootError={rootError}
             retryRoot={retryRoot}
-            emptyLabel={t('files.noFilesInProject')}
+            emptyLabel={props.emptyLabel ?? t('files.noFilesInProject')}
             emptyIconName="folder"
             loadingLabel={t('common.loading')}
             inlineRetryLabel={t('errors.tryAgain')}
@@ -662,7 +704,8 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             getItemLayout={
                 Platform.OS === 'web'
                     ? (_data, index) => {
-                        const length = isTouchPrimaryPointer() ? TREE_ROW_METRICS.minHeightPx.touch : TREE_ROW_METRICS.minHeightPx.precise;
+                        const heights = props.folderPage ? HAPPIER_TREE_ROW_METRICS.tableMinHeightPx : HAPPIER_TREE_ROW_METRICS.minHeightPx;
+                        const length = isTouchPrimaryPointer() ? heights.touch : heights.precise;
                         return { length, offset: length * index, index };
                     }
                     : undefined

@@ -14,6 +14,8 @@ import {
     type HappierWidgetFrameStyle,
     type HappierWidgetFrameTextRender,
     type HappierLayoutChangeEvent,
+    type HappierControlledDisclosure,
+    type HappierDisclosureMotionDriver,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
@@ -24,6 +26,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
+import { reanimatedDisclosureMotion } from '@/components/ui/lists/ExpandableItem';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
@@ -90,6 +93,8 @@ export type WidgetFrameProps = Readonly<{
     titleMeta?: React.ReactNode;
     /** The widget's controls at the end of the header: its ⋯ menu, a move handle. */
     menu?: React.ReactNode;
+    /** Mounted viewer-local disclosure; never writes the layout or alters Resource activity. */
+    disclosure?: HappierControlledDisclosure;
     body: WidgetFrameBody;
     footer?: WidgetFrameFooter | null;
     /** Reserved body rows. Home keeps {@link HOME_WIDGET_BODY_ROWS}; other placements reserve none. */
@@ -122,6 +127,7 @@ const FRESH_RING_FADE_MS = 600;
  * Happier's theme, text owner, glyphs, the W1 state bodies and the arrival ring.
  */
 export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFrameProps) {
+    const reducedMotion = useReducedMotionPreference();
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const phone = useDeviceType() === 'phone';
@@ -245,6 +251,15 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             sourcePlacement={phone ? 'below' : 'inline'}
             meta={meta}
             accessory={props.menu}
+            disclosure={props.disclosure}
+            // The public driver erases Reanimated's host-private value types, as at the plugin presentation boundary.
+            disclosureMotion={reanimatedDisclosureMotion as unknown as HappierDisclosureMotionDriver}
+            reducedMotion={reducedMotion}
+            disclosureColors={props.disclosure ? {
+                glyph: theme.colors.text.secondary,
+                glyphActive: theme.colors.text.primary,
+                focus: theme.colors.border.focus,
+            } : undefined}
             renderText={renderText}
             footer={footerNode}
             fill={props.widgetPresentation ? false : props.fill}

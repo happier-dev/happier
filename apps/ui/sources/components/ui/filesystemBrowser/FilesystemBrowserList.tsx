@@ -1,14 +1,16 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
+import { resolveFilesystemErrorReason } from './filesystemErrorReason';
 
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
-import { Icon } from '@/components/ui/icons/Icon';
 
 const FILESYSTEM_BROWSER_ESTIMATED_ITEM_SIZE = 38;
 type FilesystemBrowserListNode = FilesystemBrowserListProps['nodes'][number];
@@ -34,36 +36,17 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
                 </Text>
             </View>
         ) : props.rootError ? (
-            <View
+            <SurfaceStateCard
                 testID={props.listHeaderTestID}
-                style={{
-                    paddingHorizontal: 12,
-                    paddingVertical: 10,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 10,
-                }}
-            >
-                <Icon name="warning-circle" size={16} color={theme.colors.text.secondary} />
-                <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
-                    {props.inlineRetryLabel}
-                </Text>
-                <View style={{ flex: 1 }} />
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={props.inlineRetryLabel}
-                    onPress={() => {
-                        void props.retryRoot();
-                    }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6 }}
-                >
-                    <Text style={{ fontSize: 12, color: theme.colors.text.link, ...Typography.default('semiBold') }}>
-                        {props.inlineRetryLabel}
-                    </Text>
-                </Pressable>
-            </View>
+                size="line"
+                kind="error"
+                title={t('files.pane.rootErrorTitleUnnamed')}
+                reason={props.rootErrorReason ?? resolveFilesystemErrorReason(props.rootError)}
+                diagnosticCode={props.rootError}
+                action={{ label: props.inlineRetryLabel, onPress: props.retryRoot }}
+            />
         ) : null
-    ), [props.inlineRetryLabel, props.listHeaderTestID, props.loadingLabel, props.retryRoot, props.rootError, showRootLoadingHeader, theme.colors.text.link, theme.colors.text.secondary]);
+    ), [props.inlineRetryLabel, props.listHeaderTestID, props.loadingLabel, props.retryRoot, props.rootError, props.rootErrorReason, showRootLoadingHeader, theme.colors.text.secondary]);
 
     const renderItem = React.useCallback(({ item: node, index }: { item: FilesystemBrowserListNode; index: number }) => (
         props.renderRow({

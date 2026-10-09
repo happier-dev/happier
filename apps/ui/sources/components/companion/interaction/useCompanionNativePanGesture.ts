@@ -11,31 +11,25 @@ import Animated, {
     withTiming,
 } from 'react-native-reanimated';
 
-import { COMPANION_DRAG_THRESHOLD_PX } from './companionPointerDragConfig';
 import { pointIntersectsCompanionNoDragRegions, type CompanionNoDragRegionRect } from './CompanionNoDragRegion';
 import {
+    COMPANION_DRAG_THRESHOLD_PX,
+    clampCompanionPoint as clampPoint,
     projectCompanionRelease,
     resolveCompanionReleaseSpringConfig,
+    type CompanionPoint,
+    type CompanionDragBounds,
+    type CompanionDragMotionPolicy,
     type CompanionReleaseMotion,
-} from './companionReleaseMotion';
+} from '@happier-dev/plugin-ui/presentation';
+
+export type { CompanionPoint, CompanionDragBounds, CompanionDragMotionPolicy } from '@happier-dev/plugin-ui/presentation';
 
 export const COMPANION_NATIVE_PAN_DRAG_THRESHOLD_PT = COMPANION_DRAG_THRESHOLD_PX;
 
 /** How long the "picked up" affordance takes to grow and to let go. */
 const COMPANION_DRAG_LIFT_IN_MS = 120;
 const COMPANION_DRAG_LIFT_OUT_MS = 180;
-
-export type CompanionPoint = Readonly<{ x: number; y: number }>;
-
-export type CompanionDragBounds = Readonly<{
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-}>;
-
-/** Whether lift and settle animate, or snap for a reduced-motion consumer. */
-export type CompanionDragMotionPolicy = 'animate' | 'snap';
 
 type NativePanEvent = Readonly<{
     x?: number;
@@ -107,14 +101,6 @@ export type UseCompanionNativePanGestureParams<TDragState> = Readonly<{
 function readFinite(value: number | undefined, fallback = 0): number {
     'worklet';
     return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
-
-function clampPoint(point: CompanionPoint, bounds: CompanionDragBounds): CompanionPoint {
-    'worklet';
-    return {
-        x: Math.min(bounds.maxX, Math.max(bounds.minX, point.x)),
-        y: Math.min(bounds.maxY, Math.max(bounds.minY, point.y)),
-    };
 }
 
 function eventStartedInNoDragRegion(

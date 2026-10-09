@@ -6,6 +6,8 @@ import { StatusPill, type StatusPillVariant } from '@/components/ui/status/Statu
 
 import type { AgentInputStatusBadge as AgentInputStatusBadgeDescriptor, AgentInputStatusBadgeTone } from '../agentInputContracts';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { Icon } from '@/components/ui/icons/Icon';
+import { Typography } from '@/constants/Typography';
 
 type AgentInputStatusBadgeProps = AgentInputStatusBadgeDescriptor & Readonly<{
     anchorRef?: React.RefObject<any>;
@@ -29,33 +31,32 @@ export function AgentInputStatusBadge(props: AgentInputStatusBadgeProps) {
     const emphasis = props.emphasis ?? 'prominent';
     const variant = resolvePillVariant(tone);
     const accent = theme.colors.state[variant].foreground;
-    // The state hue lives in the fill and the leading glyph; the label stays in a neutral text role.
-    // Painting the label the accent too would read as one colour but measures 2.09:1 on the light
-    // warning tint — under half the 4.5:1 AA floor for 11px text.
-    //
-    // Between the two neutral roles, the muted one is the calmer choice but only survives on light:
-    // `text.secondary` measures 4.96:1 light / 3.46:1 dark on that same tint. Dark themes need
-    // brighter ink to sit equally quiet, so each side takes the most recessive role that still
-    // clears AA.
-    const labelColor = theme.dark === true
-        ? theme.colors.text.primary
-        : theme.colors.text.secondary;
+    // The state hue lives in the fill and the leading glyph; the label stays in the primary text role
+    // (lab `.l12-sb`), which clears AA on every state tint in both themes. Painting the label the accent
+    // would read as one colour but measures 2.09:1 on the light warning tint.
+    const labelColor = theme.colors.text.primary;
+    // A badge that opens a popover says so with the same quiet caret the composer's chips carry.
+    const caret = props.renderPopover && emphasis !== 'quiet'
+        ? <Icon name="caret-down" size={12} color={theme.colors.text.tertiary} testID={props.testID ? `${props.testID}:caret` : undefined} />
+        : undefined;
 
     const pill = (
         <StatusPill
             variant={variant}
             chrome={emphasis === 'quiet' ? 'plain' : 'pill'}
+            // The composer badge is a control among the composer's capsule chips (lab `.l12-sb`), so it takes
+            // the capsule shape of that row; the fill, padding owner and type stay the app-wide pill's.
+            shape="capsule"
             label={props.label}
             // Composer badges carry sentence-case phrases ("Account rotation pending"), not the
             // 2–8 character tokens the micro-label type is tracked for.
             labelVariant="phrase"
-            labelNumberOfLines={1}
+            labelStyle={emphasis === 'quiet' ? undefined : styles.label}
+            labelNumberOfLines={props.labelNumberOfLines ?? 1}
             foregroundColor={labelColor}
             leading={props.icon ? props.icon(accent) : undefined}
+            trailing={caret}
             hideDot
-            // Chrome (fill, radius, type, no border) stays the app-wide pill; only the vertical
-            // rhythm is local. The composer status row sits beside 11px text and interactive
-            // chips, where the pill's default 2px vertical padding reads squat around a glyph.
             style={emphasis === 'quiet' ? undefined : styles.pillDensity}
         />
     );
@@ -102,7 +103,13 @@ const styles = StyleSheet.create(() => ({
     wrapperPressed: {
         opacity: motionTokens.press.opacity,
     },
+    // Beside the composer's chips the badge keeps their rhythm: a touch more air than a status fact.
     pillDensity: {
         paddingVertical: 4,
+        paddingLeft: 8,
+        paddingRight: 9,
+    },
+    label: {
+        ...Typography.default('semiBold'),
     },
 }));

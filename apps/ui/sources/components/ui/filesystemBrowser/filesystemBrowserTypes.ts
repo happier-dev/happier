@@ -22,6 +22,8 @@ export type FilesystemBrowserListProps = Readonly<{
     rootLoading: boolean;
     showInlineLoadingHeader?: boolean;
     rootError: string | null;
+    /** A different error domain may supply its already-resolved reason; rootError stays diagnostic. */
+    rootErrorReason?: string | null;
     loadingLabel: string;
     inlineRetryLabel: string;
     listHeaderTestID?: string;

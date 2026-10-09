@@ -1,8 +1,11 @@
-import type { CompanionReleaseMotion } from '@/components/companion/interaction/companionReleaseMotion';
-import type {
-    CompanionDragBounds,
-    CompanionPoint,
-} from '@/components/companion/interaction/useCompanionNativePanGesture';
+import {
+    clampCompanionPoint,
+    resolveFloatingFrameRect,
+    type CompanionReleaseMotion,
+    type CompanionDragBounds,
+    type CompanionPoint,
+    type FrameRect,
+} from '@happier-dev/plugin-ui/presentation';
 import { VOICE_MOTION } from '@/components/voice/light/voiceLightTokens';
 
 /** Measured floating-presence bounds; both Island and Orb use this geometry. */
@@ -63,6 +66,22 @@ export function resolveVoiceOrbRestingBottomInset(chrome: VoiceOrbBottomChrome):
         + nonNegative(chrome.petOffset);
 }
 
+/** Shared measured shell space for a viewer or presence; chrome custody stays in the shell. */
+export function resolveVoicePresenceAvailableRect(input: Readonly<{
+    hostWidth: number;
+    hostHeight: number;
+    restingBottomInset: number;
+    edgeInset: number;
+    minimumTop: number;
+    bottomMargin?: number;
+}>): FrameRect {
+    const right = Math.max(0, input.hostWidth - nonNegative(input.edgeInset));
+    const bottom = Math.max(0, input.hostHeight - nonNegative(input.restingBottomInset) - nonNegative(input.bottomMargin ?? 0));
+    const x = Math.min(right, nonNegative(input.edgeInset));
+    const y = Math.min(bottom, nonNegative(input.minimumTop));
+    return { x, y, width: right - x, height: bottom - y };
+}
+
 /** Measured interaction bounds shared by Island and Orb; chrome/keyboard custody stays in the shell. */
 export function resolveVoicePresenceGeometry(input: Readonly<{
     hostWidth: number;
@@ -73,15 +92,34 @@ export function resolveVoicePresenceGeometry(input: Readonly<{
     edgeInset?: number;
     minimumTop?: number;
     bottomMargin?: number;
-}>): Readonly<{ restingPoint: CompanionPoint; dragBounds: CompanionDragBounds }> {
+    /** Current viewer measurement, withdrawn by its owner when docked or closed. */
+    viewerRect?: FrameRect | null;
+    /** Other current shell companions, including a floating Island or pet. */
+    avoidRects?: readonly FrameRect[];
+    restCentred?: boolean;
+}>): Readonly<{ restingPoint: CompanionPoint; dragBounds: CompanionDragBounds; availableRect: FrameRect; fits: boolean }> {
     const maxX = Math.max(0, input.hostWidth - nonNegative(input.edgeInset ?? VOICE_ORB_EDGE) - nonNegative(input.containerWidth));
     const maxY = Math.max(0, input.hostHeight - nonNegative(input.restingBottomInset)
         - nonNegative(input.bottomMargin ?? VOICE_ORB_BOTTOM) - nonNegative(input.containerHeight));
     const minX = Math.min(maxX, nonNegative(input.edgeInset ?? VOICE_ORB_EDGE));
     const minY = Math.min(maxY, nonNegative(input.minimumTop ?? VOICE_ORB_MIN_TOP));
+    const availableRect = resolveVoicePresenceAvailableRect({
+        ...input,
+        edgeInset: input.edgeInset ?? VOICE_ORB_EDGE,
+        minimumTop: input.minimumTop ?? VOICE_ORB_MIN_TOP,
+        bottomMargin: input.bottomMargin ?? VOICE_ORB_BOTTOM,
+    });
+    const placement = resolveFloatingFrameRect({
+        rect: { x: input.restCentred ? (minX + maxX) / 2 : maxX, y: maxY,
+            width: nonNegative(input.containerWidth), height: nonNegative(input.containerHeight) },
+        availableRect,
+        avoidRects: input.viewerRect ? [...(input.avoidRects ?? []), input.viewerRect] : input.avoidRects,
+    });
     return {
-        restingPoint: { x: maxX, y: maxY },
+        restingPoint: { x: placement.rect.x, y: placement.rect.y },
         dragBounds: { minX, maxX, minY, maxY },
+        availableRect,
+        fits: placement.fits && input.containerWidth <= availableRect.width && input.containerHeight <= availableRect.height,
     };
 }
 
@@ -138,22 +176,36 @@ export function resolveVoicePresenceReleaseTarget(input: Readonly<{
     projected: CompanionPoint;
     bounds: CompanionDragBounds;
     anchors?: 'orb' | 'island';
+    containerSize?: Readonly<{ width: number; height: number }>;
+    avoidRects?: readonly FrameRect[];
 }>): CompanionPoint {
     'worklet';
     const midpoint = (input.bounds.minX + input.bounds.maxX) / 2;
+    let point: CompanionPoint;
     if (input.anchors === 'island') {
         const centreDistance = Math.abs(input.projected.x - midpoint);
         const edge = input.projected.x < midpoint ? input.bounds.minX : input.bounds.maxX;
-        return {
+        point = {
             x: centreDistance <= Math.abs(input.projected.x - edge) ? midpoint : edge,
             y: input.projected.y < (input.bounds.minY + input.bounds.maxY) / 2
                 ? input.bounds.minY : input.bounds.maxY,
         };
+    } else {
+        point = {
+            x: input.projected.x < midpoint ? input.bounds.minX : input.bounds.maxX,
+            y: Math.min(input.bounds.maxY, Math.max(input.bounds.minY, input.projected.y)),
+        };
     }
-    return {
-        x: input.projected.x < midpoint ? input.bounds.minX : input.bounds.maxX,
-        y: Math.min(input.bounds.maxY, Math.max(input.bounds.minY, input.projected.y)),
-    };
+    if (!input.containerSize || !input.avoidRects?.length) return point;
+    const { width, height } = input.containerSize;
+    const placement = resolveFloatingFrameRect({
+        rect: { ...point, width, height },
+        availableRect: { x: input.bounds.minX, y: input.bounds.minY,
+            width: input.bounds.maxX - input.bounds.minX + width,
+            height: input.bounds.maxY - input.bounds.minY + height },
+        avoidRects: input.avoidRects,
+    });
+    return { x: placement.rect.x, y: placement.rect.y };
 }
 
 /** Additional composer clearance from the measured Island rect above the shell's bottom band. */
@@ -174,8 +226,5 @@ export function clampVoicePresencePoint(
     bounds: CompanionDragBounds,
 ): CompanionPoint {
     'worklet';
-    return {
-        x: Math.min(bounds.maxX, Math.max(bounds.minX, point.x)),
-        y: Math.min(bounds.maxY, Math.max(bounds.minY, point.y)),
-    };
+    return clampCompanionPoint(point, bounds);
 }

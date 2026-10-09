@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { HappierBadge } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -10,6 +11,7 @@ import { StatusDot } from './StatusDot';
 export const STATUS_PILL_VARIANTS = [
     'success',
     'warning',
+    'attention',
     'danger',
     'info',
     'neutral',
@@ -17,11 +19,28 @@ export const STATUS_PILL_VARIANTS = [
 
 export type StatusPillVariant = (typeof STATUS_PILL_VARIANTS)[number];
 
+type HappierBadgeStyle = React.ComponentProps<typeof HappierBadge>['style'];
+
+type StateColors = Readonly<{ foreground: string; background: string; border: string }>;
+
+/**
+ * "Needs you" (DESIGN.md, "One attention colour"): the Brand-owned attention amber for its ink and ring.
+ * The amber has no tint token of its own, so its faint ground is the warning tint (the attention ink is
+ * asserted AA on it in `themeContrast.test.ts`). The one owner of the attention triple: status pills and
+ * the Work status treatment both draw it from here.
+ */
+export function resolveAttentionStateColors(state: Readonly<{
+    attention: Readonly<{ foreground: string }>;
+    warning: Readonly<{ background: string }>;
+}>): StateColors {
+    return { foreground: state.attention.foreground, background: state.warning.background, border: state.attention.foreground };
+}
+
 export function resolveStatusPillVariantForState(
     state: 'live' | 'needsAttention' | 'neutral',
 ): StatusPillVariant {
     if (state === 'live') return 'success';
-    if (state === 'needsAttention') return 'warning';
+    if (state === 'needsAttention') return 'attention';
     return 'neutral';
 }
 
@@ -52,6 +71,15 @@ export type StatusPillProps = Readonly<{
     /** Truncate the label instead of letting it grow, for pills in width-constrained rows. */
     labelNumberOfLines?: number;
     labelVariant?: StatusPillLabelVariant;
+    /** Label type beyond the variant's role (the composer badge's heavier phrase). */
+    labelStyle?: StyleProp<TextStyle>;
+    /**
+     * `rect` (default): the shared status geometry. `capsule`: a badge that is itself a control among
+     * capsule chips (the composer status row).
+     */
+    shape?: 'rect' | 'capsule';
+    /** A trailing mark (the caret of a badge that opens a popover). */
+    trailing?: React.ReactNode;
     testID?: string;
     variantTestID?: string;
     accessibilityLabel?: string;
@@ -76,26 +104,8 @@ function resolveTabularTypography() {
 }
 
 const stylesheet = StyleSheet.create(() => ({
-    container: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        // 8px, not a full pill. A badge is a small rounded rect that sits in a row of
-        // rectangular surfaces; a capsule reads as a separate species next to them. 8 is on
-        // the radius scale, so a badge nests concentrically inside an 8px-padded parent.
-        borderRadius: 8,
-        // Badges are background-only: no border chrome on any pill app-wide. The saturated
-        // `state.border` outline made every pill shout over its own label.
-        borderWidth: 0,
-    },
     plainContainer: {
         gap: 4,
-        paddingHorizontal: 0,
-        paddingVertical: 0,
-        borderWidth: 0,
-        backgroundColor: 'transparent',
     },
     variantMarker: {
         position: 'absolute',
@@ -117,58 +127,70 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
+/**
+ * Core's semantic status pill: the variant → state colours, the status dot and the app's scaled pill type.
+ * The chrome itself (radius, padding, gap, background-only fill) is the shared badge geometry
+ * (`HappierBadge` / `HAPPIER_BADGE_METRICS`), so a core pill and a plugin author's `Badge` cannot drift.
+ */
 export function StatusPill(props: StatusPillProps): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const state = theme.colors.state[props.variant];
+    const state: StateColors = props.variant === 'attention'
+        ? resolveAttentionStateColors(theme.colors.state)
+        : theme.colors.state[props.variant];
     const chrome = props.chrome ?? 'pill';
+    const plain = chrome === 'plain';
     const foregroundColor = props.foregroundColor ?? state.foreground;
     const labelVariantStyle = props.labelVariant === 'phrase' ? styles.phraseLabel : null;
     const dotColor = props.dotColor ?? foregroundColor;
+    const leading = props.leading ?? (props.hideDot ? null : (
+        <StatusDot
+            testID={props.testID ? `${props.testID}:dot` : undefined}
+            color={dotColor}
+            isPulsing={props.isPulsing}
+        />
+    ));
 
     return (
-        <View
+        <HappierBadge
             testID={props.testID}
             accessibilityLabel={props.accessibilityLabel ?? props.label}
-            style={[
-                styles.container,
-                chrome === 'plain'
-                    ? styles.plainContainer
-                    : {
-                        backgroundColor: state.background,
-                        borderColor: state.border,
-                    },
-                props.style,
-            ]}
+            color={foregroundColor}
+            backgroundColor={plain ? 'transparent' : state.background}
+            shape={props.shape}
+            {...(plain ? { horizontalPadding: 0, verticalPadding: 0 } : {})}
+            // Core's RN style prop crosses into the portable badge style at this one adapter boundary.
+            style={[plain ? styles.plainContainer : null, props.style] as HappierBadgeStyle}
+            leading={(
+                <>
+                    <View
+                        testID={props.variantTestID ?? (props.testID ? `${props.testID}:variant:${props.variant}` : undefined)}
+                        pointerEvents="none"
+                        style={styles.variantMarker}
+                    />
+                    {leading}
+                </>
+            )}
+            trailing={props.trailing}
         >
-            <View
-                testID={props.variantTestID ?? (props.testID ? `${props.testID}:variant:${props.variant}` : undefined)}
-                pointerEvents="none"
-                style={styles.variantMarker}
-            />
-            {props.leading ?? (props.hideDot ? null : (
-                <StatusDot
-                    testID={props.testID ? `${props.testID}:dot` : undefined}
-                    color={dotColor}
-                    isPulsing={props.isPulsing}
-                />
-            ))}
-            {props.count !== undefined ? (
+            <>
+                {props.count !== undefined ? (
+                    <Text
+                        testID={props.testID ? `${props.testID}:count` : undefined}
+                        style={[styles.label, labelVariantStyle, resolveTabularTypography(), { color: foregroundColor }]}
+                    >
+                        {props.count}
+                    </Text>
+                ) : null}
                 <Text
-                    testID={props.testID ? `${props.testID}:count` : undefined}
-                    style={[styles.label, labelVariantStyle, resolveTabularTypography(), { color: foregroundColor }]}
+                    testID={props.testID ? `${props.testID}:label` : undefined}
+                    numberOfLines={props.labelNumberOfLines}
+                    ellipsizeMode={props.labelNumberOfLines === undefined ? undefined : 'tail'}
+                    style={[styles.label, labelVariantStyle, { color: foregroundColor }, props.labelStyle, props.labelNumberOfLines === undefined ? null : { flexShrink: 1 }]}
                 >
-                    {props.count}
+                    {props.label}
                 </Text>
-            ) : null}
-            <Text
-                testID={props.testID ? `${props.testID}:label` : undefined}
-                numberOfLines={props.labelNumberOfLines}
-                ellipsizeMode={props.labelNumberOfLines === undefined ? undefined : 'tail'}
-                style={[styles.label, labelVariantStyle, { color: foregroundColor }, props.labelNumberOfLines === undefined ? null : { flexShrink: 1 }]}
-            >
-                {props.label}
-            </Text>
-        </View>
+            </>
+        </HappierBadge>
     );
 }

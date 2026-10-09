@@ -36,7 +36,7 @@ import {
     useCompanionNativePanGesture,
     type CompanionPoint,
 } from './useCompanionNativePanGesture';
-import { resolveCompanionReleaseSpringConfig } from './companionReleaseMotion';
+import { resolveCompanionReleaseSpringConfig } from '@happier-dev/plugin-ui/presentation';
 import { PET_COMPANION_RELEASE_MOTION } from '@/components/pets/interaction/petPointerDragBindings';
 import { resolvePetNativeDragAnimationState } from '@/components/pets/interaction/resolvePetDragAnimationState';
 import { VOICE_ORB_RELEASE_MOTION } from '@/components/voice/presence/voicePresenceGeometry';

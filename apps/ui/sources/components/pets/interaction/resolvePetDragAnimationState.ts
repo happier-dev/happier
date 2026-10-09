@@ -1,6 +1,6 @@
 import type { PetAnimationStateV1 } from '@happier-dev/protocol';
 
-import { COMPANION_DRAG_THRESHOLD_PX } from '@/components/companion/interaction/companionPointerDragConfig';
+import { COMPANION_DRAG_THRESHOLD_PX } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The pet's own reading of a drag: horizontal motion becomes a running animation. This is the

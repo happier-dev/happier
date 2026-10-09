@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { FrameRect } from '@happier-dev/plugin-ui/presentation';
 import { Platform, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
@@ -55,6 +56,10 @@ export const VoicePresenceFloat = React.memo(function VoicePresenceFloat(props: 
     anchors?: 'orb' | 'island';
     bottomChromeInset?: number;
     onBottomReservationChange?: (height: number) => void;
+    viewerRect?: FrameRect | null;
+    avoidRects?: readonly FrameRect[];
+    /** Publish settled measured geometry to the existing shell owner, never pointer samples. */
+    onRectChange?: (rect: FrameRect | null) => void;
     testID?: string;
     children: (render: VoicePresenceFloatRender) => React.ReactNode;
 }>): React.ReactElement {
@@ -67,29 +72,42 @@ export const VoicePresenceFloat = React.memo(function VoicePresenceFloat(props: 
     const interactionPadding = props.interactionPaddingHorizontal ?? 0;
     const interactive = resolveOverlayPointerEvents(interactionPadding > 0 ? 'box-none' : 'auto');
 
+    const width = containerSize?.width ?? props.width;
+    const height = containerSize?.height ?? props.height;
+    const avoidRects = React.useMemo(() => props.viewerRect
+        ? [...(props.avoidRects ?? []), props.viewerRect] : props.avoidRects,
+    [props.avoidRects, props.viewerRect]);
     const geometry = resolveVoicePresenceGeometry({
         hostWidth: host.w,
         hostHeight: host.h,
-        containerWidth: containerSize?.width ?? props.width,
-        containerHeight: containerSize?.height ?? props.height,
+        containerWidth: width,
+        containerHeight: height,
         restingBottomInset: props.restingBottomInset,
         edgeInset: props.edgeInset,
         minimumTop: props.minimumTop,
         bottomMargin: 0,
+        restCentred: props.restCentred,
+        avoidRects,
     });
     const { minX, maxX, minY, maxY } = geometry.dragBounds;
     const bounds = React.useMemo(() => ({ minX, maxX, minY, maxY }), [maxX, maxY, minX, minY]);
-    const restX = props.restCentred ? (minX + maxX) / 2 : geometry.restingPoint.x;
+    const restX = geometry.restingPoint.x;
     const restY = geometry.restingPoint.y;
     const initialPoint = React.useMemo(() => ({ x: restX, y: restY }), [restX, restY]);
     const onDragRelease = React.useCallback((release: VoicePresenceDragRelease) => {
         setBottomDocked(release.point.y === maxY);
-    }, [maxY]);
-    React.useEffect(() => { setBottomDocked(true); }, [initialPoint]);
+        props.onRectChange?.({ ...release.point, width, height });
+    }, [height, maxY, props.onRectChange, width]);
+    React.useEffect(() => { setBottomDocked(initialPoint.y === maxY); }, [initialPoint, maxY]);
+    const reportRect = props.onRectChange;
+    React.useEffect(() => {
+        if (host.w > 0 && host.h > 0) reportRect?.({ ...initialPoint, width, height });
+    }, [height, host.h, host.w, initialPoint, reportRect, width]);
+    React.useEffect(() => () => { reportRect?.(null); }, [reportRect]);
     const reportBottomReservation = props.onBottomReservationChange;
     const reservation = resolveVoicePresenceBottomReservation({
         hostHeight: host.h,
-        point: initialPoint,
+        point: { x: restX, y: maxY },
         containerHeight: containerSize?.height ?? 0,
         bottomChromeInset: props.bottomChromeInset ?? 0,
         dockedBottom: bottomDocked,
@@ -106,6 +124,8 @@ export const VoicePresenceFloat = React.memo(function VoicePresenceFloat(props: 
         motionPolicy: reduced ? 'snap' : 'animate',
         pointerSelectors: VOICE_PRESENCE_POINTER_SELECTORS,
         anchors: props.anchors,
+        containerSize: React.useMemo(() => ({ width, height }), [height, width]),
+        avoidRects,
     });
     const gesture = React.useMemo(() => drag.gesture.enabled(Platform.OS !== 'web'), [drag.gesture]);
     const { translateX, translateY, dragProgress } = drag;

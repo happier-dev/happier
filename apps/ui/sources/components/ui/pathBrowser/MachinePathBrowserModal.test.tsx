@@ -298,36 +298,100 @@ describe('MachinePathBrowserModal', () => {
         itemRenderCounts.clear();
     });
 
-    it('expands the machine root and confirms the selected folder', async () => {
+    it('loads root children on the selected Home before confirming a folder, without selecting the disclosure target', async () => {
+        const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+        const targetHome = await upsertServerProfile({ serverUrl: 'https://path-browser-folder-target.example.test', name: 'Folder Home' });
+        const { clearCachedMachineFileBrowserRoots, clearCachedMachineFileBrowserEntries } = await import('@/sync/domains/input/machineFileBrowser');
+        clearCachedMachineFileBrowserRoots({ machineId: 'machine-1', serverId: targetHome.id });
+        clearCachedMachineFileBrowserEntries({ machineId: 'machine-1', serverId: targetHome.id });
+        let resolveRootChildren!: (result: Awaited<ReturnType<typeof defaultDirectoryEntries>>) => void;
+        const rootChildren = new Promise<Awaited<ReturnType<typeof defaultDirectoryEntries>>>((resolve) => {
+            resolveRootChildren = resolve;
+        });
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(async (input) => (
+            input.directoryPath === '/' ? await rootChildren : await defaultDirectoryEntries(input)
+        ));
         const onResolve = vi.fn();
         const onClose = vi.fn();
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
+                    serverId={targetHome.id}
+                    selectionMode="directory"
                     onResolve={onResolve}
                     onClose={onClose}
                 />);
 
         await waitForTestId(screen, getPathBrowserToggleTestId('/'));
         await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+        expect(screen.findByTestId(getPathBrowserRowTestId('/'))?.props.accessibilityExpanded).toBe(true);
+        const pendingChildren = screen.findHostByTestId(`${getPathBrowserRowTestId('/')}-loading`);
+        expect(pendingChildren).not.toBeNull();
+        expect(pendingChildren?.props.accessibilityRole).toBe('progressbar');
+        expect(pendingChildren?.props.accessibilityLabel).toBe('common.loading');
+        expect(screen.findByTestId(getPathBrowserRowTestId('/Users'))).toBeNull();
+        expect(screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID)?.props.disabled).toBe(true);
+        expect(onResolve).not.toHaveBeenCalled();
+
+        await act(async () => {
+            resolveRootChildren({ ok: true, entries: [{ name: 'Users', path: '/Users', type: 'directory' }], truncated: false });
+        });
 
         const usersRow = await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+        expect(usersRow).not.toBeNull();
+        expect(screen.findHostByTestId(`${getPathBrowserRowTestId('/')}-loading`)).toBeNull();
+        expect(screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID)?.props.disabled).toBe(true);
         await screen.pressByTestIdAsync(getPathBrowserRowTestId('/Users'));
+        expect(screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID)?.props.disabled).toBe(false);
 
         await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
 
         expect(listMachineFileBrowserRootsMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
+            serverId: targetHome.id,
         }));
         expect(listMachineFileBrowserDirectoryEntriesMock.mock.calls).toEqual(expect.arrayContaining([
             [expect.objectContaining({
                 machineId: 'machine-1',
                 directoryPath: '/',
                 includeFiles: false,
+                serverId: targetHome.id,
             })],
         ]));
         expect(onResolve).toHaveBeenCalledWith('/Users');
         expect(onClose).toHaveBeenCalled();
+    });
+
+    it('shows a failed root-directory read as a retryable child error instead of an empty expanded root', async () => {
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({ ok: false, error: 'RPC method not available' });
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1"
+            selectionMode="directory" onResolve={vi.fn()} onClose={vi.fn()} />);
+
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+        const error = await waitForTestId(screen, `${getPathBrowserRowTestId('/')}-folder-error`);
+        expect(error).not.toBeNull();
+        expect(screen.getTextContent()).toContain('files.repositoryFolderLoadFailed');
+        expect(screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID)?.props.disabled).toBe(true);
+
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(defaultDirectoryEntries);
+        await screen.pressByTestIdAsync(`${getPathBrowserRowTestId('/')}-folder-error-action`);
+        expect(await waitForTestId(screen, getPathBrowserRowTestId('/Users'))).not.toBeNull();
+        expect(screen.findByTestId(`${getPathBrowserRowTestId('/')}-folder-error`)).toBeNull();
+    });
+
+    it('uses tree arrow disclosure without selecting or picking the focused folder', async () => {
+        const onPickPath = vi.fn();
+        const screen = await renderScreen(<MachinePathBrowserView machineId="machine-1" variant="popover"
+            interaction="immediate" onPickPath={onPickPath} />);
+        const root = await waitForTestId(screen, getPathBrowserRowTestId('/'));
+        expect(root?.props.onKeyDown).toBeTypeOf('function');
+        await act(async () => { root!.props.onKeyDown({ key: 'ArrowRight', preventDefault: vi.fn() }); });
+        const child = await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+        expect(child).not.toBeNull();
+        expect(onPickPath).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId('/Users'));
+        expect(onPickPath).toHaveBeenCalledWith('/Users');
     });
 
     it('shows the machine-unreachable copy instead of transport vocabulary when the directory RPC fails', async () => {

@@ -72,6 +72,21 @@ describe('FilesystemBrowserRow folder error', () => {
 });
 
 describe('FilesystemBrowserRow tree title (one line; the meaningful end stays)', () => {
+    it('discloses a folder independently from its named navigation target', async () => {
+        const folder: FilesystemBrowserNode = { path: 'folder.ts', name: 'folder.ts', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false };
+        const onPress = vi.fn();
+        const onDisclosurePress = vi.fn();
+        const targets = { onPress, onDisclosurePress };
+        const screen = await renderScreen(<FilesystemBrowserRow testID="row" node={folder} title={folder.name} icon={null} disclosure {...targets} />);
+        const disclosure = screen.findByTestId('row-disclosure');
+        expect(disclosure).toBeTruthy();
+        expect(disclosure?.props.accessibilityLabel).toBeTruthy();
+        await screen.pressByTestIdAsync('row-disclosure');
+        expect(onDisclosurePress).toHaveBeenCalledOnce();
+        expect(onPress).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('row');
+        expect(onPress).toHaveBeenCalledOnce();
+    });
     const textNodes = (screen: Awaited<ReturnType<typeof renderScreen>>, value: string) =>
         screen.findAll((node) => node.props?.children === value && node.props?.numberOfLines === 1);
 
@@ -141,4 +156,3 @@ describe('FilesystemBrowserRow row actions (… only when the row is in play)', 
         pointer.touch = false;
     });
 });
-
