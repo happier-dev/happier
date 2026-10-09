@@ -43,6 +43,30 @@ vi.mock('@/sync/domains/state/storage', () => createStorageModuleStub({
 }));
 
 describe('useWorkspaceState', () => {
+    it.each(['restore', 'sync'] as const)('admits duplicate workflow details from %s without writing or changing unrelated tabs', async source => {
+        storageState.ready = true;
+        const first = { id: 'workflow-first', target: { kind: 'workflow', params: { id: 'workflow-1' } }, pinned: true, preview: false };
+        const duplicate = { ...first, id: 'workflow-duplicate', pinned: false, preview: true };
+        let saved = reduceWorkspaceState(createWorkspaceState(first), { type: 'openTab', groupId: 'group:1', tab: storedTab });
+        saved = reduceWorkspaceState(saved, { type: 'openTab', groupId: 'group:1', tab: duplicate });
+        const scopeKey = workspaceLayoutScopeKey({ ...storageState.scope, windowId: 'window-a' });
+        if (source === 'restore') storageState.layouts = { [scopeKey]: saved };
+        const { useWorkspaceState } = await import('./useWorkspaceState');
+        const hook = await renderHook(() => useWorkspaceState({ initialTab, windowId: 'window-a', admitState: admission([]) }));
+        if (source === 'sync') act(() => hook.getCurrent().applySharedRecord({ v: 1,
+            order: ['workflow-first', 'session-a', 'workflow-duplicate'], pairs: [], tabsById: {
+                'workflow-first': first, 'session-a': storedTab, 'workflow-duplicate': { ...duplicate, preview: false },
+            } }));
+        expect(Object.values(hook.getCurrent().state.tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(1);
+        expect(hook.getCurrent().state.tabs['workflow-first']).toMatchObject({ pinned: source === 'restore', preview: false });
+        expect(hook.getCurrent().state.tabs['session-a']).toEqual(storedTab);
+        if (source === 'restore') {
+            const state = hook.getCurrent().state;
+            expect(state.groups[state.focusedGroupId].activeTabId).toBe('workflow-first');
+        }
+        expect(saveLayouts).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
     it('leaves non-singleton preview disposition intact while admitting a plugin singleton', async () => {
         storageState.ready = true;
         let saved = reduceWorkspaceState(createWorkspaceState({ id: 'first', target: { kind: pluginKind, params: {} }, pinned: true, preview: false }),
