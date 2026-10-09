@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { NO_TEAM_CAPABILITIES_V1, type TeamSummaryV1 } from '@happier-dev/protocol/teams';
+import { NO_TEAM_CAPABILITIES_V1, TeamCredentialResourceEntitledPageV1Schema, type TeamSummaryV1 } from '@happier-dev/protocol/teams';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { HomeGovernanceEligibilityV1Schema, HomeGovernanceProjectionV1Schema } from '@happier-dev/protocol/home/governance';
 
 const serverFetchMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/http/client', () => ({
+vi.mock('@/sync/http/client', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/http/client')>(),
     serverFetch: serverFetchMock,
 }));
 
@@ -26,16 +29,27 @@ import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
 import { act } from 'react-test-renderer';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { createRootLayoutFeaturesResponse, renderHook } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse, homeGovernanceProjectionFixture, renderHook } from '@/dev/testkit';
+import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import {
     primeServerFeaturesSnapshot,
     resetServerFeaturesClientForTests,
 } from '@/sync/api/capabilities/serverFeaturesClient';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { updateEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
 import { resetTeamsDirectoryEngineForTests } from '@/sync/engine/teams/teamsDirectoryEngine';
 import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
+import { resetHomeGovernanceEngineForTests } from '@/sync/engine/home/governance/homeGovernanceEngine';
+import { resetHomeGovernanceEligibilityEngineForTests } from '@/sync/engine/home/governance/homeGovernanceEligibilityEngine';
+import { clearHomeGovernanceSnapshotsForServer } from '@/sync/store/home/governance/homeGovernanceSnapshots';
+import { resetHomeGovernanceEligibilitySnapshotsForTests } from '@/sync/store/home/governance/homeGovernanceEligibilitySnapshots';
+import { useHomeAdministrationSettingsAdmission } from '@/hooks/home/useHomeAdministrationSettingsAdmission';
 
 import { useTeamsDirectory } from './useTeamsDirectory';
+import { useHomeTeamCredentialModelCatalog } from './useHomeTeamCredentialModelCatalog';
+import { useTeamsDestinationShown } from './useTeamsDestinationShown';
 
 function tokenForSub(sub: string): string {
     const payload = globalThis.btoa(JSON.stringify({ sub }))
@@ -64,6 +78,7 @@ function team(id: string, name = `Team ${id}`, archivedAt: number | null = null)
         viewerRole: 'member',
         capabilities: NO_TEAM_CAPABILITIES_V1,
         admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+        counts: null,
     };
 }
 
@@ -79,6 +94,9 @@ async function addHome(name: string, serverUrl: string, teamsEnabled: boolean): 
     (features.features as Record<string, unknown>).teams = { enabled: false };
     expect(tryWriteServerEnabledBitInPlace(features, 'teams', teamsEnabled)).toBe(true);
     primeServerFeaturesSnapshot({ serverId: id, snapshot: { status: 'ready', features } });
+    await updateEffectiveHomeViewState((current) => ({
+        ...current, activeTargetKind: 'server', activeTargetId: id,
+    }), { scope: 'device' });
     return id;
 }
 
@@ -103,6 +121,93 @@ afterEach(() => {
 });
 
 describe('useTeamsDirectory', () => {
+    it('binds a local Home alias to its published identity without borrowing the focused Home Account', async () => {
+        const home = createHomeGovernanceHarness();
+        const named = await home.addHome({ name: 'Named Home', serverUrl: 'https://team-alias.example',
+            serverIdentityId: 'srv_team_alias', accountId: 'named-account', currentAccount: true,
+            teamsEnabled: true, credentialResourcesEnabled: true });
+        await home.addHome({ name: 'Focused Home', serverUrl: 'https://team-focused.example',
+            serverIdentityId: 'srv_team_focused', accountId: 'focused-account', currentAccount: true,
+            teamsEnabled: true, credentialResourcesEnabled: true });
+        expect(named).not.toBe('srv_team_alias');
+        home.answer(named, '/v1/teams/list', { body: { items: [team('shared-id', 'Named Team')], nextCursor: null } });
+        const catalogRequest = bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', { teamId: 'shared-id' });
+        home.answer(named, catalogRequest.path, { body: TeamCredentialResourceEntitledPageV1Schema.parse({ resources: [], nextCursor: null }) });
+        home.answer(named, bindHomeDomainActionHttpRequestV1('home.governance.get', {}).path, {
+            body: HomeGovernanceProjectionV1Schema.parse(homeGovernanceProjectionFixture({
+                viewer: { accountId: 'named-account', homeRole: 'owner', status: 'active' },
+            })),
+        });
+        home.answer(named, bindHomeDomainActionHttpRequestV1('home.governance.eligibility.get', {}).path, {
+            body: HomeGovernanceEligibilityV1Schema.parse({ teamsEnabled: true, createTeam: true,
+                createTeamForChosenAccount: false, showTeams: true }),
+        });
+        getCredentialsForServerUrlMock.mockImplementation(async (url) => {
+            const token = home.findByServerUrl(url)?.token;
+            return token ? { token } : null;
+        });
+        runtimeFetchMock.mockImplementation(async (request) => {
+            const headers = new Headers(request.init?.headers);
+            if (request.token) headers.set('Authorization', `Bearer ${request.token}`);
+            return home.request(request.url, { ...request.init, headers });
+        });
+        serverFetchMock.mockImplementation((path, init) => home.request(new URL(path, getActiveServerSnapshot().serverUrl), init));
+        // Action preparation uses the real endpoint fetch, below the reachability
+        // fetch used by directory reads. Both HTTP leaves answer from the same Home.
+        setRuntimeFetch((input, init) => home.request(input, init));
+        const rendered = await renderHook(() => ({
+            directory: useTeamsDirectory({ serverIds: [named] }),
+            catalog: useHomeTeamCredentialModelCatalog({ serverId: named, enabled: true }),
+            shown: useTeamsDestinationShown([named]),
+            administration: useHomeAdministrationSettingsAdmission({ serverIds: [named] }),
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().directory.rows).toHaveLength(1));
+            expect(rendered.getCurrent().directory.rows[0]?.address).toEqual({ serverId: named, teamId: 'shared-id' });
+            expect(rendered.getCurrent().directory.scopes).toEqual([{ serverId: 'srv_team_alias', accountId: 'named-account' }]);
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().catalog.current).toBe(true));
+            expect(rendered.getCurrent().catalog.teamNameById).toEqual({ 'shared-id': 'Named Team' });
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().shown).toBe(true));
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().administration.admittedServerIds).toEqual([named]));
+            const reads = home.requests.filter((request) => request.path.startsWith('/v1/teams'));
+            expect(reads.length).toBeGreaterThan(1);
+            expect(reads.every((request) => request.serverId === named
+                && request.token === home.findByServerUrl('https://team-alias.example')?.token)).toBe(true);
+            expect(home.requests.filter((request) => request.path.startsWith('/v1/home/governance')).every((request) => request.serverId === named
+                && request.token === home.findByServerUrl('https://team-alias.example')?.token)).toBe(true);
+        } finally {
+            await rendered.unmount();
+            resetRuntimeFetch();
+            resetHomeGovernanceEngineForTests();
+            resetHomeGovernanceEligibilityEngineForTests();
+            clearHomeGovernanceSnapshotsForServer('srv_team_alias');
+            resetHomeGovernanceEligibilitySnapshotsForTests();
+            await home.reset();
+        }
+    });
+
+    it('projects a failed Team credential discovery and retries the directory even with no resource rows', async () => {
+        const home = await addHome('Home A', 'https://home-a.example', true);
+        await setActiveServerId(home, { scope: 'device' });
+        runtimeFetchMock.mockRejectedValue(new Error('network down'));
+        const rendered = await renderHook(() => useHomeTeamCredentialModelCatalog({ serverId: home, enabled: true }));
+        await vi.waitFor(() => expect(rendered.getCurrent().condition).toEqual({ reason: 'offline', retryable: true }));
+        expect(rendered.getCurrent().resources).toEqual([]);
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [], nextCursor: null }), { status: 200 }));
+        await act(async () => { await rendered.getCurrent().reload(); });
+        await vi.waitFor(() => expect(rendered.getCurrent().current).toBe(true));
+        expect(rendered.getCurrent().condition).toBeNull();
+        await rendered.unmount();
+    });
+
+    it('does not claim a disabled Team credential catalog is stale or loading', async () => {
+        const home = await addHome('Home A', 'https://home-a.example', true);
+        await setActiveServerId(home, { scope: 'device' });
+        const rendered = await renderHook(() => useHomeTeamCredentialModelCatalog({ serverId: null, enabled: false }));
+        expect(rendered.getCurrent().condition).toBeNull();
+        expect(runtimeFetchMock).not.toHaveBeenCalled();
+        await rendered.unmount();
+    });
     it('reads each capable Home as the Account that Home is signed in as', async () => {
         const home = await addHome('Home A', 'https://home-a.example', true);
         await setActiveServerId(home, { scope: 'device' });
@@ -120,7 +225,7 @@ describe('useTeamsDirectory', () => {
         expect(current.kind).toBe('ready');
         expect(current.rows[0]?.address).toEqual({ serverId: home, teamId: 't1' });
         expect(current.rows[0]?.homeName).toBe('Home A');
-        expect(runtimeFetchMock.mock.calls[0]?.[0]?.url).toBe('https://home-a.example/v1/teams/list');
+        expect(runtimeFetchMock.mock.calls.some(([request]) => request.url === 'https://home-a.example/v1/teams/list')).toBe(true);
         await rendered.unmount();
     });
 
@@ -258,7 +363,9 @@ describe('useTeamsDirectory', () => {
         await vi.waitFor(() => {
             expect(runtimeFetchMock).toHaveBeenCalled();
         });
-        expect(JSON.parse(String(runtimeFetchMock.mock.calls[0]?.[0]?.init?.body))).toMatchObject({
+        const listRequest = runtimeFetchMock.mock.calls.find(([request]) => request.url === 'https://home-a.example/v1/teams/list')?.[0];
+        expect(listRequest).toBeDefined();
+        expect(JSON.parse(String(listRequest.init.body))).toMatchObject({
             scope: 'member',
             archived: 'archived',
         });

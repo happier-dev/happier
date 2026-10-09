@@ -4,6 +4,7 @@ import { useHomeGovernanceEligibilitySnapshots } from '@/hooks/home/useHomeGover
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeResolutions } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveTeamsDestinationShown } from '@/sync/domains/teams/teamsSettingsAdmission';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 const EMPTY_SCOPES: readonly ServerAccountScope[] = Object.freeze([]);
 
@@ -17,7 +18,7 @@ export function useTeamsDestinationShown(capableServerIds: readonly string[]): b
     const scopes = React.useMemo(() => {
         const out: ServerAccountScope[] = [];
         for (const serverId of capableServerIds) {
-            const resolution = scopeResolutions.get(serverId);
+            const resolution = scopeResolutions.get(resolveServerProfileScopeIdForIdentifier(serverId));
             if (resolution?.kind === 'bound') out.push(resolution.scope);
         }
         return out.length > 0 ? out : EMPTY_SCOPES;
@@ -26,8 +27,9 @@ export function useTeamsDestinationShown(capableServerIds: readonly string[]): b
 
     return React.useMemo(() => {
         const showTeamsByServerId = new Map<string, boolean | undefined>();
-        for (const [serverId, snapshot] of eligibility.snapshotsByServerId) {
-            showTeamsByServerId.set(serverId, snapshot.data?.showTeams);
+        for (const serverId of capableServerIds) {
+            const snapshot = eligibility.snapshotsByServerId.get(resolveServerProfileScopeIdForIdentifier(serverId));
+            showTeamsByServerId.set(serverId, snapshot?.data?.showTeams);
         }
         return resolveTeamsDestinationShown({ capableServerIds, showTeamsByServerId });
     }, [capableServerIds, eligibility.snapshotsByServerId]);

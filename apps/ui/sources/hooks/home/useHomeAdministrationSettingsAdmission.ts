@@ -16,6 +16,7 @@ import {
 
 import { useServerCredentialAccountScopeResolutions } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { serverAccountScopeListKey } from '@/sync/domains/scope/serverAccountScope';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 export type {
     HomeAdministrationHomeEntry,
@@ -100,7 +101,7 @@ export function useHomeAdministrationSettingsAdmission(
     const scopesRef = React.useRef(scopes);
     scopesRef.current = scopes;
     const retry = React.useCallback((serverId: string) => {
-        const resolution = scopesRef.current.get(serverId);
+        const resolution = scopesRef.current.get(resolveServerProfileScopeIdForIdentifier(serverId));
         if (resolution?.kind === 'bound') void refreshHomeGovernanceSnapshot(resolution.scope);
         else retryServerCredentialAccountScope(serverId);
     }, []);
@@ -108,7 +109,7 @@ export function useHomeAdministrationSettingsAdmission(
     const admission = React.useMemo(() => {
         const observationsByServerId: Record<string, HomeAdministrationHomeObservation> = {};
         for (const serverId of serverIds) {
-            const resolution = scopes.get(serverId);
+            const resolution = scopes.get(resolveServerProfileScopeIdForIdentifier(serverId));
             if (!resolution) continue;
             const snapshot = resolution.kind === 'bound'
                 ? getHomeGovernanceSnapshot(resolution.scope)

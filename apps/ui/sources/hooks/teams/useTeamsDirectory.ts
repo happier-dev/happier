@@ -18,7 +18,7 @@ import {
     serverAccountScopeListKey,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { TeamsHomeAdmissionEntry } from '@/sync/domains/teams/teamsSettingsAdmission';
 import {
     loadMoreTeamsDirectory,
@@ -101,7 +101,7 @@ export function useTeamsDirectory(options?: Readonly<{
     const scopes = React.useMemo(() => {
         const out: ServerAccountScope[] = [];
         for (const serverId of capableServerIds) {
-            const resolution = scopeResolutions.get(serverId);
+            const resolution = scopeResolutions.get(resolveServerProfileScopeIdForIdentifier(serverId));
             if (resolution?.kind === 'bound') out.push(resolution.scope);
         }
         return out.length > 0 ? Object.freeze(out) : EMPTY_SCOPES;
@@ -126,12 +126,16 @@ export function useTeamsDirectory(options?: Readonly<{
 
     const getSnapshots = React.useCallback(() => {
         const byServerId: Record<string, TeamsDirectorySnapshot | undefined> = {};
-        for (const scope of scopes) {
-            byServerId[scope.serverId] = getTeamsDirectorySnapshot(scope, queryKey) ?? undefined;
+        // Credential/snapshot keys use the published Home identity; the view
+        // keeps the requested profile identifier, including its navigation address.
+        for (const serverId of capableServerIds) {
+            const resolution = scopeResolutions.get(resolveServerProfileScopeIdForIdentifier(serverId));
+            if (resolution?.kind === 'bound') {
+                byServerId[serverId] = getTeamsDirectorySnapshot(resolution.scope, queryKey) ?? undefined;
+            }
         }
         return byServerId;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [queryKey, scopesKey]);
+    }, [capableServerIds, queryKey, scopeResolutions]);
 
     // The store publishes an immutable snapshot per key, so a serialized
     // identity of the observed keys is a sound change signal without
@@ -168,7 +172,7 @@ export function useTeamsDirectory(options?: Readonly<{
     // this device failed to read is settled on its own reason, never a spinner.
     const homes = React.useMemo<readonly TeamsHomeAdmissionEntry[]>(() => admittedHomes.map((home) => {
         if (home.state !== 'capable') return home;
-        const resolution = scopeResolutions.get(home.serverId);
+        const resolution = scopeResolutions.get(resolveServerProfileScopeIdForIdentifier(home.serverId));
         if (resolution?.kind === 'bound') return home;
         if (resolution?.kind === 'signed_out' || resolution?.kind === 'unknown_home') {
             return { serverId: home.serverId, state: 'disabled' as const };

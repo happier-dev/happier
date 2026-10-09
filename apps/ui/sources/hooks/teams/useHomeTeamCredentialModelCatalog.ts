@@ -1,8 +1,10 @@
 import * as React from 'react';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import { teamsUnavailableReason, type TeamsDirectoryUnavailableHome } from '@/components/settings/teams/teamsDirectoryViewState';
 
 import { observeTeamCredentialResourceCatalog, refreshTeamCredentialResourceCatalog } from '@/sync/engine/teams/teamsDirectoryEngine';
 import { getTeamCredentialResourceCatalogSnapshot, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useTeamsDirectory } from './useTeamsDirectory';
 
 export type HomeTeamCredentialModelCatalog = Readonly<{
@@ -11,7 +13,9 @@ export type HomeTeamCredentialModelCatalog = Readonly<{
     homeNameByTeamId: Readonly<Record<string, string>>;
     currentResourceKeys: ReadonlySet<string>;
     current: boolean;
-    /** Re-reads every observed Team catalog through the canonical directory engine. */
+    /** The owning directory/catalog's cold-load or failed-read condition, never inferred from emptiness. */
+    condition: Pick<TeamsDirectoryUnavailableHome, 'reason' | 'retryable'> | null;
+    /** Re-reads membership discovery and observed Team catalogs through their canonical engine. */
     reload: () => Promise<void>;
 }>;
 
@@ -28,32 +32,43 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
 }>): HomeTeamCredentialModelCatalog {
     const serverId = input.serverId?.trim() ?? '';
     const directory = useTeamsDirectory({ enabled: input.enabled && serverId !== '', serverIds: serverId ? [serverId] : [] });
-    const scope = directory.scopes.find((candidate) => candidate.serverId === serverId) ?? null;
-    const rowsKey = JSON.stringify(directory.rows.map((row) => [row.address.serverId, row.address.teamId]));
+    const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const scope = directory.scopes.find((candidate) => candidate.serverId === scopeServerId) ?? null;
+    // Team loaders accept canonical Home addresses, not device-local route aliases.
+    const rows = React.useMemo(() => directory.rows.map((row) => ({ ...row,
+        address: { ...row.address, serverId: resolveServerProfileScopeIdForIdentifier(row.address.serverId) },
+    })), [directory.rows]);
+    const rowsKey = JSON.stringify(rows.map((row) => [row.address.serverId, row.address.teamId]));
 
     React.useEffect(() => {
         if (!input.enabled || !scope) return;
-        const releases = directory.rows.map((row) => observeTeamCredentialResourceCatalog(scope, row.address));
+        const releases = rows.map((row) => observeTeamCredentialResourceCatalog(scope, row.address));
         return () => { for (const release of releases) release(); };
         // rowsKey is the collision-safe identity of the Team addresses observed.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [input.enabled, rowsKey, scope?.accountId, scope?.serverId]);
 
     const reload = React.useCallback(async () => {
-        if (!input.enabled || !scope) return;
-        await Promise.all(directory.rows.map((row) => refreshTeamCredentialResourceCatalog(scope, row.address)));
-    }, [directory.rows, input.enabled, scope]);
+        if (!input.enabled) return;
+        directory.refresh();
+        if (!scope) return;
+        await Promise.all(rows.map((row) => refreshTeamCredentialResourceCatalog(scope, row.address)));
+    }, [directory.refresh, rows, input.enabled, scope]);
 
     const snapshotVersion = React.useSyncExternalStore(
         subscribeTeamsSnapshots,
-        () => JSON.stringify(directory.rows.map((row) => {
+        () => JSON.stringify(rows.map((row) => {
             const snapshot = getTeamCredentialResourceCatalogSnapshot(scope, row.address);
-            return [row.address.teamId, snapshot?.status ?? 'none', snapshot?.lastObservedAt ?? null, snapshot?.stale === true];
+            return [row.address.teamId, snapshot?.status ?? 'none', snapshot?.lastObservedAt ?? null, snapshot?.stale === true, snapshot?.error?.kind ?? null];
         })),
         () => '',
     );
 
     return React.useMemo(() => {
+        const unavailable = directory.unavailableHomes.find((home) => home.serverId === serverId);
+        let condition: HomeTeamCredentialModelCatalog['condition'] = unavailable
+            ? { reason: unavailable.reason, retryable: unavailable.retryable }
+            : null;
         if (!input.enabled || !scope) {
             return {
                 resources: EMPTY_RESOURCES,
@@ -61,6 +76,7 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
                 homeNameByTeamId: {},
                 currentResourceKeys: new Set(),
                 current: false,
+                condition: input.enabled ? condition : null,
                 reload,
             };
         }
@@ -69,11 +85,14 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
         const homeNameByTeamId: Record<string, string> = {};
         const currentResourceKeys = new Set<string>();
         let current = directory.kind !== 'loading' && !directory.partial;
-        for (const row of directory.rows) {
+        if (directory.kind === 'loading' && !condition) condition = { reason: 'loading', retryable: false };
+        for (const row of rows) {
             teamNameById[row.address.teamId] = row.team.name;
             homeNameByTeamId[row.address.teamId] = row.homeName;
             const snapshot = getTeamCredentialResourceCatalogSnapshot(scope, row.address);
             if (snapshot?.status !== 'ready' || snapshot.stale) current = false;
+            if (snapshot?.error && (!condition || condition.reason === 'loading')) condition = teamsUnavailableReason(snapshot.error);
+            else if (snapshot?.status !== 'ready' && !condition) condition = { reason: 'loading', retryable: false };
             resources.push(...(snapshot?.data ?? []));
             if (snapshot?.status === 'ready' && !snapshot.stale) {
                 for (const resource of snapshot.data ?? []) currentResourceKeys.add(`${resource.teamId}:${resource.id}`);
@@ -85,9 +104,10 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             homeNameByTeamId: Object.freeze(homeNameByTeamId),
             currentResourceKeys,
             current,
+            condition: current ? null : condition,
             reload,
         });
         // snapshotVersion is the scoped store change signal.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [directory.kind, directory.partial, input.enabled, reload, rowsKey, scope?.accountId, scope?.serverId, snapshotVersion]);
+    }, [directory.kind, directory.partial, directory.unavailableHomes, input.enabled, reload, rowsKey, scope?.accountId, scope?.serverId, serverId, snapshotVersion]);
 }
