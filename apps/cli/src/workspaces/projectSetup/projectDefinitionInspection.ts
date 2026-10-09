@@ -1,7 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import type { ProjectDefinitionDetectionV1, ProjectEnvironmentSelectionV1, ProjectManifestV1, ProjectNativeRefV1, ProjectToolInspectionV1, ProjectToolRequirementV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { inspectProjectImportCandidates } from './projectNativeResolution';
+import { inspectProjectImportCandidates, readProjectExecutionInputs, resolveProjectEnvironmentSelection } from './projectNativeResolution';
 import type { ProjectImportCandidate, ProjectNativeCommandIo } from './projectNativeResolution';
 import { collectNativePackageDirectories, isNativeDefinitionRecord, parseNativePackage } from './nativePackageScripts';
 import { readProjectDefinitionFile, type ProjectDefinitionFileRead } from './nativeDefinitionFiles';
@@ -209,8 +209,19 @@ export async function inspectProjectDefinitionExecutionFacts(input: Readonly<{
         if (candidate) { const { preselected: _preselected, ...preview } = candidate; commands.push({ ...preview, name: entry.name }); }
     }
     const tools = await inspectProjectToolFacts({ root, detection, candidates: [...importCandidates, ...commands.map(command => ({ ...command, preselected: false }))], io, ...(signal ? { signal } : {}) });
+    const environment = await resolveProjectEnvironmentSelection({ root, selection: manifest?.environment ?? { kind: 'host' } });
+    let environmentExecutionInputs: Awaited<ReturnType<typeof readProjectExecutionInputs>>;
+    if (environment.kind === 'selected') {
+        try {
+            const installed = environment.selection.kind === 'toolchain'
+                ? await io.resolveTool(environment.selection.tool === 'nix_flake' ? 'nix' : environment.selection.tool,
+                    { cwd: root, ...(signal ? { signal } : {}) }) : null;
+            signal?.throwIfAborted();
+            environmentExecutionInputs = await readProjectExecutionInputs(root, environment.file ? [environment.file] : [], installed?.executablePath);
+        } catch { signal?.throwIfAborted(); }
+    }
     signal?.throwIfAborted();
-    return { importCandidates, commands, tools };
+    return { importCandidates, commands, tools, ...(environmentExecutionInputs ? { environmentExecutionInputs } : {}) };
 }
 
 /** Lex only enough Nix for literal dotted script attributes; string/comment bodies are never declarations. */

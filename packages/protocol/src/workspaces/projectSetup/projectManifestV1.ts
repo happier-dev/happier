@@ -22,6 +22,13 @@ export const ProjectNativeRefV1Schema = z.union([
 ]);
 export type ProjectNativeRefV1 = z.infer<typeof ProjectNativeRefV1Schema>;
 
+/** Contained selected execution bytes, never a workspace-wide file inventory. */
+export const ProjectExecutionInputV1Schema = z.strictObject({
+  file: ProjectNativeFilePathV1Schema,
+  hash: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
+});
+export type ProjectExecutionInputV1 = z.infer<typeof ProjectExecutionInputV1Schema>;
+
 export const ProjectCommandSourceV1Schema = z.union([
   ProjectNativeRefV1Schema,
   z.strictObject({ kind: z.literal('command'), command: nonempty, cwd: z.optional(nonempty), platforms: z.optional(z.array(z.enum(['darwin', 'linux', 'windows']))) }),
@@ -91,5 +98,6 @@ export const ProjectDefinitionImportCandidateV1Schema = z.strictObject({
   code: z.optional(nonempty),
   preselected: z.boolean(),
   invocation: z.optional(ProjectNativeInvocationPreviewV1Schema),
+  executionInputs: z.optional(z.array(ProjectExecutionInputV1Schema)),
 }).check(z.refine(candidate => !candidate.preselected || candidate.availability === 'available', 'Only available unambiguous offers may be preselected'));
 export type ProjectDefinitionImportCandidateV1 = z.infer<typeof ProjectDefinitionImportCandidateV1Schema>;

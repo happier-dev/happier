@@ -16,3 +16,12 @@ export const ProjectSetupConsentFailureDetailsV1Schema = lazyZodSchema(() => z.o
   consentScope: ProjectSetupConsentScopeV1Schema.optional(),
 }).strict());
 export type ProjectSetupConsentFailureDetailsV1 = z.infer<typeof ProjectSetupConsentFailureDetailsV1Schema>;
+
+/** A terminal Script review is not a setup grant or a resumable setup hold. */
+export const ProjectScriptEffectChangedFailureDetailsV1Schema = lazyZodSchema(() => z.object({
+  kind: z.literal('pendingApproval'),
+  code: z.literal('project_script_effect_changed'),
+  reviewedEffect: StrictJsonValueSchema,
+  reviewedEffectDigest: z.string().min(1),
+}).strict());
+export type ProjectScriptEffectChangedFailureDetailsV1 = z.infer<typeof ProjectScriptEffectChangedFailureDetailsV1Schema>;
