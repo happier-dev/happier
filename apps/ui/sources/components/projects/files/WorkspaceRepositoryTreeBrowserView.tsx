@@ -1,7 +1,7 @@
-import { useRepositoryTreeVisibility } from '@/hooks/workspaces/files/useRepositoryTreeVisibility';
+import { useRepositoryTreeBrowserState } from '@/hooks/workspaces/files/repositoryTreeBrowserState';
 import { RepositoryTreeVisibilityControl } from '@/components/workspaces/files/repositoryTree/RepositoryTreeVisibilityControl';
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, View, type ScrollViewProps } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { RepositoryTreeToolbar } from '@/components/workspaces/files/repositoryTree/RepositoryTreeToolbar';
@@ -9,7 +9,6 @@ import { RepositoryTreeCreateMenu, type RepositoryTreeCreateMenuItemId } from '@
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
 import { SearchResultsList } from '@/components/workspaces/files/repositoryTree/SearchResultsList';
-import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -20,7 +19,9 @@ import { useWorkspaceFileQuery } from '@/sync/domains/workspaces/files/useWorksp
 import { workspaceCreateDirectory, workspaceWriteFile } from '@/sync/ops/workspaceFileSystem';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { storage, useLocalSetting, useMachine, useServerScopedMachine, useWorkspaceRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
+import { storage, useLocalSetting, useServerScopedMachine, useWorkspaceRepositoryTreeExpandedPaths } from '@/sync/domains/state/storage';
+import { usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { useWorkspaceFileTransfers, type WorkspaceUploadEntry } from '@/hooks/workspaces/transfers/useWorkspaceFileTransfers';
@@ -77,14 +78,39 @@ export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
     renderRowActions?: React.ComponentProps<typeof WorkspaceRepositoryTreeList>['renderRowActions'];
     /** The file open in Details: its row stays selected (lab F1). */
     selectedPath?: string | null;
+    /** Session adapters may restrict effects, never substitute another Home's target. */
+    effectsEnabled?: boolean;
+    transferEffectsEnabled?: boolean;
+    contextKey?: string;
+    rootLabel?: string;
+    rootHeading?: React.ReactNode;
+    machineName?: string | null;
+    createMenuPlacement?: 'toolbar' | 'paneHeader';
+    onRefreshScm?: () => void;
+    scrollProps?: Pick<ScrollViewProps, 'onLayout' | 'onContentSizeChange' | 'onScroll' | 'scrollEventThrottle'>;
+    scrollOverlay?: React.ReactNode;
+    /**
+     * A Code folder page (plan 13 §2, lab p-code BROWSE): one folder's entries drawn in place as the
+     * page's table — no tree toolbar, the name goes into the folder, the chevron opens it inline —
+     * keeping this browser's row actions, uploads, drops and transfers.
+     */
+    folderPage?: Readonly<{
+        path: string;
+        onOpenFolder: (path: string) => void;
+        renderRowMetadata?: React.ComponentProps<typeof WorkspaceRepositoryTreeList>['renderRowMetadata'];
+        renderRowSubtitle?: React.ComponentProps<typeof WorkspaceRepositoryTreeList>['renderRowSubtitle'];
+        onNodesChange?: React.ComponentProps<typeof WorkspaceRepositoryTreeList>['onNodesChange'];
+    }> | null;
 }>;
 
+function BrowserHeaderAction(props: Readonly<{ action: React.ReactNode }>) {
+    usePaneHeaderSlotContent(React.useMemo(() => ({ action: props.action }), [props.action]));
+    return null;
+}
 
 export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRepositoryTreeBrowserViewProps) => {
     const { theme } = useUnistyles();
     const homeApplicationCarrierEligibility = useLocalSetting('homeApplicationCarrierEligibility');
-    const [showChangedOnly, setShowChangedOnly] = React.useState(false);
-    const [detailsMode, setDetailsMode] = React.useState(false);
     const [treeReloadNonce, setTreeReloadNonce] = React.useState(0);
     const [treeRootLoading, setTreeRootLoading] = React.useState(false);
     const [uploadDestinationDir, setUploadDestinationDir] = React.useState('');
@@ -96,13 +122,15 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         () => props.scope,
         [props.scope.serverId, props.scope.machineId, props.scope.rootPath],
     );
-    const { visibilityMode, setVisibilityMode, gitIgnoreAvailable, setGitIgnoreAvailable, revealedPaths, revealPath, latestRequest } = useRepositoryTreeVisibility(tryBuildWorkspaceCacheKey(workspaceScope) ?? '');
-    const workspaceScmController = useWorkspaceScmSnapshotController(props.scmSnapshot === undefined ? workspaceScope : null);
-    const effectiveScmSnapshot = props.scmSnapshot ?? workspaceScmController.snapshot ?? null;
-    const globalMachine = useMachine(workspaceScope.machineId);
-    const scopedMachine = useServerScopedMachine(workspaceScope.serverId, workspaceScope.machineId);
-    const machine = scopedMachine ?? globalMachine;
-    const machineRpcTargetAvailable = Boolean(machine && isMachineOnline(machine));
+    const { visibilityMode, setVisibilityMode, gitIgnoreAvailable, setGitIgnoreAvailable, revealedPaths, revealPath, latestRequest,
+        changedOnly: storedChangedOnly, setChangedOnly: setShowChangedOnly, detailsMode, setDetailsMode,
+        searchQuery: uncontrolledSearchQuery, setSearchQuery: setUncontrolledSearchQuery } = useRepositoryTreeBrowserState(tryBuildWorkspaceCacheKey(workspaceScope) ?? '');
+    // Changed-only and file-query modes belong to the tree; a Code page always lists its folder.
+    const showChangedOnly = props.folderPage ? false : storedChangedOnly;
+    const machine = useServerScopedMachine(workspaceScope.serverId, workspaceScope.machineId);
+    const machineRpcTargetAvailable = props.effectsEnabled !== false && Boolean(machine && isMachineOnline(machine));
+    const workspaceScmController = useWorkspaceScmSnapshotController(props.scmSnapshot === undefined && machineRpcTargetAvailable ? workspaceScope : null);
+    const effectiveScmSnapshot = props.scmSnapshot !== undefined ? props.scmSnapshot : workspaceScmController.snapshot ?? null;
     const serverSnapshot = useServerFeaturesSnapshotForServerId(workspaceScope.serverId, {
         enabled: Boolean(workspaceScope.serverId) && machineRpcTargetAvailable,
     });
@@ -138,23 +166,31 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             ? runnerFiniteTransferRpcDeclared
             : isMachineDaemonFiniteTransferApplicationSupported(machine?.daemonState),
     });
-    const transferActionsAvailable = machineRpcTargetAvailable && transferPreselection.kind !== 'unavailable';
+    const transferActionsAvailable = props.transferEffectsEnabled !== false && machineRpcTargetAvailable && transferPreselection.kind !== 'unavailable';
 
     const workspaceExpandedPaths = useWorkspaceRepositoryTreeExpandedPaths(workspaceScope);
 
     const expandedPaths = props.expandedPaths ?? workspaceExpandedPaths;
-    const setExpandedPaths = props.onExpandedPathsChange
-        ?? ((paths: string[]) => storage.getState().setWorkspaceRepositoryTreeExpandedPaths(workspaceScope, paths));
+    const setExpandedPaths = React.useCallback((paths: string[]) => {
+        if (props.onExpandedPathsChange) props.onExpandedPathsChange(paths);
+        else storage.getState().setWorkspaceRepositoryTreeExpandedPaths(workspaceScope, paths);
+    }, [props.onExpandedPathsChange, workspaceScope]);
+    const expandedPathsRef = React.useRef(expandedPaths);
+    expandedPathsRef.current = expandedPaths;
 
-    const [uncontrolledSearchQuery, setUncontrolledSearchQuery] = React.useState('');
     const searchQuery = props.searchQuery ?? uncontrolledSearchQuery;
     const setSearchQuery = props.onSearchQueryChange ?? setUncontrolledSearchQuery;
 
-    const fileQuery = useWorkspaceFileQuery({ scope: workspaceScope, query: searchQuery, enabled: !showChangedOnly, limit: 200, reloadToken: treeReloadNonce });
+    const fileQuery = useWorkspaceFileQuery({ scope: workspaceScope, query: searchQuery, enabled: !props.folderPage && !showChangedOnly && machineRpcTargetAvailable, limit: 200, reloadToken: treeReloadNonce, contextKey: props.contextKey });
     const searchResults = fileQuery.items;
     const isSearching = fileQuery.isSearching;
 
-    const showSearchBar = props.showSearchBar !== false;
+    const folderPage = props.folderPage ?? null;
+    const folderPageNavigation = React.useMemo(
+        () => (folderPage ? { onOpenFolder: folderPage.onOpenFolder } : null),
+        [folderPage?.onOpenFolder],
+    );
+    const showSearchBar = props.showSearchBar !== false && !folderPage;
     const webFileInputRef = React.useRef<HTMLInputElement | null>(null);
     const webFolderInputRef = React.useRef<HTMLInputElement | null>(null);
     const pickedUploadSelectionRef = React.useRef<Readonly<{ destinationDir: string; isCurrent: () => boolean }> | null>(null);
@@ -168,12 +204,12 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         setSearchQuery('');
         setShowChangedOnly(false);
         revealPath(path, { focus: true });
-        const current = storage.getState().getWorkspaceRepositoryTreeExpandedPaths(workspaceScope);
+        const current = expandedPathsRef.current;
         const ancestors = computeExpandedPathsForReveal({ expandedPaths: current, fullPath: path });
         const next = isDirectory && !ancestors.includes(path) ? [...ancestors, path] : ancestors;
         if (props.onExpandedPathsChange) props.onExpandedPathsChange(next);
         else storage.getState().setWorkspaceRepositoryTreeExpandedPaths(workspaceScope, next);
-    }, [workspaceScope, props.onExpandedPathsChange, setSearchQuery, revealPath]);
+    }, [workspaceScope, props.onExpandedPathsChange, setSearchQuery, revealPath, setShowChangedOnly]);
 
     React.useEffect(() => {
         if (props.revealRequest) handleRevealPath(props.revealRequest.path);
@@ -189,7 +225,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     }, [props.onOpenFile, props.onOpenFilePinned, revealPath]);
 
 
-    const shouldShowSearchResults = !showChangedOnly && searchQuery.trim().length > 0;
+    const shouldShowSearchResults = !folderPage && !showChangedOnly && searchQuery.trim().length > 0;
 
     React.useEffect(() => {
         if (shouldShowSearchResults || showChangedOnly) {
@@ -204,18 +240,19 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey });
         }
         setTreeReloadNonce((n) => n + 1);
-        if (props.scmSnapshot === undefined) {
+        if (props.onRefreshScm) props.onRefreshScm();
+        else if (props.scmSnapshot === undefined && machineRpcTargetAvailable) {
             void workspaceScmController.refresh();
         }
-    }, [props.scmSnapshot, workspaceScmController, workspaceScope]);
+    }, [props.onRefreshScm, props.scmSnapshot, workspaceScmController.refresh, workspaceScope, machineRpcTargetAvailable]);
 
     const collapseAll = React.useCallback(() => {
         setExpandedPaths([]);
     }, [setExpandedPaths]);
 
     const allowCreateActions = React.useMemo(() => (
-        Boolean(workspaceScope.machineId.trim() && workspaceScope.rootPath.trim())
-    ), [workspaceScope]);
+        machineRpcTargetAvailable && Boolean(workspaceScope.machineId.trim() && workspaceScope.rootPath.trim())
+    ), [workspaceScope, machineRpcTargetAvailable]);
     const webDropState = useWorkspaceRepositoryTreeWebDropState({
         enabled: transferActionsAvailable && Platform.OS === 'web',
         expandedPaths,
@@ -255,13 +292,14 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         })();
     }, [allowCreateActions, expandedPaths, props.onOpenFile, props.onOpenFilePinned, refresh, setExpandedPaths, workspaceScope, revealPath]);
 
-    const createFolder = React.useCallback(() => {
+    const createFolder = React.useCallback((parentDir?: string) => {
         if (!allowCreateActions) return;
         void (async () => {
             const raw = await Modal.prompt(
                 t('files.createFolderPromptTitle'),
                 t('files.createFolderPromptBody'),
-                { placeholder: 'src/new-folder' },
+                // From a folder's menu the new folder starts inside it.
+                parentDir ? { placeholder: `${parentDir}/new-folder`, defaultValue: `${parentDir}/` } : { placeholder: 'src/new-folder' },
             );
             if (typeof raw !== 'string') return;
             const directoryPath = raw.trim().replace(/\/+$/, '');
@@ -293,20 +331,21 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         onResolveUploadConflicts: showUploadConflictResolutionDialog,
         onAfterUploadSuccess: refresh,
     });
+    const handleRequestDownload = React.useCallback<NonNullable<Parameters<typeof useWorkspaceRepositoryTreeRowActions>[0]['onRequestDownload']>>((params) => transfers.startDownload(params), [transfers.startDownload]);
     const rowActions = useWorkspaceRepositoryTreeRowActions({
         workspaceScope,
         writeActionsEnabled: allowCreateActions,
         expandedPaths,
         onExpandedPathsChange: setExpandedPaths,
         onRequestRefresh: refresh,
-        onRequestDownload: (params) => transfers.startDownload(params),
+        onRequestDownload: handleRequestDownload,
     });
 
     const startWebUploads = React.useCallback(async (files: readonly File[], destinationDir: string) => {
         const entries: WorkspaceUploadEntry[] = files.map((file) => ({
             kind: 'web',
             file,
-            relativePath: (file as any).webkitRelativePath || file.name,
+            relativePath: file.webkitRelativePath || file.name,
         }));
         const res = await transfers.startUploads({ entries, destinationDir });
         if (!res.ok) {
@@ -353,10 +392,10 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     });
 
     const selectUploadDestination = React.useCallback(async () => {
-        const nextDestination = await promptRepositoryUploadDestination(uploadDestinationDir);
+        const nextDestination = await promptRepositoryUploadDestination(uploadDestinationDir, props.rootLabel);
         if (nextDestination === null) return;
         setUploadDestinationDir(nextDestination);
-    }, [uploadDestinationDir]);
+    }, [uploadDestinationDir, props.rootLabel]);
 
     const onSelectCreateMenuItem = React.useCallback((itemId: RepositoryTreeCreateMenuItemId) => {
         if (itemId === 'repository-tree-create-file') {
@@ -397,7 +436,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         onFilesDropped: async (event: WebFileDragEvent) => {
             const dataTransfer = event?.dataTransfer;
             if (!dataTransfer) return;
-            const destinationDir = readRepositoryFileDropTarget(event)?.destinationDir ?? '';
+            const destinationDir = readRepositoryFileDropTarget(event)?.destinationDir ?? folderPage?.path ?? '';
             // The browser supplies the concrete DataTransfer at this external boundary.
             const dropped = await readWebDroppedEntries(dataTransfer as DataTransfer);
             const entries: WorkspaceUploadEntry[] = dropped.map((entry) => ({
@@ -432,6 +471,19 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
         },
     }), [dropZoneHandlers, webDropState.onDropTargetChange, props.onWebDropTargetChange]);
 
+    /** Files picked from a folder's menu upload into that folder (lab p-code ACTIONS). */
+    const uploadInto = React.useCallback((destinationDir: string) => {
+        if (!transferActionsAvailable) return;
+        const isCurrent = captureCurrentUploadAcquisition();
+        if (!isCurrent()) return;
+        if (Platform.OS === 'web') {
+            pickedUploadSelectionRef.current = { destinationDir, isCurrent };
+            webFileInputRef.current?.click();
+            return;
+        }
+        void startNativeUploads(destinationDir, isCurrent);
+    }, [captureCurrentUploadAcquisition, startNativeUploads, transferActionsAvailable]);
+
     const defaultRenderRowActions = React.useCallback<NonNullable<WorkspaceRepositoryTreeBrowserViewProps['renderRowActions']>>((node, control) => {
         if (node.type !== 'file' && node.type !== 'directory') return null;
         const nodeKind: 'file' | 'directory' = node.type === 'file' ? 'file' : 'directory';
@@ -445,32 +497,42 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                 kind={nodeKind}
                 disableWriteActions={!allowCreateActions}
                 downloadActionsEnabled={transferActionsAvailable && (transferSizeBytes == null || transferSizeBytes >= 0)}
-                onSelect={(itemId) => rowActions.onSelectRowMenuItem({ path: node.path, type: nodeKind }, itemId)}
+                folderCreation={nodeKind === 'directory' ? { newFolder: allowCreateActions, upload: transferActionsAvailable } : null}
+                onSelect={(itemId) => {
+                    if (itemId === 'repository-tree-menuitem-new-folder') createFolder(node.path);
+                    else if (itemId === 'repository-tree-menuitem-upload') uploadInto(node.path);
+                    else void rowActions.onSelectRowMenuItem({ path: node.path, type: nodeKind }, itemId);
+                }}
                 control={control}
             />
         );
-    }, [allowCreateActions, props.fileHref, rowActions, transferActionsAvailable]);
+    }, [allowCreateActions, createFolder, props.fileHref, rowActions, transferActionsAvailable, uploadInto]);
 
     // This pane has no header of its own, so its + menu ends the toolbar (the session pane's header carries it).
     // The one changed-file count, needed only while its chip shows.
     const changedCount = showChangedOnly && effectiveScmSnapshot?.repo.isRepo === true ? selectScmChangedFiles(effectiveScmSnapshot).length : null;
-    const machineName = machine ? getMachineDisplayName(machine).trim() || null : null;
-    const createMenu = (
+    const machineName = props.machineName ?? (machine ? getMachineDisplayName(machine).trim() || null : null);
+    const createMenuSelectRef = React.useRef(onSelectCreateMenuItem);
+    createMenuSelectRef.current = onSelectCreateMenuItem;
+    const selectCreateMenuItem = React.useCallback((itemId: RepositoryTreeCreateMenuItemId) => createMenuSelectRef.current(itemId), []);
+    const rootLabel = props.rootLabel ?? t('files.projectRoot');
+    const createMenu = React.useMemo(() => (
         <RepositoryTreeCreateMenu
             createEnabled={allowCreateActions}
             uploadEnabled={transferActionsAvailable}
             isWeb={Platform.OS === 'web'}
-            uploadDestinationLabel={uploadDestinationDir || t('files.projectRoot')}
-            onSelect={onSelectCreateMenuItem}
+            uploadDestinationLabel={uploadDestinationDir || rootLabel}
+            onSelect={selectCreateMenuItem}
         />
-    );
-    const showAllFiles = React.useCallback(() => setShowChangedOnly(false), []);
+    ), [allowCreateActions, transferActionsAvailable, uploadDestinationDir, rootLabel, selectCreateMenuItem]);
+    const showAllFiles = React.useCallback(() => setShowChangedOnly(false), [setShowChangedOnly]);
 
     return (
-        <View style={{ flex: 1 }}>
+        <View style={folderPage ? null : { flex: 1 }}>
+            {props.createMenuPlacement === 'paneHeader' ? <BrowserHeaderAction action={createMenu} /> : null}
             {showSearchBar ? (
                 <RepositoryTreeToolbar
-                    testIDPrefix="workspace-repository-tree"
+                    testIDPrefix={props.createMenuPlacement === 'paneHeader' ? 'repository-tree' : 'workspace-repository-tree'}
                     searchValue={searchQuery}
                     onSearchValueChange={setSearchQuery}
                     changedOnly={showChangedOnly}
@@ -481,11 +543,11 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                     onCollapseAll={!showChangedOnly && expandedPaths.length > 0 ? collapseAll : null}
                     onRefresh={refresh}
                     refreshing={treeRootLoading}
-                    trailing={createMenu}
+                    trailing={props.createMenuPlacement === 'paneHeader' ? undefined : createMenu}
                     onRequestClose={props.onRequestClose}
                 />
             ) : null}
-            {!showChangedOnly && !shouldShowSearchResults ? <RepositoryTreeVisibilityControl mode={visibilityMode} available={gitIgnoreAvailable} onChange={setVisibilityMode} /> : null}
+            {!folderPage && !showChangedOnly && !shouldShowSearchResults ? <RepositoryTreeVisibilityControl mode={visibilityMode} available={gitIgnoreAvailable} onChange={setVisibilityMode} /> : null}
             {Platform.OS === 'web' ? (
                 <>
                     <input
@@ -522,8 +584,9 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                     })}
                 </>
             ) : null}
-            <WebDropTargetView testID="repository-tree-drop-zone" style={{ flex: 1 }} {...dropZoneHandlersWithRoot}>
-                <View style={{ flex: 1, position: 'relative' }}>
+            <WebDropTargetView testID="repository-tree-drop-zone" style={folderPage ? null : { flex: 1 }} {...dropZoneHandlersWithRoot}>
+                <View style={folderPage ? { position: 'relative' } : { flex: 1, position: 'relative' }}>
+                    {!shouldShowSearchResults ? props.rootHeading : null}
                     {shouldShowSearchResults ? (
                         <SearchResultsList
                             workspaceScope={workspaceScope}
@@ -539,20 +602,24 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                             onFolderPress={(folder) => handleRevealPath(folder.fullPath.replace(/\/+$/, ''), true)}
                             onFilePress={(file) => props.onOpenFile(file.fullPath)}
                             onFilePressPinned={(file) => (props.onOpenFilePinned ?? props.onOpenFile)(file.fullPath)}
+                            {...props.scrollProps}
                         />
                     ) : (
                         <WorkspaceRepositoryTreeList
                             fileHref={props.fileHref}
                             theme={theme}
                             scope={workspaceScope}
+                            directoryListing={machineRpcTargetAvailable}
+                            directoryUnavailable={!machineRpcTargetAvailable}
+                            onRequestRefresh={refresh}
                             reloadToken={treeReloadNonce}
                             detailsMode={detailsMode}
-                        visibilityMode={visibilityMode}
-                        revealedPaths={revealedPaths}
-                        revealRequest={latestRequest}
-                        onGitIgnoreAvailableChange={setGitIgnoreAvailable}
+                            visibilityMode={visibilityMode}
+                            revealedPaths={revealedPaths}
+                            revealRequest={latestRequest}
+                            onGitIgnoreAvailableChange={setGitIgnoreAvailable}
                             expandedPaths={expandedPaths}
-                            onExpandedPathsChange={(paths) => setExpandedPaths(paths)}
+                            onExpandedPathsChange={setExpandedPaths}
                             onOpenFile={handleTreeOpenFile}
                             onOpenFilePinned={handleTreeOpenFilePinned}
                             scmSnapshot={effectiveScmSnapshot}
@@ -565,13 +632,24 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                             onShowAllFiles={showAllFiles}
                             selectedPath={props.selectedPath ?? null}
                             machineName={machineName}
+                            presentation={folderPage ? 'inline' : undefined}
+                            rootDirectoryPath={folderPage?.path}
+                            folderPage={folderPageNavigation}
+                            renderRowMetadata={folderPage?.renderRowMetadata}
+                            renderRowSubtitle={folderPage?.renderRowSubtitle}
+                            onNodesChange={folderPage?.onNodesChange}
+                            emptyLabel={folderPage ? t('projects.code.emptyFolder') : undefined}
+                            {...props.scrollProps}
                         />
                     )}
                     <RepositoryTreeDropOverlay
                         visible={webDropState.fileDragActive}
-                        destinationLabel={webDropState.dropDestinationDir || t('files.projectRoot')}
+                        destinationLabel={webDropState.dropDestinationDir || folderPage?.path || rootLabel}
                     />
+                    {props.scrollOverlay}
                 </View>
+                {!machineRpcTargetAvailable && machine ? <SurfaceFreshnessLine testID="repository-tree-offline" asOf={null}
+                    reason={t('projects.code.offline')} action={{ label: t('common.retry'), onPress: refresh }} /> : null}
                 <RepositoryTreeTransferStatusBar
                     uploadState={transfers.uploadState}
                     downloadState={transfers.downloadState}
