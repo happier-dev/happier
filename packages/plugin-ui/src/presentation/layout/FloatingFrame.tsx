@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type HTMLAttributes,
@@ -17,6 +18,7 @@ import {
   type UseCompanionPointerDragSessionParams,
 } from '../interaction/useCompanionPointerDragSession.js';
 import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
+import { HAPPIER_PRESENCE_CAPSULE_HEIGHT } from '../copresence/PresenceCapsule.js';
 import {
   resolveFloatingFrameRect,
   type FloatingFrameMode,
@@ -56,6 +58,16 @@ export type FloatingFrameProps = Readonly<{
   children: ReactNode;
   /** Floating controls drawn on the host's floating material above the body. */
   controls: ReactNode;
+  /**
+   * Floating content below the body (who is acting, and the one control that changes it). It is part
+   * of the frame: it moves with it and its height is chrome, never taken from the body's aspect.
+   */
+  footer?: ReactNode;
+  /**
+   * The narrowest usable frame, as the host measured it (its controls must fit across). Resizing
+   * stops there and a placement narrower than it docks.
+   */
+  minWidth?: number;
   accessibilityLabel: string;
   /** Accessible names for the grip; the host supplies its translated `presentation.*` labels. */
   resizeLabel?: string;
@@ -74,9 +86,22 @@ export type FloatingFrameProps = Readonly<{
 export const HAPPIER_FLOATING_FRAME_METRICS = Object.freeze({
   controlsHeight: 32,
   gap: 8,
+  /** The footer holds one presence capsule, so it is that capsule's height. */
+  footerHeight: HAPPIER_PRESENCE_CAPSULE_HEIGHT,
   bodyRadius: 12,
   gripSize: 16,
 });
+
+/** Which optional bands a frame draws around its body. */
+export type FloatingFrameChromeOptions = Readonly<{ footer?: boolean }>;
+
+/** The frame's fixed vertical space around the body: controls band, gaps and the footer. */
+export function resolveFloatingFrameChromeHeight(
+  options?: FloatingFrameChromeOptions,
+): number {
+  const { controlsHeight, gap, footerHeight } = HAPPIER_FLOATING_FRAME_METRICS;
+  return controlsHeight + gap + (options?.footer ? gap + footerHeight : 0);
+}
 
 /** Resize step for the grip's keyboard equivalents, as a share of the current width. */
 const KEYBOARD_RESIZE_STEP = 0.1;
@@ -101,7 +126,10 @@ type WebTransitionStyle = ViewStyle & {
 };
 
 /** The body's place inside a frame rect. */
-export function resolveFloatingFrameBodyRect(rect: FrameRect): FrameRect {
+export function resolveFloatingFrameBodyRect(
+  rect: FrameRect,
+  options?: FloatingFrameChromeOptions,
+): FrameRect {
   const top =
     HAPPIER_FLOATING_FRAME_METRICS.controlsHeight +
     HAPPIER_FLOATING_FRAME_METRICS.gap;
@@ -109,7 +137,7 @@ export function resolveFloatingFrameBodyRect(rect: FrameRect): FrameRect {
     x: rect.x,
     y: rect.y + top,
     width: rect.width,
-    height: Math.max(0, rect.height - top),
+    height: Math.max(0, rect.height - resolveFloatingFrameChromeHeight(options)),
   };
 }
 
@@ -117,14 +145,11 @@ export function resolveFloatingFrameBodyRect(rect: FrameRect): FrameRect {
 export function resolveFloatingFrameHeight(
   width: number,
   aspectRatio: number,
+  options?: FloatingFrameChromeOptions,
 ): number {
   const aspect =
     aspectRatio > 0 && Number.isFinite(aspectRatio) ? aspectRatio : 16 / 10;
-  return (
-    HAPPIER_FLOATING_FRAME_METRICS.controlsHeight +
-    HAPPIER_FLOATING_FRAME_METRICS.gap +
-    width / aspect
-  );
+  return resolveFloatingFrameChromeHeight(options) + width / aspect;
 }
 
 /** The rect of `size` standing in `corner` of the available space. */
@@ -174,6 +199,11 @@ function clampRect(rect: FrameRect, available: FrameRect): FrameRect {
   };
 }
 
+/** The grip must stay inside the body; the host's measured minimum is the usable one. */
+function resolveMinimumWidth(props: Pick<FloatingFrameProps, 'minWidth'>): number {
+  return Math.max(HAPPIER_FLOATING_FRAME_METRICS.gripSize * 2, props.minWidth ?? 0);
+}
+
 function readKey(event: unknown): string | null {
   const record = event as {
     key?: unknown;
@@ -206,6 +236,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
   const [interacting, setInteracting] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [bodyNode, setBodyNode] = useState<View | null>(null);
   const latest = useRef(props);
   latest.current = props;
   const gestureRef = useRef<{
@@ -228,6 +259,9 @@ export function FloatingFrame(props: FloatingFrameProps) {
         rect: target,
         availableRect: current.availableRect,
         avoidRects: current.avoidRects,
+        aspectRatio: current.aspectRatio,
+        chromeHeight: resolveFloatingFrameChromeHeight({ footer: current.footer != null }),
+        minWidth: current.minWidth,
       });
       if (!placement.fits) {
         current.onModeChange('docked');
@@ -313,13 +347,15 @@ export function FloatingFrame(props: FloatingFrameProps) {
       const current = latest.current;
       const right = gesture.start.x + gesture.start.width;
       const width = Math.max(
-        HAPPIER_FLOATING_FRAME_METRICS.gripSize * 4,
+        resolveMinimumWidth(current),
         Math.min(
           right - current.availableRect.x,
           gesture.start.width - move.totalDeltaX,
         ),
       );
-      const height = resolveFloatingFrameHeight(width, current.aspectRatio);
+      const height = resolveFloatingFrameHeight(width, current.aspectRatio, {
+        footer: current.footer != null,
+      });
       gesture.current = clampRect(
         { x: right - width, y: gesture.start.y, width, height },
         current.availableRect,
@@ -340,8 +376,13 @@ export function FloatingFrame(props: FloatingFrameProps) {
   const onKeyDown = useCallback(
     (event: unknown) => {
       const current = latest.current;
-      if (current.mode !== 'floating') return;
       const key = readKey(event);
+      if (current.mode === 'expanded' && key === 'Escape') {
+        consume(event);
+        current.onModeChange('floating');
+        return;
+      }
+      if (current.mode !== 'floating') return;
       const rect = current.rect;
       const corner = resolveFloatingFrameCorner(
         { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 },
@@ -376,7 +417,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
       const width = Math.min(
         current.availableRect.width,
         Math.max(
-          HAPPIER_FLOATING_FRAME_METRICS.gripSize * 4,
+          resolveMinimumWidth(current),
           rect.width *
             (grow ? 1 + KEYBOARD_RESIZE_STEP : 1 - KEYBOARD_RESIZE_STEP),
         ),
@@ -388,7 +429,9 @@ export function FloatingFrame(props: FloatingFrameProps) {
             x: right - width,
             y: rect.y,
             width,
-            height: resolveFloatingFrameHeight(width, current.aspectRatio),
+            height: resolveFloatingFrameHeight(width, current.aspectRatio, {
+              footer: current.footer != null,
+            }),
           },
           current.availableRect,
         ),
@@ -396,6 +439,22 @@ export function FloatingFrame(props: FloatingFrameProps) {
     },
     [settle],
   );
+
+  // A double-click on the watched picture expands it, and restores it when expanded (web pointer).
+  useEffect(() => {
+    const node = bodyNode as unknown as HTMLElement | null;
+    if (Platform.OS !== 'web' || typeof node?.addEventListener !== 'function') return undefined;
+    const onDoubleClick = (event: MouseEvent) => {
+      const current = latest.current;
+      if (current.moveInput !== 'surface') return;
+      const target = event.target as Element | null;
+      if (target?.closest?.(`${NO_DRAG_SELECTOR}, ${GRIP_SELECTOR}`)) return;
+      if (current.mode === 'floating') current.onModeChange('expanded');
+      else if (current.mode === 'expanded') current.onModeChange('floating');
+    };
+    node.addEventListener('dblclick', onDoubleClick);
+    return () => node.removeEventListener('dblclick', onDoubleClick);
+  }, [bodyNode]);
 
   if (props.mode === 'closed') return null;
 
@@ -473,6 +532,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
       accessibilityLabel={props.accessibilityLabel}
       role="group"
       focusable={floating}
+      {...webOnly({ happierFloatingFrame: 'true' })}
       {...frameEventHandlers}
       style={[
         frameStyle,
@@ -497,6 +557,7 @@ export function FloatingFrame(props: FloatingFrameProps) {
         {props.controls}
       </View>
       <View
+        ref={setBodyNode}
         testID={props.testID ? `${props.testID}-body` : undefined}
         style={[
           bodyStyle,
@@ -561,6 +622,20 @@ export function FloatingFrame(props: FloatingFrameProps) {
           </View>
         ) : null}
       </View>
+      {props.footer != null ? (
+        <View
+          testID={props.testID ? `${props.testID}-footer` : undefined}
+          style={{
+            height: HAPPIER_FLOATING_FRAME_METRICS.footerHeight,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          {...webOnly({ happierFloatingFrameHandle: String(dragEnabled) })}
+        >
+          {props.footer}
+        </View>
+      ) : null}
     </View>
   );
 }

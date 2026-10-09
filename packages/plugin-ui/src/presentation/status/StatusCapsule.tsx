@@ -20,6 +20,13 @@ export type HappierStatusCapsuleProps = HappierStatusCapsuleContent & Readonly<{
    * blinking it off); while it leaves it keeps its last words and takes no presses.
    */
   visible?: boolean;
+  /**
+   * `dock` (default) drops it over the top edge of a page or a stream. `inline` stands in flow among
+   * other floating capsules: the identity a floating viewer names (its Machine, with a status dot).
+   */
+  placement?: 'dock' | 'inline';
+  /** A mark before the sentence (a status dot); never a second sentence. */
+  leading?: ReactNode;
   colors: HappierCapsuleColors;
   host: HappierCapsuleHost;
   testID: string;
@@ -74,6 +81,7 @@ export function HappierStatusCapsule(props: HappierStatusCapsuleProps): ReactEle
           aria-live="polite"
         >
           {shown.busy ? <host.Spinner color={props.colors.secondaryText} /> : null}
+          {props.leading ?? null}
           <host.Text role="meta" color={props.colors.text} numberOfLines={1} style={TEXT_STYLE}>{shown.text}</host.Text>
           {shown.action ? (
             <host.Button
@@ -88,6 +96,7 @@ export function HappierStatusCapsule(props: HappierStatusCapsuleProps): ReactEle
     );
   };
 
+  if (props.placement === 'inline') return visible ? <>{renderCapsule(false)}</> : null;
   if (host.Dock) {
     return <host.Dock visible={visible} edge="top" style={DOCK_STYLE}>{renderCapsule}</host.Dock>;
   }

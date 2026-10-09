@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import {
   FloatingFrame,
+  resolveFloatingFrameBodyRect,
   resolveFloatingFrameHeight,
   type FloatingFrameProps,
   type HappierFloatingFramePointerBinding,
@@ -306,5 +307,59 @@ describe('FloatingFrame', () => {
     await view.render(frame('closed'));
     expect(view.container.querySelector('[data-testid="retained"]')).toBeNull();
     view.unmount();
+  });
+
+  it('draws a footer below the body and keeps the body aspect, including while resizing', () => {
+    const height = resolveFloatingFrameHeight(WIDTH, ASPECT, { footer: true });
+    const rect = { ...START, y: AVAILABLE.y + AVAILABLE.height - height, height };
+    const { view, byId, onRectChange } = mount({
+      rect,
+      footer: <Text testID="presence">Claude is working</Text>,
+    });
+    const body = resolveFloatingFrameBodyRect(rect, { footer: true });
+    expect(body.width / body.height).toBeCloseTo(ASPECT);
+    expect(byId('frame-footer').contains(byId('presence'))).toBe(true);
+    expect(byId('frame-body').contains(byId('presence'))).toBe(false);
+
+    key(byId('frame-grip'), 'ArrowLeft');
+    const [larger] = onRectChange.mock.calls.at(-1)!;
+    const largerBody = resolveFloatingFrameBodyRect(larger, { footer: true });
+    expect(largerBody.width / largerBody.height).toBeCloseTo(ASPECT);
+    view.unmount();
+  });
+
+  it('never resizes below the usable minimum width the host measured', () => {
+    const { view, byId, onRectChange } = mount({ minWidth: 380 });
+    drag(byId('frame-grip'), 300, 0);
+    const moves = onRectChange.mock.calls.filter(([, change]) => change.kind === 'move');
+    expect(Math.min(...moves.map(([rect]) => (rect as FrameRect).width))).toBe(380);
+    view.unmount();
+  });
+
+  it('expands on a double-click of the watched picture and restores on a second one or Escape', () => {
+    const watching = mount();
+    act(() => {
+      watching.byId('picture').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(watching.onModeChange).toHaveBeenLastCalledWith('expanded');
+    watching.view.unmount();
+
+    const expanded = mount({ mode: 'expanded' });
+    act(() => {
+      expanded.byId('picture').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(expanded.onModeChange).toHaveBeenLastCalledWith('floating');
+    expanded.onModeChange.mockClear();
+    key(expanded.byId('frame'), 'Escape');
+    expect(expanded.onModeChange).toHaveBeenLastCalledWith('floating');
+    expanded.view.unmount();
+
+    // Controlling: the picture's clicks belong to the content.
+    const controlling = mount({ moveInput: 'chrome' });
+    act(() => {
+      controlling.byId('picture').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(controlling.onModeChange).not.toHaveBeenCalled();
+    controlling.view.unmount();
   });
 });

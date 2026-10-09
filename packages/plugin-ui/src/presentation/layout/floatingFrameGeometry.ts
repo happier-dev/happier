@@ -18,22 +18,30 @@ export function frameRectsOverlap(a: FrameRect, b: FrameRect): boolean {
  * Nearest usable placement in measured host space. Obstacle edges enumerate every free pocket;
  * no corner preference, fixed size or obstacle registry belongs to the neutral frame.
  * A host that cannot fit its measured content uses its existing dock composition when fits is false.
+ *
+ * `aspectRatio` is the body's own width ÷ height; `chromeHeight` is the frame's fixed vertical
+ * space around the body (its controls band, gaps and footer), so shrinking keeps the picture's
+ * shape instead of squeezing one axis. `minWidth` is the host's measured usable minimum (its
+ * controls must fit across): positive space narrower than that is not a usable frame.
  */
 export function resolveFloatingFrameRect(input: Readonly<{
     rect: FrameRect;
     availableRect: FrameRect;
     avoidRects?: readonly FrameRect[];
     aspectRatio?: number;
+    chromeHeight?: number;
+    minWidth?: number;
 }>): FloatingFrameGeometry {
     'worklet';
     const available = input.availableRect;
     const availableWidth = Math.max(0, available.width);
     const availableHeight = Math.max(0, available.height);
+    const chrome = Math.max(0, input.chromeHeight ?? 0);
     let width = Math.min(Math.max(0, input.rect.width), availableWidth);
     let height = Math.min(Math.max(0, input.rect.height), availableHeight);
     if (input.aspectRatio && input.aspectRatio > 0) {
-        width = Math.min(width, height * input.aspectRatio);
-        height = width / input.aspectRatio;
+        width = Math.max(0, Math.min(width, (availableHeight - chrome) * input.aspectRatio));
+        height = chrome + width / input.aspectRatio;
     }
     const maxX = available.x + availableWidth - width;
     const maxY = available.y + availableHeight - height;
@@ -42,7 +50,7 @@ export function resolveFloatingFrameRect(input: Readonly<{
         y: clamp(input.rect.y, available.y, maxY),
         width, height,
     };
-    if (width <= 0 || height <= 0) return { rect, fits: false };
+    if (width <= 0 || height - chrome <= 0 || width < (input.minWidth ?? 0)) return { rect, fits: false };
     const obstacles = input.avoidRects ?? [];
     if (!obstacles.some((obstacle) => frameRectsOverlap(rect, obstacle))) return { rect, fits: true };
 

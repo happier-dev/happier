@@ -37,4 +37,29 @@ describe('measured floating frame placement', () => {
             avoidRects: [{ x: 0, y: 0, width: 100, height: 100 }],
         }).fits).toBe(false);
     });
+
+    it('keeps the body aspect outside the chrome when the space is short, and refuses a frame narrower than its usable minimum', () => {
+        // A 400-wide frame with 40 px of chrome above a 1.6 body asks for 290 px; only 120 px is free.
+        const short = resolveFloatingFrameRect({
+            rect: { x: 0, y: 0, width: 400, height: 290 },
+            availableRect: { x: 0, y: 0, width: 600, height: 120 },
+            aspectRatio: 1.6, chromeHeight: 40,
+        });
+        expect(short.fits).toBe(true);
+        expect(short.rect.width).toBeCloseTo(128);
+        expect(short.rect.width / (short.rect.height - 40)).toBeCloseTo(1.6);
+
+        // Positive space is not usable space: the controls need 240 px across.
+        expect(resolveFloatingFrameRect({
+            rect: { x: 0, y: 0, width: 400, height: 290 },
+            availableRect: { x: 0, y: 0, width: 600, height: 120 },
+            aspectRatio: 1.6, chromeHeight: 40, minWidth: 240,
+        }).fits).toBe(false);
+        // No body height at all never fits.
+        expect(resolveFloatingFrameRect({
+            rect: { x: 0, y: 0, width: 400, height: 290 },
+            availableRect: { x: 0, y: 0, width: 600, height: 36 },
+            aspectRatio: 1.6, chromeHeight: 40,
+        }).fits).toBe(false);
+    });
 });

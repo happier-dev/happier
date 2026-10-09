@@ -86,7 +86,9 @@ export type HappierPresenceCapsuleProps = Readonly<{
 }>;
 
 /** The presence capsule's own geometry: a 44 px capsule, a 30 px mark. */
-const CAPSULE_MIN_HEIGHT = 44;
+/** The capsule's row height; a frame that stands it below its body reserves exactly this. */
+export const HAPPIER_PRESENCE_CAPSULE_HEIGHT = 44;
+const CAPSULE_MIN_HEIGHT = HAPPIER_PRESENCE_CAPSULE_HEIGHT;
 const MARK_SIZE = 30;
 const MARK_GLYPH_SIZE = 16;
 const LEADING_GLYPH_SIZE = 14;

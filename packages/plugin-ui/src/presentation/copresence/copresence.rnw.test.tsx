@@ -293,6 +293,26 @@ describe('HappierStatusCapsule', () => {
       mounted.unmount();
     }
   });
+
+  it('stands inline in flow as an identity capsule, with its leading mark, never through the dock', () => {
+    const { host } = createHost();
+    const mounted = mountThroughReactNativeWeb(
+      <div data-testid="row">
+        <HappierStatusCapsule placement="inline" text="fly-bot-1" leading={<span data-testid="dot" />}
+          colors={COLORS} host={host} testID="s" />
+      </div>,
+    );
+    try {
+      const capsule = byTestId(mounted.container, 's')!;
+      expect(capsule.textContent).toBe('fly-bot-1');
+      expect(capsule.contains(byTestId(mounted.container, 'dot'))).toBe(true);
+      // In flow: no docked (leaving-aware) wrapper and no absolute dock positioning.
+      expect(mounted.container.querySelector('[data-leaving]')).toBeNull();
+      expect(capsule.parentElement?.getAttribute('data-testid')).toBe('row');
+    } finally {
+      mounted.unmount();
+    }
+  });
 });
 
 describe('HappierAgentCursor', () => {
