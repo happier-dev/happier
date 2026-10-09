@@ -8,6 +8,7 @@ import {
     REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
     SUBAGENT_RPC_SCOPES,
 } from './actionSpecRpcRegistration';
+import * as registrarModule from './registerActionSpecRpcHandlers';
 
 const REVIEW_COMMENT_ACTION_IDS = Object.freeze([
     'reviews.comments.create',
@@ -50,8 +51,28 @@ function createRpcHarness() {
 }
 
 describe('ActionSpec-derived RPC registrar', () => {
+    const module = registrarModule;
+
+    it('projects only code-bound worker refusal facts for finite Project Actions', async () => {
+        const failure = { ok: false as const, errorCode: 'not_accepting', error: 'not_accepting',
+            details: { kind: 'no_worker_can_accept', unavailable: 'ask', reason: 'not_accepting' } };
+        expect(module.unwrapActionResultForRpc('projects.script.run', failure)).toEqual(failure);
+        expect(module.unwrapActionResultForRpc('session.spawn_new', failure)).not.toHaveProperty('details');
+        expect(module.unwrapActionResultForRpc('projects.script.run', { ...failure,
+            errorCode: 'process_exit_nonzero' })).not.toHaveProperty('details');
+        expect(module.unwrapActionResultForRpc('projects.script.run', { ...failure,
+            details: { ...failure.details, credential: 'private' } })).not.toHaveProperty('details');
+        const scriptReview = { ok: false as const, errorCode: 'project_script_effect_changed', error: 'project_script_effect_changed',
+            details: { kind: 'pendingApproval', code: 'project_script_effect_changed', reviewedEffectDigest: 'script',
+                reviewedEffect: { command: { kind: 'command', command: 'echo changed' } } } };
+        expect(module.unwrapActionResultForRpc('projects.script.run', scriptReview)).toEqual(scriptReview);
+        expect(module.unwrapActionResultForRpc('projects.script.run', { ...scriptReview,
+            errorCode: 'project_setup_effect_changed' })).not.toHaveProperty('details');
+        expect(module.unwrapActionResultForRpc('projects.script.run', { ...scriptReview,
+            details: { ...scriptReview.details, consentScope: 'untilChanged' } })).not.toHaveProperty('details');
+        expect(module.unwrapActionResultForRpc('session.spawn_new', scriptReview)).not.toHaveProperty('details');
+    });
     it('keeps only the validated committed spawn outcome in source-key waiting failures', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const source = { type: 'success', disposition: 'created', sessionId: 'c111111111111111111111111',
             executionTarget: { serverId: 'home', machineId: 'machine' },
             organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
@@ -70,7 +91,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('lets one compatibility seam reject an alias request before canonical Action dispatch', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const execute = vi.fn(async () => ({ ok: true as const, result: null }));
         const { handlers, rpcHandlerManager } = createRpcHarness();
         module.registerActionSpecRpcHandlers({
@@ -99,7 +119,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('projects only strict execution-run start certainty across the generated RPC seam', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         expect(module.unwrapActionResultForRpc('execution.run.start', {
             ok: false,
             errorCode: 'execution_run_target_unavailable',
@@ -138,7 +157,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('classifies generated start-RPC input rejection before Action execution as no-run-created', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const execute = vi.fn();
         const { handlers, rpcHandlerManager } = createRpcHarness();
         module.registerActionSpecRpcHandlers({
@@ -169,7 +187,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('decodes released RPC input to semantic Action input and encodes the transport result', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const execute = vi.fn(async () => ({
             ok: true as const,
             result: { operationId: 'operation-1', presentation: { state: 'running' } },
@@ -212,7 +229,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('rejects invalid released input and invalid encoded output at the RPC binding seam', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const execute = vi.fn(async () => ({ ok: true as const, result: { semantic: true } }));
         const { handlers, rpcHandlerManager } = createRpcHarness();
         module.registerActionSpecRpcHandlers({
@@ -250,7 +266,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('threads the canonical RPC cancellation signal into Action execution', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const execute = vi.fn(async () => ({
             ok: true as const,
             result: { ok: true },
@@ -284,7 +299,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('registers scoped ActionSpec RPC rows through the shared dispatch adapter', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
 
         const calls: unknown[] = [];
         const actionExecutor: RpcActionExecutor = {
@@ -366,7 +380,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('keeps raw direct Action requests unchanged when targeted requests are enabled', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const execute = vi.fn(async () => ({ ok: true as const, result: { state: 'paused' } }));
         const { handlers, rpcHandlerManager } = createRpcHarness();
         module.registerActionSpecRpcHandlers({
@@ -393,7 +406,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('opens the targeted envelope origin session into the execution context', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const execute = vi.fn(async () => ({ ok: true as const, result: { admission: 'created' } }));
         const { handlers, rpcHandlerManager } = createRpcHarness();
         module.registerActionSpecRpcHandlers({
@@ -411,7 +423,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('registers new ActionSpec rows matched by RPC method scope without action-id catalog updates', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
 
         const actionExecutor: RpcActionExecutor = {
             execute: async (actionId, input) => ({ ok: true, result: { actionId, input } }),
@@ -446,7 +457,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('stamps the Action operation runner admitted request identity into execution context', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
         const contexts: unknown[] = [];
         const actionExecutor: RpcActionExecutor = {
             execute: async (_actionId, _input, context) => {
@@ -480,7 +490,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('does not register runtime ActionSpec rows while their rpc surface is disabled', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
 
         const actionExecutor: RpcActionExecutor = {
             execute: async (actionId, input) => ({ ok: true, result: { actionId, input } }),
@@ -514,7 +523,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('registers review-comment ActionSpec rows through required generic scopes', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
 
         const calls: unknown[] = [];
         const actionExecutor: RpcActionExecutor = {
@@ -554,7 +562,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('honors scope exclusions for typed ABI exceptions', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
 
         const actionExecutor: RpcActionExecutor = {
             execute: async () => ({ ok: true, result: null }),
@@ -590,7 +597,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('registers ActionSpec RPC aliases through the same action handler', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
 
         const calls: unknown[] = [];
         const actionExecutor: RpcActionExecutor = {
@@ -643,7 +649,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('skips canonical typed exceptions and rejects duplicate ActionSpec RPC bindings', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
 
         const { handlers, rpcHandlerManager } = createRpcHarness();
         const actionExecutor: RpcActionExecutor = {
@@ -683,7 +688,6 @@ describe('ActionSpec-derived RPC registrar', () => {
     });
 
     it('rejects duplicate registrations across scoped registrar calls', async () => {
-        const module = await import('./registerActionSpecRpcHandlers');
 
         const { rpcHandlerManager } = createRpcHarness();
         const actionExecutor: RpcActionExecutor = {
