@@ -1,5 +1,6 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
+import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol';
 import { createCapabilityChecklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
@@ -87,6 +88,7 @@ import {
 import { controlDaemonPluginDevelopment } from '@/daemon/controlClient';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import { setInstalledPluginEnabled } from '@/plugins/store/enabled';
+import { ManagedResourceDispositionV1Schema, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { runPluginAuthorToolchain } from '@/plugins/authoring/toolchain';
 import { packLocalPlugin } from '@/plugins/packaging/pack';
@@ -200,6 +202,10 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
         ? await params.dependencies.agentCatalogEntry?.getConnectedServiceStateSharingDescriptor?.() ?? null
         : null;
     params.signal?.throwIfAborted();
+    // Catalog probes need selected credentials but never persisted conversation state.
+    const probeStateSharing = ConnectedServicesProviderStateSharingSettingsV1Schema.parse(
+        params.accountSettings?.connectedServicesProviderStateSharingSettingsV1,
+    );
     const resolved = await resolveConnectedServiceAuthForSpawn({
         signal: params.signal,
         retainCleanup: params.cleanupScope?.retain,
@@ -211,7 +217,16 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
         baseDir: materializationBaseDir,
         credentials: params.credentials,
         api: await params.dependencies.createApiClient(params.credentials),
-        accountSettings: params.accountSettings,
+        accountSettings: {
+            ...params.accountSettings,
+            connectedServicesProviderStateSharingSettingsV1: {
+                ...probeStateSharing,
+                byAgentId: {
+                    ...probeStateSharing.byAgentId,
+                    [params.agentId]: { ...probeStateSharing.byAgentId[params.agentId], stateMode: 'isolated' },
+                },
+            },
+        },
         processEnv: params.processEnv,
         resolveQualifiedPurposeBindingSnapshot: (bindings) => {
             const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
@@ -402,7 +417,14 @@ async function invokeCliPreflightMethod(
     if (method === 'probeCatalogs' && params?.connectedServices != null && !parsedConnectedServices.success) {
         return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Could not prepare the selected connected-service account for this probe.' } };
     }
-    const hasConnectedServiceSelection = parseConnectedServiceBindingSelections(connectedServices).length > 0;
+    const connectedServiceSelections = parseConnectedServiceBindingSelections(connectedServices);
+    // Team material requires an admitted Session. These operation probes have
+    // neither that authority nor a direct-material origin, so do not reinterpret
+    // the requested resource as personal Account credentials or native auth.
+    if (connectedServiceSelections.some((selection) => selection.kind === 'team_resource')) {
+        return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Could not prepare the selected connected-service account for this probe.' } };
+    }
+    const hasConnectedServiceSelection = connectedServiceSelections.length > 0;
     const explicitEnvironment = method === 'probeCatalogs'
         ? stripSessionControlEnvOverrides(sanitizeEnvVarRecord(params?.environmentVariables))
         : {};
@@ -991,6 +1013,15 @@ async function invokePluginMarketplaceAction(
         return await invokePluginDevelopmentAction(action, params);
     }
 
+    let managedResourceDispositions: readonly ManagedResourceDispositionV1[] | undefined;
+    if ((action === 'disable' || action === 'uninstall') && params?.managedResourceDispositions !== undefined) {
+        const parsed = ManagedResourceDispositionV1Schema.array().safeParse(params.managedResourceDispositions);
+        if (!parsed.success) {
+            return { ok: false, error: { code: 'invalid-request', message: 'Invalid reviewed managed-resource dispositions' } };
+        }
+        managedResourceDispositions = parsed.data;
+    }
+
     if (action === 'enable' || action === 'disable') {
         const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
         if (!pluginId) {
@@ -1001,8 +1032,15 @@ async function invokePluginMarketplaceAction(
             happyHomeDir: configuration.happyHomeDir,
             pluginId,
             enabled: action === 'enable',
+            ...(managedResourceDispositions !== undefined ? { managedResourceDispositions } : {}),
         });
         if (!toggled.ok) {
+            if (action === 'disable' && toggled.change
+                && toggled.change.kind !== 'reviewRequired'
+                && toggled.change.kind !== 'registryProfileRequired'
+                && toggled.change.kind !== 'projectTrustAccepted') {
+                return { ok: true, result: { action, pluginId, change: toggled.change } };
+            }
             return { ok: false, error: { message: toggled.errorMessage, code: toggled.errorCode } };
         }
 
@@ -1132,10 +1170,17 @@ async function invokePluginMarketplaceAction(
     // listing is a discovery fact, never a second update resolver.
     const change = await requestUserPluginChange({
         request: action === 'uninstall'
-            ? { kind: 'uninstall', pluginId }
+            ? { kind: 'uninstall', pluginId,
+                ...(managedResourceDispositions !== undefined ? { managedResourceDispositions } : {}) }
             : { kind: action, pluginId },
         approval: 'none',
     });
+    // Removal reviews and partial/uncertain outcomes are semantic daemon results.
+    // Installation trust/registry reviews cannot settle a removal request.
+    if (action === 'uninstall' && change.kind !== 'reviewRequired'
+        && change.kind !== 'registryProfileRequired' && change.kind !== 'projectTrustAccepted') {
+        return { ok: true, result: { action, pluginId, change } };
+    }
     // An update the installed policy still owes a present user travels back
     // verbatim, exactly like an install review: only a present user can decide it.
     if (action === 'update' && change.kind === 'reviewRequired') {

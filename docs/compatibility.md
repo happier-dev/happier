@@ -53,6 +53,60 @@ An existing same-concept split-brain in the touched corridor must be consolidate
 
 Before adding dual writers, parallel persisted formats, rollout modes, operator flags, socket-drain protocols, or a mandatory client floor, compare their lifetime cost with the actual user behavior required. If preserving old-client/new-server behavior for a major change would require substantial machinery, stop and obtain an explicit developer/product decision among: operation-scoped degradation, a documented client update requirement, or the heavier compatibility transition. An agent must not silently choose either forced upgrades or heavy compatibility machinery. This exception is for genuinely incompatible, high-cost transitions; routine server changes must remain compatible and must not manufacture client-update requirements.
 
+### Antigravity account data (0.3 development)
+
+Antigravity's 0.2 service id, `antigravity`, is a persisted-data input to the
+qualified service `happier.agent.antigravity` / `antigravity-account`. Its bundled
+compatibility declaration admits stored OAuth credentials, profile/group defaults
+and runtime-issue references into the existing qualified owners. Current writes
+use qualified identity. OAuth project metadata survives as `projectId` in the
+qualified credential and becomes the native ACP token's `project_id` at
+materialization.
+
+This is storage ingress, not a new scalar public-service alias. The existing
+closed legacy peer service set remains unchanged, and Antigravity advertises no
+legacy peer operations. Reverse profile/revision projections must omit this
+storage-only mapping rather than publish a scalar Antigravity row. Internal
+physical database identity columns do not grant an old peer operation.
+
+The additional 0.2 defaults carrier is read by the existing qualified preference
+migration and retired on edits/deletion through that owner. It is not copied into
+a second 0.3 default chooser. Fetched settings that reject the canonical schema
+refuse qualified launch defaulting instead of selecting cached or native
+authentication; network failures retain the existing cache policy. Runtime
+issues retain generic failure, retry and reset information while their stored
+service references are normalized once.
+
+The approved all-component, one-way 0.3 upgrade does not require 0.2 outward
+reader negotiation, but does require forward readability of actual 0.2 data.
+Generated compatibility publication, real stored-row/revision checks and current
+package validation remain required integration gates. Retire the storage adapter
+when those persisted 0.2 inputs leave the supported data window, not merely when
+old processes disappear. This integration is unreleased and still under validation.
+
+### Project and checkout identity (0.3 development)
+
+Current development checkout resolution has one Protocol owner:
+`workspaces/workspaceRefResolutionV1`. Exact selection qualifies a WorkspaceRef
+id with its Home, or supplies Home, Machine and normalized root; a full address
+also verifies the checkout id. An unqualified id is accepted only when the whole
+candidate set is unique. Duplicate candidates remain ambiguous, rather than being
+collapsed or narrowed to the active Home. UI Home aliases and target-platform
+path helpers adapt to that same owner.
+
+Accepted refs retain a stable Project anchor, `projectKey` (the ref id for an
+unenriched predecessor). Adding Source or hosting facts cannot change that anchor
+or merge independently accepted Projects. A new checkout may join only a unique,
+proven same-Home Source or repository association. Personal Project widget
+Artifacts use the anchor; filesystem access and plugin grants use the exact
+checkout. Home-qualified local checkout preferences read bare-id predecessor
+values only when canonical resolution proves their unique Home.
+
+Canonical writes are strict. Stored ref readers drop unknown fields recursively
+while validating known identity and enrichment fields. These are development
+source contracts, not a released row-storage rollout or loaded-runtime QA claim;
+Project row persistence has its own Account/Home owner.
+
 ### Widget and organization stored readers (0.3 development)
 
 Account Settings' retained legacy JSON carriers use the same stored-read owner.
@@ -78,6 +132,9 @@ Action/request inputs, runtime events and wire results keep their strict
 validators. Writers emit the current canonical shape, including when editing
 an opened record. This changes additive-field read tolerance, not the persisted
 format, storage-mode authority, access policy or supported version frontier.
+Stored Plain Machine content uses the same projection at `machineStoredContent`:
+an extra envelope field is ignored on read and dropped on re-encoding, while
+required content, encryption-mode agreement and strict encoded writes remain enforced.
 The generic Artifact header remains an open metadata custodian; kind-owned
 readers project its known fields. Artifact body and private-revision readers
 drop extras separately while retaining body, Artifact/revision binding and
@@ -129,6 +186,22 @@ Full status responses remain valid inputs to the same schema and UI mapper. This
 transport changes no persisted repository or Session data. The one-way 0.3
 component upgrade does not support an older UI reading sparse responses from a
 new daemon; update the producer and its consumers together.
+
+### Plugin projection invalidation (development)
+
+The development daemon also carries optional
+`daemonState.contributionRegistryProjectionRevision` through the existing Machine
+content transport. It is a nonnegative integer for projection invalidation, not
+Machine identity or execution authority. Running-state publication initializes an
+absent revision; the existing plugin-registry publication bridge advances it.
+Current UI readers accept retained states without it and use the existing generic
+daemon-state-version invalidation for those states. Marked states use the specific
+revision and daemon identity, so unrelated daemon-state publications remain cheap.
+No Machine content codec, Account-mode decision or database schema changes.
+The inspected clean `../0.2` state producer at
+`3a0f38b9d5d1fd1a3debe7a2d140178b14aca0ac` omits this field; its retained states
+remain readable. This is development-source behavior, not a claim of loaded or
+released mixed-component certification.
 
 ### Local-service Machine summary (development)
 
@@ -566,6 +639,55 @@ The projected `ConnectedAccountUiProjectionEntryV1` contract is also absent from
 that predecessor; its current strict development schema adds the optional
 recovery-credit declaration together with its producer and UI consumer.
 
+### Requester Machine bindings and work-summary preparation (development)
+
+The development AccessKey migration changes only its Machine foreign key from
+`(machineId, accountId)` to `Machine.id`. Existing requester/Session ownership,
+tuple uniqueness, encrypted bytes and versions remain unchanged. SQLite and
+PostgreSQL migration probes preserve predecessor rows; MySQL and retained-stack
+deployment are separate outstanding validation, not established availability.
+Foreign AccessKey admission still requires the shared Machine grant owner and
+verified requester runtime channel.
+
+The nullable `Session.runtimeMachineTarget` field retains the exact Home,
+requester, Session, Machine and installation committed by the admitted publisher.
+Closing that publisher preserves the placement; a later admitted publisher
+replaces it in the existing publisher transaction. Predecessor rows have no
+placement until an actual publisher establishes it. Stored readers drop unknown
+fields, then recheck the original tuple, Home, installation and current Machine
+access. Invalid or retired placement cannot select another AccessKey or adopt a
+replacement installation. Cold pending input and Workflow origin delivery consume
+this same fact; Session DTOs do not expose the internal placement. The additive
+provider migrations and loaded-runtime journey require their own validation.
+
+`MachineWorkSummaryV1` is a new strict read projection: `current` carries the
+complete requester Account display identities and integer Session/task/terminal
+counts; `unavailable` carries no inferred counts. Both object boundaries reject
+unknown fields, including work identifiers and content. This is neither a
+stored-data reader nor an inventory producer. Its Action, RPC and mounted UI
+must consume the canonical live inventory and owner-or-Manage admission; the
+schema alone does not make that operation available.
+
+Execution Run preparation, active budget custody, visibility markers, private
+retained lifecycle records and pending terminal delivery preserve the admitted
+`RequesterWorkAttributionV1` tuple. Automation claim and Workflow coordinator
+custody carry their captured host admission through the same live inventory.
+Session-owned Run starts consume exact protected child custody, or an ordinary
+accepted Session marker with the current process generation and command hash.
+The extra decoded credential annotation is immutable, nonenumerable and never
+part of the persisted credential codec. Private Action options carry admitted
+Workflow attribution only across the existing in-process host seam; a public
+request or Session metadata cannot provide it.
+These optional fields do not upgrade legacy work: missing attribution or
+conflicting active observations make the summary unavailable rather than hiding
+that work behind an attributed duplicate. Current public Run projections omit
+the host-local field; stored readers tolerate its absence and unknown fields.
+The inspected `../0.2` marker reader retains unknown fields through its
+passthrough schema, so its local marker read is not claimed to strip this
+nonsecret tuple. The private retained lifecycle format has no corresponding
+predecessor reader. Neither format grants runtime authority or changes Run
+placement, and source-level coverage alone does not establish a loaded journey.
+
 ### Direct sharing and Account erasure (development)
 
 The development Account-erasure transaction preserves direct grants that the erased
@@ -681,13 +803,21 @@ server reserves the draft KV prefix so old generic-KV clients cannot read or ove
 rows.
 
 Development V2 draft operations use the same repository, physical rows and CAS while preserving
-strict V1 reads, writes, conflicts, cursors and events. V2-only Run/discussion addresses and
-successor new-Session content use the distinct V2 socket and AccountChange hint schemas. Current
+strict V1 reads, writes, conflicts, cursors and events. V2-only Run/discussion and Project Open
+addresses, plus successor new-Session content, use the distinct V2 socket and AccountChange hint schemas. Current
 clients materialize their exact addresses before advancing the change cursor. Account encryption
-transitions opt into the V2 draft directive only when the captured new-Session content needs it;
+transitions opt into the V2 draft directive when captured Account-owned content needs it;
 older strict servers reject that directive before mutation. The
 [Account transition contract](./encryption.md#account-mode-transition-status) owns resealing and
 replay; Session-bound drafts never participate solely because their address uses V2.
+
+Development Project Open drafts use `project-open/<draftId>` through the existing draft
+repository, reserved KV prefix, field mutation identities and revision CAS. Their V2 document
+retains unfinished selections separately from strict submitted Open inputs, uncertain inputs
+and acknowledged/retired outcomes. It has no Composer or Session binding. This address/document
+cannot be projected into V1 or a synthetic new-Session draft. An unavailable typed draft route
+does not authorize an Open effect with an unretained intent. The retained draft does not replace
+Machine acknowledgement or prove filesystem effects, setup completion or exclusive checkout custody.
 
 ### Automation predecessor data (development)
 
@@ -717,11 +847,11 @@ Protocol-owned `automationTemplatePayloadV1`/`automationTemplateStoredV1` codec
 in the daemon, Account trigger projection and UI read adapters. Explicit plain
 and encrypted V1 envelopes, including the predecessor outer Session-id
 consistency check and template-only raw-secretbox recovery, remain readable;
-the Account host checks persisted Account mode before opening content. On a plain
-Account the only encrypted execution exception is the explicit predecessor
-existing-Session template, bound to an authenticated retained E2EE Session whose
-envelope the device can open. The server validates that exact same-Account Session
-binding, not arbitrary ciphertext. A keyless reader projects a locked legacy row
+the canonical trigger Action checks persisted Account mode before opening content.
+On a plain Account, an encrypted predecessor existing-Session template bound to an
+authenticated retained E2EE Session remains paused until present-user review and
+Save; it is not an encrypted execution exception. The server validates that exact
+same-Account Session binding, not arbitrary ciphertext. A keyless reader projects a locked legacy row
 with deletion available. Generic Account crypto does not gain an
 untagged-ciphertext fallback.
 
@@ -747,31 +877,96 @@ plain Account mode, unchanged target and revision CAS; ordinary recipe writers
 cannot use it to downgrade current content. No reverse 0.3-to-0.2 write or rollback
 adapter is introduced.
 
-The trigger projection carries `legacy: { editable: false, reason: 'created_in_0_2', placements }`
-alongside the retained prompt, target and schedules. The read-only `placements`
-array contains each enabled assignment's `machineId` and template `directory`,
-including zero or multiple assignments; those rows do not invent a single
-`project`. New trigger writes remain single-project. For an existing-Session
-target without a single assignment, the Session owner resolves its actual
-machine; unavailable Session authority leaves that target unavailable rather
-than choosing an arbitrary assignment. Reading does not migrate a row.
-The UI identifies these rows as created in Happier 0.2, not deleted workflows.
-Opening the Account trigger popover changes nothing. A reviewed edit uses the
-shared trigger form and `workflow.trigger.update`, discloses the Happier 0.3-or-later
-execution boundary before Done, and retains the draft when conversion is refused.
-Each schedule in a plural set is addressed by its own trigger id; a manual row
-keeps the existing Automation Run now and never gains an invented schedule.
-Trigger removal needs no conversion; a legacy toggle requires explicit review.
-Enabling an individual trigger in a disabled set is one revision-checked
-reconciliation: only that trigger becomes effective, not its disabled siblings.
-Conversion uses the existing inline representability owner
-and one Automation revision-CAS write, with no Artifact creation. Until Channels
-supplies an authoritative Account-scoped association/absence observation,
-conversion refuses `legacy_conversion_unsupported` with
-`channel_association_unknown`; a proven bound row refuses `channel_reply_handoff`.
-Unrepresentable settings also refuse without rewriting execution bytes.
-Conversion writes the current Workflow recipe for the current daemon. This is
-development-source behavior, not released or live-QA evidence.
+The canonical trigger Action owner converts representable predecessor rows on
+ordinary read through the existing inline converter and one Automation
+revision-CAS reconciliation. It retains the Automation id, trigger ids and each
+assignment's enabled state and priority, including zero or multiple assignments;
+conversion creates no Artifact. Channel bindings address that same Automation
+id and remain associated, rather than vetoing conversion. Unrepresentable
+settings refuse without rewriting execution bytes.
+
+A plain Account's encrypted template bound to a retained Session instead pauses
+recipe-free, retaining the exact ciphertext. Its projection is
+`legacy: { editable: false, reason: 'created_in_0_2', lockedReason: 'review_required' }`, with unavailable
+execution health; ordinary reads neither request its key nor decrypt its private
+content. The UI shows “Needs your review” using the existing attention treatment.
+A present user opening the row requests a deliberate review through the
+authenticated retained-Session/historical-material path. Its decrypted draft stays
+local to the popover, not in the shared trigger store. Opening changes no private
+stored content and does not resume execution.
+
+Save uses `workflow.trigger.update` with `confirmLegacyConversion: true` and the
+opened revision. Its notice explains that the normal plain Workflow stores the
+reviewed content without E2EE and resumes enabled triggers; the Session itself
+remains E2EE. That reconciliation preserves the original triggers and all original
+assignments when the reviewed project is unchanged from the authenticated Session,
+including zero/plural assignments that do not contain its Machine. A deliberately
+changed project replaces placement through the normal authoring contract. Later
+present-user enabled/trigger-only edits use recipe-free reconciliation and retain
+those assignments and the opaque private definition body. Failed
+key authorization or a lost revision leaves the original paused ciphertext intact.
+Agent or unattended callers cannot take this confirmation path. Trigger removal
+needs no conversion; a legacy toggle cannot bypass review. Ordinary per-trigger
+enable behavior still enables only the selected trigger, whereas conversion
+confirmation retains each sibling's enabled state. This is development-source
+behavior, not released or loaded-runtime QA evidence.
+
+The current converter preserves a new-Session predecessor's native Agent
+`resume` token as `providerSessionResume`: it still creates a fresh Happier
+Session, rather than treating that native token as a Happier Session id.
+Predecessor environment values use the existing Agent launch-environment schema
+in the Workflow's private execution selection; they are not rewritten into
+Launch Profile secret references or synced Session draft fields. Agent-start
+environment policy still applies. For a fresh Session, a requested checkout name
+and base ref use the existing `new_worktree` selection and SCM creation-intent
+owner; omitted values keep the incumbent generated name and committed-revision
+behavior. An existing-Session predecessor checkout draft was a no-op and keeps
+that Session's actual directory instead of creating a worktree. Separate display
+text stays distinct from the Agent prompt, and unchanged prompts retain their
+exact original bytes.
+
+Inputless Session steps now persist a truthful `session_ready` correspondence
+for either fresh creation or existing Session acquisition, without authored input
+or a fabricated receipt. Recovery reuses that durable correspondence and the
+existing stable Session-creation custody. Explicit existing-Session steps ready
+the target through the canonical inactive-resume owner before admitting Pending
+input; failed resume admits no prompt. Offline launch choices flow through the
+canonical runtime snapshot, whose timestamped permission/model policy accepts
+newer incoming values and incoming-wins ties. Same-Agent portable driver choices
+retain native recovery identities; different-Agent choices are refused and a
+retained live process keeps its actual driver. Retained Session ciphertext never
+gains an automatic Account-plain fallback.
+
+Definition conversion alone does not certify preservation of already queued
+predecessor Runs. The inspected 0.2 producer at
+`639a32ec0e832dedb35d5a5809c36717c568225f` creates queued Runs without an
+`executionInputEnvelope` column or frozen input. Development migration checks
+now preserve null-input queued/claimed rows only before execution evidence
+exists; the migration does not invent frozen recipe bytes. Effectful open
+predecessor history still refuses activation. The development claim owner now
+first-freezes a safe null-input Run from its definition through the same input
+owner as new admission. The existing claim CAS commits those bytes and the lease
+together, preserving the Run's assignments and checking that no execution evidence
+appeared. Existing non-null frozen inputs are never replaced from the Automation's
+later mutable definition. A retained Session ciphertext template stays held for
+explicit review, and an already-started historical Run is not replayed merely
+because its definition was converted. This source behavior does not certify the
+loaded retained-data upgrade journey.
+
+For a non-null frozen predecessor input, the current server claim/admission owner
+may promote an ordinary queued or reclaimed Run into canonical Workflow custody
+only before execution evidence exists. It converts that exact frozen input, not
+the Automation's later definition, and retains the input bytes. A retained
+encrypted template on a now-plain Account remains held for review. This server
+boundary does not resolve the null-input migration above or authorize acquiring
+a Session on a different Machine from its canonical runtime owner.
+
+Current-development assigned inventory may carry `executionRecipeVersion: 2` for
+an actual canonical recipe. Missing/null means unclassified, not legacy execution
+permission. The existing Automation Run-detail route may carry a canonical
+`workflowRun` identity and open its result through `workflow.run.get`; it omits the
+historical recipe payload for that custody. Channels reply-handoff retry remains
+the existing same-Run mutation, not a second Workflow executor or execution retry.
 
 The retired `/automations/[id]` and `/automations/edit?id=` routes only resolve
 the existing direct Automation read, then open the bound workflow's trigger
@@ -836,21 +1031,21 @@ incumbent Automation transaction creates the parent Run and attaches its opaque
 definition envelope; occurrence evidence remains a separate frozen Automation
 envelope. Before root coordination, the assigned daemon binds its canonical
 payload to declared inputs exactly once and seals the immutable accepted
-workflow snapshot used by origin-neutral Runs. Actual 0.2 one-shot templates and
-their retained Run data remain readable by current workers. The current strict
-one-shot recipe is not an adapter for obsolete copied Workflow definitions.
+workflow snapshot used by origin-neutral Runs. Actual 0.2 templates remain
+readable through the canonical trigger conversion owner, and retained Run data
+through the historical Run readers. The stored strict one-shot read shape is
+not an adapter for obsolete copied Workflow definitions.
 Retained 0.2 flat-template prompts stay literal, including brace text, when run
 or explicitly converted to a Workflow; native current one-shot input-token rules
 do not reinterpret or restrict those historical prompts.
 
-Explicit conversion in 0.3 development requires the Channels binding-read owner
-to establish that the exact Automation has no retained binding. Disabled and
-deleting bindings still count; unavailable, corrupt or mismatched observations
-never become absence. Existing-Session conversion also requires that Session's
-current Agent identity and project, with its Machine matching the retained
-assignment. The shared trigger owner writes the inline recipe through the existing
-Automation revision CAS; unsupported templates remain unchanged with a typed
-`legacy_conversion_unsupported` reason.
+Conversion in 0.3 development keeps the exact Automation id and therefore its
+Channel binding. Existing-Session conversion uses that Session's authenticated
+Agent identity and actual project/Machine, not an arbitrary retained assignment.
+The shared trigger owner writes the inline recipe through the existing Automation
+revision CAS; unsupported templates remain unchanged with a typed
+`legacy_conversion_unsupported` reason. Retained encrypted templates on plain
+Accounts require the present-user review and Save described above.
 
 Predecessor recovery follows the Account-transition and retained-Session paths
 described above. The 0.2 transition to plain could leave Automation ciphertext
@@ -858,10 +1053,12 @@ whose outer template requires genuine historical Account material; its embedded
 Session key does not decrypt that outer template. Plain/no-Session-target rows
 can be explicitly recovered to canonical plain content through the existing
 converter and `templateVersion` CAS. Templates bound to retained E2EE Sessions
-stay encrypted and execute through that Session's authenticated envelope on a
-key-holding device or daemon. A keyless reader stays locked with deletion
-available. Historical material stays in existing custody; discarding it is an
-explicit user action, not a generic reader fallback or recreated Account key.
+stay encrypted and paused until present-user review and confirmation. A key-holding
+device opens the local review through the authenticated Session/historical-material
+path, then Save writes the normal Account-plain Workflow; the Session itself stays
+E2EE. A keyless reader stays locked with deletion available. Historical material
+stays in existing custody; discarding it is an explicit user action, not a generic
+reader fallback or recreated Account key.
 These implemented development paths do not certify a loaded runtime or release.
 
 The current development trigger context replaces the earlier copied-definition
@@ -1039,10 +1236,39 @@ The inspected `../0.2` Workflow owners are absent at
 `17ba05df68d4d3d4cad1c1241b58e63805db37ed`; ordinary Automation and Session
 data remain separate predecessor obligations.
 
+Current-development Workflow Actions preserve `history_not_readable`,
+`encryption_setup_required`, and `waiting_for_keys` from the per-Run key owner.
+These are distinct from malformed private content (`content_unavailable`) and
+an unavailable storage boundary (`storage_unavailable`). Recognized database
+failures at Workflow storage HTTP admission return 503 with the latter code;
+unexpected application exceptions remain with the global error owner. A failed
+read never establishes mutation currentness or an empty successful result.
+The review UI keeps a fieldless Wait's card and disabled Continue visible while
+its exact evidence is pending or unavailable, and offers reason-specific recovery.
+Only successfully read exact evidence can enable mutation. This is development
+source behavior, not verification of a loaded QA runtime or a released contract.
+
 The current Account-transition inventory GET reads the captured Home directly,
 without an older-server feature probe or inventory-426 translation. Request failures
 remain failures rather than a fabricated empty inventory. This development cut does
 not activate dormant V5 or downgrade current requests to predecessor transition wire.
+
+### Same-machine session handoff (development)
+
+Same-machine handoff extends the current V3 operation without another transport or
+persisted shape. Path-backed Sessions require an explicit, different local target
+before the source stops. Managed Sessions retain their existing private-directory
+allocation. The existing local durable bundle path works without a network transfer
+carrier; the `sessions.handoff` feature decision still applies.
+
+Source cleanup shares the target job locally, requires completed target commit, and
+must not stop the successor by Session id. Abort preserves an already completed job.
+Tracked cancellation remains available during preparation and closes before target
+launch, which begins publishing the target's canonical Session metadata. The accepted
+launch then completes confirmation, commit, and cleanup through its existing nonce
+observation owner. This is development behavior, not a released rollback guarantee.
+Predecessor request adapters and cross-machine transfer contracts remain seam-owned;
+unsupported operation versions fail before execution rather than pretending to move.
 
 ### Workspace-sync handoff rollout
 
@@ -1063,6 +1289,26 @@ fall back to a direct copy or claim that a first completed link prepared the des
 The result records only the links actually traversed and their observed statuses. A later
 retry starts a fresh route check, not a persisted cursor or replay of the second link.
 
+The development-line devcontainer bind-workspace extension keeps the admitted child
+Machine and Session as the execution identity. Only physical workspace work is routed
+to its current controller, through the existing Workspace Sync RPC family. A parent
+without the exact private `daemon.workspaceSync.handoffSourcePhase.v1` member returns
+`workspace_sync_update_required` before Session quiescence or Agent export; there is
+no SSH, legacy-copy, or generic parent-Account fallback. The installed child socket
+retains the original child admission, actor and caller constraints. Home verifies
+that scoped routing, while the parent rechecks the current child relation, controller
+installation and native bind root before preparing or finalizing a write.
+
+Source commit and abort release only the exact operation and original context retained
+by the existing parent preparation owner. They can settle that custody after source
+adoption, cancellation, native replacement or withdrawal of the original actor's grant;
+they do not restore effect authority or reuse a retired borrower credential. Current
+installed-child custodian transport and parent installation/Home authentication remain
+required. An unavailable retired child socket cannot manufacture cleanup authority.
+This private routing does not expand public Session-handoff or Workspace Sync policy:
+a missing scoped chosen-target producer fails closed, and reaching a physical parent
+with the daemon's ambient custodian credential is not admission to the chosen child.
+
 The current daemon remains the sole relationship-settings writer and uses the external Mutagen
 sidecar as the sole reconciliation engine. Mutagen session identifiers and private broker details
 are daemon-local implementation state, not wire or persistence compatibility contracts. A missing
@@ -1081,6 +1327,50 @@ facts come from the matching engine producer. Missing endpoint evidence is unkno
 The controller's clean-result predicate gates dependent execution and fresh/recovered Copy once;
 raw manual Flush remains a diagnostic operation. A completed cycle does not establish immutable
 inputs or global convergence.
+
+The 0.3 development Machine publication is a readiness-only invalidation signal,
+not a second private relationship-status channel. The existing daemon-state version
+orders that signal; current UI consumers refresh admitted status/conflict reads for
+their demanded exact Home/controller scopes and retain last-known values while
+refreshing. Full relationship detail, cursor invalidation and stale-response
+rejection remain owned by those existing private reads and stores.
+
+Ordinary Machine metadata/state publishers share the strict publication contract in
+`machines/machinePublishedContentV1.ts`. Stored readers tolerate additive or retired
+fields and retain supported predecessor host facts, including
+`startedWithCliVersion`; UI metadata still treats malformed optional CLI-update
+facts as absent. Their new writes do not echo retired private Sync fields or unknown
+peer/transfer bags. Tolerant reading does not migrate the retained blob: wider key
+delivery must check the entire opened current content and its committed versions,
+or remain pending until an authorized custodian rewrite. The incumbent legacy
+content-key transition intentionally rekeys the exact opened bytes; it is a retained
+content transition, not an ordinary publisher or a second privacy projection owner.
+Converting that key cannot make unsafe retained content eligible for delivery.
+This refines unshipped 0.3 source in place; it is not a loaded-runtime or release
+safety claim.
+
+Machine grant and Team membership effects consume the same canonical effective
+access union before and after the complete mutation. The existing membership
+wrapper captures Machine and Session impacts together; a surviving direct, Team
+or Group grant must not be treated as final loss. Final actor-room invalidation
+occurs after commit without deleting Session history or retained AccessKey bytes.
+This is incomplete development source: socket disconnection alone does not certify
+settled Session or process cancellation.
+
+The development Machine content-key lifecycle reads predecessor owner data with
+either an absent legacy-secret envelope or an Account-key envelope, then converts
+both ciphertexts and the owner envelope as one conditional state. Conversion
+preserves the opened blobs rather than treating a tolerant read projection as a
+privacy migration. New E2EE Machines use random resource keys; Plain Machines do
+not allocate key material. Registration adopts the returned winner and does not
+independently replace an existing envelope or ciphertext. New encoded writers
+send the exact owner-envelope identity and expected content revision; recipient
+opening envelopes remain separate from this `keyBasis`. Retired writers refuse,
+and a lost transition acknowledgement is observed without automatic replay.
+Current contexts, caches, hydration and RPC use the existing update carrier.
+These wire refinements replace unreleased 0.3 shapes in place; historical reads
+are custodian-only and malformed present envelopes never become legacy or Plain.
+This describes current source, not a successful composed runtime certification.
 
 Reviewed conflict resolution refines the development Action in place: source and explicit
 destination entry expectations are required, including complete structural identity for a
@@ -1271,9 +1561,11 @@ lifetime. This is a strict direct cut: grants without the epoch are rejected,
 not upgraded from current Account state. PAT credential-row revocation remains
 independent; ordinary PAT bearers cannot open this broker route.
 
-The published payload is never the bare Bun executable. The pinned Bun 1.3.5
-standalone runtime still exposes its embedded CLI dispatcher when `BUN_BE_BUN` is
-inherited (`scripts/pipeline/release/bun-runner-hardening.test.mjs`), so the
+The published payload is never the bare Bun executable. Bun 1.3.5 established
+that the standalone runtime exposes its embedded CLI dispatcher when `BUN_BE_BUN`
+is inherited; the current 0.3 development pin reproduces that behavior through
+`scripts/pipeline/release/bun-runner-hardening.test.mjs`, which reads the canonical
+`apps/stack/scripts/provision/.bun-version`. Therefore the
 shipped product is the Rust shell in `apps/cli/runner-native-shell`, which refuses
 unknown arguments and clears the environment before spawning the Bun core as a
 nested sidecar. Release admission rejects any candidate that reaches the embedded
@@ -1354,6 +1646,14 @@ uses `plugin-sdk-v` for the separately published Plugin SDK pair, but the local
 tag set contains no such immutable tag. This is repository-local source and
 publisher-contract evidence; it does not claim an independently queried
 deployment or npm-registry state.
+
+The current development Agent Session output contract accepts omitted host `turnId`
+for Session-scoped transcript output, and treats a witnessed `sidechainId` as Session
+scope even when an originating host turn is recorded. Existing foreground writes with
+required turn identity remain accepted unchanged; foreground lifecycle events still
+require that identity. This is an in-place development contract change under the
+Plugin Platform direct-cut basis above, not an established released predecessor
+migration. See [runtime scope](runtime-core.md) for the consumed host behavior.
 
 The prospective `../0.2` source was inspected read-only on branch `dev` at
 `439125d17582cdfa7534a156737d52559565353b`, including the committed tree,
@@ -1464,6 +1764,35 @@ The approved SDK r0.31 direct cut does not make current `dev` → `../0.2`
 rollback a supported direction. Do not add predecessor readers, dual writers,
 aliases, writer-floor waits, or rollback-only gates for unpublished author
 contracts; forward migration and current-version integrity still apply.
+
+### Action operation observation epochs (development)
+
+The existing daemon Action-operation owner exposes two read epochs over the same
+store. V1 list/get retain the closed snapshot reader inspected in clean `../0.2`
+at `37a6541578749067b49d4579be8c752c9591b8c8`: only `forkRequest`,
+`spawnAttempt`, and `handoff` domain references, with the original terminal
+`errorCode`/`error` pair. Its response projection omits current domain references,
+`setupReview`, `observation`, and failure `details`; it never rewrites retained
+custody, state, revisions, or revision notifications.
+
+Current Actions, Workflow observation/recovery, UI reconciliation, command output,
+and prepared-copy completion use the existing V2 list/get methods so they retain
+those richer facts. Stop uses the unchanged V1 cancel method. This is a bounded
+read-epoch projection, not a second operation owner, parser, or promise of mixed
+0.2/0.3 stack support. Remove it only when the original V1 reader contract is
+explicitly retired; unrelated operations and retained operation results are
+unchanged.
+
+Current managed bootstrap observations capture the native resource and controller
+installation on the V2 managed operation reference independently of an installer
+task. An actual installer task supplies only its task id and kind. Already-enrolled
+native boot recovery uses the same correlation without inventing a task or replaying
+installation and pairing. Detail shows observed progress and Retry only when that
+operation's captured facts match the retained managed row; a later successful retry
+clears the failed diagnostic. Missing capture is unavailable evidence, not permission
+to borrow an older failed operation for a rebuilt resource. This replaces an
+undeployed task-nested capture in place. V1 continues omitting the managed reference;
+no new operation store or retained-data migration is required.
 
 ### Notification channel sender source migration (development)
 

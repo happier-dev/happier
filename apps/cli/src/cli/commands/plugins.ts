@@ -81,6 +81,7 @@ import {
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import {
   decideUserPluginChange,
+  describeUserPluginChangeFailure as describePluginChangeFailure,
   requestUserPluginChange,
   readUserPluginChangeStatus,
   resolvePluginChangeRequestClientPaths,
@@ -676,79 +677,6 @@ async function runPluginsActionsCommand(args: readonly string[]): Promise<void> 
     out.line(`  ${dim('Surfaces:')} ${action.surfaces.join(', ') || '(none)'}`);
   }
   console.log(out.render());
-}
-
-function describePluginChangeFailure(result: Exclude<UserPluginChangeResult, { kind: 'committed' }>): Readonly<{
-  code: string;
-  message: string;
-  details?: Readonly<Record<string, unknown>>;
-}> {
-  switch (result.kind) {
-    case 'projectTrustAccepted':
-      return {
-        code: 'project_trust_accepted',
-        message: `Plugin project trust was accepted for ${result.projectRoot}.`,
-        details: { projectRoot: result.projectRoot },
-      };
-    case 'reviewRequired':
-      return result.reviewKind === 'projectTrust'
-        ? {
-            code: 'project_trust_review_required',
-            message: `Project trust review is required for ${result.review.source.locator}.`,
-            details: { pendingChangeId: result.pendingChangeId, review: result.review },
-          }
-        : {
-            code: 'review_required',
-            message: `Install and trust review is required for ${result.review.displayName}.`,
-            details: { pendingChangeId: result.pendingChangeId, review: result.review },
-          };
-    case 'registryProfileRequired':
-      return {
-        code: 'plugin_registry_profile_required',
-        message: `Npm registry '${result.registryOrigin}' requires a usable registry profile before installing ${result.packageName}.`,
-        details: {
-          registryOrigin: result.registryOrigin,
-          packageName: result.packageName,
-          registryProfileId: result.registryProfileId,
-        },
-      };
-    case 'cancelled':
-      return { code: 'cancelled', message: 'The plugin change was cancelled before it was applied.' };
-    case 'expired':
-      return { code: 'expired', message: 'The plugin review expired; run the command again to review the current candidate.' };
-    case 'busy':
-      return { code: 'busy', message: `Another plugin change is already in progress for ${result.pluginId}.`, details: { pluginId: result.pluginId } };
-    case 'unavailable':
-      return { code: 'unavailable', message: `The daemon plugin-change service is unavailable (${result.code}).`, details: { causeCode: result.code } };
-    case 'conflict':
-      return { code: 'conflict', message: `Plugin facts changed while applying ${result.pluginId}; review the candidate again.`, details: { pluginId: result.pluginId } };
-    case 'failed':
-      return {
-        code: 'failed',
-        message: result.message ?? `The daemon rejected the plugin change (${result.code}).`,
-        details: {
-          causeCode: result.code,
-          ...(result.message ? { causeMessage: result.message } : {}),
-        },
-      };
-    case 'outcomeUnknown':
-      return {
-        code: 'outcome_unknown',
-        message: `The daemon may have applied the change for ${result.pluginId}; inspect installed state before retrying.`,
-        details: { pluginId: result.pluginId, ...(result.expectedCandidate ? { expectedCandidate: result.expectedCandidate } : {}) },
-      };
-    case 'dataRemovalPartial':
-      return {
-        code: 'plugin_data_removal_partial',
-        message: 'Plugin data removal stopped after a partial daemon-owned change. Retrying the same confirmed command is safe.',
-        details: {
-          pluginId: result.pluginId,
-          causeCode: result.causeCode,
-          completed: result.completed,
-          pending: result.pending,
-        },
-      };
-  }
 }
 
 function pluginChangeReviewRejoinCommands(pendingChangeId: string): readonly string[] {

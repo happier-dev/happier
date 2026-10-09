@@ -9,6 +9,8 @@ import type { PluginContributionIdentityV1, QualifiedConnectedAccountPurposeBind
 import type {
   ManagedProviderRequestAuthCapabilityPathBinding,
 } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
+import type { MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { ensurePrivateConnectedServiceMaterializedRoot } from '../materialize/privateMaterializedRoot';
 import type {
   ConnectedAccountRequestAuthSubjectRegistry,
@@ -17,14 +19,18 @@ import {
   scopeConnectedAccountPurposeBindingLease,
   type ConnectedAccountPurposeBindingOwner,
 } from './ConnectedAccountPurposeBindingOwner';
+import type { DaemonConnectedAccountPurposeBindingRuntime } from './createDaemonConnectedAccountPurposeBindingRuntime';
 
 export type ManagedProviderOperationAuthorityActivation = Readonly<{
   exactPurposeBindingSubjectId: string | null;
   requestAuth: ManagedProviderRequestAuthCapabilityPathBinding | null;
+  isCurrent(): boolean;
   cleanup(): Promise<void>;
 }>;
 
 export type ManagedProviderOperationAuthority = Readonly<{
+  listActionFormConnectedAccountOptions?: DaemonConnectedAccountPurposeBindingRuntime['listActionFormConnectedAccountOptions'];
+  readCredentialConfigurationRevision?(account: QualifiedConnectedAccountRef, signal: AbortSignal): Promise<string | null>;
   activate(input: Readonly<{
     identity: PluginContributionIdentityV1;
     operationId: string;
@@ -32,6 +38,12 @@ export type ManagedProviderOperationAuthority = Readonly<{
     purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
     requestAuthUses: readonly QualifiedConnectedAccountRequestAuthUseV1[];
     isCurrent(): boolean;
+    /** Additional row/role custody for native managed-resource operations. */
+    managedOperation?: Readonly<{
+      role: MachineProvisionerRoleV1;
+      isCurrent(role: MachineProvisionerRoleV1): boolean;
+      credentialConfigurations?: readonly Readonly<{ account: QualifiedConnectedAccountRef; revision: string | null }>[];
+    }>;
   }>): Promise<ManagedProviderOperationAuthorityActivation>;
 }>;
 
@@ -85,7 +97,8 @@ export function createManagedProviderOperationAuthority(input: Readonly<{
   purposeBindingOwner: Pick<
     ConnectedAccountPurposeBindingOwner,
     'activatePurposeBindings'
-  >;
+  > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'readCredentialConfigurationRevision'>>;
+  listActionFormConnectedAccountOptions?: DaemonConnectedAccountPurposeBindingRuntime['listActionFormConnectedAccountOptions'];
   requestAuthRegistry: Pick<
     ConnectedAccountRequestAuthSubjectRegistry,
     'activate' | 'retire'
@@ -94,7 +107,17 @@ export function createManagedProviderOperationAuthority(input: Readonly<{
   createRedactionLease(): RedactionLease;
 }>): ManagedProviderOperationAuthority {
   return Object.freeze({
+    ...(input.listActionFormConnectedAccountOptions ? { listActionFormConnectedAccountOptions: input.listActionFormConnectedAccountOptions } : {}),
+    async readCredentialConfigurationRevision(account, signal) {
+      if (!input.purposeBindingOwner.readCredentialConfigurationRevision) throw new Error('managed_provider_connection_basis_unavailable');
+      return await input.purposeBindingOwner.readCredentialConfigurationRevision(account, signal);
+    },
     async activate(operationInput) {
+      const managedOperation = operationInput.managedOperation;
+      const isCurrent = () => readsCurrent(operationInput.isCurrent)
+        && (managedOperation === undefined || readsCurrent(() => (
+          managedOperation.isCurrent(managedOperation.role)
+        )));
       const identity = Object.freeze({
         pluginId: operationInput.identity.pluginId.trim(),
         localId: operationInput.identity.localId.trim(),
@@ -148,18 +171,21 @@ export function createManagedProviderOperationAuthority(input: Readonly<{
           }),
         });
       }));
-      if (!readsCurrent(operationInput.isCurrent)) {
+      if (!isCurrent()) {
         throw new Error('managed_provider_operation_authority_not_current');
       }
 
-      const purposeLease = purposes.length > 0
+      // Native managed operations retain absence as well as a selected account;
+      // an empty exact lease must never fall through to mutable user defaults.
+      const purposeLease = purposes.length > 0 || managedOperation !== undefined
         ? input.purposeBindingOwner.activatePurposeBindings({
             subject: {
               kind: 'managed_provider_operation',
               operationId,
               pluginId: identity.pluginId,
               providerLocalId: identity.localId,
-              isCurrent: operationInput.isCurrent,
+              isCurrent,
+              ...(managedOperation?.credentialConfigurations ? { credentialConfigurations: managedOperation.credentialConfigurations } : {}),
             },
             purposes,
             bindings,
@@ -261,7 +287,7 @@ export function createManagedProviderOperationAuthority(input: Readonly<{
                 }))),
               isCurrent: () => (
                 !cleanupStarted
-                && readsCurrent(operationInput.isCurrent)
+                && isCurrent()
                 && purposeLease?.isCurrent() === true
               ),
             })
@@ -270,6 +296,8 @@ export function createManagedProviderOperationAuthority(input: Readonly<{
           exactPurposeBindingSubjectId:
             purposeLease?.subjectId ?? null,
           requestAuth,
+          isCurrent: () => !cleanupStarted && isCurrent()
+            && (purposeLease === null || purposeLease.isCurrent()),
           cleanup,
         });
       } catch (error) {

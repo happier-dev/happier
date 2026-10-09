@@ -145,11 +145,11 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
   }).strict(),
   z.object({ kind: z.literal('spawnAttempt'), id: ActionOperationIdentifierV1Schema }).strict(),
   z.object({ kind: z.literal('managedMachine'), id: ActionOperationIdentifierV1Schema,
+    /** Enrollment and native boot recovery share this exact retained resource. */
+    controller: z.lazy(() => ManagedControllerV1Schema).optional(),
+    resource: z.lazy(() => ManagedResourceV1Schema).optional(),
     bootstrapTask: z.object({ id: ActionOperationIdentifierV1Schema,
       taskKind: z.literal('remote.ssh.bootstrapMachine.v1'),
-      /** Older development observations without a capture cannot identify today's install attempt. */
-      controller: z.lazy(() => ManagedControllerV1Schema).optional(),
-      resource: z.lazy(() => ManagedResourceV1Schema).optional(),
     }).strict().optional(),
   }).strict(),
   z.object({

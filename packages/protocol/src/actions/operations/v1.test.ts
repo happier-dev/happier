@@ -76,14 +76,21 @@ describe('Action operation v1 contract', () => {
   });
   it('keeps a managed row associated while its actual bootstrap task is attached', () => {
     const domainRef = { kind: 'managedMachine', id: 'managed-row',
+      controller: { machineId: 'controller', installationId: 'installation' },
+      resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained' } },
       bootstrapTask: { id: 'real-task', taskKind: 'remote.ssh.bootstrapMachine.v1' } };
     expect(ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.acquire', domainRef }).domainRef)
       .toEqual(domainRef);
     expect(ActionOperationDomainRefV1Schema.parse({ kind: 'managedMachine', id: 'waiting-row' }))
       .toEqual({ kind: 'managedMachine', id: 'waiting-row' });
+    const { bootstrapTask: _task, ...bootRecovery } = domainRef;
+    expect(ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.bootstrap.retry', domainRef: bootRecovery }).domainRef)
+      .toEqual(bootRecovery);
     expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef,
       bootstrapTask: { ...domainRef.bootstrapTask, taskKind: 'arbitrary.task' } }).success).toBe(false);
     expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef, intentRevision: 0 }).success).toBe(false);
+    expect(ActionOperationDomainRefV1Schema.safeParse({ ...domainRef,
+      bootstrapTask: { ...domainRef.bootstrapTask, controller: domainRef.controller, resource: domainRef.resource } }).success).toBe(false);
   });
   it('retains only the qualified service relocation attempt without claiming a native lifetime', () => {
     const domainRef = { kind: 'projectService', purpose: 'relocation',
