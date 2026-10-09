@@ -1,7 +1,9 @@
-import { McpServerCatalogMutationV1Schema, unavailableReasonSchema } from "./catalogSchemasV1.js";
-import type { McpServerCatalogMutationV1, McpServerCatalogSnapshotV1, McpServerCatalogUnavailableReasonV1 } from "./catalogSchemasV1.js";
+import { McpServerCatalogMutationV1Schema, McpServerCatalogScopeV1Schema, unavailableReasonSchema } from "./catalogSchemasV1.js";
+import type { McpServerCatalogMutationV1, McpServerCatalogSnapshotV1, McpServerCatalogUnavailableReasonV1,
+  McpServerCatalogScopeV1, McpServerBindingEnabledReversalV1, McpServerCatalogMutationResponseV1 } from "./catalogSchemasV1.js";
 export { McpServerCatalogMutationV1Schema, McpServerCatalogSnapshotV1Schema } from "./catalogSchemasV1.js";
-export type { McpServerCatalogMutationV1, McpServerCatalogSnapshotV1, McpServerCatalogUnavailableReasonV1, McpServerCatalogSourceCleanupV1 } from "./catalogSchemasV1.js";
+export type { McpServerCatalogMutationV1, McpServerCatalogSnapshotV1, McpServerCatalogUnavailableReasonV1, McpServerCatalogSourceCleanupV1,
+  McpServerCatalogScopeV1, McpServerBindingEnabledReversalV1, McpServerCatalogMutationResponseV1 } from "./catalogSchemasV1.js";
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
 import { projectStoredMcpServerCatalogV1, openMcpServerCatalogContentV1, type McpServerCatalogV1, type McpServerCatalogRowReadResponseV1, type McpServerCatalogRowMutationResponseV1, McpServerCatalogV1Schema } from './serverRowsV1.js';
 import { type McpServersSettingsV1 } from './settingsV1.js';
@@ -10,10 +12,26 @@ export { listMcpServerCatalogSavedSecretRefsV1, rewriteMcpServerCatalogSavedSecr
   remapMcpServerCatalogSavedSecretReferencesV1 } from './serverRowsV1.js';
 
 
+class McpServerCatalogMutationRefusalV1 extends Error {
+  constructor(readonly code: 'binding-conflict' | 'server_scope_mismatch' | 'not_authenticated') { super(code); }
+}
+
 /** Definitions and their bindings share one validation and one durable row CAS. */
-export function applyMcpServerCatalogMutationV1(catalog: McpServerCatalogV1, rawChange: McpServerCatalogMutationV1): McpServerCatalogV1 {
+export function applyMcpServerCatalogMutationV1(catalog: McpServerCatalogV1, rawChange: McpServerCatalogMutationV1,
+  scope?: McpServerCatalogScopeV1 | null): McpServerCatalogV1 {
   McpServerCatalogV1Schema.parse(catalog);
   const change = McpServerCatalogMutationV1Schema.parse(rawChange);
+  if (change.kind === 'server-create-batch') {
+    for (const { entry, bindings } of change.entries) {
+      for (const binding of bindings) {
+        if (binding.serverId !== entry.id) throw new Error(`Binding serverId mismatch: ${binding.serverId}`);
+      }
+    }
+    return McpServerCatalogV1Schema.parse({ ...catalog,
+      servers: [...catalog.servers, ...change.entries.map(item => item.entry)],
+      bindings: [...catalog.bindings, ...change.entries.flatMap(item => item.bindings)],
+    });
+  }
   if (change.kind === 'server-remove') {
     if (catalog.bindings.some(binding => binding.serverId === change.serverId) && !change.removeBindings) {
       throw new Error('Server is referenced by bindings; confirm removal of those bindings');
@@ -27,7 +45,16 @@ export function applyMcpServerCatalogMutationV1(catalog: McpServerCatalogV1, raw
     return { ...catalog, bindings: catalog.bindings.filter(binding => binding.id !== change.bindingId) };
   }
   if (change.kind === 'binding-enabled') {
-    if (!catalog.bindings.some(binding => binding.id === change.bindingId)) throw new Error(`Binding not found: ${change.bindingId}`);
+    if (change.expectedScope || change.captureBefore) {
+      if (!McpServerCatalogScopeV1Schema.safeParse(scope).success) throw new McpServerCatalogMutationRefusalV1('not_authenticated');
+      if (change.expectedScope && (change.expectedScope.serverId !== scope?.serverId
+        || change.expectedScope.accountId !== scope?.accountId)) throw new McpServerCatalogMutationRefusalV1('server_scope_mismatch');
+    }
+    const binding = catalog.bindings.find(binding => binding.id === change.bindingId);
+    if (!binding) throw new Error(`Binding not found: ${change.bindingId}`);
+    if (change.expectedEnabled !== undefined && binding.enabled !== change.expectedEnabled) {
+      throw new McpServerCatalogMutationRefusalV1('binding-conflict');
+    }
     return { ...catalog, bindings: catalog.bindings.map(binding => binding.id === change.bindingId ? { ...binding, enabled: change.enabled } : binding) };
   }
   if ('binding' in change) {
@@ -54,6 +81,36 @@ export function applyMcpServerCatalogMutationV1(catalog: McpServerCatalogV1, raw
   });
 }
 
+/** Capture, comparison and acknowledgement all belong to the same row mutation. */
+export async function commitMcpServerCatalogMutationV1(input: Readonly<{
+  catalog: McpServerCatalogV1; revision: number; change: McpServerCatalogMutationV1; scope: McpServerCatalogScopeV1 | null;
+  writeCatalog(value: Readonly<{ catalog: McpServerCatalogV1; expectedRevision: number }>): Promise<McpServerCatalogRowMutationResponseV1>;
+}>): Promise<McpServerCatalogMutationResponseV1> {
+  let catalog: McpServerCatalogV1;
+  let change: McpServerCatalogMutationV1;
+  try {
+    change = McpServerCatalogMutationV1Schema.parse(input.change);
+    catalog = applyMcpServerCatalogMutationV1(input.catalog, change, input.scope);
+  } catch (error) {
+    if (error instanceof McpServerCatalogMutationRefusalV1) {
+      if (error.code === 'binding-conflict') return { status: 'conflict', revision: input.revision };
+      throw error;
+    }
+    throw Object.assign(new Error('MCP catalog mutation is invalid'), { code: 'invalid-mutation', cause: error });
+  }
+  let reversal: Omit<McpServerBindingEnabledReversalV1, 'revision'> | undefined;
+  if (change.kind === 'binding-enabled' && change.captureBefore) {
+    const before = input.catalog.bindings.find(binding => binding.id === change.bindingId)?.enabled;
+    // The reducer above proved the binding and scope before any durable effect.
+    if (before === undefined) throw Object.assign(new Error('Binding unavailable'), { code: 'invalid-mutation' });
+    reversal = { scope: McpServerCatalogScopeV1Schema.parse(input.scope), bindingId: change.bindingId,
+      before, applied: change.enabled };
+  }
+  const result = await input.writeCatalog({ catalog, expectedRevision: input.revision });
+  return result.status === 'updated' && reversal
+    ? { ...result, reversal: { ...reversal, revision: result.revision } } : result;
+}
+
 /** The same readiness contract crosses UI, CLI and typed Actions. */
 export type McpServerCatalogSourceTransferV1 = Readonly<{
   readSourceSnapshot(): Promise<Readonly<{ raw: Readonly<Record<string, unknown>>; version: number }>>;
@@ -74,7 +131,7 @@ type LoadInput = Readonly<{
 }>;
 export function emptyMcpServerCatalogV1(): McpServerCatalogV1 { return { v: 1, servers: [], bindings: [] }; }
 
-function retainedSource(raw: Readonly<Record<string, unknown>>) {
+export function readRetainedMcpServerCatalogSourceV1(raw: Readonly<Record<string, unknown>>) {
   const root = raw.mcpServersSettingsV1;
   if (root === undefined) return { status: 'opened' as const, catalog: emptyMcpServerCatalogV1(), strictMode: false };
   if (root === null || typeof root !== 'object' || Array.isArray(root)) return { status: 'unavailable' as const, reason: 'invalid-stored-content' as const };
@@ -95,7 +152,7 @@ export function extractRetainedMcpServerCatalogPolicyV1(raw: Readonly<Record<str
     return { status: 'unavailable', reason: 'invalid-stored-content' };
   }
   if (!Object.hasOwn(raw, 'mcpServersSettingsV1')) return { status: 'ready', raw };
-  const source = retainedSource(raw);
+  const source = readRetainedMcpServerCatalogSourceV1(raw);
   if (source.status !== 'opened') return { status: 'unavailable', reason: 'invalid-stored-content' };
   return { status: 'ready', raw: raw.mcpServersStrictMode === undefined
     ? { ...raw, mcpServersStrictMode: source.strictMode } : raw };
@@ -145,7 +202,7 @@ export async function loadMcpServerCatalogV1(input: LoadInput): Promise<McpServe
   }
   if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
   if (catalog.status === 'absent') {
-    let retained = retainedSource(source.raw);
+    let retained = readRetainedMcpServerCatalogSourceV1(source.raw);
     if (retained.status === 'unavailable') return retained;
     if (retained.status === 'partial') return { ...retained, status: 'partial', revision: 'absent', authority: 'inactive' };
     const policy = extractRetainedMcpServerCatalogPolicyV1(source.raw);
@@ -158,7 +215,7 @@ export async function loadMcpServerCatalogV1(input: LoadInput): Promise<McpServe
       if (result.status !== 'applied') return { status: 'unavailable', reason: result.status === 'conflict' ? 'source-version-conflict' : 'authority-not-confirmed' };
       try { source = await transfer.readSourceSnapshot(); }
       catch { return { status: 'unavailable', reason: 'unreachable' }; }
-      retained = retainedSource(source.raw);
+      retained = readRetainedMcpServerCatalogSourceV1(source.raw);
       if (retained.status === 'unavailable') return retained;
       if (retained.status === 'partial') return { ...retained, status: 'partial', revision: 'absent', authority: 'inactive' };
       if (typeof source.raw.mcpServersStrictMode !== 'boolean') return { status: 'unavailable', reason: 'source-version-conflict' };

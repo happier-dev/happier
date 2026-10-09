@@ -3,8 +3,11 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../../actions/actionExecutionResult.js';
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import { McpServerBindingV1Schema, McpServerCatalogEntryV1Schema } from './settingsV1.js';
-import { McpServerCatalogSnapshotV1Schema, type McpServerCatalogSnapshotV1, type McpServerCatalogMutationV1 } from './catalogSchemasV1.js';
-import { McpServerCatalogV1Schema, McpServerCatalogDiagnosticV1Schema, McpServerCatalogRowMutationResponseV1Schema, type McpServerCatalogRowMutationResponseV1 } from './catalogSchemasV1.js';
+import { McpServerCatalogCreateBatchV1Schema, McpServerCatalogSnapshotV1Schema,
+  type McpServerCatalogSnapshotV1, type McpServerCatalogMutationV1 } from './catalogSchemasV1.js';
+import { McpServerCatalogV1Schema, McpServerCatalogDiagnosticV1Schema, McpServerCatalogRowMutationResponseV1Schema,
+  McpServerCatalogMutationResponseV1Schema, McpServerCatalogScopeV1Schema,
+  type McpServerCatalogMutationResponseV1 } from './catalogSchemasV1.js';
 import { DaemonMcpServersTestRequestSchema, DaemonMcpServersTestResponseSchema,
   DaemonMcpServersDetectRequestSchema, DaemonMcpServersDetectResponseSchema } from './daemonRpcV1.js';
 import type { McpServerActionIdV1 } from './serverActionIdsV1.js';
@@ -15,8 +18,13 @@ const catalogRevision = lazyZodSchema(() => z.union([revision, z.literal('absent
 const identity = lazyZodSchema(() => z.string().min(1));
 const serverWrite = lazyZodSchema(() => z.object({ expectedRevision: catalogRevision,
   entry: McpServerCatalogEntryV1Schema, bindings: z.array(McpServerBindingV1Schema) }).strict());
+const serverCreate = lazyZodSchema(() => z.union([serverWrite,
+  McpServerCatalogCreateBatchV1Schema.omit({ kind: true }).extend({ expectedRevision: catalogRevision }).strict(),
+]));
 const bindingWrite = lazyZodSchema(() => z.object({ expectedRevision: catalogRevision, binding: McpServerBindingV1Schema }).strict());
 const bindingAddress = lazyZodSchema(() => z.object({ expectedRevision: catalogRevision, bindingId: identity }).strict());
+const bindingEnabled = lazyZodSchema(() => bindingAddress.extend({ captureBefore: z.boolean().optional(),
+  expectedEnabled: z.boolean().optional(), expectedScope: McpServerCatalogScopeV1Schema.optional() }).strict());
 const serverListEntry = lazyZodSchema(() => {
   const { id, name, title, description, transport, createdAt, updatedAt } = McpServerCatalogEntryV1Schema.shape;
   return z.object({ id, name, title, description, transport, createdAt, updatedAt }).strict();
@@ -41,15 +49,15 @@ const readResult = lazyZodSchema(() => z.union([
 export const MCP_SERVER_ACTION_INPUT_SCHEMAS_V1 = {
   'mcp.servers.list': lazyZodSchema(() => z.object({}).strict()),
   'mcp.servers.read': lazyZodSchema(() => z.object({ serverId: identity }).strict()),
-  'mcp.servers.create': serverWrite,
+  'mcp.servers.create': serverCreate,
   'mcp.servers.update': serverWrite,
   'mcp.servers.duplicate': lazyZodSchema(() => serverWrite.extend({ serverId: identity }).strict()),
   'mcp.servers.delete': lazyZodSchema(() => z.object({ expectedRevision: catalogRevision,
     serverId: identity, removeBindings: z.boolean() }).strict()),
   'mcp.bindings.add': bindingWrite,
   'mcp.bindings.edit': bindingWrite,
-  'mcp.bindings.enable': bindingAddress,
-  'mcp.bindings.disable': bindingAddress,
+  'mcp.bindings.enable': bindingEnabled,
+  'mcp.bindings.disable': bindingEnabled,
   'mcp.bindings.remove': bindingAddress,
   'mcp.servers.test': lazyZodSchema(() => z.union([
     DaemonMcpServersTestRequestSchema.options[0].strict(), DaemonMcpServersTestRequestSchema.options[1].strict(),
@@ -65,8 +73,8 @@ export const MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 = {
   'mcp.servers.delete': McpServerCatalogRowMutationResponseV1Schema,
   'mcp.bindings.add': McpServerCatalogRowMutationResponseV1Schema,
   'mcp.bindings.edit': McpServerCatalogRowMutationResponseV1Schema,
-  'mcp.bindings.enable': McpServerCatalogRowMutationResponseV1Schema,
-  'mcp.bindings.disable': McpServerCatalogRowMutationResponseV1Schema,
+  'mcp.bindings.enable': McpServerCatalogMutationResponseV1Schema,
+  'mcp.bindings.disable': McpServerCatalogMutationResponseV1Schema,
   'mcp.bindings.remove': McpServerCatalogRowMutationResponseV1Schema,
   'mcp.servers.test': DaemonMcpServersTestResponseSchema,
   'mcp.servers.probe': DaemonMcpServersDetectResponseSchema,
@@ -74,7 +82,7 @@ export const MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 = {
 export type McpServerActionRequestV1 = Readonly<{ actionId: McpServerActionIdV1; input: unknown; context: ActionExecutorContext }>;
 export type McpServerActionPortsV1 = Readonly<{
   readCatalog(context: ActionExecutorContext): Promise<McpServerCatalogSnapshotV1>;
-  mutate(change: McpServerCatalogMutationV1, expectedRevision: number | 'absent', context: ActionExecutorContext): Promise<McpServerCatalogRowMutationResponseV1>;
+  mutate(change: McpServerCatalogMutationV1, expectedRevision: number | 'absent', context: ActionExecutorContext): Promise<McpServerCatalogMutationResponseV1>;
   machine(request: Readonly<{ actionId: 'mcp.servers.test' | 'mcp.servers.probe'; input: unknown;
     machineId: string; context: ActionExecutorContext }>): Promise<unknown>;
 }>;
@@ -123,9 +131,16 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
             : { status: 'not-found', serverId, revision: snapshot.revision };
         break;
       }
-      case 'mcp.servers.create': case 'mcp.servers.update': {
+      case 'mcp.servers.create': {
+        const { expectedRevision, ...change } = MCP_SERVER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
+        result = await ports.mutate('entries' in change
+          ? { kind: 'server-create-batch', entries: change.entries }
+          : { kind: 'server-create', ...change }, expectedRevision, context);
+        break;
+      }
+      case 'mcp.servers.update': {
         const { expectedRevision, entry, bindings } = MCP_SERVER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
-        result = await ports.mutate({ kind: actionId === 'mcp.servers.create' ? 'server-create' : 'server-update', entry, bindings }, expectedRevision, context);
+        result = await ports.mutate({ kind: 'server-update', entry, bindings }, expectedRevision, context);
         break;
       }
       case 'mcp.servers.duplicate': {
@@ -141,8 +156,8 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
         result = await ports.mutate({ kind: actionId === 'mcp.bindings.add' ? 'binding-create' : 'binding-update', binding }, expectedRevision, context); break;
       }
       case 'mcp.bindings.enable': case 'mcp.bindings.disable': {
-        const { expectedRevision, bindingId } = MCP_SERVER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
-        result = await ports.mutate({ kind: 'binding-enabled', bindingId, enabled: actionId === 'mcp.bindings.enable' }, expectedRevision, context); break;
+        const { expectedRevision, ...change } = MCP_SERVER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
+        result = await ports.mutate({ kind: 'binding-enabled', ...change, enabled: actionId === 'mcp.bindings.enable' }, expectedRevision, context); break;
       }
       case 'mcp.bindings.remove': {
         const { expectedRevision, bindingId } = MCP_SERVER_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);

@@ -10,6 +10,8 @@ function projectMcpObservation(input: unknown): unknown {
   return {
     ...(typeof value.status === 'string' ? { status: value.status } : {}),
     ...(typeof value.serverId === 'string' ? { serverId: value.serverId } : typeof entry.id === 'string' ? { serverId: entry.id } : {}),
+    ...(Array.isArray(value.entries) ? { serverIds: value.entries
+      .map(item => readRecord(readRecord(item).entry).id).filter(id => typeof id === 'string') } : {}),
     ...(typeof value.bindingId === 'string' ? { bindingId: value.bindingId } : typeof binding.id === 'string' ? { bindingId: binding.id } : {}),
     ...(typeof value.machineId === 'string' ? { machineId: value.machineId } : {}),
     ...(typeof value.expectedRevision === 'number' || value.expectedRevision === 'absent' ? { expectedRevision: value.expectedRevision } : {}),
