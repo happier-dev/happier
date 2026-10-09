@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createProfileDuplicateDraftV1, createProfileOperations, setBuiltinProfileEnabledPreferenceV1, setProfileFavoritePreferenceV1 } from './profileOperations.js';
+import { createProfileDuplicateDraftV1, createProfileOperations, setBuiltinProfileEnabledPreferenceV1, setProfileFavoritePreferenceV1, type ProfileOperationsPorts } from './profileOperations.js';
 import { ProfileRecordV1Schema, openProfileRecordContentV1, type ProfileRecordV1 } from './profileRecordV1.js';
 import type { ProfileCatalogSnapshotV1 } from './profileCatalogV1.js';
 import { EnvironmentVariableSchema, EnvVarRequirementSchema } from './environmentVariables.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { getBuiltInBackendProfile } from './builtInBackendProfiles.js';
 import { AIBackendProfileSchema } from './backendProfileSchema.js';
-import { readAiLaunchProfileRecords } from './read.js';
+import { isLaunchProfileV2, readAiLaunchProfileRecords } from './read.js';
 import { listAccountSettingsSavedSecretReferences } from '../account/settings/savedSecretMutationOwner.js';
 
 const profile = { v: 2 as const, id: 'a', name: 'Alpha', createdAt: 1, updatedAt: 1,
@@ -436,6 +436,70 @@ describe('Profile semantic operations', () => {
       expect(draft.profile).not.toHaveProperty(key);
     }
   });
+  it('duplicates only a captured unrepresentable MachineLogin definition losslessly with source revision admission', async () => {
+    const legacy = AIBackendProfileSchema.parse({ id: 'machine-login', name: 'Machine login', authMode: 'machineLogin',
+      requiresMachineLoginTargetKey: 'agent:claude', requiresMachineLogin: 'claude', isBuiltIn: true,
+      environmentVariables: [{ name: 'PUBLIC_CONFIG', value: 'retained' }], defaultModelMode: 'retained-model',
+      defaultPermissionModeByAgent: { claude: 'default' }, compatibility: { claude: true }, createdAt: 1, updatedAt: 2 });
+    const retained = ProfileRecordV1Schema.parse({ ...row, id: legacy.id, definition: { kind: 'legacy', profile: legacy },
+      secretBindings: { TOKEN: 'happier:shared-secret:v1:secret-kept', MASKED: null } });
+    let captured: unknown;
+    let writes = 0;
+    const owner = createProfileOperations({
+      readCatalog: () => ({ ...activeAuthority, status: 'ready', records: [{ record: retained, revision: 4 }], diagnostics: [], referenceGuardRevision: 5 }),
+      writeRecord: async input => { writes++; captured = input; return { status: 'updated', id: input.record.id, revision: 0 }; },
+      deleteRecord: async input => ({ status: 'updated', id: input.id, revision: 5 }) });
+    expect(await owner.duplicate({ id: legacy.id, expectedRevision: 3, newProfileId: 'stale-copy', name: 'Stale copy', now: 10 }))
+      .toMatchObject({ status: 'conflict', revision: 4 });
+    expect(writes).toBe(0);
+    const source = owner.read({ id: legacy.id });
+    if (source.status !== 'present') throw new Error('legacy_source_unavailable');
+    const draft = createProfileDuplicateDraftV1({ profile: source.profile, sourceRow: { record: retained, revision: 4 },
+      newProfileId: 'copy', name: 'Machine login copy', now: 10 });
+    expect(draft).toMatchObject({ status: 'draft', profile: { ...legacy, id: 'copy', name: 'Machine login copy',
+      isBuiltIn: false, createdAt: 10, updatedAt: 10, enabled: retained.enabled, promptStack: retained.promptStack },
+      secretBindings: retained.secretBindings, legacyCloneSource: { id: retained.id, revision: 4 } });
+    expect(await owner.duplicate({ id: legacy.id, expectedRevision: 4, newProfileId: 'copy', name: 'Machine login copy', now: 10 }))
+      .toEqual({ status: 'updated', id: 'copy', revision: 0 });
+    expect(captured).toMatchObject({ operation: 'clone-legacy', expectedRevision: 'absent', legacyCloneSource: { id: retained.id, revision: 4 },
+      record: { id: 'copy', enabled: retained.enabled, promptStack: retained.promptStack, secretBindings: retained.secretBindings,
+        definition: { kind: 'legacy', profile: { ...legacy, id: 'copy', name: 'Machine login copy', isBuiltIn: false, createdAt: 10, updatedAt: 10 } } } });
+    expect(await owner.save({ profile: { ...legacy, id: 'arbitrary', name: 'Arbitrary legacy' }, expectedRevision: 'absent' }))
+      .toMatchObject({ status: 'invalid', reason: 'legacy-creation-unsupported' });
+    expect(writes).toBe(1);
+  });
+  it('detaches a captured legacy Artifact without losing inherited bindings or private null masks', async () => {
+    const inherited = 'happier:shared-secret:v1:inherited';
+    const hidden = 'happier:shared-secret:v1:hidden';
+    const legacy = AIBackendProfileSchema.parse({ id: 'artifact-machine-login', name: 'Machine login',
+      authMode: 'machineLogin', requiresMachineLoginTargetKey: 'agent:claude',
+      envVarRequirements: [{ name: 'TOKEN', kind: 'secret', required: true }], createdAt: 1, updatedAt: 2 });
+    const record = ProfileRecordV1Schema.parse({ ...row, id: legacy.id,
+      definition: { kind: 'artifact', artifactId: 'published-machine-login' }, secretBindings: { MASKED: null } });
+    const artifact = { artifactId: 'published-machine-login',
+      header: { kind: 'launch-profile.v1', profileId: legacy.id, name: legacy.name },
+      body: JSON.stringify({ kind: 'launch-profile.v1', profile: legacy, secretBindings: { TOKEN: inherited, MASKED: hidden } }),
+      access: 'view' as const, revision: { headerVersion: 2, bodyVersion: 3 } };
+    const artifactsById = new Map([[artifact.artifactId, artifact]]);
+    const source = readAiLaunchProfileRecords([record], { artifactsById, recordRevisionsById: new Map([[record.id, 4]]) }).entries[0];
+    if (!source || source.kind === 'opaque') throw new Error('profile_definition_unavailable');
+    const draft = createProfileDuplicateDraftV1({ profile: source.profile, sourceRow: { record, revision: 4 }, artifactsById,
+      newProfileId: 'artifact-copy', name: 'Machine login copy', now: 10 });
+    expect(draft).toMatchObject({ status: 'draft', profile: { id: 'artifact-copy', enabled: record.enabled, promptStack: record.promptStack },
+      secretBindings: { TOKEN: inherited, MASKED: null }, legacyCloneSource: { id: record.id, revision: 4,
+        artifactRevision: { artifactId: artifact.artifactId, ...artifact.revision } } });
+    if (draft.status !== 'draft') throw new Error('profile_draft_unavailable');
+    for (const key of ['artifactId', 'viewOnly', 'shared', 'revision', 'profileRecordRevision']) expect(draft.profile).not.toHaveProperty(key);
+    let captured: unknown;
+    const owner = createProfileOperations({ readCatalog: () => ({ ...activeAuthority, status: 'ready',
+      records: [{ record, revision: 4 }], diagnostics: [], referenceGuardRevision: 5 }), artifactsById: () => artifactsById,
+      writeRecord: async input => { captured = input; return { status: 'updated', id: input.record.id, revision: 0 }; },
+      deleteRecord: async input => ({ status: 'updated', id: input.id, revision: 5 }) });
+    expect(await owner.save({ profile: draft.profile, secretBindings: draft.secretBindings, expectedRevision: 'absent',
+      legacyCloneSource: draft.legacyCloneSource })).toMatchObject({ status: 'updated', id: 'artifact-copy' });
+    expect(captured).toMatchObject({ operation: 'clone-legacy', record: { definition: { kind: 'legacy', profile: { id: 'artifact-copy' } },
+      secretBindings: { TOKEN: inherited, MASKED: null } } });
+  });
   it('creates only private membership for a shared view-only Profile and edits its private fields', async () => {
     let catalog: ProfileCatalogSnapshotV1 = { ...activeAuthority, status: 'ready', records: [], diagnostics: [], referenceGuardRevision: 'absent' };
     const artifact = { artifactId: 'published-a', header: { kind: 'launch-profile.v1', profileId: 'a', name: 'Alpha' },
@@ -472,22 +536,34 @@ describe('Profile semantic operations', () => {
   });
   it('keeps the exact retained identity when saving an unchanged granted Artifact as private membership', async () => {
     const retainedId = ' retained-profile ';
-    const content = { kind: 'launch-profile.v1', profile: { ...profile, id: retainedId }, secretBindings: {} };
+    const inheritedRef = 'happier:shared-secret:v1:inherited-token';
+    const replacementRef = 'happier:shared-secret:v1:replacement-token';
+    const content = { kind: 'launch-profile.v1', profile: { ...profile, id: retainedId }, secretBindings: { TOKEN: inheritedRef } };
     const artifact = { artifactId: 'retained-published-profile',
       header: { kind: 'launch-profile.v1', profileId: retainedId, name: profile.name },
       body: JSON.stringify(content), access: 'view' as const, revision: { headerVersion: 2, bodyVersion: 3 } };
-    let captured: unknown;
-    const owner = createProfileOperations({ readCatalog: () => ({ ...activeAuthority, status: 'ready', records: [],
-      diagnostics: [], referenceGuardRevision: 'absent' }), artifactsById: () => new Map([[artifact.artifactId, artifact]]),
-      writeRecord: async input => { captured = input; return { status: 'updated', id: input.record.id, revision: 1 }; },
+    const captured: Array<Parameters<ProfileOperationsPorts['writeRecord']>[0]> = [];
+    let catalog: ProfileCatalogSnapshotV1 = { ...activeAuthority, status: 'ready', records: [],
+      diagnostics: [], referenceGuardRevision: 'absent' };
+    const owner = createProfileOperations({ readCatalog: () => catalog, artifactsById: () => new Map([[artifact.artifactId, artifact]]),
+      writeRecord: async input => { captured.push(input);
+        catalog = { ...catalog, records: [{ record: input.record, revision: 1 }], referenceGuardRevision: 1 };
+        return { status: 'updated', id: input.record.id, revision: 1 }; },
       deleteRecord: async input => ({ status: 'updated', id: input.id, revision: 2 }) });
     const opened = owner.read({ id: retainedId });
     if (opened.status !== 'present') throw new Error('Expected the real admitted Artifact projection');
+    expect(opened.profile.secretBindings).toEqual({ TOKEN: inheritedRef });
     expect(await owner.save({ profile: opened.profile, expectedRevision: 'absent' }))
       .toEqual({ status: 'updated', id: retainedId, revision: 1 });
-    expect(captured).toMatchObject({ operation: 'create', expectedRevision: 'absent', record: {
+    expect(captured[0]).toMatchObject({ operation: 'create', expectedRevision: 'absent', record: {
       id: retainedId, definition: { kind: 'artifact', artifactId: artifact.artifactId }, secretBindings: {}, promptStack: [],
     } });
+    expect(captured[0]?.record.secretBindings).toEqual({});
+    artifact.body = JSON.stringify({ ...content, secretBindings: { TOKEN: replacementRef } });
+    artifact.revision = { headerVersion: 2, bodyVersion: 4 };
+    expect(owner.read({ id: retainedId })).toMatchObject({ status: 'present', revision: 1,
+      record: { secretBindings: {} }, profile: { secretBindings: { TOKEN: replacementRef },
+        revision: { headerVersion: 2, bodyVersion: 4 } } });
   });
   it('refuses a real retained Artifact body edit rather than normalizing it into reference-only membership', async () => {
     const retained = { ...profile, name: ' Alpha ' };
@@ -507,6 +583,29 @@ describe('Profile semantic operations', () => {
       .toMatchObject({ status: 'invalid', reason: 'read-only' });
     expect(writes).toBe(0);
     expect(artifact.body).toBe(JSON.stringify({ kind: 'launch-profile.v1', profile: retained, secretBindings: {} }));
+  });
+  it('saves unchanged granted Artifact membership when target-map insertion order differs', async () => {
+    const retained = { ...profile, compatibilityByTargetKey: {
+      'agent:happier.agent.claude/claude': true, 'agent:happier.agent.codex/codex': false,
+    } };
+    const body = JSON.stringify({ kind: 'launch-profile.v1', profile: retained, secretBindings: {} });
+    const artifact = { artifactId: 'retained-map-order-profile',
+      header: { kind: 'launch-profile.v1', profileId: retained.id, name: retained.name },
+      body, access: 'view' as const, revision: { headerVersion: 2, bodyVersion: 3 } };
+    let captured: unknown;
+    const owner = createProfileOperations({ readCatalog: () => ({ ...activeAuthority, status: 'ready', records: [],
+      diagnostics: [], referenceGuardRevision: 'absent' }), artifactsById: () => new Map([[artifact.artifactId, artifact]]),
+      writeRecord: async input => { captured = input; return { status: 'updated', id: input.record.id, revision: 1 }; },
+      deleteRecord: async input => ({ status: 'updated', id: input.id, revision: 2 }) });
+    const opened = owner.read({ id: retained.id });
+    if (opened.status !== 'present' || !isLaunchProfileV2(opened.profile)) throw new Error('Expected the real V2 Artifact projection');
+    const compatibilityByTargetKey = Object.fromEntries(Object.entries(opened.profile.compatibilityByTargetKey).reverse());
+    expect(await owner.save({ profile: { ...opened.profile, compatibilityByTargetKey }, expectedRevision: 'absent' }))
+      .toEqual({ status: 'updated', id: retained.id, revision: 1 });
+    expect(captured).toMatchObject({ operation: 'create', expectedRevision: 'absent', record: {
+      id: retained.id, definition: { kind: 'artifact', artifactId: artifact.artifactId }, secretBindings: {}, promptStack: [],
+    } });
+    expect(artifact.body).toBe(body);
   });
   it('attaches private fields to a granted Artifact with the explicit absent-membership guard', async () => {
     const artifact = { artifactId: 'published-a', header: { kind: 'launch-profile.v1', profileId: 'a', name: 'Alpha' },

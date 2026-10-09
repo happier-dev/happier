@@ -19,7 +19,9 @@ import { ArtifactRevisionV1Schema } from '../artifacts/artifactActionsV1.js';
 import { listSavedSecretReferenceCarrierPathsV1 } from '../account/settings/savedSecretReferenceV1.js';
 import type { ProfileTransferControlV1 } from './profileTransferV1.js';
 import type { ProviderContributionV1 } from '../providers/contributions/v1.js';
-import { listLegacyAiLaunchProfileUnpromotedCredentialEnvironmentVariableNamesV1 } from '../providers/migrations/legacyProfilesV1.js';
+import { listLegacyAiLaunchProfileUnpromotedCredentialEnvironmentVariableNamesV1, requiresLegacyAiLaunchProfileProviderSourcePreparationV1 } from '../providers/migrations/legacyProfilesV1.js';
+import { LaunchProfileIdV2Schema } from './v2/profileId.js';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { z } from 'zod';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
@@ -230,6 +232,40 @@ export function readEffectiveProfileSecretBindingsV1(record: ProfileRecordV1, op
   const artifact = resource?.artifactId === artifactId ? readLaunchProfileArtifactForReferenceCensusV1(resource) : null;
   if (!artifact || artifact.profile.id !== record.id) return null;
   return resolveEffectiveProfileSecretBindingsV1(artifact.secretBindings, record.secretBindings);
+}
+
+/** The only new legacy body is an exact copy of a captured, still-unrepresentable source. */
+export function createLegacyProfileCloneRecordV1(input: Readonly<{
+  source: ProfileRecordV1; id: string; name: string; createdAt: number; updatedAt: number;
+  artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
+}>): ProfileRecordV1 | null {
+  const artifact = input.source.definition.kind === 'artifact'
+    ? input.artifactsById?.get(input.source.definition.artifactId) : undefined;
+  const body = input.source.definition.kind === 'legacy' ? input.source.definition.profile
+    : artifact ? readLaunchProfileArtifactV1(artifact)?.profile : undefined;
+  if (!body || 'v' in body || body.id !== input.source.id
+    || !(body.authMode === 'machineLogin' || body.requiresMachineLogin || body.requiresMachineLoginTargetKey)
+    || requiresLegacyAiLaunchProfileProviderSourcePreparationV1(body, input.source.secretBindings)
+    || !LaunchProfileIdV2Schema.safeParse(input.id).success || input.id === input.source.id
+    || isHistoricalBuiltInAiLaunchProfileIdV1(input.id)) return null;
+  const effective = readEffectiveProfileSecretBindingsV1(input.source, { artifactsById: input.artifactsById ?? new Map() });
+  if (!effective) return null;
+  const clone = ProfileRecordV1Schema.safeParse({ ...input.source, id: input.id,
+    definition: { kind: 'legacy', profile: { ...body, id: input.id, name: input.name,
+      isBuiltIn: false, createdAt: input.createdAt, updatedAt: input.updatedAt } },
+    secretBindings: { ...effective, ...input.source.secretBindings } });
+  return clone.success ? clone.data : null;
+}
+
+export function isLegacyProfileSourcePreservingCloneV1(input: Readonly<{
+  source: ProfileRecordV1; record: ProfileRecordV1; artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
+}>): boolean {
+  if (input.record.definition.kind !== 'legacy') return false;
+  const body = input.record.definition.profile;
+  const expected = createLegacyProfileCloneRecordV1({ ...input, id: input.record.id,
+    name: body.name, createdAt: body.createdAt, updatedAt: body.updatedAt });
+  return expected !== null && sameStrictJsonValue(projectNativeJsonValueForTransport(expected),
+    projectNativeJsonValueForTransport(input.record));
 }
 
 /** One projection for opened private records; Artifact grants remain resource-owned. */
