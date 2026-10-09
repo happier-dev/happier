@@ -70,7 +70,7 @@ export function describeManagedLifecycleState(
     case 'observationUnavailable':
       return { tone: 'warning', line: t('managedMachines.creation.observationUnavailable'), actions: ['checkNow'] };
     case 'creationCanceledCleanup':
-      return { tone: 'warning', line: t('managedMachines.creation.canceledCleanup'), actions: ['checkNow'] };
+      return { tone: 'warning', line: t('managedMachines.creation.canceledCleanup'), actions: ['checkNow', 'openProvider'] };
     case 'stopPending':
       return {
         tone: 'pending',
@@ -160,7 +160,7 @@ export function describeManagedLifecycleState(
       return {
         tone: 'warning',
         line: t('managedMachines.cleanup.unknown'),
-        actions: ['checkNow'],
+        actions: ['checkNow', 'openProvider'],
       };
     case 'providerRemoved':
       return {
@@ -217,7 +217,7 @@ export function describeManagedLifecycleState(
       return {
         tone: 'warning',
         line: t('managedMachines.creation.unknown', { name: state.name }),
-        actions: ['checkNow'],
+        actions: ['checkNow', 'openProvider'],
       };
   }
 }

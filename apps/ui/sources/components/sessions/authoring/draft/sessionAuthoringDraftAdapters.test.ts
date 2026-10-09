@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
+import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import {
     buildAutomationTemplateFromSessionAuthoringDraft,
@@ -19,6 +20,7 @@ import {
     buildSessionServerStartSpawnDraftV1FromAuthoringDraft,
     buildPersistedNewSessionDraftFromAuthoringDraft,
     buildSessionSpawnNewInputV2FromAuthoringDraft,
+    buildManagedAcquireAgentStartV1FromAuthoringDraft,
     buildNewSessionTempDataFromAuthoringDraft,
     hydrateSessionAuthoringDraftFromAutomationTemplate,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
@@ -84,6 +86,30 @@ function intervalAutomationDraft(params: Readonly<{
 }
 
 describe('sessionAuthoringDraftAdapters', () => {
+    it('projects the same authored Session into pre-acquire admission without inventing an execution target', () => {
+        const draft = buildNewSessionAuthoringDraftFromResolvedInputs({
+            directory: '/workspace/project', prompt: 'Submitted work', sessionName: 'Submitted Session',
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            permissionMode: 'read-only', acpSessionModeId: 'plan', profileId: 'profile',
+            sessionConfigOptionOverrides: buildAcpConfigOptionOverridesV1({
+                updatedAt: 23, overrides: { reasoning_effort: { value: 'high', updatedAt: 23 } },
+            }),
+            environmentVariables: { PRIVATE_TOKEN: 'guest-process-only' },
+            connectedServices: null,
+        });
+        const params = { draft, creationKey: 'managed-send', permissionMode: 'read-only',
+            configurationUpdatedAtMs: 23, initialMessage: 'Submitted work' };
+        const continuation = buildManagedAcquireAgentStartV1FromAuthoringDraft(params);
+        expect(continuation).toMatchObject({ title: 'Submitted Session', profileId: 'profile', agentModeId: 'plan',
+            permissionMode: 'read-only', initialInput: { text: 'Submitted work' },
+            configuration: { options: { reasoning_effort: { value: 'high', updatedAtMs: 23 } } } });
+        expect(continuation).not.toHaveProperty('executionTarget');
+        expect(continuation).not.toHaveProperty('environmentVariables');
+        const { executionTarget, ...spawnAuthoring } = buildSessionSpawnNewInputV2FromAuthoringDraft({ ...params,
+            draft: { ...draft, executionTarget: { kind: 'machine', target: { serverId: 'home', machineId: 'enrolled' } } } });
+        expect(executionTarget.machineId).toBe('enrolled');
+        expect(continuation).toEqual(spawnAuthoring);
+    });
     it('round-trips initial triggers with the draft and includes them in the atomic spawn input', () => {
         const initialTriggers = SessionInitialTriggerV1Schema.array().parse([{
             trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'everyMatch' } },

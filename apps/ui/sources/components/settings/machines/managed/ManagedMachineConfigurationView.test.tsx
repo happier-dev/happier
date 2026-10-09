@@ -56,6 +56,40 @@ const provisioner = { contribution: { pluginId: 'custom.compute', localId: 'vm' 
 } };
 
 describe('mounted managed configurator', () => {
+    it('discloses conditional cloud quotes and lets coupled native dimensions be staged without acquiring', async () => {
+        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://conditional-quotes.example',
+            serverIdentityId: 'srv_conditional_quotes', accountId: 'owner', currentAccount: true });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+        const nativeFacts = { size: { id: 'small', title: 'Small' }, image: { id: 'linux', title: 'Linux' }, location: { id: 'west', title: 'West' } };
+        const prices = (amount: string) => [{ amount, currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 }];
+        const choices = [{ id: 'west-small', title: 'West small', launch: { cpu: 2 }, nativeFacts, prices: prices('1') },
+            { id: 'west-other-network', title: 'West other network', launch: { cpu: 3 }, nativeFacts, prices: prices('2') },
+            { id: 'east-other-image', title: 'East other image', launch: { cpu: 4 }, prices: prices('3'), nativeFacts: {
+                ...nativeFacts, image: { id: 'other', title: 'Other image' }, location: { id: 'east', title: 'East' } } }];
+        for (const [actionId, result] of [['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+            ['machines.provisioners.check', { available: true }], ['machines.provisioners.options', { choices }]] as const)
+            harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+                const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+                return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+            } });
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+            provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.images:linux')).not.toBeNull());
+        await act(async () => screen.pressByTestId('managed-config.images:linux'));
+        const sizes = screen.tree.findAll(node => node.props.testID === 'managed-config.sizes' && typeof node.props.onChange === 'function')[0];
+        await act(async () => sizes?.props.onChange('small'));
+        await act(async () => screen.pressByTestId('managed-config.locations:west'));
+        expect(screen.getTextContent()).toContain(t('managedMachines.price.unavailable', { provider: 'Virtual machine' }));
+        await act(async () => screen.pressByTestId('managed-config.images:other'));
+        expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+        await act(async () => screen.pressByTestId('managed-config.locations:east'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+        await screen.unmount();
+    });
     it('keeps the actual Modal timeout as one editable field inside Ends and revalidates its exact native launch', async () => {
         const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
         restoreViewport = () => viewport.mockRestore();
@@ -364,7 +398,9 @@ describe('mounted managed configurator', () => {
         expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
         await screen.unmount();
     });
-    it('opens and saves a preset without allocating; preserves selected draft after failed Create', async () => {
+    it('reviews a one-off deadline, omits it from a saved preset, and preserves it after failed Create', async () => {
+        const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
+        restoreViewport = () => viewport.mockRestore();
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute.example', serverIdentityId: 'srv_compute', accountId: 'owner', currentAccount: true });
         const { storage } = await import('@/sync/domains/state/storage');
         const metadata = createMachineFixture().metadata;
@@ -388,11 +424,27 @@ describe('mounted managed configurator', () => {
         await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config.choice:small').length).toBeGreaterThan(0));
         await act(async () => screen.pressByTestId('managed-config.choice:small'));
         expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
+        const keep = 'managed-config.receipt:keep';
+        const deadline = { kind: 'deadline', at: new Date(2099, 0, 2, 18, 30).getTime(), effect: 'stop', interrupts: true };
+        expect(screen.findByTestId(`${keep}:choice:deadline`)).not.toBeNull();
+        expect(screen.findByTestId(`${keep}:deadline:confirm`)).toBeNull();
+        await screen.pressByTestIdAsync(`${keep}:choice:deadline`);
+        await act(async () => screen.changeTextByTestId(`${keep}:deadline-date-input`, '2099-01-02'));
+        await act(async () => screen.changeTextByTestId(`${keep}:deadline-time-input`, '18:30'));
+        expect(screen.findByTestId(`${keep}:deadline:interrupts`)).not.toBeNull();
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+        expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
+        await screen.pressByTestIdAsync(`${keep}:deadline:confirm`);
+        expect(screen.findByTestId('managed-config.receipt:save-deadline-note')).not.toBeNull();
         const saved = { id: 'saved', homeId: 'srv_compute', revision: 1, name: 'Virtual machine', owner: { kind: 'account', accountId: 'owner' },
             recipe: { provider: provisioner.contribution, schemaVersion: 1, name: 'Virtual machine', choices: { cpu: 2 } }, controller: { machineId: 'host', installationId: 'installation' } };
         harness.answer(serverId, '/v1/machines/presets/create', { body: { kind: 'saved', preset: saved } });
         await act(async () => screen.pressByTestId('managed-config.save-preset'));
         await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
+        expect(harness.requestsFor('/v1/machines/presets/create')[0]?.input).toMatchObject({
+            recipe: saved.recipe, controller: saved.controller, wakeOnAcceptedMessage: true,
+        });
+        expect(harness.requestsFor('/v1/machines/presets/create')[0]?.input).not.toHaveProperty('retention');
         expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
         harness.answer(serverId, '/v1/actions/machines.managed.acquire', { status: 403, body: { code: 'permission_denied' } });
         harness.answer(serverId, '/v1/machines', { body: [{ id: 'host', kind: 'persistent', installationId: 'installation',
@@ -400,6 +452,8 @@ describe('mounted managed configurator', () => {
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }] });
         await act(async () => screen.pressByTestId('managed-config.create'));
         await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config.error').length).toBeGreaterThan(0));
+        expect(ExternalActionRequestEnvelopeV1Schema.parse(harness.requestsFor('/v1/actions/machines.managed.acquire')[0]?.input).input)
+            .toMatchObject({ selection: { retention: deadline, wakeOnAcceptedMessage: true }, reviewedFacts: { retention: deadline } });
         expect(screen.tree.findAll(node => node.props.testID === 'managed-config.choice:small' && node.props.selected === true).length).toBeGreaterThan(0);
         harness.answer(serverId, '/v1/actions/machines.managed.acquire', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);

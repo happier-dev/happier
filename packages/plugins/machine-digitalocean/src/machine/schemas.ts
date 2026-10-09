@@ -39,5 +39,6 @@ export const nativeSizeSchema = z.object({
 export const nativeRegionSchema = z.object({ slug: text, name: text, available: z.boolean(), sizes: z.array(text) });
 export const nativeImageSchema = z.object({
   id: nativeId, slug: z.optional(z.nullable(text)), name: text, distribution: z.optional(text), regions: z.array(text), status: text, type: text,
+  description: z.optional(z.nullable(z.string().check(z.trim()))),
 });
 export type NativeImage = z.infer<typeof nativeImageSchema>;

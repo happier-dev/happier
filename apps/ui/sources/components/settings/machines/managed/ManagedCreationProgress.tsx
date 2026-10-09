@@ -18,6 +18,7 @@ import { describeActionOperationStatusLabel, resolveActionOperationStatus } from
 
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
 export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineV1; handlers?: ManagedLifecycleHandlers;
+    provider?: string;
     operation?: ActionOperationProjection | null;
     /** D53: a failed Set up recovers on this same machine, or is skipped; never re-acquired. */
     setupRecovery?: Readonly<{ retry?: () => void; skip?: () => void }> }>) {
@@ -55,7 +56,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         {awaitingConnection ? <ItemGroup>
             <ManagedMachineStateRow name={machine.launch.name}
                 mark={<Icon name="desktop" color={theme.colors.text.secondary} />}
-                state={state} handlers={props.handlers ?? {}}
+                state={state} provider={props.provider} handlers={props.handlers ?? {}}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup) ? <Item title={t('managedMachines.creation.mayBill')}
                 mode="info" showChevron={false} titleLines={0} testID="managed-machine.possible-cost" /> : null}
@@ -65,6 +66,9 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 testID="managed-machine.recovery" accessoryLayout="stacked" rightElement={
                     <Text selectable style={Typography.mono()}>{machine.recovery?.reference ?? JSON.stringify(machine.resource?.value)}</Text>
                 } />
+            {machine.allocation !== 'confirmed-absent' && (machine.cleanup || machine.allocation === 'may-exist')
+                && !machine.recovery?.consoleUrl ? <Item title={t('managedCleanup.consoleHelp')} mode="info" showChevron={false}
+                    titleLines={0} testID="managed-machine.recovery-manual" /> : null}
         </ItemGroup> : null}
     </>;
 }

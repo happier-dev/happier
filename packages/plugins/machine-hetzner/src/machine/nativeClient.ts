@@ -25,9 +25,12 @@ const sizeSchema = mini.object({
 });
 const imageSchema = mini.object({
   id: nativeId(), name: mini.nullable(text()), architecture: mini.enum(['x86', 'arm']),
+  description: mini.optional(mini.nullable(mini.string().check(mini.trim()))),
   type: mini.enum(['system', 'snapshot', 'backup', 'app']), status: text(), deprecated: mini.nullable(text()),
 });
-const locationSchema = mini.object({ id: nativeId(), name: text(), description: text() });
+const locationSchema = mini.object({ id: nativeId(), name: text(), description: text(),
+  country: mini.optional(mini.nullable(text())),
+});
 const pricingSchema = mini.object({
   currency: text(),
   primary_ips: mini.optional(mini.array(mini.object({ type: mini.enum(['ipv4', 'ipv6']), prices: mini.array(locationPriceSchema) }))),

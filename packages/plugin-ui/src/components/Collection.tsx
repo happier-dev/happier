@@ -21,6 +21,7 @@ import {
   useOptionalHappierUiTypography,
 } from '../environment/context.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import { useHappierPageSection } from '../presentation/layout/PageSection.js';
 import { HAPPIER_RADIUS_V1 } from '../environment/radius.js';
 import { HappierStatusDot } from '../presentation/status/StatusDot.js';
 import { PluginUiIconGlyph, type IconName } from './Icon.js';
@@ -59,7 +60,7 @@ import { HappierText } from '../presentation/text/Text.js';
 import { CollectionCards, CollectionGroupActionButton, readCollectionLineHeight } from './CollectionCards.js';
 import { HappierSkeletonBlock } from '../presentation/feedback/Skeleton.js';
 import { List, ListItemSelectionContext, type ItemProps, type ListMultiSelectionCapabilityProps, type ListSingleChoiceCapabilityProps, type ListSectionData, type ListSelectionProps } from './List.js';
-import { resolveHappierRovingTabStop } from '../presentation/collection/semantics.js';
+import { encodeHappierSectionRowCellKey, resolveHappierRovingTabStop } from '../presentation/collection/semantics.js';
 import { HappierRadioMark } from '../presentation/form/RadioMark.js';
 import { HappierChevron } from '../presentation/collection/DisclosureChevron.js';
 import { ListCollectionControlContext, type ListCollectionControl } from './listCollectionControl.js';
@@ -71,6 +72,7 @@ import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
 import { CollectionDetailHeadingFocusContext, useCollectionDetailHeadingFocusInternal } from './Focus.js';
 import { CollectionVirtualizerContext, type CollectionVirtualizer } from '../presentation/collection/collectionVirtualizer.js';
+import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
 
 /**
  * The Collection (COLLECTION.md §3–§4, §7, §10.1): one item anatomy drawn as a `table` at rest and as a `list` beside
@@ -166,11 +168,7 @@ export type CollectionGlyphBadge = Readonly<
 export type CollectionGroupAction = Readonly<{ label: string; onPress: () => void }>;
 
 /** A row's own controls, beside the row's press target (the grid's sibling cell). */
-type CollectionRowActionItems = readonly Readonly<{
-  id: string;
-  label: string;
-  disabled?: boolean;
-}>[];
+type CollectionRowActionItems = readonly Omit<NonNullable<ItemProps['secondaryActions']>[number], 'icon'>[];
 
 /**
  * Keep the secondary-action callback and its items one discriminated capability. List.Item
@@ -179,6 +177,7 @@ type CollectionRowActionItems = readonly Readonly<{
  */
 export type CollectionRowActions = Readonly<{
   accessory?: ReactNode;
+  accessoryWraps?: boolean;
   busy?: boolean;
 }> & (
   | Readonly<{
@@ -251,9 +250,11 @@ export type CollectionProps<Item> = Readonly<{
    * `page`: a page-sized collection scrolls as the page — its `header`, every row and its `footer` in one scroller
    * and one reading and focus order, with no virtualization (for a few dozen items, not an open-ended feed).
    * `collection` (default): the rows scroll inside the Collection, virtualized, under a fixed header.
+   * `page-virtualized`: a table (including its responsive list) windows in a positioned containing page;
+   * otherwise uses collection scrolling.
    */
-  scroll?: 'collection' | 'page';
-  /** Platform adapter for this Collection's Lists; page-scrolling rows remain fully mounted. */
+  scroll?: 'collection' | 'page' | 'page-virtualized';
+  /** Platform adapter for collection-scrolling Lists; page modes retain the containing page's scroll owner. */
   virtualizer?: CollectionVirtualizer;
   /**
    * The items are still arriving: the table and list hold their row geometry with skeleton rows that fill the
@@ -787,6 +788,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
       {...(anatomy.accessibilityHint?.(item) === undefined ? {} : { accessibilityHint: anatomy.accessibilityHint(item) })}
       {...(anatomy.testID === undefined ? {} : { testID: anatomy.testID(item) })}
       {...(actions.busy === undefined ? {} : { busy: actions.busy })}
+      {...(actions.accessoryWraps === undefined ? {} : { accessoryWraps: actions.accessoryWraps })}
       {...(accessory === null ? {} : { accessory })}
       secondaryActions={actions.secondaryActions}
       onSecondaryAction={actions.onSecondaryAction}
@@ -804,6 +806,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
       {...(anatomy.accessibilityHint?.(item) === undefined ? {} : { accessibilityHint: anatomy.accessibilityHint(item) })}
       {...(anatomy.testID === undefined ? {} : { testID: anatomy.testID(item) })}
       {...(actions.busy === undefined ? {} : { busy: actions.busy })}
+      {...(actions.accessoryWraps === undefined ? {} : { accessoryWraps: actions.accessoryWraps })}
       {...(accessory === null ? {} : { accessory })}
     >
       {rowContents}
@@ -954,10 +957,14 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   const detail = props.detail ?? 'auto';
   // A page-sized collection scrolls as the page: its header, items and footer in one scroller. A board's columns
   // scroll on their own, so a board never does.
-  const pageScroll = props.scroll === 'page' && presentation !== 'board';
+  const pageTracker = useOptionalPluginUiScrollActivityTracker();
+  const pageVirtualized = props.scroll === 'page-virtualized' && pageTracker?.scrollToOffset !== undefined
+    && presentation === 'table';
+  const pageScroll = (props.scroll === 'page' && presentation !== 'board') || pageVirtualized;
   // A page-scrolling list sits among the page's other sections, so its groups take the page section anatomy:
   // a section title above one sheet of rows, not a dense list's caption band.
   const palette = useOptionalHappierUiPalette();
+  const enclosingPageSheet = useHappierPageSection();
   const pageSections = pageScroll && presentation === 'list' && palette !== null;
 
   // ---- measured geometry: the split owner's pure rule, never a device label ----
@@ -1229,6 +1236,17 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   });
   const tabStopKey = tabStopIndex === null ? null : navigationKeys[tabStopIndex] ?? null;
   const toggleExpanded = model.actions.toggleExpanded;
+  const pageCellHeights = useMemo(() => new Map(cellsRef.current.flatMap(cell => [
+    [cell.key, cell[rowGeometry]] as const,
+    [encodeHappierSectionRowCellKey(cell.key), cell[rowGeometry]] as const,
+  ])), [sections, metrics, rowGeometry, grouped]);
+  const pageGeometry = useMemo(() => ({
+    rowHeight: (key: string) => pageCellHeights.get(key)
+      ?? (rowGeometry === 'table' ? metrics.tableRow : metrics.listRow),
+    headerHeight: metrics.groupHeader,
+    width: size?.width ?? null,
+    defaultRowHeight: rowGeometry === 'table' ? metrics.tableRow : metrics.listRow,
+  }), [pageCellHeights, rowGeometry, metrics, size?.width]);
   const control = useMemo<ListCollectionControl>(() => ({
     ownsSelectionRows: true,
     hideChrome: true,
@@ -1279,6 +1297,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       ),
     }),
     ...(pageScroll ? { pageScroll: true } : {}),
+    ...(pageVirtualized ? { pageVirtualization: pageGeometry } : {}),
     wrapSectionHeader: (sectionKey, header) => (
       <driver.AnimatedView
         value={progress}
@@ -1289,7 +1308,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         {header}
       </driver.AnimatedView>
     ),
-  }), [driver, expandable, metrics.groupHeader, model, multipleStore, navigationKeys, pageScroll, pageSections, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, toggleExpanded, transition, view.scrollRequest, viewportScrollRequest]);
+  }), [driver, expandable, metrics, model, multipleStore, navigationKeys, pageScroll, pageVirtualized, pageGeometry, pageSections, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, toggleExpanded, transition, view.scrollRequest, viewportScrollRequest]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);
@@ -1531,11 +1550,19 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       <View ref={rootRef} testID={props.testID} style={rootStyle} onLayout={pageScroll ? onPageViewportLayout : undefined}>
         {/* A page-sized collection scrolls the page's own header and footer with its items. */}
         {pageScroll ? null : props.header}
-        <PageScroller enabled={pageScroll} viewport={viewport} request={viewportScrollRequest}>
+        <PageScroller enabled={pageScroll && !pageVirtualized} viewport={viewport} request={viewportScrollRequest}>
         {pageScroll ? props.header : null}
         <View testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}
           style={[pageScroll ? pageStageStyle : rootStyle,
-            pageSections ? { marginHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx } : null]}>
+            // A standalone page table has the page sheet edge even when it recomposes as a list.
+            // A nested sheet already owns that edge (for example the configurator's size table).
+            pageSections || (pageScroll && presentation === 'table' && palette !== null && enclosingPageSheet === null)
+              ? { marginHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx } : null,
+            composition === 'table' && hasRows ? {
+              borderWidth: 1,
+              borderColor: theme.colors.divider,
+              borderRadius: HAPPIER_RADIUS_V1.xl,
+            } : null]}>
         <driver.AnimatedView value={progress} tracks={fadeTracks} style={pageScroll ? pageStageRowStyle : stageStyle}>
             <View
               testID={props.listTestID}

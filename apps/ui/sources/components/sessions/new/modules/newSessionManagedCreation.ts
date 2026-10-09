@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -39,18 +40,23 @@ export type NewSessionManagedCreationResult =
     | Readonly<{ kind: 'failed'; code: string }>;
 
 /** Receipt fields disclose consequences; only the strict reviewed effect enters admission. */
-export function buildNewSessionManagedAcquireInput(draft: ManagedMachineSelectionDraft): ManagedAcquireInputV1 {
-    return ManagedAcquireInputV1Schema.parse(draft.selection.kind === 'one-off'
+export function buildNewSessionManagedAcquireInput(
+    draft: ManagedMachineSelectionDraft,
+    agentStart?: ManagedAcquireAgentStartV1,
+): ManagedAcquireInputV1 {
+    const reviewed = draft.selection.kind === 'one-off'
         ? { selection: draft.selection, reviewedFacts: draft.receipt }
         : { selection: draft.selection, controller: draft.receipt.controller,
             retention: draft.receipt.retention, wakeOnAcceptedMessage: draft.receipt.wakeOnAcceptedMessage,
-            reviewedFacts: draft.receipt });
+            reviewedFacts: draft.receipt };
+    return ManagedAcquireInputV1Schema.parse({ ...reviewed, ...(agentStart ? { agentStart } : {}) });
 }
 
 /** Explicit Send joins the admitted controller operation, then reads the actual enrolled target. */
 export async function runNewSessionManagedCreation(input: Readonly<{
     draft: ManagedMachineSelectionDraft;
     acquisition: ManagedMachineAcquisitionDraft;
+    agentStart?: ManagedAcquireAgentStartV1;
     scope: ServerAccountScope;
     signal: AbortSignal;
     isCurrent: () => boolean;
@@ -131,7 +137,7 @@ export async function runNewSessionManagedCreation(input: Readonly<{
         const actionId = input.retryInstallation ? 'machines.managed.bootstrap.retry' as const : 'machines.managed.acquire' as const;
         const actionInput = input.retryInstallation && alreadyAdmitted
             ? { homeId: alreadyAdmitted.homeId, managedId: alreadyAdmitted.id, expectedIntentRevision: alreadyAdmitted.intentRevision }
-            : buildNewSessionManagedAcquireInput(input.draft);
+            : buildNewSessionManagedAcquireInput(input.draft, input.agentStart);
         const accepted = await awaitActionApprovalResult<ManagedAcceptedV1, { kind: 'accepted'; value: ManagedAcceptedV1 } | { kind: 'failed'; code: string }>({
             signal: input.signal,
             execute: async callbacks => {

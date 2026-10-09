@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "Maschinenvorlagen konnten nicht geladen werden. Versuche es erneut.",
         ownerPersonal: "Deine",
         futureOnly: "Änderungen gelten für neue Maschinen. Bestehende behalten ihre Auswahl.",
+        deadlineOmitted: "Diese Frist wird nicht in der Vorlage gespeichert.",
         use: "Vorlage verwenden",
         createOne: "Eine erstellen",
         saveAs: "Als Vorlage speichern",

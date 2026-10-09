@@ -22,6 +22,7 @@ installSettingsViewCommonModuleMocks({
 afterEach(() => {
   standardCleanup();
   modal.show.mockClear();
+  modal.hide.mockClear();
 });
 
 async function renderConfigurator(onCreate: () => void, primaryLabel = 'Create server', primaryTestID?: string) {
@@ -55,6 +56,13 @@ async function renderConfigurator(onCreate: () => void, primaryLabel = 'Create s
 }
 
 describe('ManagedMachineConfigurator on a phone', () => {
+  it('retires its protected receipt sheet when the configuration view is withdrawn', async () => {
+    const screen = await renderConfigurator(vi.fn());
+    await act(async () => screen.pressByTestId('cfg.summary'));
+    expect(modal.hide).not.toHaveBeenCalled();
+    await screen.unmount();
+    expect(modal.hide).toHaveBeenCalledWith('sheet-1');
+  });
   it('keeps the caller primary operation reachable with its public selector on compact and receipt paths', async () => {
     const onUse = vi.fn();
     const screen = await renderConfigurator(onUse, 'Use', 'managed-config.use');

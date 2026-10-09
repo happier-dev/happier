@@ -46,13 +46,32 @@ export function managedConfiguratorDimensionSelection(draft: ManagedConfigurator
 function compatibleDimensionChoice(choice: Choice, selection: Partial<Record<ManagedConfiguratorDimension, string>>) {
     return dimensions.every(dimension => !selection[dimension] || choice.nativeFacts?.[dimension]?.id === selection[dimension]);
 }
+/** Options selectors constrain their corresponding launch fields; query-only fields have no launch value. */
+function compatibleLaunchSelectors(launch: unknown, selectors: Readonly<Record<string, unknown>>): boolean {
+    // Scalar launches have no named fields. Every options field is query-only for that native shape.
+    const fields = launch && typeof launch === 'object' && !Array.isArray(launch) ? launch : {};
+    return compatibleLaunchSelectorValues(fields, selectors);
+}
+function compatibleLaunchSelectorValues(launch: unknown, selectors: unknown): boolean {
+    if (!selectors || typeof selectors !== 'object' || Array.isArray(selectors)) return pluginJsonValuesEqual(launch, selectors);
+    if (!launch || typeof launch !== 'object' || Array.isArray(launch)) return false;
+    const values = launch as Record<string, unknown>;
+    return Object.entries(selectors).every(([key, value]) => !(key in values) || compatibleLaunchSelectorValues(values[key], value));
+}
 export function managedConfiguratorDimensionChoices(draft: ManagedConfiguratorDraft, dimension: ManagedConfiguratorDimension) {
     const candidates = [...draft.choices, ...(draft.selected ? [draft.selected] : [])];
     const ids = [...new Set(candidates.flatMap(choice => choice.nativeFacts?.[dimension]?.id ? [choice.nativeFacts[dimension]!.id] : []))];
+    const remainingSelection = { ...managedConfiguratorDimensionSelection(draft), [dimension]: undefined };
     return ids.map(id => {
         const choice = candidates.find(candidate => candidate.nativeFacts?.[dimension]?.id === id)!;
-        const available = draft.choices.find(candidate => candidate.available !== false && candidate.nativeFacts?.[dimension]?.id === id);
-        return { choice: available ?? choice, available: !!available };
+        const selectable = draft.choices.filter(candidate => candidate.available !== false && candidate.nativeFacts?.[dimension]?.id === id
+            && compatibleLaunchSelectors(candidate.launch, draft.optionsSelectors ?? {}));
+        const applicable = selectable.filter(candidate => compatibleDimensionChoice(candidate, remainingSelection));
+        const representative = applicable[0] ?? choice;
+        // A conditional or unavailable comparison must never borrow an arbitrary region/network quote.
+        const prices = applicable.length === 1 ? representative.prices : undefined;
+        return { choice: prices === representative.prices ? representative : { ...representative, prices }, available: applicable.length > 0,
+            selectable: selectable.length > 0 };
     });
 }
 /** Native launch values remain indivisible. A dimension change never synthesizes provider selectors. */
@@ -62,7 +81,8 @@ export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDra
     // A bound duration is edited through the declared options field, not selected a second time.
     const selection = { ...Object.fromEntries(Object.entries(managedConfiguratorDimensionSelection(draft))
         .filter(([key]) => independentDimensions.some(dimensionKey => dimensionKey === key))), [dimension]: id };
-    const choice = draft.choices.find(candidate => candidate.available !== false && compatibleDimensionChoice(candidate, selection));
+    const choice = draft.choices.find(candidate => candidate.available !== false && compatibleDimensionChoice(candidate, selection)
+        && compatibleLaunchSelectors(candidate.launch, draft.optionsSelectors ?? {}));
     if (!draft.choices.some(candidate => candidate.available !== false && candidate.nativeFacts?.[dimension]?.id === id)) return draft;
     const complete = independentDimensions.every(key => !draft.choices.some(candidate => candidate.nativeFacts?.[key]) || !!selection[key]);
     return { ...draft, dimensionSelection: complete && choice ? undefined : selection, selected: complete && choice ? choice : null };

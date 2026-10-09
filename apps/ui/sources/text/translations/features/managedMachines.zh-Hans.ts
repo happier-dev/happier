@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "无法加载机器预设。请重试。",
         ownerPersonal: "你的",
         futureOnly: "修改仅适用于新机器。现有机器保留原有选择。",
+        deadlineOmitted: "预设不会保存此截止时间。",
         use: "使用预设",
         createOne: "创建一台",
         saveAs: "保存为预设",

@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "Nie udało się wczytać ustawień maszyn. Spróbuj ponownie.",
         ownerPersonal: "Twoje",
         futureOnly: "Zmiany dotyczą nowych maszyn. Istniejące zachowują swoje wybory.",
+        deadlineOmitted: "Ten termin nie zostanie zapisany w presecie.",
         use: "Użyj ustawienia",
         createOne: "Utwórz",
         saveAs: "Zapisz jako ustawienie",

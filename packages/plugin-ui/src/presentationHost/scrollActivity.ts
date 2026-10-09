@@ -11,6 +11,8 @@ export type PluginUiScrollActivityTracker = Readonly<{
   measureSpan(node: unknown): Promise<Readonly<{ top: number; height?: number }> | null>;
   invalidateLayout(): void;
   getLayoutRevision(): number;
+  /** Position the same physical page; Collection/List retain choice and focus ownership. */
+  scrollToOffset?(offset: number): void;
 }>;
 
 const ScrollActivityContext = createContext<PluginUiScrollActivityTracker | null>(null);

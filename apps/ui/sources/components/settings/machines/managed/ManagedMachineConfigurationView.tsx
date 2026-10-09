@@ -26,7 +26,7 @@ import { Modal } from '@/modal';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { useManagedProvisioners } from './useManagedProvisioners';
 import { useManagedMachineAccountSettings } from './useManagedMachineAccountSettings';
 import { useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
@@ -37,6 +37,9 @@ import { useInputFieldOptions } from '@/components/sessions/actions/useInputFiel
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { resolvePluginProjectedActionPresentation } from '@/sync/domains/plugins/ui/actionPresentation';
 import { createMachinePresetCollectionClient } from './machinePresetCollectionClient';
+import type { MachinePresetCollectionOptions, MachinePresetCollectionSettledResult } from './machinePresetCollectionClient';
+import { useMachinePresetQuery, isMachinePresetAccessLost } from './useMachinePresets';
+import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
 import { ManagedMachineStateRow } from './ManagedMachineStateRow';
 import { buildManagedConfigurationReceipt, describeLocalHeadroom, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
@@ -47,7 +50,8 @@ import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, sele
     managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, setManagedConfiguratorCredentials, managedConfiguratorCredentialSelections,
     type ManagedConfiguratorDraft } from './managedConfiguratorModel';
 import { describeRetention, retentionCategoryTitle } from './managedRetentionPresentation';
-import { formatProviderAmount, formatPriceUnit } from './managedMachineDisplay';
+import { countryName, formatProviderAmount, formatPriceUnit } from './managedMachineDisplay';
+import { ManagedImagePreview, useManagedImagePreviews } from './useManagedImagePreviews';
 import { ManagedSizeTable, ManagedImageTiles, ManagedLocationGroup } from './ManagedChoiceSections';
 import { formatByteCapacity } from '@/utils/files/formatByteSize';
 import { managedConfiguratorDimensionChoices, managedConfiguratorDimensionSelection, selectManagedConfiguratorDimension } from './managedConfiguratorModel';
@@ -89,6 +93,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         scopeKey: JSON.stringify([props.serverId, catalog.binding?.accountId, props.provisioner]), onExecuted: () => {} });
     approvalHandler.current = approval.requestApproval;
     const mutationAbort = React.useRef<AbortController | null>(null);
+    const optionsAbort = React.useRef<AbortController | null>(null);
     const reviewed = React.useRef<ManagedConfigurationFactsV1 | null>(null);
     const catalogProvisioner = catalog.provisioners.find(row => buildQualifiedPluginContributionKey(row.contribution) === props.provisioner);
     // Only this occurrence's controller-qualified catalog authorizes purpose choices. Account inventory is display-only.
@@ -139,6 +144,30 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         || team.kind === 'bound' && team.state.kind === 'ready'
         && team.state.mutationsAvailable && team.state.team.capabilities.manageSettings;
     const presetClient = React.useMemo(() => catalog.binding && catalog.homeId ? createMachinePresetCollectionClient(catalog.binding.scope, catalog.homeId) : null, [catalog.binding, catalog.homeId]);
+    const retirePending = React.useCallback(() => {
+        mutationAbort.current?.abort(); optionsAbort.current?.abort(); setBusy(false);
+    }, []);
+    const clearProtectedPreset = React.useCallback((code: string) => {
+        retirePending(); reviewed.current = null; loadedPreset.current = null;
+        setDraft(null); setPreset(null); setSelectedController(undefined); setLimit(undefined); setSaved(false); setError(code);
+    }, [retirePending]);
+    const readPreset = React.useMemo(() => presetClient && catalog.homeId && props.presetId
+        ? async (options: MachinePresetCollectionOptions<ManagedMachinePresetV1>): Promise<MachinePresetCollectionSettledResult<ManagedMachinePresetV1>> => {
+            const result = await presetClient.read('machines.presets.get', { homeId: catalog.homeId!, id: props.presetId! },
+                { signal: options.signal, onApprovalPending: options.onApprovalPending });
+            if (result.kind === 'failed') return result;
+            return result.value.kind === 'found' ? { kind: 'succeeded', value: result.value.preset }
+                : { kind: 'failed', code: result.value.code };
+        } : null, [presetClient, catalog.homeId, props.presetId]);
+    const presetQuery = useMachinePresetQuery({ serverId: props.serverId, homeId: catalog.homeId, presetId: props.presetId,
+        binding: catalog.binding, read: readPreset, refreshRevision: readRevision, onApprovalPending,
+        onAccessLost: clearProtectedPreset, onInvalidated: () => { retirePending(); retry(); } });
+    const teamDenied = !!props.presetId && (preset?.owner.kind === 'team' || !!teamId) && team.kind === 'bound'
+        && (team.state.kind === 'ready' && !team.state.team.capabilities.viewTeam
+            || team.state.kind === 'unavailable' && isAuthoritativeScopedSnapshotRefusal(team.state.error));
+    React.useEffect(() => {
+        if (teamDenied && presetQuery.state.value) presetQuery.withdraw('permission_denied');
+    }, [teamDenied, presetQuery.state.value, presetQuery.withdraw]);
     React.useEffect(() => {
         if (!catalogController || props.presetId || !provisioner) return;
         const initial = catalogController;
@@ -146,12 +175,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         setDraft(current => current ?? createManagedConfiguratorDraft({ provisioner, controller: initial, name: title }));
     }, [catalogController, props.presetId, provisioner, machines, title]);
     React.useEffect(() => {
-        if (!preset || !provisioner) return;
+        if (!preset || !provisioner || teamDenied) return;
         setDraft(current => current ?? { ...createManagedConfiguratorDraft({ provisioner, controller: catalogController ?? preset.controller, name: preset.recipe.name,
             credentials: preset.recipe.credentials, environment: preset.environment,
             preset: { id: preset.id, revision: preset.revision, name: preset.name, retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage } }),
             selected: { id: `preset:${preset.id}`, title: preset.name, launch: preset.recipe.choices } });
-    }, [preset, provisioner, catalogController]);
+    }, [preset, provisioner, catalogController, teamDenied]);
 
     React.useEffect(() => {
         if (!catalogProvisioner || !catalogController || catalogProvisioner.credentialPurposes === undefined) return;
@@ -171,19 +200,15 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const binding = catalog.binding;
         if (!binding) return;
         const retirement = binding.onRetire(() => {
-            mutationAbort.current?.abort(); reviewed.current = null; loadedPreset.current = null; setDraft(null); setPreset(null); setSelectedController(undefined); setBusy(false); setError(null);
+            clearProtectedPreset('action_account_scope_changed'); setTeamId('');
         });
-        return () => { retirement.dispose(); mutationAbort.current?.abort(); };
-    }, [catalog.binding]);
+        return () => { retirement.dispose(); mutationAbort.current?.abort(); optionsAbort.current?.abort(); };
+    }, [catalog.binding, clearProtectedPreset, retirePending]);
 
     React.useEffect(() => {
-        const binding = catalog.binding;
-        if (!binding || !catalog.homeId || !presetClient || !props.presetId) return;
-        const abort = new AbortController();
-        const apply = (value: { kind: 'found'; preset: ManagedMachinePresetV1 } | { kind: 'refused'; code: string }) => {
-            if (abort.signal.aborted || !binding.isCurrent()) return;
-            if (value.kind === 'refused') { setError(value.code); return; }
-            const row = value.preset;
+        if (teamDenied) return;
+        const row = presetQuery.state.value;
+        if (row) {
             if (buildQualifiedPluginContributionKey(row.recipe.provider) !== props.provisioner) { setError('invalid_parameters'); return; }
             if (!loadedPreset.current) {
                 setLimit(row.simultaneousLimit?.maximum); setTeamId(row.owner.kind === 'team' ? row.owner.teamId : '');
@@ -193,13 +218,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             // Explicit conflict review advances the basis without replacing the person's edited recipe or policy.
             setDraft(current => current?.preset?.id === row.id ? { ...current,
                 preset: { ...current.preset, revision: row.revision, name: row.name } } : current);
-        };
-        void presetClient.execute('machines.presets.get', { homeId: catalog.homeId, id: props.presetId }, {
-            signal: abort.signal, onApprovalPending, onApprovalSucceeded: apply, onApprovalFailed: code => { if (!abort.signal.aborted) setError(code); },
-        }).then(result => { if (result.kind === 'succeeded') apply(result.value); else if (result.kind === 'failed' && !abort.signal.aborted) setError(result.code); })
-            .catch(() => { if (!abort.signal.aborted && binding.isCurrent()) setError('unavailable'); });
-        return () => abort.abort();
-    }, [catalog.binding, catalog.homeId, presetClient, props.presetId, props.provisioner, readRevision]);
+        }
+        if (presetQuery.state.error) setError(presetQuery.state.error);
+    }, [presetQuery.state.value, presetQuery.state.error, props.provisioner, teamDenied]);
 
     React.useEffect(() => {
         const binding = catalog.binding;
@@ -211,6 +232,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         }
         if (!draft || draft.provisioner !== catalogProvisioner) return;
         const abort = new AbortController();
+        optionsAbort.current = abort;
         setDraft(current => current ? { ...current, optionStatus: 'loading' } : current);
         const credentials = credentialSelections;
         const input = { homeId: catalog.homeId, controller, contribution: catalogProvisioner.contribution, ...(credentials.length ? { credentials } : {}) };
@@ -269,13 +291,20 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const maySave = !!catalogProvisioner && !!catalogController && !!facts
         && credentialsReady && (!credentialPurposes?.length || facts.optionStatus === 'current')
         && (draft?.optionsSelectors === undefined || selectors !== null && facts.optionStatus === 'current') && !!activeBinding?.isCurrent() && teamWritable && !busy;
+    const presetRetention = draft?.override?.retention ?? draft?.preset?.retention;
+    // A preset is reusable; this creation's absolute deadline remains only in its one-off draft.
+    const reusablePresetRetention = presetRetention?.kind === 'deadline' ? undefined : presetRetention;
     const completedSave = (value: PresetMutationResultV1) => {
         if (!activeBinding?.isCurrent()) return;
         setBusy(false);
         if (value.kind === 'saved') { setSaved(true); setError(null); if (props.presetOnly) router.replace(`/settings/machines/presets/${encodeURIComponent(value.preset.id)}?serverId=${encodeURIComponent(activeBinding.serverId)}` as never); }
+        else if (value.kind === 'refused' && props.presetId && isMachinePresetAccessLost(value.code)) presetQuery.withdraw(value.code);
         else setError(value.kind === 'conflict' ? 'conflict' : value.code);
     };
-    const failed = (code: string) => { if (activeBinding?.isCurrent()) { setBusy(false); setError(code); } };
+    const failed = (code: string) => { if (activeBinding?.isCurrent()) {
+        if (props.presetId && isMachinePresetAccessLost(code)) presetQuery.withdraw(code);
+        else { setBusy(false); setError(code); }
+    } };
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>) => {
         if (!activeBinding?.isCurrent() || !catalogController || !catalogProvisioner || busy) return;
         const abort = new AbortController(); mutationAbort.current = abort;
@@ -297,14 +326,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             homeId: catalog.homeId, id: preset.id, expectedRevision: preset.revision,
             patch: { name: facts.launch.name, recipe: facts.launch, controller: facts.controller,
                 environment: draft?.environment ?? null,
-                retention: draft?.override?.retention ?? draft?.preset?.retention ?? null,
+                retention: reusablePresetRetention ?? null,
                 wakeOnAcceptedMessage: draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage ?? null,
                 simultaneousLimit: limit ? { maximum: limit } : null },
         }, callbacks) : await presetClient.execute('machines.presets.create', {
             homeId: catalog.homeId, id: randomUUID(), name: facts.launch.name, recipe: facts.launch,
             owner: teamId ? { kind: 'team', teamId } : { kind: 'account', accountId: activeBinding.accountId }, controller: facts.controller,
             ...(draft?.environment !== undefined ? { environment: draft.environment } : {}),
-            ...(draft?.override?.retention ?? draft?.preset?.retention ? { retention: draft?.override?.retention ?? draft?.preset?.retention } : {}),
+            ...(reusablePresetRetention ? { retention: reusablePresetRetention } : {}),
             ...((draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage) !== undefined
                 ? { wakeOnAcceptedMessage: draft?.override?.wakeOnAcceptedMessage ?? draft?.preset?.wakeOnAcceptedMessage } : {}),
             ...(limit ? { simultaneousLimit: { maximum: limit } } : {}),
@@ -351,13 +380,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             : { caption: t('managedMachines.receipt.yourNewMachine'), mark, name: draft?.name ?? title, spec: title, facts: [], cost: { kind: 'unpriced' as const, provider: title } }),
         onRename: !preset || props.presetOnly ? () => { void rename(); } : undefined,
         keep: keepPolicy && defaultPolicy ? { policy: keepPolicy, defaultPolicy, inherited: !draft?.override && (!props.presetOnly || !draft?.preset?.retention && draft?.preset?.wakeOnAcceptedMessage === undefined), categoryLabel: retentionCategoryTitle(defaultPolicy.category),
-            finiteOnly,
+            finiteOnly, deadline: !props.presetOnly,
             ...(finiteOnly && draft && provisioner ? { nativeDuration: {
                 value: managedConfiguratorDimensionSelection(draft).duration ?? null,
-                choices: managedConfiguratorDimensionChoices(draft, 'duration').flatMap(({ choice, available }) => {
+                choices: managedConfiguratorDimensionChoices(draft, 'duration').flatMap(({ choice, selectable }) => {
                     const duration = choice.nativeFacts?.duration;
                     return duration ? [{ id: duration.id, title: localized(provisioner.contribution.pluginId, duration.title),
-                        unavailableReason: !available || busy || !!preset && !props.presetOnly ? t('managedMachines.options.unavailable') : undefined }] : [];
+                        unavailableReason: !selectable || busy || !!preset && !props.presetOnly ? t('managedMachines.options.unavailable') : undefined }] : [];
                 }),
                 onChange: id => setDraft(current => current ? selectManagedConfiguratorDimension(current, 'duration', id) : current),
                 ...(provisioner.descriptor.nativeDurationInput ? { editor: nativeDurationField ? <ActionInputFields fields={[nativeDurationField]} input={fieldInput}
@@ -377,6 +406,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             onPress: () => { if (props.presetOnly) void save(); else if (props.onUse) commitUse(); else void create(); },
             disabled: props.presetOnly ? !maySave : !mayCreate, loading: busy, testID: props.onUse && !props.presetOnly ? 'managed-config.use' : 'managed-config.create' },
         secondary: !props.presetOnly ? [{ label: t('managedMachines.receipt.saveAsPreset'), onPress: () => { void save(); }, disabled: !maySave, testID: 'managed-config.save-preset', tone: 'text' }] : undefined,
+        presetSaveNote: !props.presetOnly && presetRetention?.kind === 'deadline' ? t('machinePresets.deadlineOmitted') : undefined,
     };
 
     const creationDisabledNotice = accountSettings.settings?.managedMachineCreationEnabled === false && !props.presetOnly
@@ -385,6 +415,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const summaryPrice = receipt.cost.kind === 'price' ? receipt.cost.prices[0] : undefined;
     const selectedTitle = draft?.selected ? localized(provisioner?.contribution.pluginId ?? '', draft.selected.title) : title;
     const summaryLabel = summaryPrice?.label ? localized(provisioner?.contribution.pluginId ?? '', summaryPrice.label) : null;
+    if (props.presetId && (teamDenied || presetQuery.state.error && isMachinePresetAccessLost(presetQuery.state.error)))
+        return <SurfaceStateCard kind="denied" title={t('machinePresets.accessLost')} testID="managed-config.error"
+            action={{ label: t('managedMachines.actions.tryAgain'), onPress: retry }} />;
     if (!provisioner) return <>
         {creationDisabledNotice ? <ItemGroup>{creationDisabledNotice}</ItemGroup> : null}
         <ItemGroup title={t('managedMachines.config.managedFrom')}>
@@ -450,7 +483,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                     disabled={!catalogController || !catalogProvisioner || busy} onPress={() => { if (prerequisite.repairAction) void repair(prerequisite.repairAction); }} />;
             })}
         </ItemGroup> : null}
-        {draft ? <ManagedConfiguratorNativeChoices draft={draft} localized={localized} compact={compact} computer={controllerName} disabled={!catalogProvisioner || !catalogController || busy || !!preset && !props.presetOnly}
+        {draft ? <ManagedConfiguratorNativeChoices serverId={props.serverId} draft={draft} localized={localized} compact={compact} computer={controllerName} disabled={!catalogProvisioner || !catalogController || busy || !!preset && !props.presetOnly}
             onChange={(dimension, id) => setDraft(current => current ? selectManagedConfiguratorDimension(current, dimension, id) : current)} /> : null}
         {/* Setup belongs to a preset revision; a one-off Create never runs it, so only the preset editor offers it. */}
         {draft && props.presetOnly ? <MachineEnvironmentSection testID="managed-config.environment" environment={draft.environment}
@@ -474,6 +507,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
 
 /** The labelled dimensions select complete, provider-returned variants through the draft owner. */
 function ManagedConfiguratorNativeChoices(props: Readonly<{
+    serverId: string;
     draft: ManagedConfiguratorDraft;
     localized: ReturnType<typeof useManagedProvisionerPresentation>['localized'];
     compact: boolean; disabled: boolean;
@@ -485,7 +519,7 @@ function ManagedConfiguratorNativeChoices(props: Readonly<{
     const pluginId = draft.provisioner.contribution.pluginId;
     const selected = managedConfiguratorDimensionSelection(draft);
     const unavailable = (available: boolean) => !available || props.disabled ? t('managedMachines.options.unavailable') : undefined;
-    const sizes = managedConfiguratorDimensionChoices(draft, 'size').flatMap(({ choice, available }) => {
+    const sizes = managedConfiguratorDimensionChoices(draft, 'size').flatMap(({ choice, available, selectable }) => {
         const size = choice.nativeFacts?.size;
         if (!size) return [];
         const hourly = choice.prices?.find(price => price.unit === 'hour');
@@ -495,21 +529,36 @@ function ManagedConfiguratorNativeChoices(props: Readonly<{
             spec: props.localized(pluginId, size.title), ...(hourly ? { hourly: formatProviderAmount(hourly) } : {}),
             ...(monthly ? { monthly: formatProviderAmount(monthly) } : {}),
             headroom: draft.provisioner.descriptor.billing.location === 'local' ? describeLocalHeadroom(size, draft.check?.localResources) : undefined,
-            unavailableReason: unavailable(available) }];
+            unavailableReason: unavailable(available), selectable: selectable && !props.disabled }];
     });
-    const images = managedConfiguratorDimensionChoices(draft, 'image').flatMap(({ choice, available }) => {
+    const imageChoices = managedConfiguratorDimensionChoices(draft, 'image');
+    const previews = useManagedImagePreviews({ serverId: props.serverId, controllerMachineId: draft.controller.machineId,
+        pluginId, occurrenceId: draft.provisioner.occurrenceId,
+        requests: imageChoices.flatMap(({ choice }) => {
+            const image = choice.nativeFacts?.image;
+            return image?.preview ? [{ imageId: image.id, resource: image.preview.resource }] : [];
+        }) });
+    const images = imageChoices.flatMap(({ choice, available, selectable }) => {
         const image = choice.nativeFacts?.image;
-        return image ? [{ id: image.id, name: props.localized(pluginId, image.title), description: unavailable(available) ?? '', unavailableReason: unavailable(available) }] : [];
+        const preview = image ? previews.get(image.id) : undefined;
+        return image ? [{ id: image.id, name: props.localized(pluginId, image.title),
+            ...(preview ? { preview: <ManagedImagePreview source={preview}
+                accessibilityLabel={image.preview?.accessibilityLabel ? props.localized(pluginId, image.preview.accessibilityLabel) : undefined} /> } : {}),
+            description: unavailable(available) ?? (image.description ? props.localized(pluginId, image.description) : ''), unavailableReason: unavailable(available),
+            selectable: selectable && !props.disabled }] : [];
     });
-    const locations = managedConfiguratorDimensionChoices(draft, 'location').flatMap(({ choice, available }) => {
+    const locations = managedConfiguratorDimensionChoices(draft, 'location').flatMap(({ choice, available, selectable }) => {
         const location = choice.nativeFacts?.location;
-        return location ? [{ id: location.id, city: props.localized(pluginId, location.title), country: '', unavailableReason: unavailable(available) }] : [];
+        // The country comes only from the provider's own ISO code, named in the reader's language.
+        return location ? [{ id: location.id, city: props.localized(pluginId, location.title), countryCode: location.countryCode,
+            country: countryName(location.countryCode, getPreferredLanguage()), unavailableReason: unavailable(available), selectable: selectable && !props.disabled }] : [];
     });
     const firstPrice = managedConfiguratorDimensionChoices(draft, 'size').flatMap(({ choice }) => choice.prices ?? [])[0];
     const billing = draft.provisioner.descriptor.billing;
     // The section says where the prices come from and when they bill, or, locally, whose share it is.
     const sizeDescription = billing.location === 'local' ? t('managedMachines.config.localSizeDescription', { computer: props.computer })
-        : [firstPrice ? t('managedMachines.config.pricesChecked', { provider: firstPrice.source, time: formatAsOfTime(firstPrice.observedAt) }) : null,
+        : [firstPrice ? t('managedMachines.config.pricesChecked', { provider: firstPrice.source, time: formatAsOfTime(firstPrice.observedAt) })
+            : t('managedMachines.price.unavailable', { provider: props.localized(pluginId, draft.provisioner.descriptor.title) }),
             billing.stoppedBilling === 'billed' ? t('managedMachines.config.billedWhileExists')
                 : billing.stoppedBilling === 'not-billed' ? t('managedMachines.config.billedWhileRunning') : null]
             .filter((part): part is string => part !== null).join(' ') || undefined;

@@ -26,6 +26,10 @@ export const RetentionV1Schema = lazyDefinition(() => z.discriminatedUnion('kind
   z.strictObject({ kind: z.literal('unused'), afterMs: z.number().check(z.gt(0)), effect: z.enum(['stop', 'delete']) }),
   z.strictObject({ kind: z.literal('deadline'), at: z.number().check(z.gte(0)), effect: z.enum(['stop', 'delete']), interrupts: z.literal(true) }),
 ]));
+/** Reusable choices cannot carry an absolute time from another allocation. */
+export const ReusableRetentionV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
+  RetentionV1Schema.def.options[0], RetentionV1Schema.def.options[1],
+]));
 export const ManagedControllerV1Schema = lazyDefinition(() => z.strictObject({ machineId: id(), installationId: id() }));
 /** A host submission fact, independently displayed from native power observations. */
 export const SubmittedNativeEffectV1Schema = lazyDefinition(() => z.strictObject({

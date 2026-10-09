@@ -149,7 +149,16 @@ export function createScrollViewNearViewportTracker(scrollRef: React.RefObject<u
             return null;
         },
     });
-    return { ...tracker, onScroll: event => tracker.onScroll(event as NativeSyntheticEvent<NativeScrollEvent>) };
+    return {
+        ...tracker,
+        onScroll: event => tracker.onScroll(event as NativeSyntheticEvent<NativeScrollEvent>),
+        scrollToOffset: offset => {
+            const node = scrollRef.current;
+            if (node && typeof node === 'object' && 'scrollTo' in node && typeof node.scrollTo === 'function') {
+                node.scrollTo(horizontal ? { x: offset, animated: false } : { y: offset, animated: false });
+            }
+        },
+    };
 }
 
 export function useIsNearViewport(tracker: NearViewportTracker | null, span: NearViewportSpan | null): boolean {

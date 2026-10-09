@@ -7,7 +7,7 @@ import { useServerCredentialAccountScopeStates, useServerCredentialAccountScopeB
 import { publishHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
-import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult } from './machinePresetCollectionClient';
+import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult, type MachinePresetCollectionSettledResult, type MachinePresetCollectionOptions } from './machinePresetCollectionClient';
 import { buildManagedPresetHistory } from './managedPresetHistory';
 import type { createManagedProvisionerClient } from './managedProvisionerClient';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, managedConfiguratorFacts, managedConfiguratorOptionsSelectors, type ManagedConfiguratorDraft } from './managedConfiguratorModel';
@@ -22,8 +22,58 @@ export type MachinePresetQueryState<T> = Readonly<{
 }>;
 type ScopedQueryState<T> = MachinePresetQueryState<T> & Readonly<{ accountId: string }>;
 
-function inaccessible(code: string): boolean {
+export function isMachinePresetAccessLost(code: string): boolean {
     return code === 'permission_denied' || code === 'preset_not_found' || code === 'action_account_scope_changed';
+}
+
+/** One scoped read lifetime for preset detail and editing, including approvals and Home invalidation. */
+export function useMachinePresetQuery<T>(input: Readonly<{
+    serverId: string; homeId: string | null; presetId?: string; binding: ServerCredentialAccountScopeBinding | null;
+    read: ((options: MachinePresetCollectionOptions<T>) => Promise<MachinePresetCollectionSettledResult<T>>) | null;
+    refreshRevision?: number;
+    onApprovalPending?: (approval: ActionApprovalRegistration) => void;
+    onAccessLost?: (code: string) => void;
+    onInvalidated?: () => void;
+}>) {
+    const { serverId, homeId, presetId, binding, read, refreshRevision } = input;
+    const queryKey = JSON.stringify([serverId, homeId, binding?.accountId, binding?.revision, presetId]);
+    const [state, setState] = React.useState<MachinePresetQueryState<T> & { queryKey: string }>(
+        { queryKey, value: null, loading: true, error: null });
+    const [revision, refresh] = React.useReducer(value => value + 1, 0);
+    const callbacks = React.useRef(input);
+    callbacks.current = input;
+    const pendingRead = React.useRef<AbortController | null>(null);
+    const withdraw = React.useCallback((code: string) => {
+        pendingRead.current?.abort();
+        setState({ queryKey, value: null, loading: false, error: code });
+        callbacks.current.onAccessLost?.(code);
+    }, [queryKey]);
+    React.useEffect(() => {
+        if (!binding?.isCurrent() || !read || !presetId) return;
+        const controller = new AbortController();
+        pendingRead.current = controller;
+        const retirement = binding.onRetire(() => withdraw('action_account_scope_changed'));
+        setState(current => ({ queryKey, value: current.queryKey === queryKey ? current.value : null, loading: true, error: null }));
+        void read({ signal: controller.signal, onApprovalPending: approval => {
+            if (!controller.signal.aborted && binding.isCurrent()) callbacks.current.onApprovalPending?.(approval);
+        } }).then(result => {
+            if (controller.signal.aborted || !binding.isCurrent()) return;
+            if (result.kind === 'failed' && isMachinePresetAccessLost(result.code)) { withdraw(result.code); return; }
+            setState(current => ({ queryKey, loading: false, error: result.kind === 'failed' ? result.code : null,
+                value: result.kind === 'succeeded' ? result.value : current.queryKey === queryKey ? current.value : null }));
+        }).catch(() => {
+            if (!controller.signal.aborted && binding.isCurrent()) setState(current => ({ ...current, loading: false, error: 'request_failed' }));
+        });
+        return () => { controller.abort(); retirement.dispose(); };
+    }, [binding, read, presetId, queryKey, withdraw, revision, refreshRevision]);
+    React.useEffect(() => subscribeHomeAccountChange(event => {
+        if (!presetId || !areServerProfileIdentifiersEquivalent(serverId, event.serverId)) return;
+        pendingRead.current?.abort();
+        callbacks.current.onInvalidated?.();
+        refresh();
+    }), [serverId, presetId]);
+    return { state: binding?.isCurrent() && state.queryKey === queryKey ? state
+        : { queryKey, value: null, loading: !!presetId, error: null }, setState, queryKey, refresh, withdraw };
 }
 
 function reconcilePresets(previous: readonly ManagedMachinePresetV1[] | null | undefined,
@@ -149,7 +199,7 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
                 if (controller.signal.aborted || !binding.isCurrent()) return;
                 setState(current => ({ ...current, [serverId]: { accountId: binding.accountId, loading: false,
                     value: result.kind === 'succeeded' ? reconcilePresets(current[serverId]?.value, result.value)
-                        : inaccessible(result.code) ? null : current[serverId]?.value ?? null,
+                        : isMachinePresetAccessLost(result.code) ? null : current[serverId]?.value ?? null,
                     error: result.kind === 'failed' ? result.code : null } }));
             }).catch(() => {
                 if (controller.signal.aborted || !binding.isCurrent()) return;
@@ -194,37 +244,14 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
     const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
     const homeId = getServerProfileById(serverId)?.serverIdentityId ?? null;
     const accountId = binding?.accountId ?? null;
-    const queryKey = JSON.stringify([serverId, accountId, presetId]);
-    const [state, setState] = React.useState<MachinePresetQueryState<MachinePresetHistoryData> & { queryKey: string }>(
-        { queryKey, value: null, loading: true, error: null });
-    const [refreshRevision, setRefreshRevision] = React.useState(0);
     const [mutationResult, setMutationResult] = React.useState<Readonly<{ queryKey: string; value: PresetMutationResultV1 }> | null>(null);
     const approvalRef = React.useRef(onApprovalPending);
     approvalRef.current = onApprovalPending;
-    const refresh = React.useCallback(() => setRefreshRevision(value => value + 1), []);
     const client = React.useMemo(() => binding && homeId ? createMachinePresetCollectionClient(binding.scope, homeId) : null,
         [binding, homeId]);
-    React.useEffect(() => {
-        if (!binding || !client) return;
-        const controller = new AbortController();
-        const retirement = binding.onRetire(() => {
-            controller.abort();
-            setState({ queryKey, value: null, loading: false, error: 'action_account_scope_changed' });
-        });
-        setState(current => ({ queryKey, value: current.queryKey === queryKey ? current.value : null, loading: true, error: null }));
-        void client.detail(presetId, { signal: controller.signal, onApprovalPending: approval => approvalRef.current?.(approval) }).then(result => {
-            if (controller.signal.aborted || !binding.isCurrent()) return;
-            setState(current => ({ queryKey, loading: false, error: result.kind === 'failed' ? result.code : null,
-                value: result.kind === 'succeeded' ? result.value : inaccessible(result.code) ? null : current.value }));
-        }).catch(() => {
-            if (controller.signal.aborted || !binding.isCurrent()) return;
-            setState(current => ({ ...current, loading: false, error: 'request_failed' }));
-        });
-        return () => { controller.abort(); retirement.dispose(); };
-    }, [binding, client, presetId, queryKey, refreshRevision]);
-    React.useEffect(() => subscribeHomeAccountChange(event => {
-        if (areServerProfileIdentifiersEquivalent(serverId, event.serverId)) refresh();
-    }), [refresh, serverId]);
+    const read = React.useMemo(() => client ? (options: MachinePresetCollectionOptions<MachinePresetHistoryData>) => client.detail(presetId, options) : null,
+        [client, presetId]);
+    const { state, setState, queryKey, refresh } = useMachinePresetQuery({ serverId, homeId, presetId, binding, read, onApprovalPending });
     const resolving = resolution.kind === 'resolving' || resolution.kind === 'bound';
     const visibleState: MachinePresetQueryState<MachinePresetHistoryData> = !homeId
         ? { value: null, loading: false, error: 'server_identity_unavailable' }
@@ -244,7 +271,7 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
                 setState(current => current.queryKey === queryKey && current.value
                     ? { ...current, value: { ...current.value, preset: value.preset } } : current);
                 publishHomeAccountChange(serverId);
-            } else if (value.kind === 'refused' && inaccessible(value.code)) {
+            } else if (value.kind === 'refused' && isMachinePresetAccessLost(value.code)) {
                 setState({ queryKey, value: null, loading: false, error: value.code });
             }
         };
@@ -257,7 +284,7 @@ export function useMachinePresetDetail(serverId: string, presetId: string,
                         retirement.dispose();
                         if (!binding.isCurrent()) return;
                         setState(current => current.queryKey === queryKey
-                            ? { ...current, loading: false, error: code, ...(inaccessible(code) ? { value: null } : {}) }
+                            ? { ...current, loading: false, error: code, ...(isMachinePresetAccessLost(code) ? { value: null } : {}) }
                             : current);
                     },
                 });

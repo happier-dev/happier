@@ -8,6 +8,7 @@ import { createDeferred } from '@/dev/testkit';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { readMachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { loadProfileCatalogV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
@@ -92,12 +93,12 @@ function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>;
     return { rows, machine, executeAction: createFrontDoorActionExecute(executor) };
 }
 
-function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promise<void>; enrolled?: boolean; failed?: boolean; setupFails?: boolean; setupSucceeds?: boolean; custodianAccountId?: string;
+function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promise<void>; enrolled?: boolean; failed?: boolean; setupFails?: boolean; setupSucceeds?: boolean; custodianAccountId?: string; denyCrossMachine?: boolean;
     environmentSetup?: ManagedMachineV1['environmentSetup'] }> = {}) {
     // Persisted actor policy is fixture input, not a mocked policy decision or production waiver.
     const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
         'machines.environment.apply': ['ui'], 'machines.managed.setup.skip': ['ui'],
-        'machines.managed.acquire': ['ui'], 'machines.managed.bootstrap.retry': ['ui'],
+        'machines.managed.acquire': ['ui', 'agent'], 'machines.managed.bootstrap.retry': ['ui'],
         'machines.managed.delete': ['ui'],
     } });
     const actions: Array<{ actionId: string; input: unknown }> = [];
@@ -105,6 +106,9 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
         ...(input.enrolled ? { enrolledMachineId: 'guest' } : {}),
         ...(input.environmentSetup ? { preset: { id: 'preset', revision: 4 }, environmentSetup: input.environmentSetup } : {}) };
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        resolveAgentStartContext: async () => ({ caller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
+            baseline: { machineId: 'parent-machine', directory: '/work' }, roles: {}, ledSubtreeSessionIds: [],
+            workDepthLimit: 4, callerPermissionCeiling: 'yolo' }),
         isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context, getActionSpec(actionId).safety),
         managedMachineReferences: async ({ input: request, signal }) => readMachineReferenceCensusV1({
             homeId: request.homeId, machineId: machine.enrolledMachineId ?? null, signal,
@@ -179,10 +183,17 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
     const progress: unknown[] = [];
     const run = (options: Readonly<{ retryInstallation?: boolean; setupRecovery?: 'retry' | 'skip' | 'delete';
         reviewDelete?: (census: MachineReferenceCensusV1) => Promise<boolean>;
-        acquisition?: ManagedMachineAcquisitionDraft; draft?: typeof draft }> = {}) => runNewSessionManagedCreation({
+        acquisition?: ManagedMachineAcquisitionDraft; draft?: typeof draft; agentStart?: ManagedAcquireAgentStartV1 }> = {}) => runNewSessionManagedCreation({
         draft: options.draft ?? draft, acquisition: options.acquisition ?? acquisition, scope: { serverId: 'server', accountId: 'account' },
         signal: new AbortController().signal, isCurrent: input.current ?? (() => true),
-        executeAction: createFrontDoorActionExecute(executor),
+        executeAction: createFrontDoorActionExecute(input.denyCrossMachine ? {
+            execute: (actionId, value, context) => executor.execute(actionId, value, { ...context,
+                surface: 'agent', authority: 'account_automation', defaultSessionId: 'parent', callerPermissionMode: 'yolo',
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
+                sessionInputSource: { sourceSessionId: 'parent', sourceTurnId: 'turn', via: 'action' },
+                sessionAgentSpawnPolicyV1: { allowCrossMachine: false },
+            }),
+        } : executor),
         onAcquisitionChange: value => { acquisition = value; }, onProgress: value => progress.push(value),
         onApprovalPending: () => { throw new Error('unexpected_approval'); }, ...options,
     });
@@ -191,6 +202,18 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
 }
 
 describe('ordinary managed creation continuation', () => {
+    it('refuses a denied authored Agent continuation before controller admission while bare compute remains allowed', async () => {
+        const boundary = transport({ denyCrossMachine: true });
+        const agentStart: ManagedAcquireAgentStartV1 = { directory: { kind: 'path', path: '/work' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } },
+            initialInput: { text: 'Do the submitted work' } };
+        expect(await boundary.run({ agentStart })).toEqual({ kind: 'failed', code: 'policy_denied_field' });
+        expect(boundary.actions).toEqual([]);
+        expect(boundary.getAcquisition()).not.toHaveProperty('managedId');
+        expect(await boundary.run()).toMatchObject({ kind: 'enrolled', machine: { id: 'paid' } });
+        expect(boundary.actions.filter(value => value.actionId === 'machines.managed.acquire')).toHaveLength(1);
+        expect(boundary.actions.find(value => value.actionId === 'machines.managed.acquire')?.input).not.toHaveProperty('agentStart');
+    });
     it('deletes the same failed-setup row only after reviewing its references, without reacquiring or continuing enrollment', async () => {
         const boundary = transport({ enrolled: true,
             environmentSetup: { environment: { setupScript: 'echo ready' }, state: 'failed', errorCode: 'setup_failed' } });

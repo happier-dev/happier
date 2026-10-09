@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "Não foi possível carregar as predefinições. Tente novamente.",
         ownerPersonal: "Sua",
         futureOnly: "As edições valem para novas máquinas. As existentes mantêm suas escolhas.",
+        deadlineOmitted: "A predefinição não salvará este prazo.",
         use: "Usar predefinição",
         createOne: "Criar uma",
         saveAs: "Salvar como predefinição",

@@ -76,8 +76,9 @@ export const PLUGIN = definePlugin({
     options: { ...defaults, title: 'Discover Hetzner options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
       async run(_input, context): Promise<MachineProvisionerOptionsResultV1> { const facts = await (await runtime(context)).options();
-        return { choices: facts.sizes.flatMap(size => size.prices.flatMap(price =>
-          facts.images.filter(image => image.status === 'available' && image.deprecated === null && image.architecture === size.architecture)
+        return { choices: facts.sizes.flatMap(size => size.prices.flatMap(price => {
+          const location = facts.locations.find(value => value.name === price.location);
+          return facts.images.filter(image => image.status === 'available' && image.deprecated === null && image.architecture === size.architecture)
             .flatMap(image => [{ ipv4: true, ipv6: false }, { ipv4: false, ipv6: true }, { ipv4: true, ipv6: true }].map(publicNetworking => ({
               id: `${size.id}/${image.id}/${price.location}/${Number(publicNetworking.ipv4)}${Number(publicNetworking.ipv6)}`,
               title: `${size.name} · ${size.cores} CPU · ${size.memory} GiB · ${size.disk} GB · ${image.name ?? image.id} · ${price.location}`,
@@ -91,10 +92,13 @@ export const PLUGIN = definePlugin({
               nativeFacts: {
                 size: { id: String(size.id), title: size.name, cpuCores: size.cores,
                   memoryBytes: size.memory * 1024 ** 3, diskBytes: size.disk * 1000 ** 3 },
-                image: { id: String(image.id), title: image.name ?? String(image.id) },
-                location: { id: price.location, title: facts.locations.find(location => location.name === price.location)?.description ?? price.location },
+                image: { id: String(image.id), title: image.name ?? String(image.id),
+                  ...(image.description ? { description: image.description } : {}) },
+                location: { id: price.location, title: location?.description ?? price.location,
+                  ...(location?.country ? { countryCode: location.country } : {}) },
               },
-            }))))) }; },
+            })));
+        })) }; },
     },
     acquire: { ...defaults, title: 'Acquire Hetzner resource', dangerLevel: 'destructive',
       confirmation: { title: 'Create this Hetzner Server?', body: 'This creates the reviewed paid resource. Powered-off Servers remain billable.' },

@@ -6,7 +6,7 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { ManagedRefusalCodeV1Schema } from './providerFactsV1.js';
-import { ManagedControllerV1Schema, RetentionV1Schema, createValidatedLaunchSnapshotV1Schema } from './managedMachineV1.js';
+import { ManagedControllerV1Schema, ReusableRetentionV1Schema, createValidatedLaunchSnapshotV1Schema } from './managedMachineV1.js';
 import { MachineEnvironmentV1Schema } from './machineEnvironmentV1.js';
 export { MachineEnvironmentV1Schema, MachineEnvironmentV1ReadSchema, type MachineEnvironmentV1 } from './machineEnvironmentV1.js';
 
@@ -26,7 +26,7 @@ export function createManagedMachinePresetV1Schema<Choices extends z.core.$ZodTy
     recipe: createValidatedLaunchSnapshotV1Schema(choices),
     controller: ManagedControllerV1Schema,
     environment: MachineEnvironmentV1Schema.optional(),
-    retention: mini.optional(RetentionV1Schema),
+    retention: mini.optional(ReusableRetentionV1Schema),
     wakeOnAcceptedMessage: z.boolean().optional(),
     simultaneousLimit: ManagedMachinePresetLimitV1Schema.optional(),
     archivedAt: z.number().nonnegative().optional(),
@@ -52,7 +52,7 @@ export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.obj
     recipe: mini.optional(createValidatedLaunchSnapshotV1Schema(PluginJsonValueV2Schema)),
     controller: mini.optional(ManagedControllerV1Schema),
     environment: MachineEnvironmentV1Schema.nullable().optional(),
-    retention: mini.optional(mini.nullable(RetentionV1Schema)),
+    retention: mini.optional(mini.nullable(ReusableRetentionV1Schema)),
     wakeOnAcceptedMessage: z.boolean().nullable().optional(),
     simultaneousLimit: ManagedMachinePresetLimitV1Schema.nullable().optional(),
   }).strict(),

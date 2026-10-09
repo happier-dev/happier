@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "Impossibile caricare i preset. Riprova.",
         ownerPersonal: "Tuo",
         futureOnly: "Le modifiche valgono per le nuove macchine. Quelle esistenti mantengono le loro scelte.",
+        deadlineOmitted: "La preimpostazione non salverà questa scadenza.",
         use: "Usa preset",
         createOne: "Creane una",
         saveAs: "Salva come preset",

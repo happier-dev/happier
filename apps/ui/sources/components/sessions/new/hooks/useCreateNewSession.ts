@@ -97,6 +97,7 @@ import {
     buildNewSessionAuthoringDraftFromResolvedInputs,
     buildSessionServerStartSpawnDraftV1FromAuthoringDraft,
     buildSessionSpawnNewInputV2FromAuthoringDraft,
+    buildManagedAcquireAgentStartV1FromAuthoringDraft,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import {
@@ -669,8 +670,27 @@ export function useCreateNewSession(params: Readonly<{
                 managedAcquisitionRef.current = acquisition;
                 current.onManagedMachineAcquisitionChange(acquisition);
                 current.onLaunchUserAttemptIdChange?.(acquisition.requestId);
+                if (!acquisition.managedId && !submitted.authoringDraft) {
+                    progress({ kind: 'failed', code: 'managed_continuation_unavailable' });
+                    reportAfterCreatedSettlement({ status: 'rejected' });
+                    return;
+                }
                 const result = await runNewSessionManagedCreation({
                     draft: managedDraft, acquisition, scope, signal: cancellation.signal, isCurrent,
+                    ...(!acquisition.managedId && submitted.authoringDraft ? {
+                        agentStart: buildManagedAcquireAgentStartV1FromAuthoringDraft({
+                            draft: { ...submitted.authoringDraft, sessionName: submittedSessionName,
+                                promptStack: submittedPromptStack, prompt: opts.inputTextOverride ?? '',
+                                displayText: opts.inputTextOverride ?? '' },
+                            creationKey: buildManualSessionCreationKey(acquisition.requestId),
+                            permissionMode: parsePermissionIntentAlias(submitted.permissionMode) ?? 'default',
+                            configurationUpdatedAtMs: submitted.authoringDraft.permissionModeUpdatedAt ?? nowServerMs(),
+                            initialMessage: opts.initialMessage === 'skip' ? null : opts.inputTextOverride,
+                            initialStructuredInput: opts.initialInputStructuredInput,
+                            initialReviewComments: opts.initialInputReviewComments,
+                            sourceContext: submitted.sourceContext ?? null,
+                        }),
+                    } : {}),
                     retryInstallation: opts.managedMachineRetryInstallation,
                     setupRecovery: opts.managedMachineSetupRecovery,
                     reviewDelete: census => Modal.confirm(t('managedMachines.actions.deleteMachine'), [

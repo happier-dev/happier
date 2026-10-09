@@ -58,6 +58,8 @@ export type ManagedReceiptModel = Readonly<{
     value: boolean;
     onChange: (next: boolean) => void;
   }>;
+  /** A one-off deadline is not part of the reusable recipe saved by the secondary action. */
+  presetSaveNote?: string;
   /** Configurator: the one primary action and its billing footnote. */
   primary?: ManagedReceiptAction & Readonly<{ footnote?: string }>;
   /** Created machine: quiet power actions at the foot, where the consequence is stated. */
@@ -185,6 +187,11 @@ export const MachineConfigurationReceipt = React.memo(
                 />
               ))}
             </View>
+            {model.presetSaveNote ? (
+              <Text testID={`${props.testID}:save-deadline-note`} style={styles.footnote}>
+                {model.presetSaveNote}
+              </Text>
+            ) : null}
           </SectionContentRow>
         ) : null}
       </ItemGroup>

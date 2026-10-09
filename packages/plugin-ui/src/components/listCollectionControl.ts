@@ -44,6 +44,13 @@ export type ListCollectionControl = Readonly<{
    * order with the rows.
    */
   pageScroll?: boolean;
+  /** Collection's existing row/header geometry, windowed in the containing physical page. */
+  pageVirtualization?: Readonly<{
+    rowHeight(key: string): number;
+    headerHeight: number;
+    width: number | null;
+    defaultRowHeight: number;
+  }>;
   /**
    * A page-scrolling list's groups are page sections: each group's rows sit on one page sheet under its header
    * (the page anatomy every other section of the page uses), in these colours.

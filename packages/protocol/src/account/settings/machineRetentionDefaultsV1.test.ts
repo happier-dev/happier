@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as owner from './accountSettings.js';
 import { applyAccountSettingMutationV1 } from './accountSettingMutationV1.js';
 import { resolveMachineRetentionPolicyV1 as resolve } from '../../machines/managed/resolveMachineRetentionPolicyV1.js';
+import { MACHINE_RETENTION_CATEGORIES_V1, MachineRetentionPolicyV1Schema, updateMachineRetentionCategoryPreferenceV1 } from './machineRetentionDefaultsV1.js';
 
 const unused = { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } as const;
 const keep = { kind: 'until-delete' } as const;
@@ -33,6 +34,24 @@ describe('managed machine category preference through Account settings', () => {
     expect(applyAccountSettingMutationV1({}, { operations: [
       { op: 'set', key: 'machineRetentionDefaultsV1', value: { ...value, managedId: 'secret-resource' } },
     ] })).toMatchObject({ status: 'invalid', reason: 'invalidValue' });
+  });
+
+  it('refuses absolute deadlines in every reusable category without narrowing one-off policies', () => {
+    const policy = { retention: { kind: 'deadline', at: 4_000, effect: 'stop', interrupts: true },
+      wakeOnAcceptedMessage: true } as const;
+    expect(MachineRetentionPolicyV1Schema.parse(policy)).toEqual(policy);
+    for (const category of MACHINE_RETENTION_CATEGORIES_V1) {
+      expect(applyAccountSettingMutationV1({}, { operations: [
+        { op: 'set', key: 'machineRetentionDefaultsV1', value: { v: 1, [category]: policy } },
+      ] })).toMatchObject({ status: 'invalid', reason: 'invalidValue' });
+      expect(() => updateMachineRetentionCategoryPreferenceV1({ v: 1 }, category, policy)).toThrow();
+      for (const retention of [unused, keep]) {
+        const value = { v: 1, [category]: { retention, wakeOnAcceptedMessage: true } };
+        expect(applyAccountSettingMutationV1({}, { operations: [
+          { op: 'set', key: 'machineRetentionDefaultsV1', value },
+        ] })).toEqual({ status: 'applied', raw: { machineRetentionDefaultsV1: value } });
+      }
+    }
   });
 
   it('resolves descriptor facts and precedence without provider identity or mutating snapshots', () => {

@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "Impossible de charger les préréglages. Réessayez.",
         ownerPersonal: "À vous",
         futureOnly: "Les modifications s’appliquent aux nouvelles machines. Les machines existantes gardent leurs choix.",
+        deadlineOmitted: "Le préréglage n’enregistrera pas cette échéance.",
         use: "Utiliser le préréglage",
         createOne: "En créer une",
         saveAs: "Enregistrer comme préréglage",

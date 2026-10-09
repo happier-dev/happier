@@ -42,13 +42,13 @@ describe('public digitalocean machine provisioner', () => {
     }));
     const runtime = await activated({ sizes,
       regions: [{ slug: 'nyc3', name: 'New York 3', available: true, sizes: sizes.map(size => size.slug) }],
-      images: [{ id: 1, name: 'Ubuntu 24.04', distribution: 'Ubuntu', regions: ['nyc3'], status: 'available', type: 'base' }], links: {},
+      images: [{ id: 1, name: 'Ubuntu 24.04', description: 'Ubuntu base image', distribution: 'Ubuntu', regions: ['nyc3'], status: 'available', type: 'base' }], links: {},
     });
     const result = await runtime.handlers.get('options')!({}, runtime.context);
     expect(result).toMatchObject({ choices: [
       { nativeFacts: { size: { id: sizes[0]!.slug, title: 's5-1vcpu-1gb · 1 CPU · 1024 MB · 25 GB', cpuCores: 1,
         memoryBytes: 1024 * 1024 ** 2, diskBytes: 25 * 1000 ** 3 },
-        image: { id: '1', title: 'Ubuntu 24.04' }, location: { id: 'nyc3', title: 'New York 3' }, monthlyCapStatus: 'none' },
+        image: { id: '1', title: 'Ubuntu 24.04', description: 'Ubuntu base image' }, location: { id: 'nyc3', title: 'New York 3' }, monthlyCapStatus: 'none' },
         prices: [{ unit: 'hour', amount: '0.02' }, { unit: 'month', amount: '12' }] },
       { nativeFacts: { monthlyCapStatus: 'none' } },
       { nativeFacts: { monthlyCapStatus: 'unknown' } },
@@ -56,6 +56,8 @@ describe('public digitalocean machine provisioner', () => {
     ] });
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
     expect(JSON.stringify(result)).not.toContain('captured-private');
+    expect(JSON.stringify(result)).not.toContain('countryCode');
+    expect(JSON.stringify(result)).not.toContain('preview');
   });
   it('reconciles a retained pending native correlation without purchasing again', async () => {
     const runtime = await activated({ droplets: [{ id: 42, name: 'managed', status: 'off', tags: ['happier-pending-1'], volume_ids: [] }], links: {} });

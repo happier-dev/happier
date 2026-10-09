@@ -27,6 +27,7 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { t } from '@/text';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { ManagedReceiptColumns } from './ManagedReceiptPageLayout';
@@ -246,6 +247,7 @@ export function ManagedMachineSections(props: SectionProps) {
         }
     };
     const target = { homeId: machine.homeId, managedId: machine.id };
+    const recoveryConsoleUrl = machine.recovery?.consoleUrl;
     const canRemove = canMutate && machine.archivedAt === undefined && machine.creationState !== 'retired';
     const reviewRemoval = () => { if (canRemove) setRemoveReviewKey(deleteReviewKey); };
     // The saved admission can offer Move while the old controller is offline;
@@ -362,6 +364,8 @@ export function ManagedMachineSections(props: SectionProps) {
         nativeExpiry: nativeExpiryDescription,
         effects: supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
         canWake: supportedIntents.includes('start') || supportedIntents.includes('resume'),
+        // A live machine is where an explicit, reviewed deadline is set (plan 52); the Action still asks first.
+        deadline: true,
         consequence: describeRetention, disabled: !canMutate, onChange: changePolicy,
         onReset: () => fireAndForget(resetPolicy(), { tag: 'ManagedMachineSections.resetPolicy' }) };
     const keepChannel = useLiveValueChannel(keep);
@@ -382,7 +386,11 @@ export function ManagedMachineSections(props: SectionProps) {
             title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(
                 `/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
-        <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} handlers={{ checkNow: inspect,
+        <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} provider={policyParent?.providerTitle} handlers={{ checkNow: inspect,
+            ...(recoveryConsoleUrl ? { openProvider: () => {
+                if (!props.binding?.isCurrent()) return;
+                fireAndForget(openExternalUrl(recoveryConsoleUrl), { tag: 'ManagedMachineSections.openConsole' });
+            } } : {}),
             ...(canRemove ? { remove: reviewRemoval } : {}),
             ...(canMutate && currentControllerAvailable && canRetryManagedInstallation(machine, operation) ? {
                 reinstall: () => fireAndForget(run('machines.managed.bootstrap.retry', { ...target,
@@ -399,7 +407,11 @@ export function ManagedMachineSections(props: SectionProps) {
                     : canMove ? { kind: 'movable', onPress: () => fireAndForget(reviewMove(), { tag: 'ManagedMachineSections.moveReview' }) }
                         : { kind: 'unavailable' } }} />
             : <ItemGroup title={t('managedMachines.config.managedFrom')}><Item title={controllerName}
-                subtitle={t('managedMachines.controller.required', { controller: controllerName })} mode="info" showChevron={false} testID="managed-machine.controller-unavailable" /></ItemGroup>}
+                subtitle={t('managedMachines.controller.required', { controller: controllerName })} mode="info" showChevron={false}
+                testID="managed-machine.controller-unavailable" accessoryLayout="adaptive" rightElement={canMove ?
+                    <RoundButton title={t('managedController.moveShort')} display="secondary" size="small"
+                        testID="managed-machine.controller-unavailable:move"
+                        onPress={() => fireAndForget(reviewMove(), { tag: 'ManagedMachineSections.moveReview' })} /> : undefined} /></ItemGroup>}
         {moveReview?.key === deleteReviewKey && canMutate ? <ManagedControllerMoveList testID="managed-machine.move-candidates"
             candidates={moveReview.candidates.map(candidate => {
                 const row = controllerMachines?.find(value => value.id === candidate.id);

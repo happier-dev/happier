@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "No se pudieron cargar los ajustes predefinidos. Inténtalo de nuevo.",
         ownerPersonal: "Tuyo",
         futureOnly: "Los cambios se aplican a máquinas nuevas. Las existentes conservan sus opciones.",
+        deadlineOmitted: "El preajuste no guardará este plazo.",
         use: "Usar ajuste predefinido",
         createOne: "Crear una",
         saveAs: "Guardar como ajuste predefinido",

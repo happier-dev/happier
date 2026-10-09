@@ -36,8 +36,8 @@ describe('public hetzner machine provisioner', () => {
     const runtime = await activated({
       server_types: [{ id: 1, name: 'cx23', cores: 2, memory: 4, disk: 40, architecture: 'x86',
         prices: [{ location: 'fsn1', price_hourly: pair('0.01'), price_monthly: pair('6') }] }],
-      images: [{ id: 10, name: 'ubuntu-24.04', architecture: 'x86', type: 'system', status: 'available', deprecated: null }],
-      locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein' }],
+      images: [{ id: 10, name: 'ubuntu-24.04', description: 'Ubuntu 24.04 LTS', architecture: 'x86', type: 'system', status: 'available', deprecated: null }],
+      locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein', country: 'DE' }],
       pricing: { currency: 'EUR', primary_ips: [{ type: 'ipv4', prices: [
         { location: 'fsn1', price_hourly: pair('0.001'), price_monthly: pair('0.60') },
       ] }] }, meta: { pagination: { next_page: null } },
@@ -46,7 +46,7 @@ describe('public hetzner machine provisioner', () => {
     expect(result).toMatchObject({ choices: [
       { launch: { publicNetworking: { ipv4: true, ipv6: false } },
         nativeFacts: { size: { id: '1', cpuCores: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 40 * 1000 ** 3 },
-          image: { id: '10', title: 'ubuntu-24.04' }, location: { id: 'fsn1', title: 'Falkenstein' } },
+          image: { id: '10', title: 'ubuntu-24.04', description: 'Ubuntu 24.04 LTS' }, location: { id: 'fsn1', title: 'Falkenstein', countryCode: 'DE' } },
         prices: [{ amount: '0.01', label: { key: 'machineHetzner.prices.compute' } }, { amount: '6', label: { key: 'machineHetzner.prices.compute' } },
           { amount: '0.001', label: { key: 'machineHetzner.prices.primaryIpv4' }, source: 'https://api.hetzner.cloud/v1/pricing#primary_ips' },
           { amount: '0.60', label: { key: 'machineHetzner.prices.primaryIpv4' } }] },
@@ -54,6 +54,7 @@ describe('public hetzner machine provisioner', () => {
       { launch: { publicNetworking: { ipv4: true, ipv6: true } }, prices: [{ amount: '0.01' }, { amount: '6' }, { amount: '0.001' }, { amount: '0.60' }] },
     ] });
     expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('preview');
   });
   it('admits the full cold manifest with host confirmation for native effects', () => {
     const result = parsePluginManifest(exports.PLUGIN_MANIFEST);

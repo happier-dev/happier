@@ -38,7 +38,7 @@ describe('managed lifecycle presentation', () => {
     expect(missing.actions).toEqual(['checkNow']);
   });
 
-  it('offers only the next steps whose owner supplied a handler', async () => {
+  it.each(['cleanupPending', 'cleanupUnknown', 'creationCanceledCleanup'] as const)('offers console recovery only when its owner supplies a handler (%s)', async kind => {
     const { ManagedMachineStateRow } = await import('./ManagedMachineStateRow');
     const pressed: string[] = [];
     const screen = await renderScreen(
@@ -47,14 +47,16 @@ describe('managed lifecycle presentation', () => {
         name="hz-build-0"
         mark={null}
         provider="Hetzner"
-        state={{ kind: 'cleanupPending' }}
-        handlers={{ tryAgain: () => pressed.push('tryAgain') }}
+        state={{ kind }}
+        handlers={{}}
       />,
     );
     expect(screen.findByTestId('row:openProvider')).toBeNull();
+    await screen.update(<ManagedMachineStateRow testID="row" name="hz-build-0" mark={null}
+      provider="Hetzner" state={{ kind }} handlers={{ openProvider: () => pressed.push('openProvider') }} />);
     await act(async () => {
-      screen.pressByTestId('row:tryAgain');
+      screen.pressByTestId('row:openProvider');
     });
-    expect(pressed).toEqual(['tryAgain']);
+    expect(pressed).toEqual(['openProvider']);
   });
 });

@@ -5,7 +5,7 @@ import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contribut
 import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { FlyLaunchQueryV1Schema, FlyLaunchV1Schema } from '../../../../../../../packages/plugins/machine-fly/src/machine/schemas';
 import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
-import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections } from './managedConfiguratorModel';
+import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections } from './managedConfiguratorModel';
 
 const descriptor = MachineProvisionerContributionV1Schema.parse({
     id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
@@ -22,6 +22,43 @@ const options = { choices: [
 ] };
 
 describe('managed configurator draft owner', () => {
+    it('selects a dimension of a valid scalar launch without inventing object selectors', () => {
+        const scalar = { ...provisioner, descriptor: { ...descriptor,
+            launchSchema: { type: 'string', enum: ['small', 'large'] } satisfies PluginJsonSchemaV2 } };
+        const loaded = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: scalar, controller, name: 'Guest' }), {
+            choices: [{ id: 'scalar-small', title: 'Small', launch: 'small', nativeFacts: { size: { id: 'small', title: 'Small' } } }],
+        });
+        expect(managedConfiguratorDimensionChoices(loaded, 'size')[0]).toMatchObject({ available: true, selectable: true });
+        const selected = selectManagedConfiguratorDimension(loaded, 'size', 'small');
+        expect(managedConfiguratorAcquireInput(selected, 'home')?.selection).toMatchObject({ launch: { choices: 'small' } });
+        const queried = { ...loaded, optionsSelectors: { search: 'small' } };
+        expect(selectManagedConfiguratorDimension(queried, 'size', 'small').selected?.launch).toBe('small');
+    });
+    it('compares size quotes against the selected region and selectors, preserving unavailable combinations', () => {
+        const facts = { size: { id: 'small', title: 'Small' }, image: { id: 'linux', title: 'Linux' } };
+        const price = (amount: string) => [{ amount, currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 }];
+        const choices = [
+            { id: 'west-small', title: 'West small', launch: { cpu: 2, ipv4: true, region: 'west' }, prices: price('1'), nativeFacts: { ...facts, location: { id: 'west', title: 'West' } } },
+            { id: 'east-small', title: 'East small', launch: { cpu: 2, ipv4: true, region: 'east' }, prices: price('2'), nativeFacts: { ...facts, location: { id: 'east', title: 'East' } } },
+            { id: 'east-ipv6', title: 'East IPv6', launch: { cpu: 2, ipv4: false, region: 'east' }, prices: price('3'), nativeFacts: { ...facts, location: { id: 'east', title: 'East' } } },
+            { id: 'west-large', title: 'West large', launch: { cpu: 4, ipv4: true, region: 'west' }, prices: price('4'), nativeFacts: { ...facts, size: { id: 'large', title: 'Large' }, location: { id: 'west', title: 'West' } } },
+        ];
+        const native = { ...provisioner, descriptor: { ...descriptor, launchSchema: { type: 'object', properties: {
+            cpu: { type: 'integer' }, ipv4: { type: 'boolean' }, region: { type: 'string' } }, required: ['cpu', 'ipv4', 'region'], additionalProperties: false } satisfies PluginJsonSchemaV2 } };
+        const loaded = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: native, controller, name: 'Guest' }), { choices });
+        const selected = { ...selectManagedConfiguratorChoice(loaded, 'west-small'), optionsSelectors: { ipv4: true } };
+        const east = selectManagedConfiguratorDimension(selected, 'location', 'east');
+        expect(east.selected?.id).toBe('east-small');
+        expect(managedConfiguratorDimensionChoices(east, 'size').find(row => row.choice.nativeFacts?.size?.id === 'small'))
+            .toMatchObject({ available: true, choice: { id: 'east-small', prices: price('2') } });
+        expect(managedConfiguratorFacts(east)?.prices).toEqual(price('2'));
+        expect(managedConfiguratorDimensionChoices(east, 'size').find(row => row.choice.nativeFacts?.size?.id === 'large'))
+            .toMatchObject({ available: false, choice: { prices: undefined } });
+        const ambiguous = { ...east, optionsSelectors: undefined };
+        expect(managedConfiguratorDimensionChoices(ambiguous, 'size').find(row => row.choice.nativeFacts?.size?.id === 'small')?.choice.prices).toBeUndefined();
+        expect(managedConfiguratorDimensionChoices(loaded, 'size').find(row => row.choice.nativeFacts?.size?.id === 'small')?.choice.prices).toBeUndefined();
+        expect(selectManagedConfiguratorDimension({ ...east, optionsSelectors: { ipv4: false } }, 'size', 'small').selected?.id).toBe('east-ipv6');
+    });
     it('retains preset setup in the draft and receipt while keeping one-off acquisition free of setup authority', () => {
         const environment = { setupScript: 'echo ready', secretRefs: { v: 1 as const, bindings: { API_TOKEN: { ref: 'setup-token' } } } };
         const initial = createManagedConfiguratorDraft({ provisioner, controller, name: 'Guest', environment,
@@ -170,6 +207,8 @@ describe('managed configurator draft owner', () => {
         expect(managedConfiguratorFacts(large)?.nativeFacts?.image).toEqual(nativeFacts.image);
         // Crossing dependent dimensions stages only explicit intent, never a synthetic launch or a changed region.
         const otherImage = selectManagedConfiguratorDimension(large, 'image', 'other');
+        expect(managedConfiguratorDimensionChoices(large, 'image').find(row => row.choice.nativeFacts?.image?.id === 'other'))
+            .toMatchObject({ available: false, selectable: true });
         expect(managedConfiguratorAcquireInput(otherImage, 'home')).toBeNull();
         expect(managedConfiguratorDimensionSelection(otherImage)).toEqual({ size: 'large', image: 'other', location: 'west' });
         const smallOther = selectManagedConfiguratorDimension(otherImage, 'size', 'small');

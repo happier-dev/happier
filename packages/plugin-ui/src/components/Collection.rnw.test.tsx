@@ -74,6 +74,7 @@ import { PageHeader } from './PageHeader.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { createListMultiSelectionStore } from './ListMultiSelection.js';
 import { PluginUiProviderInternal } from './PluginUiProvider.js';
+import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
 
 type Entry = Readonly<{ id: string; title: string; group: 'needs' | 'rest'; repo: string; reason: string; age: string }>;
 
@@ -221,7 +222,7 @@ type HarnessOptions = Readonly<{
   header?: React.ReactNode;
   footer?: React.ReactNode;
   detail?: 'auto' | 'none';
-  scroll?: 'collection' | 'page';
+  scroll?: CollectionProps<Entry>['scroll'];
   groupAction?: (groupKey: string) => Readonly<{ label: string; onPress: () => void }> | null;
   detailHeader?: (key: string) => Readonly<{ title: string; subtitle?: string; actions?: React.ReactNode }>;
   useRowActions?: CollectionProps<Entry>['useRowActions'];
@@ -281,6 +282,7 @@ function mount(options: Readonly<{
   reducedMotion?: boolean;
   openKey?: string | null;
   pane?: ReturnType<typeof createPaneHost>;
+  scrollTracker?: PluginUiScrollActivityTracker;
 }> & HarnessOptions = {}) {
   const context = createSurfaceContext({ reducedMotion: options.reducedMotion ?? false });
   const hostApi = createHostApiStub(context);
@@ -296,7 +298,9 @@ function mount(options: Readonly<{
   const wrap = () => (
     <>
       <PluginUiProviderInternal hostApi={hostApi} context={context} presentationHost={host}>
-        <Harness {...harness} openKey={openKey} onOpenChange={(key) => { openChanges.push(key); }} />
+        <PluginUiScrollActivityProvider tracker={options.scrollTracker ?? null}>
+          <Harness {...harness} openKey={openKey} onOpenChange={(key) => { openChanges.push(key); }} />
+        </PluginUiScrollActivityProvider>
       </PluginUiProviderInternal>
       <Slot />
     </>
@@ -333,12 +337,103 @@ function visible(element: HTMLElement | null): boolean {
   return true;
 }
 
+function scroller(element: HTMLElement | null): HTMLElement | null {
+  for (let node = element?.parentElement ?? null; node !== null; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === 'auto' || overflow === 'scroll') return node;
+  }
+  return null;
+}
+
 function headerTitles(container: HTMLElement): readonly string[] {
   const header = container.querySelector('[aria-hidden="true"]');
   return header === null ? [] : [...header.querySelectorAll('[dir="auto"]')].map((node) => node.textContent ?? '');
 }
 
 describe('Collection table', () => {
+  it.each([1440, 390])('windows a large single-choice catalog in the page and reveals keyboard focus at width %s', async (width) => {
+    const listeners = new Set<() => void>();
+    let window = { top: 0, bottom: 600 };
+    const offsets: number[] = [];
+    const tracker: PluginUiScrollActivityTracker & { scrollToOffset(offset: number): void } = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+      getLayoutRevision: () => 0,
+      getWindow: () => window,
+      subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      measureSpan: async () => ({ top: 0 }),
+      scrollToOffset: offset => {
+        offsets.push(offset);
+        window = { top: offset, bottom: offset + 600 };
+        listeners.forEach(listener => listener());
+      },
+    };
+    const catalog = Array.from({ length: 240 }, (_, index): Entry => ({
+      id: `size-${index}`, title: `Compute ${index + 1}`, group: 'rest',
+      repo: `${index + 1} vCPU · ${2 * (index + 1)} GiB`, reason: '', age: '$0.12/h',
+    }));
+    const choices: string[] = [];
+    const view = mount({ items: catalog, grouped: false, detail: 'none', scroll: 'page-virtualized',
+      scrollTracker: tracker, anatomy: { ...anatomy, peek: undefined },
+      selection: { single: { value: 'size-0', onValueChange: key => choices.push(key) } },
+    });
+    const otherControl = document.createElement('button');
+    document.body.appendChild(otherControl);
+    try {
+      view.measure(width);
+      await act(async () => {});
+      const mountedRows = () => view.container.querySelectorAll('[role="radio"]');
+      expect(mountedRows().length).toBeGreaterThan(0);
+      expect(mountedRows().length).toBeLessThan(catalog.length);
+      expect(view.container.querySelectorAll('[role="radiogroup"]')).toHaveLength(1);
+      expect(scroller(view.query('row:size-0'))).toBeNull();
+      expect(view.query('virtualizer')).toBeNull();
+      expect(view.query('row:size-239')).toBeNull();
+      await act(async () => {
+        view.query('row:size-0')!.focus();
+        view.query('row:size-0')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+      });
+      expect(choices).toEqual(['size-239']);
+      expect(offsets.at(-1)).toBeGreaterThan(600);
+      expect(document.activeElement).toBe(view.query('row:size-239'));
+      expect(mountedRows().length).toBeLessThan(catalog.length);
+      await view.update({ selection: { single: { value: 'size-239', onValueChange: key => choices.push(key) } } });
+      expect(view.query('row:size-239')?.getAttribute('aria-checked')).toBe('true');
+      const focusedRow = view.query('row:size-239');
+      const offsetsBeforeResize = offsets.length;
+      const focusedOffsetBeforeResize = offsets.at(-1);
+      view.measure(width === 1440 ? 390 : 1440);
+      await act(async () => {});
+      expect(document.activeElement).toBe(focusedRow);
+      expect(view.query('row:size-239')).toBe(focusedRow);
+      expect(offsets.length).toBeGreaterThan(offsetsBeforeResize);
+      expect(offsets.at(-1)).not.toBe(focusedOffsetBeforeResize);
+      expect(choices).toEqual(['size-239']);
+      expect(mountedRows().length).toBeLessThan(catalog.length);
+      const offsetsBeforeLeaving = offsets.length;
+      act(() => { otherControl.focus(); });
+      view.measure(width);
+      await act(async () => {});
+      expect(document.activeElement).toBe(otherControl);
+      expect(offsets).toHaveLength(offsetsBeforeLeaving);
+      await act(async () => {
+        view.query('row:size-239')!.focus();
+        view.query('row:size-239')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+      });
+      expect(choices).toEqual(['size-239', 'size-0']);
+      expect(document.activeElement).toBe(view.query('row:size-0'));
+      expect(view.openChanges).toEqual([]);
+    } finally { otherControl.remove(); view.unmount(); }
+  });
+  it('uses the incumbent collection virtualizer when page windowing has no positioned page host', () => {
+    const view = mount({ detail: 'none', scroll: 'page-virtualized',
+      selection: { single: { value: 'a', onValueChange() {} } },
+    });
+    try {
+      view.measure(1440);
+      expect(view.query('virtualizer')).not.toBeNull();
+      expect(view.container.querySelectorAll('[role="radiogroup"]')).toHaveLength(1);
+    } finally { view.unmount(); }
+  });
   it.each(['board', 'grid'] as const)('chooses cards in %s without opening their navigation destinations', async (presentation) => {
     const choices: string[] = [];
     const destinationRenders: string[] = [];
@@ -991,14 +1086,6 @@ describe('a phone-width page in a pane host', () => {
 });
 
 describe('a page-sized collection (scroll page)', () => {
-  const scroller = (element: HTMLElement | null): HTMLElement | null => {
-    for (let node = element?.parentElement ?? null; node !== null; node = node.parentElement) {
-      const overflow = getComputedStyle(node).overflowY;
-      if (overflow === 'auto' || overflow === 'scroll') return node;
-    }
-    return null;
-  };
-
   it('scrolls the page header, every row and the footer in one scroller, in reading order', () => {
     const view = mount({
       presentation: 'list',

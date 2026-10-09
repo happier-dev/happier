@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "Не удалось загрузить пресеты. Попробуйте ещё раз.",
         ownerPersonal: "Ваш",
         futureOnly: "Изменения применяются к новым машинам. Существующие сохраняют свой выбор.",
+        deadlineOmitted: "Этот срок не будет сохранён в шаблоне.",
         use: "Использовать пресет",
         createOne: "Создать",
         saveAs: "Сохранить как пресет",

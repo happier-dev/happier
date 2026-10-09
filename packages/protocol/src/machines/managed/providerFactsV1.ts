@@ -38,8 +38,20 @@ export const ProviderNativeOptionFactsV1Schema = lazyDefinition(() => z.strictOb
     memoryBytes: z.optional(z.int().check(z.gte(0))),
     diskBytes: z.optional(z.int().check(z.gte(0))),
   })),
-  image: z.optional(z.strictObject({ id: id(), title: PluginLocalizedStringV2Schema })),
-  location: z.optional(z.strictObject({ id: id(), title: PluginLocalizedStringV2Schema })),
+  image: z.optional(z.strictObject({
+    id: id(), title: PluginLocalizedStringV2Schema,
+    description: z.optional(PluginLocalizedStringV2Schema),
+    /** Static packaged image/png Resource; the existing Image owner admits and renders its bytes. */
+    preview: z.optional(z.strictObject({
+      resource: asProtocolZod(PluginContributionIdentityV1Schema),
+      accessibilityLabel: z.optional(PluginLocalizedStringV2Schema),
+    })),
+  })),
+  location: z.optional(z.strictObject({
+    id: id(), title: PluginLocalizedStringV2Schema,
+    /** Native ISO 3166-1 alpha-2 fact, never inferred from a region id or label. */
+    countryCode: z.optional(z.string().check(z.regex(/^[A-Z]{2}$/u))),
+  })),
   /** A declared native duration names a complete returned choice; it never names an inferred launch field. */
   duration: z.optional(z.strictObject({ id: id(), title: PluginLocalizedStringV2Schema, afterMs: instant() })),
   /** A published monthly rate is not evidence of a native spending cap. */

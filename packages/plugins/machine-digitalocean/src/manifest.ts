@@ -84,7 +84,8 @@ export const PLUGIN = definePlugin({
               nativeFacts: {
                 size: { id: size.slug, title: `${size.slug} · ${size.vcpus} CPU · ${size.memory} MB · ${size.disk} GB`, cpuCores: size.vcpus,
                   memoryBytes: size.memory * 1024 ** 2, diskBytes: size.disk * 1000 ** 3 },
-                image: { id: String(image.id), title: image.name },
+                image: { id: String(image.id), title: image.name,
+                  ...(image.description ? { description: image.description } : {}) },
                 location: { id: region.slug, title: region.name },
                 monthlyCapStatus: size.monthlyCapStatus,
               },

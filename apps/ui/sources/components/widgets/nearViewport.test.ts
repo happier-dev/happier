@@ -14,10 +14,16 @@ function scrollTo(tracker: ReturnType<typeof createNearViewportTracker>, y: numb
 
 describe('near-viewport window', () => {
     it('measures against the native inner view ref rather than its numeric native node handle', async () => {
+        let offset = 0;
         const content = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(10, -100, 800, 6000) };
         const card = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(10, 100, 400, 260) };
-        const tracker = createScrollViewNearViewportTracker({ current: { getInnerViewRef: () => content, getInnerViewNode: () => 42 } }, false);
+        const tracker = createScrollViewNearViewportTracker({ current: {
+            getInnerViewRef: () => content, getInnerViewNode: () => 42,
+            scrollTo: (position: Readonly<{ y: number }>) => { offset = position.y; },
+        } }, false);
         expect(await tracker.measureSpan(card)).toEqual({ top: 200, height: 260 });
+        tracker.scrollToOffset?.(2000);
+        expect(offset).toBe(2000);
     });
     it('uses the same demand window along a horizontal Canvas axis', () => {
         const tracker = createNearViewportTracker({ quantum: 24, initialViewportHeight: 0, axis: 'x' });

@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook } from '@/dev/testkit';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
@@ -26,6 +26,7 @@ import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profil
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
+import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 
 // Static owner imports can reach Socket.IO before runtime setup; replace only its external transport.
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -53,6 +54,8 @@ let managedOperationSettled = false;
 let managedOperationWait: Promise<void> | null = null;
 let managedDeleteSettings: ReturnType<typeof ActionsSettingsV1Schema.parse> | null = null;
 const managedDeleteRequests: Array<{ actionId: string; target: unknown; input: unknown }> = [];
+let observeFreshManagedAcquire = false;
+const managedAcquireRequests: unknown[] = [];
 const scopeRules = new Map<string, AutomationDefinitionDetail>();
 
 beforeEach(async () => {
@@ -69,6 +72,8 @@ beforeEach(async () => {
     managedOperationWait = null;
     managedDeleteSettings = null;
     managedDeleteRequests.length = 0;
+    observeFreshManagedAcquire = false;
+    managedAcquireRequests.length = 0;
     scopeRules.clear();
     spawnResult = createDeferred<SessionSpawnNewResultV1>();
     authoringHttp = createAuthoringMemoryHttpBoundary();
@@ -89,6 +94,16 @@ const runtime = installSessionPaneRuntimeTestHarness({
     accountCurrentness: () => createPlainAccountEncryptionCurrentnessFixture(retainedPurposeDefaults ? { settingsVersion: 1 } : {}),
     request: async (url, init) => {
         const requestUrl = new URL(String(url));
+        if (observeFreshManagedAcquire && requestUrl.pathname === '/v1/machines') {
+            return Response.json([{ ...createPlainMachineRowFixture({ id: 'controller', accountId: 'account-a' }),
+                installationId: 'installation' }]);
+        }
+        if (observeFreshManagedAcquire && requestUrl.pathname === '/v1/actions/machines.managed.acquire') {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+            managedAcquireRequests.push(envelope.input);
+            return Response.json({ v: 1, actionId: 'machines.managed.acquire', requestId: envelope.requestId,
+                execution: { ok: false, errorCode: 'policy_denied_field', error: 'policy_denied_field' } });
+        }
         if (retainedPurposeDefaults) {
             if (requestUrl.pathname === '/v1/account/saved-secrets/resources/materials') {
                 savedSecretImportRequests.push(requestUrl.pathname);
@@ -294,6 +309,37 @@ async function createManagedDraft(archiveEffect: 'keep' | 'stop' | 'delete' = 'k
 }
 
 describe('useCreateNewSession (projection currentness admission)', () => {
+    it('submits the authored Session continuation to managed admission before acquiring a fresh target', async () => {
+        observeFreshManagedAcquire = true;
+        const selection = await createManagedDraft();
+        const { buildNewSessionAuthoringDraftFromResolvedInputs } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+        const authoringDraft = buildNewSessionAuthoringDraftFromResolvedInputs({ directory: '/tmp', prompt: 'Submitted work',
+            agentTarget, profileId: 'review-profile', permissionMode: 'read-only', sessionName: 'Submitted Session',
+            connectedServices: null, sessionConfigOptionOverrides: buildAcpConfigOptionOverridesV1({
+                updatedAt: 23, overrides: { reasoning_effort: { value: 'high', updatedAt: 23 } },
+            }) });
+        managedDeleteSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['ui'] } });
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage.getState().applySettingsForScope({ serverId: runtime.serverId, accountId: 'account-a' },
+            { ...storage.getState().settings, actionsSettingsV1: managedDeleteSettings }, 1);
+        const hook = await mount(null, false, { managedMachineSelection: selection, authoringDraft,
+            selectedMachineId: null, selectedMachine: null, permissionMode: 'read-only', launchUserAttemptId: 'fresh-send',
+            promptStore: createNewSessionPromptStore('Submitted work'),
+            onManagedMachineAcquisitionChange: () => {}, onManagedMachineEnrolled: async () => { throw new Error('unexpected_enrollment'); } });
+        try {
+            await act(async () => { await hook.getCurrent().handleCreateSession(); });
+            expect(managedAcquireRequests).toHaveLength(1);
+            expect(managedAcquireRequests[0]).toMatchObject({ selection: selection.selection, agentStart: {
+                title: 'Submitted Session', agentTarget, profileId: 'review-profile', permissionMode: 'read-only',
+                initialInput: { text: 'Submitted work' },
+                configuration: { options: { reasoning_effort: { value: 'high', updatedAtMs: 23 } } },
+            } });
+            expect(managedAcquireRequests[0]).not.toHaveProperty('agentStart.executionTarget');
+            expect(spawnRequests).toEqual([]);
+            expect(hook.params.promptStore.getPrompt()).toBe('Submitted work');
+            expect(hook.getCurrent().managedMachineCreationProgress).toMatchObject({ kind: 'failed', code: 'policy_denied_field' });
+        } finally { await hook.unmount(); }
+    });
     it('retires acknowledged failed-setup Delete custody without sending the held prompt or replaying its request', async () => {
         const selection = await createManagedDraft();
         managedMachine = { id: 'delete-paid', homeId: runtime.serverIdentityId, custodianAccountId: 'account-a',
@@ -392,8 +438,7 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             } }));
             expect(purposeInitializationRequests).toHaveLength(1);
             expect(purposeInitializationRequests[0]).toMatchObject({ expectedRevision: 'absent', sourceSettingsVersion: 1 });
-            expect(savedSecretImportRequests).toContain('/v1/account/saved-secrets/resources/materials');
-            expect(savedSecretImportRequests).toContain('/v2/account/settings/history');
+            expect(savedSecretImportRequests).not.toContain('/v1/account/saved-secrets/resources/materials');
         } finally { purposeRowReadGate?.resolve(); await hook.unmount(); }
     });
     it('retains the authored draft and refuses spawn when inherited purpose authority withdraws before Send', async () => {

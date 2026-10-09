@@ -2,6 +2,11 @@
 
 Bundled and installed plugins contribute through the same manifest, registration and projection contracts. The host owns installation, admission, currentness, invocation and cleanup; a plugin owns its integration's declarations and executable leaves. The SDK exposes that boundary without becoming another runtime or persistence owner.
 
+In 0.3 development source, merged CLI contribution reads reuse the existing
+immutable built-in registry for bundled declarations. Installed-plugin discovery
+still runs on each merged read; it cannot overwrite that built-in snapshot or
+retain an installed generation across reloads.
+
 This is the standing reference for **0.3 development source / Developer Preview authoring**. Source availability is distinct from registry publication and loaded-platform verification. Exact public exports and capability facts come from the package-owned generated API and capability reports, not a hand-maintained list in this page.
 
 ## Declaration, activation and projection
@@ -32,6 +37,8 @@ Contribution-family membership and normalization are Protocol-owned. In developm
 The development-only `machineProvisioners` family declares native launch and resource schemas and same-plugin daemon Action roles through its [Protocol owner](../packages/protocol/src/plugins/contributions/machineProvisioners.ts). Discovery reads descriptors without importing provisioner leaves; selected or retained contribution demand activates only the needed leaf through the existing `activate(api)` Action ABI. Roles receive raw declared launch choices or resource values, and options receive the provider-declared query value. The host retains qualified resource references, controller and occurrence identity, current-row custody and captured credentials separately. Effectful roles require that private admission; ordinary contributed Action calls cannot supply it. Retained reads may use the same row custody, while initial checks and options can pin a private captured-account lease without inventing a managed row. Native enrollment accepts buffered argv/private-stdin execution through the same ordinary enrollment recipe; live output is optional. Buffered pairing uses the existing auth request, controller approval and auth wait producers, not another installer or enrollment authority. Only the selected guest process receives any invocation-private output observer and inherited task budget; captured preflight processes do not.
 
 In current 0.3 development source, the shared configurator consumes the options Action's explicit `inputHints.fields` and current occurrence-pinned input schema through the existing Action form owner. A schema alone does not declare rendered fields. Editable selector paths must match the executable launch paths so retained recipes can revalidate through that same options role; the UI does not guess native wrappers or merge launch fragments. Selected native prices retain every line in the canonical configuration facts' `prices` vector, including optional localized labels, exact amount, currency, unit, source and observation time. The shared receipt renders that vector without adding totals, currency conversion or guessed monthly rates. Missing native declarations remain unavailable rather than implying UI support.
+
+In the same development source, an absolute Stop/Delete deadline is a reviewed, interrupting choice for one-off creation or a live machine, never a default. The shared Keep control owns its date/time and interruption review. [Reusable retention](../packages/protocol/src/machines/managed/managedMachineV1.ts) derives Keep and unused rules from the same retention schema; [preset writes](../packages/protocol/src/machines/managed/managedMachinePresetV1.ts) and [Account category defaults](../packages/protocol/src/account/settings/machineRetentionDefaultsV1.ts) reject absolute deadlines through their canonical input schemas, including Actions. Saving a deadline-bearing creation draft as a preset preserves its other settings, omits the deadline with an explicit disclosure, and leaves the deadline in the one-off draft. This is development behavior, not a claim of released cloud support.
 
 The same development declaration can bind `nativeDurationInput:{path,unit}` to one ordinary numeric field in its existing options Action. Units are milliseconds or seconds; the field's schema and editor remain owned by that Action. Canonical manifest admission requires the field in every input arm with one identical numeric schema and exactly one numeric hint. This lets the shared Ends owner use that real field without guessing native names or adding a second lifetime input. The binding is not an observed expiry timestamp. Modal declares `timeoutMs` in milliseconds; loaded single-editor UI behavior remains subject to the shared configurator's integration check.
 
@@ -66,7 +73,7 @@ between invocations.
 
 Safe checks may return an optional prerequisite `repairAction` containing a qualified Action reference and JSON invocation input. The host validates that reference and input against the current Action catalog without activating or running the repair. The fact is descriptive, not installation authority: an explicit repair uses the ordinary Action front door and its current approval and execution policy. A missing system tool does not imply a managed installer exists.
 
-Native options may disclose optional `nativeFacts` with labelled size, image and location identities. A size can include observed CPU cores, memory bytes and disk bytes; omitted dimensions and measurements remain unknown. An explicit `monthlyCapStatus: 'none'` reports a native absence of a monthly cap; `unknown` or omission never becomes a cap inferred from a monthly rate. These facts do not replace the strict raw launch selectors or become acquisition authority. The shared reviewed-configuration builder snapshots supplied native facts for later receipt presentation. Retention declarations separately expose optional `finiteOnly`: omission is unknown, and neither native expiry nor the absence of power operations supplies that fact. Policy qualification remains at the sole retention resolver.
+Native options may disclose optional `nativeFacts` with labelled size, image and location identities. A size can include observed CPU cores, memory bytes and disk bytes; omitted dimensions and measurements remain unknown. Images may include a localized `description` and a declarative `preview` naming an exact packaged PNG Resource (`resource: {pluginId, localId}`) with an optional localized `accessibilityLabel` for the existing public Image renderer. Locations may include the native ISO alpha-2 `countryCode`; no country is inferred from a label or region id. Hetzner projects its returned image description and location country code; DigitalOcean projects its returned image description and leaves country absent. Both omit previews because their native catalogs supply none. An explicit `monthlyCapStatus: 'none'` reports a native absence of a monthly cap; `unknown` or omission never becomes a cap inferred from a monthly rate. These facts do not replace the strict raw launch selectors or become acquisition authority. The shared reviewed-configuration builder snapshots supplied native facts for later receipt presentation. Retention declarations separately expose optional `finiteOnly`: omission is unknown, and neither native expiry nor the absence of power operations supplies that fact. Policy qualification remains at the sole retention resolver.
 
 Provisioners that return pending acquisition handles declare an optional `reconciliation` hook with a closed native-operation schema and a safe same-plugin daemon Action. The public `defineMachineProvisionerReconciliationSchemas` constructor consumes the launch schema and supplies a strict input union: the retained native handle, or the original managed-row/request correlation with its declared launch. The shared acquire/reconcile result validates pending handles and eventual bound resources. The same constructor supplies the destroy input for either a bound resource or proven-owned partial attachments identified by the retained native handle. Ordinary resource inspection remains unchanged. Reconciliation requires private retained-row custody and performs read-only lookup; it cannot repeat acquisition. Without the hook, strict acquire writes cannot emit pending, while retained generic row data remains readable for unavailable/manual recovery.
 
@@ -265,13 +272,35 @@ resource-specific private token.
 - Trusted daemon and native plugin code is executable code. Managed services provide portable APIs, resource custody, cancellation and diagnostics; they are not a malicious-code sandbox. Real network, credential, present-user and OS permission boundaries still apply.
 - Capability declarations, runtime registration and lifecycle must exist in the applicable realm. A daemon declaration does not establish browser or native support. Registry publication and a loaded invocation are separate evidence, not substitute availability authorities.
 
+In 0.3 development source, Plugin UI `readResource` and `watchResource` also
+accept the closed host-read reference `{ hostRead: actionId, input }` for
+`usage.query` and `connectedServices.quota.get`. It selects a host snapshot, not
+a plugin contribution or an authority. The canonical Action preparation owner
+admits the current plugin caller, input, settings and captured Account before
+the mount can join the existing Resource store. A safe read still obeys an
+explicit plugin-caller policy. One-shot `executeAction` remains available.
+
+Preparation must establish read admission, not merely prepare remote delivery.
+The current API-token preparation path defers server grant checks until
+execution, so mounted host Resources refuse that path rather than borrow
+already-open Account bytes or execute a read solely to discard its result.
+One-shot Action execution keeps its existing server admission path.
+
+Native Resource hooks and hosted bridge subscriptions retain the same read,
+invalidation, last-authorized-value and retirement semantics. Host identity
+includes the Action and its canonical resolved input under the captured
+Account; it never fabricates a plugin id. An invalidation carries no snapshot
+bytes: rereading remains the single snapshot authority. Unsupported older
+bridge ceilings refuse the new reference without changing incumbent plugin
+references. Source contract tests do not certify a loaded native/hosted journey.
+
 For collection-based plugin pages, the public Plugin UI `Collection` composes one headless model, item anatomy and detail renderer across presentations and containers. `Step`, controlled `Tabs` (including host-rendered strips) and `HappierDisclosure` belong to that public UI/presentation boundary, rather than feature-local replacements. See [Collection presentation](collection-presentation.md) and the [public author composition](../apps/docs/content/docs/plugins/ui/react-native.mdx).
 
 In 0.3 development source, public `WidgetFrame` and the core widget adapter share the same frame and controlled `disclosure` contract. Collapse belongs to the current viewer; it keeps the body mounted and hidden without changing widget layout, input or Resource identity. Public `/presentation` also owns tree keyboard/focus semantics (`HappierTreeNode` and `useHappierTreeInteraction`), using explicit parent keys rather than filesystem path spelling. Filesystem trees translate their domain rows into that owner.
 
 Measured `FrameRect` placement and `resolveFloatingFrameRect` share companion geometry with core. Callers supply available space and measured avoid rectangles; the result reports when no non-overlapping placement fits so the domain can use its dock composition. Pointer listeners, native gestures and measurements remain host adapters. These foundations do not create a viewer registry or assert that every capture/viewer shell is integrated.
 
-Public `/presentation` exports `FloatingFrame` / `FloatingFrameProps`: one controlled neutral frame (`floating`, `expanded`, `docked`, `closed`) with a controls band and one body. It owns only geometry and shell mode: drag, velocity and release use the shared companion interaction owner, settling uses `resolveFloatingFrameRect` and asks to dock when nothing fits, arrow keys snap corners and the grip resizes with the body's aspect. `moveInput` decides whether the body or only the controls band and grip move it; the host decides that from its own control facts. The platform pointer boundary comes from the `pointer` prop or the presentation host's `companionPointer`; without one the frame moves by keyboard and menu only. It has no target, Session, network or trust props. In 0.3 development source the Session viewer is its first consumer: it frames the retained Computer or Browser body, publishes its settled rectangle to the shell's measured Voice/pet geometry and moves the reading column aside on snap. Development-only until 0.3 ships.
+Public `/presentation` exports `FloatingFrame` / `FloatingFrameProps`: one controlled neutral frame (`floating`, `expanded`, `docked`, `closed`) with a controls band and one body. It owns only geometry and shell mode: drag, velocity and release use the shared companion interaction owner, settling uses `resolveFloatingFrameRect` and asks to dock when nothing fits, arrow keys snap corners and the grip resizes with the body's aspect. `moveInput` decides whether the body or only the controls band and grip move it; the host decides that from its own control facts. While the body moves the frame, a double-click on it expands (and restores) the frame, and Escape restores an expanded frame. An optional `footer` stands one presence capsule below the body (`HAPPIER_FLOATING_FRAME_METRICS.footerHeight` is that capsule's height); `aspectRatio` is the body's own shape, so placement (`resolveFloatingFrameRect` with `chromeHeight`) shrinks both axes together, and `minWidth` is the host's measured usable minimum below which resizing stops and placement docks. `HappierStatusCapsule placement="inline"` with a `leading` mark is the same status capsule standing in flow, as a viewer's identity capsule. The platform pointer boundary comes from the `pointer` prop or the presentation host's `companionPointer`; without one the frame moves by keyboard and menu only. It has no target, Session, network or trust props. In 0.3 development source the Session viewer is its first consumer: it frames the retained Computer or Browser body, publishes its settled rectangle to the shell's measured Voice/pet geometry and moves the reading column aside on snap. Development-only until 0.3 ships.
 
 The public root and `/components` export the themed `FloatingFrame` adapter and
 its props over that same neutral owner. It supplies host theme and accessibility
@@ -312,6 +341,21 @@ An installed widget whose plugin projection is still establishing also remains l
 
 The existing Summary, Plan, Changes and Local Services metadata/body owners project into that same catalog and admission path as native definitions, without fabricated plugin identities or a parallel creation registry. Configured copies retain independent bindings. Their native bodies use the selected Session's existing data/action owners; a configured Summary's work destination opens that Session's Agents view rather than borrowing the visible Session's local status popover.
 
+In unreleased 0.3 source, native definitions declare Session and Workspace values
+through the shared field `inputType` host reference. `readWidgetInputTargetV1`
+derives target admission from those declarations; installed/authored declarations
+retain their existing explicit Session-path ABI. A declaration describes a value,
+not a read grant: Session admission still resolves the exact qualified Session,
+and Workspace admission requires the host-admitted checkout. An app-read definition
+requires neither a fabricated Session nor machine/credential material. Account or
+containing-document retirement removes its admitted content.
+
+The shared field `contextMode` defaults to follow-able; `own` fields retain only
+their ordinary bindings or declared defaults and reject context bindings. Group
+input collection excludes those fields and credentials. Page/group composition
+uses the same resolver for every widget family, and group values cannot promote
+a saved Workspace reference into host read authority.
+
 Declared `optionsSourceId: 'sessions'` uses the neutral options resolver and returns qualified `{ serverId, sessionId }` choices from current Session discovery. Setup previews resolve the same declared bindings as saved instances without writing them. The surface's `onRepairInputs` callback exposes its typed unresolved binding outcome to the existing setup composition, without creating another input writer.
 
 Widget Views can declare `resources` as qualified same-plugin Resource references at the existing manifest/Surface Registry owner. These references identify refresh dependencies, not permissions. The daemon projection retains each admitted Resource's actual `global`, `session` or `surface` scope; dynamic Resources have no fabricated packaged-file path. `widgets.item.refresh` admits the current instance and resolved target, then awaits each declared Resource's existing store read. The store's `refresh()` returns the settled snapshot, including a truthful error or retirement outcome; stale last-known content does not make a failed refresh successful.
@@ -338,8 +382,10 @@ registry or public host service.
 These are development-source contracts, not release or loaded-platform certification. WorkBoard, Project/plugin-area layouts, reusable declarative definitions and setup/edit composition consume the same identities through their respective program owners. Home includes built-in visibility and setup dismissals in its layout Artifact. WorkBoard widget intents use its existing `work-board.v1` Artifact reducer/CAS writer alongside work references and smart sections. Project/plugin areas share the [`widget-area-layout.v1` owner](../packages/protocol/src/widgets/widgetSurfaceArtifactV1.ts); changing page context does not create a new layout. Project areas use order and a Plain default.
 
 Each Project dashboard has one layout Artifact containing both main and aside.
-The omitted dashboard id retains the default identity; named documents add their
-own id to the stable private Project key, qualified by Home and owning Account.
+The omitted `layoutId` retains the default Overview identity; an explicit
+Project `layoutId: 'overview'` normalizes to that same owner reference rather than
+creating a second Artifact. Other named documents add
+their `layoutId` to the stable private Project key, qualified by Home and owning Account.
 The existing Artifact header inventory supplies names and owner-only scalar
 ordering, without reading inactive bodies or creating an inventory store. The
 default cannot be deleted; named rename, reorder and delete operate on their
@@ -383,6 +429,27 @@ child retains its own value. Viewer intent continues through the existing
 purpose-selection owner. A group conveys values, never access, and each child
 still passes exact-target, input and read-authority admission.
 
+Home and widget areas render groups through one UI owner,
+`apps/ui/sources/components/widgets/group/**`: `WidgetGroupFrame` draws the
+group in the shared widget frame (no header row when untitled) and packs the
+children with `packWidgetGroupBands` (shorter-column packing; a full-width
+child takes its own band; a lone child fills its row in view mode and keeps
+its half beside an empty slot while customizing; one column on phones and at
+half width). The group draws ink dividers; children draw plain without their
+own hairline. `widgetGroupMenu` builds the group ⋯ and each widget's group
+entries (Move to group, Remove from group, Ungroup, Group with…) through the
+frame menu's order, and every width choice shows unavailable widths with the
+blocking widget. Drag refusals for width and nesting take their words from the
+shared `widgetMovementRefused` owner. A whole group lifts by its grip as a
+`widget-layout-group` carry; a group target admits into-group or beside-group
+drops, and each card target draws the line between cards, inside its group when
+grouped (`widgetGroupDropTarget`). A group's empty slot opens the surface's Add
+aimed at that group (`widgets.item.add` with `groupId`). Save group asks for a
+name and writes a private fragment; Add to… copies the group to Home or a Project
+through `widgets.group.add`. Add lists only widgets the surface can host
+(`isWidgetTargetHostableV1`: a checkout target needs a Project), and
+`widgets.catalog.list` filters the same way.
+
 [`widget-layout-fragment.v1`](../packages/protocol/src/widgets/widgetLayoutFragmentArtifactV1.ts)
 stores reusable group options, declared inputs, provenance and each child's
 definition reference or inline definition, bindings and size through the
@@ -397,13 +464,15 @@ normal reference semantics. The
 keeps fragments out of the generic document browser, people sharing and public
 links; their port admits only the owning Account's library.
 
-Area presets are host-supplied named `items`, not caller-selected authority.
-The default Project Overview uses that preset contract; core pages may supply
-their own matching preset. Reading missing content renders defaults without a
-write. The first explicit edit persists the defaults plus the edit through the
-existing CAS writer. Preset state compares current items with the host defaults.
-Reset replaces the items immediately and returns the prior layout with its
-acknowledged revision; Undo refuses if that revision has since changed. These
+Area layouts share one `layoutId` across Project, plugin and core-page owners.
+Host presets supply named `items`; personal views use the same Artifact writer
+and `widgets.area.layout.*` Actions. Project Overview uses that preset contract.
+Reading missing defaults causes no write. The first explicit edit persists the
+defaults plus the edit through CAS; an explicitly empty saved layout remains
+empty. Create with `fromSurface` copies current content into an independent view.
+Preset state compares current content with host defaults. Reset requires the
+current revision, replaces the items immediately and returns the prior layout
+with its acknowledged revision; Reset/Undo refuse intervening edits. These
 owner-level contracts do not certify the loaded controls or visual acceptance.
 
 An attached shared dashboard binds the owner's exact Artifact, while the actor
@@ -444,6 +513,8 @@ Reusable Account definitions use `widget-definition.v1` Artifacts through the ex
 
 Declarative metric, table and single-series chart nodes use [typed data-source references](../packages/protocol/src/plugins/contributions/ui/declarativeDataV1.ts). They draw through one presentation owner, [`presentation/data/**`](../packages/plugin-ui/src/presentation/data/), which core's declarative renderer and the public `Metric`, `DataRows`, `DataTable` and `Chart` components share: tabular locale numbers, a proportion column as a share of its largest value, table columns dropped by measured width (`secondary` first, never the name) while every row stays and each row still reads every column to assistive technology, and a chart that is one labelled image naming every point. A live widget document keeps its last authorized content through refresh, a sleeping machine or a failed read, with one freshness line (as of, cause, Retry); `Post a snapshot` freezes exactly the frozen nodes on screen when the confirm opens ([`projectWidgetSnapshotPreviewV1`](../packages/protocol/src/sessions/board/declarative/snapshot.ts)). A Resource reference identifies a current declared Resource, not access authority; its scope, current occurrence and resolved input are admitted by the incumbent Resource owner. `widgets.snapshot.post` publishes the exact previewed inert document, as-of time and provenance through the existing Board item upsert. Snapshot content contains no live Resource, launch input or executable control. The Action never re-queries after approval. Definition edits/deletion, shared Board content upsert and snapshot publication use the existing consequential approval defaults and configurable waivers.
 
+The development public `@happier-dev/plugin-ui/presentation` palette also exposes finite neutral series, grids, intervals, capacity, composition, ranked rows and outcome forms from that same data owner. Callers supply identities, exact values, labels, units and any qualified projections; charts do not fetch Usage, infer accounting totals or decide status. A missing observation remains distinct from zero. Compact presentation retains exact accessible values rather than truncating the dataset. Composition takes an explicit whole, so overlapping categories retain their supplied denominator instead of becoming a misleading stacked total. App tooltip and scrolling-frame adapters may wrap shared visuals, but own no second plot geometry. Capacity and row proportions reuse the existing progress primitive; ledgers remain `DataTable`. The existing declarative one-series `Chart` is the widgets-owned consumer for the subsequent AR-2 renderer consolidation.
+
 Metric comparisons project a typed value and authored label with explicit
 `good`, `bad` or `neutral` meaning; numeric sign does not choose semantic color.
 Rows and tables can project a boolean mark with separately authored true/false
@@ -472,6 +543,38 @@ removal captures stay inside the host transport. They are not author DTOs or
 an alternative widget mutation API.
 
 ### Typed input extensions (0.3 development)
+
+Personal usage has one host-owned `UsageQuery` at
+[`inputs/usageQuery.ts`](../packages/protocol/src/inputs/usageQuery.ts). A field
+declares `inputType: { hostType: 'usageQuery' }`, not a fabricated plugin
+identity. Its generic host picker and headless validation use that same schema.
+The independently follow-able scope and cost-basis paths consume the general
+field `contextMode`; metric and breakdown retain their own presentation values.
+The Usage builtin catalog declares those nine individual input paths against
+the canonical query schema; the whole-query host input type is not attached to
+scalar paths. Usage's eight core-page presets are portable layout fragments,
+instantiated by the shared widget platform with Card groups and Lines children.
+Their view selection and user copies use `owner.layoutId` and the ordinary
+`widgets.area.layout.*` Actions, not a Usage-specific view store. The page
+offers the seven scope/cost slots; metric and breakdown remain own values.
+The Project adapter's plural `projects` slot comes from admitted Project
+identity, while the Session consumer must supply an already admitted
+Session id, not treat a route parameter as authority. The logic seams are in
+development source; their visual consumer
+and loaded-runtime validation are separate from catalog admission.
+Batch normalization sorts and deduplicates complete resolved query identities.
+`usage.query` takes `{ queries: [query] }` and returns independently keyed current
+snapshot slices; a pending source does not delay available accounting.
+
+`usage.export` takes a query, JSON/CSV/text format and explicit accounting section
+keys. The single [`usageExport.ts`](../packages/protocol/src/usage/usageExport.ts)
+serializer returns strict file bytes and a selected-field manifest, preserving
+unpriced monetary absence and the selected cost basis. The file's `asOfMs` is
+the accounting source timestamp or `null` when unknown, never the export clock.
+It performs no upload,
+clipboard or filesystem effect; local Save, Copy and Share remain explicit client
+operations. These contracts describe development source, not a loaded-client or
+release certification.
 
 The existing contribution catalog admits data-only [`inputTypes`](../packages/protocol/src/plugins/contributions/inputTypes.ts)
 descriptors. A qualified type declares semantic identity and a normalized,
@@ -567,6 +670,20 @@ budgets are optional for source and identity resolution, and required for paged
 candidate/transcript reads. Explicit caller paging budgets are preserved rather
 than clipped to a second host ceiling. Wire and persisted-data schemas still own
 their declared limits.
+
+External Sessions contributions can also declare optional `readAccounting` in
+0.3 development. This source-wide auxiliary read uses the same occurrence,
+cancellation and execution-service admission as transcript reads; older facets
+return `unsupported`. Strict Protocol admission accepts normalized numeric usage,
+explicit counter-inclusivity evidence and a source-owned frontier, never transcript
+content. Optional exact native project-directory evidence remains machine-local;
+the host resolves it to opaque project identity and Account-mode labels before
+publication, and never includes that path in usage ingest. Only an `advanced` result
+acknowledges a new cursor; replacement and expired-cursor outcomes do not.
+`resolveSource.accountingSource` supplies canonical root and change-observation
+metadata without reading transcript records. Consented machine/source accounting
+demand shares the incumbent resource reconciler with real Session links and can
+retain its watches without creating a Session identity.
 
 SDK inventory paging retains one snapshot per live query demand. `list` returns
 an opaque, serializable, single-use `nextCursor`; every successor belongs to
@@ -1035,12 +1152,21 @@ through another name classifier. Claude and Codex unsuccessful HTTP reads use
 the SDK `QuotaFetchError`; the shared timing parsers preserve Retry-After and
 provider reset evidence for the daemon's existing backoff.
 
-Before admitted qualified quota work enters the plugin, the daemon creates an
-absent PAU source as `not_loaded`, with no fetched observation. Polls, group
+After credential settlement, the daemon checks the established runtime's actual
+quota contribution and initializes an absent PAU source before returning
+`connected`, without calling the provider quota API. An initialization failure
+does not undo committed credentials; the existing quota poll repairs the source.
+Before admitted qualified quota work enters the plugin, the daemon also creates
+an absent source as `not_loaded`, with no fetched observation. Polls, group
 probes and post-recovery refreshes share this admission/failure owner. A failed
 read writes `error_last_known_good`, keeping prior meters and their observation
 times; safe provider status/code and the existing retry time travel in optional
 diagnostics. Failure rows cannot hydrate as fresh successful observations.
+Explicit V4 Refresh admission checks the current executable quota leaf before
+requesting server refresh. A missing leaf returns the existing typed unsupported
+operation result; absent publication and retired runtime generations retain
+their distinct unavailable results. Ordinary service discovery remains a cold
+descriptor read and does not activate the plugin.
 The UI distinguishes an absent observation from unsupported quota admission,
 allows Refresh while capability is unknown, and shows localized failure/status/
 retry information without displaying provider messages or headers. These are
@@ -1303,8 +1429,15 @@ access; there is no separate permission to evaluate trusted plugin code.
 Pending decisions remain until an explicit decision, handoff or shutdown
 retires them; settled rejoin results remain for the daemon lifetime. Candidate
 cleanup is awaited through that lifecycle and reports failures without a shorter
-phase timeout. Activation and retirement likewise inherit explicit containing
-deadlines when supplied; absent a deadline, trusted asynchronous work is awaited.
+phase timeout. The daemon starter's readiness wait bounds only its observation
+of startup. It does not cancel source preparation, module loading, activation,
+primary Agent construction or initial Resource admission. Those operations stay
+pending under their existing occurrence lifetime and can finish without a daemon
+restart; elapsed startup time is not a plugin load failure. Required synchronous
+consumers still wait for their registrations before the serving registry is
+published. Actual activation failures remain diagnosed and isolated at the
+canonical runtime owner. Retirement retains its explicit cleanup budget when
+supplied; otherwise trusted asynchronous cleanup is awaited.
 Installed catalog and runtime discovery consume the same validated manifest
 projection committed with each accepted development candidate, rather than
 parsing or re-evaluating its source entrypoint. Until a new candidate is accepted,

@@ -293,6 +293,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loadFailed: "No s’han pogut carregar els valors predefinits. Torna-ho a provar.",
         ownerPersonal: "Teu",
         futureOnly: "Els canvis s’apliquen a màquines noves. Les existents conserven les seves opcions.",
+        deadlineOmitted: "El preajust no desarà aquesta data límit.",
         use: "Fer servir el valor predefinit",
         createOne: "Crear-ne una",
         saveAs: "Desar com a valor predefinit",

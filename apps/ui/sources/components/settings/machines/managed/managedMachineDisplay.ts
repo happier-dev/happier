@@ -44,8 +44,10 @@ export type ManagedSizeOption = Readonly<{
   /** Local sizes: what the host keeps while this size runs ("8 cores · 28 GB"). */
   headroom?: string;
   /** The receipt's spec line for this size ("4 vCPU · 8 GB · 80 GB"). */
-  spec: string;
-  unavailableReason?: string;
+    spec: string;
+    unavailableReason?: string;
+    /** A dependent choice can be staged while its current combination is unavailable. */
+    selectable?: boolean;
 }>;
 
 export type ManagedImageOption = Readonly<{
@@ -53,8 +55,9 @@ export type ManagedImageOption = Readonly<{
   name: string;
   description: string;
   /** The provisioner descriptor's preview at static props; never a tenant screenshot. */
-  preview?: React.ReactNode;
-  unavailableReason?: string;
+    preview?: React.ReactNode;
+    unavailableReason?: string;
+    selectable?: boolean;
 }>;
 
 export type ManagedLocationOption = Readonly<{
@@ -62,8 +65,9 @@ export type ManagedLocationOption = Readonly<{
   city: string;
   country: string;
   /** ISO 3166-1 alpha-2, for the flag beside the city. */
-  countryCode?: string;
-  unavailableReason?: string;
+    countryCode?: string;
+    unavailableReason?: string;
+    selectable?: boolean;
 }>;
 
 export type ManagedReceiptFact = Readonly<{
@@ -127,6 +131,21 @@ export function formatPriceSource(
     provider: price.source,
     time: formatAsOfTime(price.observedAt),
   });
+}
+
+/**
+ * A country's name in the reader's language, from its ISO 3166-1 alpha-2 code. Nothing for an absent or
+ * unknown code, or where the platform cannot name regions: a country is never guessed from a label.
+ */
+export function countryName(countryCode: string | undefined, locale: string): string {
+  const code = countryCode?.trim().toUpperCase() ?? '';
+  if (!/^[A-Z]{2}$/.test(code)) return '';
+  try {
+    const name = new Intl.DisplayNames([locale], { type: 'region' }).of(code);
+    return name && name !== code ? name : '';
+  } catch {
+    return '';
+  }
 }
 
 /** A flag from a country code (regional-indicator letters); nothing for a code that is not two letters. */

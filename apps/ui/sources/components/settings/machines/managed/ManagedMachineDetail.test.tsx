@@ -70,6 +70,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 afterEach(() => {
     retireActiveServerAccountScopeLifetime(); resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     operationRpcBoundary.answer = null; operationRpcBoundary.requests = []; actionOperationStore.reset();
 });
 
@@ -455,7 +456,14 @@ describe('managed Machine detail', () => {
         expect(keep.nativeDuration).toBeUndefined();
         expect(keep.policy.retention).toEqual(machine.retention);
     });
-    it.each(['confirmed-absent', 'may-exist'] as const)('reviews manual responsibility before removing a %s resource from Happier and keeps its recovery details during Ask', async allocation => {
+    it.each([
+        { allocation: 'confirmed-absent', consoleUrl: undefined },
+        { allocation: 'may-exist', consoleUrl: undefined },
+        { allocation: 'bound', consoleUrl: undefined },
+        { allocation: 'bound', consoleUrl: 'https://console.vendor.test/resources/exact-native-id' },
+    ] as const)('reviews manual responsibility before removing a $allocation resource and retains recovery during Ask ($consoleUrl)', async ({ allocation, consoleUrl }) => {
+        const openConsole = vi.fn();
+        vi.stubGlobal('open', openConsole);
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-retire-review.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_retire');
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
@@ -471,7 +479,11 @@ describe('managed Machine detail', () => {
             ...(allocation === 'may-exist' ? {
                 nativeOperationRef: { contributionRef: provider, schemaVersion: 1, value: { operationId: 'unknown-native-submission' } },
                 recovery: { reference: 'original-native-recovery', reason: 'submission_result_unknown' },
-            } : { resource: { contributionRef: provider, schemaVersion: 1, value: { nativeId: 'original-native-id' } } }),
+            } : { resource: { contributionRef: provider, schemaVersion: 1,
+                value: { nativeId: 'original-native-id', cloud: 'native-cloud', region: 'native-region' } },
+                ...(allocation === 'bound' ? { cleanup: { disposition: 'unavailable' as const, reason: 'native_records_missing' },
+                    recovery: { reference: 'original-native-id · native-cloud · native-region', reason: 'native_records_missing',
+                        ...(consoleUrl ? { consoleUrl } : {}) } } : {}) }),
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         const retired: unknown[] = [];
         const nativeActions: string[] = [];
@@ -495,6 +507,17 @@ describe('managed Machine detail', () => {
         const screen = await renderScreen(<ManagedMachineDetail managedId={machine.id} serverId={target.id}
             executeAction={createDefaultActionExecutor().execute} />);
         await flushHookEffects({ cycles: 25 });
+        const consoleAction = screen.findByTestId('managed-machine.progress:openProvider');
+        if (machine.recovery) expect(screen.getTextContent()).toContain(machine.recovery.reference);
+        if (consoleUrl) {
+            expect(consoleAction).not.toBeNull();
+            await act(async () => screen.pressByTestId('managed-machine.progress:openProvider'));
+            expect(openConsole).toHaveBeenCalledWith(consoleUrl, '_blank', 'noopener,noreferrer');
+        } else {
+            expect(consoleAction).toBeNull();
+            if (allocation === 'bound') expect(screen.findByTestId('managed-machine.recovery-manual')).not.toBeNull();
+        }
+        expect(retired).toEqual([]);
         const remove = screen.tree.findAll(node => ['managed-machine.progress:remove', 'managed-machine.remove'].includes(node.props?.testID)
             && typeof node.props.onPress === 'function')[0];
         expect(remove).toBeDefined();
@@ -509,20 +532,22 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine.creationState).toBe('canceled');
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.recovery').length).toBeGreaterThan(0);
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine).toEqual(machine);
-        if (allocation === 'may-exist') expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.possible-cost').length).toBeGreaterThan(0);
+        if (allocation !== 'confirmed-absent') expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.possible-cost').length).toBeGreaterThan(0);
         expect(nativeActions).not.toContain('machines.managed.delete');
         expect(nativeActions).not.toContain('machines.managed.inspect');
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.approval').length).toBeGreaterThan(0);
     });
-    it('offers Move only for current installations that can reach the exact retained credential and submits the reviewed controller revision', async () => {
+    it.each(['offline', 'missing', 'missing-local', 'missing-nonmanager'] as const)('offers Move only with current authority and a same-credential destination (%s)', async controllerState => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-move-candidates.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_move');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests(
+            controllerState === 'missing-nonmanager' ? 'viewer' : 'owner', { currentAccount: true }) });
         const controller = { machineId: 'original', installationId: 'original-installation' };
         const next = { machineId: 'reachable', installationId: 'reachable-installation' };
         const blocked = { machineId: 'blocked', installationId: 'blocked-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
-        storage.setState({ machineListByServerId: { [serverId]: [controller, next, blocked].map(row => createMachineFixture({
+        const location = controllerState === 'missing-local' ? 'local' : 'cloud';
+        storage.setState({ machineListByServerId: { [serverId]: (controllerState === 'offline' ? [controller, next, blocked] : [next, blocked]).map(row => createMachineFixture({
             id: row.machineId, installationId: row.installationId, updatedAt: Date.now(),
             ...(row.machineId === controller.machineId ? { active: false, activeAt: 1 } : {}),
             access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })) } });
@@ -533,13 +558,13 @@ describe('managed Machine detail', () => {
         const machine: ManagedMachineV1 = { id: 'move-managed', homeId: 'srv_managed_move', custodianAccountId: 'owner', launch,
             controller, allocation: 'bound', creationState: 'active', resource: { contributionRef: provider, schemaVersion: 1, value: {} },
             desired: 'start', desiredWhen: 'now', intentRevision: 9, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'cloud', stoppedBilling: 'billed' },
+            reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location, stoppedBilling: 'billed' },
                 prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
         const provisioner = { contribution: provider, occurrenceId: 'occurrence', descriptor: {
             id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
             launchSchema: { type: 'object', properties: {}, additionalProperties: false }, resourceSchema: { type: 'object', properties: {}, additionalProperties: false },
-            platforms: ['linux'], prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' },
+            platforms: ['linux'], prerequisites: [], billing: { location, stoppedBilling: 'billed' },
             retention: { supportedIntents: ['start', 'stop', 'delete'] },
             actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' } } };
         const checked: unknown[] = [];
@@ -569,7 +594,16 @@ describe('managed Machine detail', () => {
         const screen = await renderScreen(<ManagedMachineDetail managedId={machine.id} serverId={target.id}
             executeAction={createDefaultActionExecutor().execute} />);
         await flushHookEffects({ cycles: 30 });
-        const move = screen.tree.findByType(ManagedMachineControllerSection).props.controller.move;
+        if (controllerState === 'missing-local' || controllerState === 'missing-nonmanager') {
+            expect(screen.findByTestId('managed-machine.controller-unavailable:move')).toBeNull();
+            expect(screen.tree.findAllByType(ManagedControllerMoveList)).toHaveLength(0);
+            expect(moves).toEqual([]);
+            return;
+        }
+        const move = controllerState === 'missing'
+            ? { kind: 'movable', onPress: () => screen.pressByTestId('managed-machine.controller-unavailable:move') }
+            : screen.tree.findByType(ManagedMachineControllerSection).props.controller.move;
+        if (controllerState === 'missing') expect(screen.findByTestId('managed-machine.controller-unavailable:move')).not.toBeNull();
         expect(move.kind).toBe('movable');
         expect(checked).toContainEqual({ homeId: machine.homeId, controller: next, contribution: provider, credentials: [credential] });
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBeDefined();

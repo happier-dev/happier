@@ -48,6 +48,10 @@ export const ManagedMachineConfigurator = React.memo(
     }>,
   ) {
     const channel = useLiveValueChannel(props.receipt);
+    const receiptSheet = React.useRef<string | null>(null);
+    React.useEffect(() => () => {
+      if (receiptSheet.current) Modal.hide(receiptSheet.current);
+    }, []);
     if (!props.compact) {
     return (
       <ManagedReceiptPageLayout
@@ -73,7 +77,10 @@ export const ManagedMachineConfigurator = React.memo(
         <SummaryBar
           summary={props.summary}
           primary={props.receipt.primary}
-          onOpen={() => showReceiptSheet(channel, `${props.testID}.receipt`)}
+          onOpen={() => {
+            if (receiptSheet.current) Modal.hide(receiptSheet.current);
+            receiptSheet.current = showReceiptSheet(channel, `${props.testID}.receipt`);
+          }}
           testID={`${props.testID}.summary`}
         />
       </View>
@@ -125,7 +132,7 @@ function SummaryBar(
 }
 
 function showReceiptSheet(channel: LiveValueChannel<ManagedReceiptModel>, testID: string) {
-  Modal.show({ component: ReceiptSheet, props: { channel, testID } });
+  return Modal.show({ component: ReceiptSheet, props: { channel, testID } });
 }
 
 function ReceiptSheet(

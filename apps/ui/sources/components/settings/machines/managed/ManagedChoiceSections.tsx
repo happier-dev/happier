@@ -6,12 +6,10 @@ import {
   type CollectionField,
 } from '@happier-dev/plugin-ui';
 import {
-  HappierRadioMark,
   happierPageTextMetrics,
   useHappierCollection,
 } from '@happier-dev/plugin-ui/presentation';
 
-import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -35,8 +33,6 @@ import {
 
 const keyOfSize = (size: ManagedSizeOption) => size.id;
 const NOOP_OPEN = () => undefined;
-/** The table lives inside the configurator page's own scroller (`ItemList`), so its rows render in place. */
-const renderInPageScroller = (children: React.ReactNode) => <>{children}</>;
 
 /** The size comparison: the public Collection table with one radio column and tabular numbers. */
 export const ManagedSizeTable = React.memo(function ManagedSizeTable(
@@ -79,21 +75,21 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
         3,
       ),
     ];
-    if (!props.compact)
-      fields.push(
-        numberField(
-          'disk',
-          t('managedMachines.config.columns.disk'),
-          (size) => size.disk,
-          2,
-        ),
-      );
+    // Disk stays a column wherever the table has room; the table's own priorities drop it, not a device label.
+    fields.push(
+      numberField(
+        'disk',
+        t('managedMachines.config.columns.disk'),
+        (size) => size.disk,
+        2,
+      ),
+    );
     if (hasHourly)
       fields.push(
         numberField(
           'hourly',
           t('managedMachines.config.columns.perHour'),
-          (size) => size.hourly ?? '',
+          (size) => size.hourly ?? t('common.unknown'),
           5,
         ),
       );
@@ -102,7 +98,7 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
         numberField(
           'monthly',
           t('managedMachines.config.columns.perMonth'),
-          (size) => size.monthly ?? '',
+          (size) => size.monthly ?? t('common.unknown'),
           1,
         ),
       );
@@ -141,29 +137,47 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
         value: props.value,
         onValueChange: props.onChange,
         isItemSelectable: (size: ManagedSizeOption) =>
-          size.unavailableReason === undefined,
+          size.selectable ?? size.unavailableReason === undefined,
         unavailableReason: (size: ManagedSizeOption) =>
           size.unavailableReason ?? null,
       },
     }),
     [props.onChange, props.value],
   );
+  // A phone has no room for the headroom column, so what the chosen size leaves this computer moves
+  // beneath the table instead of disappearing at the point of choice.
+  const selectedHeadroom =
+    props.compact && props.headroomTitle !== undefined
+      ? props.sizes.find((size) => size.id === props.value)?.headroom
+      : undefined;
   return (
-    <CoreCollectionScope renderPageScroller={renderInPageScroller}>
-      <Collection
-        model={model}
-        anatomy={anatomy}
-        accessibilityLabel={t('managedMachines.config.size')}
-        presentation="table"
-        detail="none"
-        scroll="page"
-        selection={selection}
-        minListWidth={280}
-        minDetailWidth={0}
-        preferredListRatio={1}
-        testID={props.testID}
-      />
-    </CoreCollectionScope>
+    <>
+      <CoreCollectionScope>
+        <Collection
+          model={model}
+          anatomy={anatomy}
+          accessibilityLabel={t('managedMachines.config.size')}
+          presentation="table"
+          detail="none"
+          scroll="page-virtualized"
+          selection={selection}
+          minListWidth={280}
+          minDetailWidth={0}
+          preferredListRatio={1}
+          testID={props.testID}
+        />
+      </CoreCollectionScope>
+      {selectedHeadroom !== undefined ? (
+        <Item
+          testID={`${props.testID}:headroom`}
+          title={props.headroomTitle}
+          density="compact"
+          mode="info"
+          showChevron={false}
+          rightElement={<TabularCell text={selectedHeadroom} />}
+        />
+      ) : null}
+    </>
   );
 });
 
@@ -211,7 +225,7 @@ export const ManagedImageTiles = React.memo(function ManagedImageTiles(
         id: image.id,
         title: image.name,
         subtitle: image.description,
-        disabled: image.unavailableReason !== undefined,
+        disabled: !(image.selectable ?? image.unavailableReason === undefined),
         preview: image.preview,
       }))}
       value={props.value}
@@ -222,7 +236,10 @@ export const ManagedImageTiles = React.memo(function ManagedImageTiles(
   );
 });
 
-/** Named regions as one keyboard-navigable radio group: flag, city, country. */
+/**
+ * Named regions as one radio group on the shared choice-tile grid: flag, city, country, two across where
+ * there is room and one per line on a phone (lab `m-config` location grid).
+ */
 export const ManagedLocationGroup = React.memo(function ManagedLocationGroup(
   props: Readonly<{
     title: string;
@@ -234,50 +251,45 @@ export const ManagedLocationGroup = React.memo(function ManagedLocationGroup(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const radioTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
-  return (
-    <ItemGroup
-      title={props.title}
-      description={props.description}
-      accessibilityRole="radiogroup"
-      accessibilityLabel={props.title}
-    >
-      {props.locations.map((location, index) => {
-        const selected = location.id === props.value;
+  const options = React.useMemo(
+    () =>
+      props.locations.map((location) => {
         const flag = countryFlag(location.countryCode);
-        return (
-          <Item
-            key={location.id}
-            testID={`${props.testID}:${location.id}`}
-            title={location.city}
-            subtitle={location.unavailableReason ?? location.country}
-            icon={
-              flag ? (
-                <Text style={styles.flag}>{flag}</Text>
-              ) : (
-                <Icon
-                  name="globe"
-                  size={18}
-                  color={theme.colors.text.secondary}
-                />
-              )
-            }
-            rightElement={
-              <HappierRadioMark selected={selected} theme={radioTheme} />
-            }
-            accessibilityRole="radio"
-            accessibilityChecked={selected}
-            itemGroupRadioIndex={index}
-            selected={selected}
-            disabled={location.unavailableReason !== undefined}
-            showChevron={false}
-            onPress={() => props.onChange(location.id)}
-          />
-        );
-      })}
+        return {
+          id: location.id,
+          title: location.city,
+          subtitle: location.unavailableReason ?? (location.country || undefined),
+          disabled: !(location.selectable ?? location.unavailableReason === undefined),
+          mark: flag ? (
+            <Text style={styles.flag}>{flag}</Text>
+          ) : (
+            <Icon name="globe" size={18} color={theme.colors.text.secondary} />
+          ),
+        };
+      }),
+    [props.locations, theme.colors.text.secondary],
+  );
+  return (
+    <ItemGroup title={props.title} description={props.description} surface="none">
+      <SelectionTiles<string>
+        density="compact"
+        maximumColumns={2}
+        minimumTileWidth={LOCATION_TILE_MIN_WIDTH_PX}
+        subtitleLines={1}
+        accessibilityLabel={props.title}
+        testIdPrefix={props.testID}
+        options={options}
+        value={props.value}
+        onChange={(next) => {
+          if (next) props.onChange(next);
+        }}
+      />
     </ItemGroup>
   );
 });
+
+/** A city and its country on one line each; narrower than this, a region takes the full row. */
+const LOCATION_TILE_MIN_WIDTH_PX = 200;
 
 const styles = StyleSheet.create((theme) => ({
   tabular: {

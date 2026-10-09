@@ -131,6 +131,65 @@ async function seedConfiguration(serverId: string) {
 }
 
 describe('reachable preset detail', () => {
+    it('withdraws a Team preset editor when its Team read loses access without changing the credential or preset response', async () => {
+        const serverId = await seed();
+        const scopeId = await seedConfiguration(serverId);
+        const teamPreset = { ...preset, owner: { kind: 'team', teamId: 'team-1' }, environment: { setupScript: 'echo team setup' } };
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: teamPreset } });
+        const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+        const request = bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-1' });
+        harness.answer(serverId, request.path, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: true }) }) });
+        const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
+            provisioner={buildQualifiedPluginContributionKey(preset.recipe.provider)} presetId={preset.id} presetOnly />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).toBe('echo team setup'));
+        harness.answer(serverId, request.path, { status: 403, body: { code: 'permission_denied' } });
+        const { refreshTeam } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+        const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
+        const { createTeamAddress } = await import('@/sync/domains/teams/teamAddress');
+        const scope = createServerAccountScope(scopeId, 'owner');
+        const address = createTeamAddress(scopeId, 'team-1');
+        if (!scope || !address) throw new Error('Expected the seeded exact Team scope');
+        await act(async () => { await refreshTeam(scope, address); });
+        await flushHookEffects();
+        expect(screen.findByTestId('managed-config.environment.setup.input')).toBeNull();
+        expect(screen.findByTestId('managed-config.choice:large')).toBeNull();
+        expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
+    });
+    it.each(['permission_denied', 'unavailable'])('refreshes protected editor content on Home changes (%s)', async code => {
+        const serverId = await seed();
+        const scopeId = await seedConfiguration(serverId);
+        const environment = { setupScript: 'echo protected setup', secretRefs: { v: 1, bindings: { TOKEN: { ref: 'protected-secret' } } } };
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...preset, environment } } });
+        await harness.requireUiApproval(serverId, 'machines.presets.update');
+        const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
+            provisioner={buildQualifiedPluginContributionKey(preset.recipe.provider)} presetId={preset.id} presetOnly />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).toBe(environment.setupScript));
+        await act(async () => screen.changeTextByTestId('managed-config.environment.setup.input', 'echo unsaved setup'));
+        await act(async () => screen.pressByTestId('managed-config.choice:large'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+        await act(async () => screen.pressByTestId('managed-config.create'));
+        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
+        const pendingId = harness.artifacts(serverId).list()[0]!.id;
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'refused', code } });
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => publishHomeAccountChange(scopeId));
+        await flushHookEffects();
+        expect(harness.requestsFor('/v1/machines/presets/get'), 'The mounted preset editor must refresh its read on the same Home wake').toHaveLength(2);
+        if (code === 'permission_denied') {
+            expect(screen.findByTestId('managed-config.environment.setup.input')).toBeNull();
+            expect(screen.findByTestId('managed-config.environment.secret:TOKEN')).toBeNull();
+            expect(screen.findByTestId('managed-config.choice:large')).toBeNull();
+            expect(screen.findByTestId('managed-config.receipt')).toBeNull();
+            expect(screen.findByTestId('managed-config.create')).toBeNull();
+        } else {
+            expect(screen.findByTestId('managed-config.environment.setup.input')?.props.value).toBe('echo unsaved setup');
+            expect(screen.findAllByType(Item).find(node => node.props.testID === 'managed-config.choice:large')?.props.selected).toBe(true);
+        }
+        harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...preset, revision: 4 } } });
+        await expect(decideApprovalAsInbox(scopeId, pendingId, 'approve')).resolves.toMatchObject({ ok: true });
+        await flushHookEffects();
+        expect(route.replace).not.toHaveBeenCalled();
+    });
     it.each([true, false])('revalidates saved native sizing only through its current declared same-path selectors (schema available: %s)', async schemaAvailable => {
         const serverId = await seed();
         const scopeId = await seedConfiguration(serverId);
@@ -298,6 +357,7 @@ describe('reachable preset detail', () => {
             presetOnly initialController={preset.controller} />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.choice:large')).not.toBeNull());
         await act(async () => screen.pressByTestId('managed-config.choice:large'));
+        expect(screen.findByTestId('managed-config.receipt:keep:choice:deadline')).toBeNull();
         harness.answer(serverId, '/v1/machines/presets/create', { select: input => {
             expect(input).toMatchObject({ homeId: preset.homeId, name: 'Custom compute', owner: preset.owner,
                 controller: preset.controller, recipe: { ...preset.recipe, name: 'Custom compute', choices: { cpu: 4 } } });

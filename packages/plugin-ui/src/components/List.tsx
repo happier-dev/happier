@@ -85,8 +85,11 @@ import {
   CollectionVirtualizerContext,
   type CollectionVirtualizer,
   type CollectionVirtualizerHandle,
+  type CollectionVirtualizerRequest,
 } from '../presentation/collection/collectionVirtualizer.js';
 import { NATIVE_COLLECTION_VIRTUALIZER } from '../presentation/collection/nativeCollectionVirtualizer.js';
+import { PageCollectionVirtualizer } from '../presentation/collection/pageCollectionVirtualizer.js';
+import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
 import { HappierListRowOpenContext } from '../presentation/collection/CollectionList.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
@@ -421,6 +424,7 @@ type ItemSecondaryAction = Readonly<{
   id: string;
   label: string;
   disabled?: boolean;
+  destructive?: boolean;
   icon?: ReactNode;
 }>;
 
@@ -1093,7 +1097,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     if (!rowIndexByKey.has(key)) rowFocusRequest.abandon();
   }, [rowFocusRequest, rowIndexByKey]);
 
-  const revealRow = (rowIndex: number) => {
+  const revealRow = useCallback((rowIndex: number) => {
     const row = rows[rowIndex];
     if (row === undefined) return;
     if (row.sectionKey !== null) {
@@ -1112,7 +1116,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     if (rowIndex === 0) list.scrollToOffset(0);
     else if (rowIndex === rows.length - 1) list.scrollToEnd();
     else list.reveal({ index: rowIndex });
-  };
+  }, [rows]);
   /**
    * Ask for physical focus on one logical row.
    *
@@ -1362,9 +1366,25 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const sectionHeaderStyle = collectionControl?.sectionHeaderStyle;
   const wrapSectionHeader = collectionControl?.wrapSectionHeader;
   const sectionHeaderAction = collectionControl?.sectionHeaderAction;
-  // A page-sized collection whose rows scroll with the page: every row mounts, and the list does not scroll.
+  // Page rows use the existing physical page; positioned page mode windows them without another scroller.
   const pageScroll = collectionControl?.pageScroll === true;
+  const pageTracker = useOptionalPluginUiScrollActivityTracker();
+  const pageGeometry = collectionControl?.pageVirtualization;
   const pageSheet = pageScroll ? collectionControl?.pageSheet : undefined;
+  const previousPageGeometryRef = useRef(pageGeometry);
+  useLayoutEffect(() => {
+    const previous = previousPageGeometryRef.current;
+    previousPageGeometryRef.current = pageGeometry;
+    if (!pageScroll || pageTracker === null || previous === undefined || pageGeometry === undefined) return;
+    if (previous.width === pageGeometry.width && previous.headerHeight === pageGeometry.headerHeight
+      && previous.defaultRowHeight === pageGeometry.defaultRowHeight) return;
+    // Logical focus also remembers navigation after blur. Only a still-focused web row may reposition
+    // the page on recomposition; an outside control must never pull the reader back to that old cursor.
+    if (Platform.OS !== 'web' || focusedKey === null
+      || document.activeElement !== rowTargets.current.get(focusedKey)) return;
+    const index = rowIndexByKey.get(focusedKey);
+    if (index !== undefined) revealRow(index);
+  }, [focusedKey, pageGeometry, pageScroll, pageTracker, revealRow, rowIndexByKey]);
 
   const renderSectionHeader = useCallback(({ section }: Readonly<{ section: VirtualizedListSectionData<Item> }>) => {
     const header = (
@@ -1407,9 +1427,37 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     return section === undefined ? null : renderSectionHeader({ section });
   }, [renderSectionHeader, virtualizedSections]);
 
+  const virtualizerRequest: CollectionVirtualizerRequest<Item> = {
+    ...(visibleSections === undefined
+      ? { kind: 'flat', items: visibleItems ?? [] } as const
+      : { kind: 'sections', sections: virtualizedSections, renderSectionHeader: renderVirtualizedSectionHeader } as const),
+    keyForItem: visibleSections === undefined ? keyForItem
+      : (item, index) => encodeHappierSectionRowCellKey(keyForItem(item, index)),
+    renderItem: renderVirtualizedItem,
+    onHandle: onVirtualizerHandle,
+    accessibilityRole: collectionRole === 'radiogroup' ? 'radiogroup' : selectionEnabled ? undefined : 'list',
+    role: collectionRole,
+    rowCount: collectionRole === 'grid' ? collectionRowCount : undefined,
+    multiSelectable: collectionMultiSelectable,
+    nativeCollection,
+    accessibilityLabel: props.accessibilityLabel,
+    testID: props.testID,
+    style: props.style,
+    contentContainerStyle: [densityStyle, props.contentContainerStyle],
+    extraData,
+    endContent: collectionEndContent,
+    preserveVisibleContentPositionOnPrepend: props.preserveVisibleContentPositionOnPrepend,
+    onScroll: observeContentMetrics ? onCollectionScroll : undefined,
+    onContentSizeChange: observeContentMetrics ? onCollectionContentSizeChange : undefined,
+  };
+
   // A page-sized collection is not virtualized: the same headers and rows, every one mounted, in the same
   // collection element, scrolling with the page around it (no reveal is needed: every row is on the page).
-  const collection = pageScroll ? (
+  const collection = pageScroll && pageGeometry !== undefined && pageTracker !== null ? (
+    <PageCollectionVirtualizer request={virtualizerRequest} geometry={pageGeometry} tracker={pageTracker}
+      tabStopKey={tabStopIndex === null || tabStopIndex < 0 ? null : visibleSections === undefined ? rows[tabStopIndex]?.key ?? null
+        : encodeHappierSectionRowCellKey(rows[tabStopIndex]?.key ?? '')} />
+  ) : pageScroll ? (
     <View
       accessibilityRole={collectionRole === 'radiogroup' ? 'radiogroup' : selectionEnabled ? undefined : 'list'}
       // @ts-expect-error React Native's role union omits RNW's standard listbox role.
@@ -1444,29 +1492,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
           ))}
       {collectionEndContent}
     </View>
-  ) : virtualizer.render({
-    ...(visibleSections === undefined
-      ? { kind: 'flat', items: visibleItems ?? [] } as const
-      : { kind: 'sections', sections: virtualizedSections, renderSectionHeader: renderVirtualizedSectionHeader } as const),
-    keyForItem: visibleSections === undefined ? keyForItem
-      : (item, index) => encodeHappierSectionRowCellKey(keyForItem(item, index)),
-    renderItem: renderVirtualizedItem,
-    onHandle: onVirtualizerHandle,
-    accessibilityRole: collectionRole === 'radiogroup' ? 'radiogroup' : selectionEnabled ? undefined : 'list',
-    role: collectionRole,
-    rowCount: collectionRole === 'grid' ? collectionRowCount : undefined,
-    multiSelectable: collectionMultiSelectable,
-    nativeCollection,
-    accessibilityLabel: props.accessibilityLabel,
-    testID: props.testID,
-    style: props.style,
-    contentContainerStyle: [densityStyle, props.contentContainerStyle],
-    extraData,
-    endContent: collectionEndContent,
-    preserveVisibleContentPositionOnPrepend: props.preserveVisibleContentPositionOnPrepend,
-    onScroll: observeContentMetrics ? onCollectionScroll : undefined,
-    onContentSizeChange: observeContentMetrics ? onCollectionContentSizeChange : undefined,
-  });
+  ) : virtualizer.render(virtualizerRequest);
 
   // One box around the collection and its chrome. It is unconditional so that
   // gaining or losing chrome never changes the React tree shape around the
@@ -1577,7 +1603,7 @@ function renderListItem(
           disabled={input.disabled}
           triggerTabIndex={input.triggerTabIndex}
           focusReturnRef={input.focusReturnRef}
-          items={input.actions.map((action) => ({ id: action.id, label: action.label, disabled: action.disabled }))}
+          items={input.actions.map((action) => ({ id: action.id, label: action.label, disabled: action.disabled, destructive: action.destructive }))}
           onSelect={input.onSelect}
         />
       )}
