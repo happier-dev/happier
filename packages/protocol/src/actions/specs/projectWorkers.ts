@@ -11,6 +11,7 @@ import { ProjectMemoryDemandV1Schema } from '../../workspaces/projectSetup/proje
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { ProjectWorkerMemoryObservationV1Schema, WorkerLoadObservationV1Schema } from '../../workspaces/projectWorkerExecutionV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema } from '../projectWorkerRefusal.js';
 import { PROJECT_SERVICE_PLACEMENT_ACTION_IDS_V1, PROJECT_SERVICE_PLACEMENT_ACTION_SPECS,
   ProjectServicePlacementActionInputSchemasV1, ProjectServicePlacementActionOutputSchemasV1 } from './projectServicePlacement.js';
 
@@ -58,7 +59,9 @@ export const ProjectWorkerStatusResultV1Schema = lazyZodSchema(() => z.discrimin
     observedMemory: ProjectWorkerMemoryObservationV1Schema.optional(),
     lastCleanSyncAtMs: WorkspaceSyncStatusV1Schema.shape.lastCleanSyncAtMs,
     explanation: z.enum(['not_accepting', 'draining', 'policy_unavailable', 'unsupported', 'forbidden',
-      'workspace_unavailable', 'unavailable', 'capability_unknown', 'memory_insufficient', 'memory_unavailable']) }).strict(),
+      'workspace_unavailable', 'worker_copy_missing', 'unavailable', 'capability_unknown', 'memory_insufficient', 'memory_unavailable']),
+    workerCopy: ProjectWorkerNoAcceptanceFailureDetailsV1Schema.shape.workerCopy,
+  }).strict().refine(value => (value.explanation === 'worker_copy_missing') === (value.workerCopy !== undefined)),
 ]));
 export type ProjectWorkerStatusInputV1 = z.infer<typeof ProjectWorkerStatusInputV1Schema>;
 export type ProjectWorkerStatusResultV1 = z.infer<typeof ProjectWorkerStatusResultV1Schema>;

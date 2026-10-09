@@ -7,7 +7,7 @@ import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 /** These facts establish no acceptance, unlike unknown eligibility or a full queue. */
 export const ProjectWorkerNoAcceptanceReasonV1Schema = lazyZodSchema(() => z.enum([
   'empty', 'no_available_machine', 'not_accepting', 'draining', 'unsupported', 'forbidden',
-  'workspace_unavailable', 'memory_insufficient',
+  'workspace_unavailable', 'memory_insufficient', 'worker_copy_missing',
 ]));
 export type ProjectWorkerNoAcceptanceReasonV1 = z.infer<typeof ProjectWorkerNoAcceptanceReasonV1Schema>;
 
@@ -16,7 +16,13 @@ export const ProjectWorkerNoAcceptanceFailureDetailsV1Schema = lazyZodSchema(() 
   kind: z.literal('no_worker_can_accept'),
   unavailable: WorkspaceWorkerPreferenceV1Schema.options[0].shape.unavailable,
   reason: ProjectWorkerNoAcceptanceReasonV1Schema,
-}).strict());
+  workerCopy: z.object({
+    serverId: z.string().trim().min(1),
+    sourceWorkspaceRefId: z.string().trim().min(1),
+    sourceMachineId: z.string().trim().min(1),
+    targetMachineId: z.string().trim().min(1),
+  }).strict().optional(),
+}).strict().refine(value => (value.reason === 'worker_copy_missing') === (value.workerCopy !== undefined)));
 export type ProjectWorkerNoAcceptanceFailureDetailsV1 = z.infer<typeof ProjectWorkerNoAcceptanceFailureDetailsV1Schema>;
 
 export function readProjectWorkerNoAcceptanceFailureV1(value: unknown):

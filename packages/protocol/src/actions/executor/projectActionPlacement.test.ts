@@ -12,7 +12,7 @@ const native = { kind: 'native', tool: 'make', file: 'Makefile', target: 'check'
 const exact = { kind: 'workers', destination: { kind: 'machine', machineId: 'worker' } } as const satisfies ProjectExecutionChoiceV1;
 const pool = { kind: 'workers', destination: { kind: 'pool', poolId: '4e9648b6-6b2d-47dc-9e3f-d927a430102d', selection: 'automatic' } } as const satisfies ProjectExecutionChoiceV1;
 
-function sourceReads(manifest?: ProjectManifestV1) {
+function sourceReads(manifest?: ProjectManifestV1, workerStatus?: unknown) {
   const bytes = JSON.stringify(manifest);
   const inspection = ProjectDefinitionInspectOutputSchema.parse({
     definition: manifest ? { basis: { kind: 'present', hash: createHash('sha256').update(bytes!).digest('hex') },
@@ -28,7 +28,7 @@ function sourceReads(manifest?: ProjectManifestV1) {
     if (actionId === 'projects.inspect') return { ok: true, result: inspection };
     if (actionId === 'projects.worker.preferences.get') return { ok: true, result: { status: 'ready', revision: 1,
       provenance: 'saved', preference: { enabled: true, destination: exact.destination, unavailable: 'fail', allowAdHoc: false, scriptOverrides: {} } } };
-    if (actionId === 'projects.worker.status') return { ok: true, result: { eligible: true, load: { kind: 'unknown' },
+    if (actionId === 'projects.worker.status') return { ok: true, result: workerStatus ?? { eligible: true, load: { kind: 'unknown' },
       candidate: { serverId: 'home', machineId: 'worker' }, explanation: 'load_unknown' } };
     if (actionId === 'machines.pools.resolve') return { ok: true, result: { kind: 'resolved', poolId: pool.destination.poolId,
       machineId: 'worker', priorityTier: 0 } };
@@ -41,6 +41,14 @@ function sourceReads(manifest?: ProjectManifestV1) {
 }
 
 describe('Project Action declaration placement ceiling', () => {
+  it.each([false, true])('retains exact copy-setup facts at the existing frontdoor and rejects stale Machine facts (stale=%s)', async stale => {
+    const workerCopy = { serverId: 'home', sourceWorkspaceRefId: 'checkout', sourceMachineId: 'source', targetMachineId: stale ? 'another-worker' : 'worker' };
+    const h = sourceReads({ version: 1, scripts: { check: { execution: 'portable', source: native } } },
+      { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'worker_copy_missing', workerCopy });
+    expect(await h.place({ kind: 'named', name: 'check' }, exact)).toMatchObject(stale
+      ? { ok: false, errorCode: 'invalid_action_output' }
+      : { ok: false, errorCode: 'worker_copy_missing', details: { kind: 'no_worker_can_accept', unavailable: 'fail', reason: 'worker_copy_missing', workerCopy } });
+  });
   it.each([{ label: 'exact', choice: exact }, { label: 'pool', choice: pool }])(
     'refuses detected native $label worker intent before worker or pool admission', async ({ choice }) => {
       const h = sourceReads();

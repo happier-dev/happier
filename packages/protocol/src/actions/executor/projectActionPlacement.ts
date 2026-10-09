@@ -1,5 +1,5 @@
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1, ProjectWorkerNoAcceptanceFailureDetailsV1Schema,
-  type PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../projectActionFamily.js';
+  type PROJECT_FINITE_ACTION_RPC_METHODS_V1, type ProjectWorkerNoAcceptanceFailureDetailsV1 } from '../projectActionFamily.js';
 import { ProjectDefinitionInspectOutputSchema } from '../projectDefinitionActionFamily.js';
 import { ProjectWorkerActionOutputSchemasV1 } from '../specs/projectWorkers.js';
 import { resolveProjectExecutionChoiceV1 } from '../../workspaces/projectWorkerPreferencesV1.js';
@@ -56,11 +56,12 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
     // target owner, never a silent SOURCE switch using an old confirmation.
     const unavailableReason = (reason: string) => observed.data.status === 'ready' && observed.data.preference.unavailable !== 'fail'
       ? 'choice_required' : reason;
-    const workerRefusal = (reason: string) => {
+    const workerRefusal = (reason: string, workerCopy?: ProjectWorkerNoAcceptanceFailureDetailsV1['workerCopy']) => {
       const details = observed.data.status === 'ready' ? ProjectWorkerNoAcceptanceFailureDetailsV1Schema.safeParse({
         kind: 'no_worker_can_accept', unavailable: observed.data.preference.unavailable, reason,
+        ...(workerCopy ? { workerCopy } : {}),
       }) : null;
-      return failure(unavailableReason(reason), details?.success ? details.data : undefined);
+      return failure(reason === 'worker_copy_missing' ? reason : unavailableReason(reason), details?.success ? details.data : undefined);
     };
     const execution = actionId === 'projects.compute.exec' ? 'portable'
       : named?.execution ?? 'primary';
@@ -95,7 +96,12 @@ export async function resolveProjectActionMachineV1(args: Readonly<{
         const worker = ProjectWorkerActionOutputSchemasV1['projects.worker.status'].safeParse(status.result);
         if (!worker.success || worker.data.eligible && (worker.data.candidate.serverId !== workspace.serverId
           || worker.data.candidate.machineId !== destination.machineId)) return failure('invalid_action_output');
-        if (!worker.data.eligible) return workerRefusal(worker.data.explanation);
+        if (!worker.data.eligible) {
+          const facts = worker.data.workerCopy;
+          if (facts && (facts.serverId !== workspace.serverId || facts.sourceWorkspaceRefId !== workspace.workspaceId
+            || facts.sourceMachineId !== workspace.machineId || facts.targetMachineId !== destination.machineId)) return failure('invalid_action_output');
+          return workerRefusal(worker.data.explanation, facts);
+        }
         machineId = destination.machineId;
       }
     }
