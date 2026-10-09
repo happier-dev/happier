@@ -17,7 +17,7 @@ export type SurfaceInputControl = Readonly<{
   beginConfidentialityHold(): Promise<void>;
   /** Only the source owner may clear this after proving the confidential target is safe. */
   clearConfidentialityHold(): boolean;
-  observeWhile<T>(read: () => Promise<T>): Promise<T | undefined>;
+  observeWhile<T>(read: () => Promise<T>, classifyCompletion?: (value: T) => SurfaceInputCompletion): Promise<T | undefined>;
   registerConfidentialityDrain(drain: () => Promise<void>): () => void;
   execute<T>(input: Readonly<{
     requestedBy: SurfaceInputRequester;
@@ -54,7 +54,7 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
     if (active) return 'busy';
     if (closed) return 'closed';
     if (requestedBy === 'agent' && confidentialityHeld) return 'observation_required';
-    if (uncertain && requestedBy === 'agent' && observationRequirement !== 'hand_back') return 'uncertain';
+    if (uncertain && (requestedBy === 'human' || observationRequirement !== 'hand_back')) return 'uncertain';
     if (requestedBy === 'agent' && humanHeld) return 'human_interrupted';
     if (requestedBy === 'agent' && observationRequirement) return 'observation_required';
     return undefined;
@@ -98,13 +98,19 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
       options.onStatusChange?.();
       return true;
     },
-    async observeWhile<T>(read: () => Promise<T>): Promise<T | undefined> {
+    async observeWhile<T>(read: () => Promise<T>, classifyCompletion?: (value: T) => SurfaceInputCompletion): Promise<T | undefined> {
       if (confidentialityHeld || closed) return undefined;
       const epoch = controlEpoch;
       const pending = read();
       observations.add(pending);
       try {
         const result = await pending;
+        // A read may dismiss a dialog. Settle that physical effect even if its observation
+        // became private or stale while awaiting the boundary acknowledgement.
+        if (classifyCompletion?.(result) === 'unknown') {
+          uncertain = true;
+          options.onStatusChange?.();
+        }
         return confidentialityHeld || closed || epoch !== controlEpoch ? undefined : result;
       } catch (error) {
         if (confidentialityHeld || closed || epoch !== controlEpoch) return undefined;

@@ -94,7 +94,10 @@ export function registerBrowserLiveCapture(input: Readonly<{
                         inputPending = inputPending.then(async () => {
                             const interrupted = await takeover;
                             if (stopped) return;
-                            if (interrupted.ok && interrupted.completion === 'uncertain') failInput('human_input_interruption_uncertain');
+                            if (interrupted.ok && interrupted.completion === 'uncertain') {
+                                failInput('human_input_interruption_uncertain');
+                                return;
+                            }
                             const outcome = await automation.execute({ v: 1, ...view, automationRequestId: control.eventId,
                                 requestedBy: 'user', requesterRef: { kind: 'streamViewer', id: startInput.streamId },
                                 navigationGeneration: input.contextCapture.getNavigationState?.(view)?.navigationGeneration ?? 0,

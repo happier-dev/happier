@@ -51,7 +51,8 @@ export function createBrowserAutomationOwnerRegistry(): BrowserAutomationOwnerRe
 
   return {
     getControllerState(view, facts) {
-      const state = entryFor(view).getStatus();
+      const control = entryFor(view);
+      const state = control.getStatus();
       const activeAutomationRequestId = state.controller === 'idle' ? null : facts?.activeAutomationRequestId ?? null;
       return {
         browserSessionId: view.browserSessionId,
@@ -61,6 +62,7 @@ export function createBrowserAutomationOwnerRegistry(): BrowserAutomationOwnerRe
         controlEpoch: state.controlEpoch,
         interruptionSettling: state.stopping,
         uncertain: state.uncertain,
+        ...(control.hasConfidentialityHold() ? { confidentialityHeld: true } : {}),
         ...(activeAutomationRequestId ? { activeAutomationRequestId } : {}),
       } satisfies BrowserAutomationControllerStateV1;
     },

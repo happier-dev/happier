@@ -111,9 +111,10 @@ describe('browser automation daemon service', () => {
     } finally { if (!('status' in first)) await first.finish(); service.dispose(); }
   });
 
-  it.each(['filled', 'unknown'] as const)('admits a fresh exact human choice after %s without releasing older confidentiality', async firstStatus => {
+  it.each(['filled', 'unknown'] as const)('preserves older confidentiality and admits fresh human input only after known %s settlement', async firstStatus => {
     const owners = createBrowserAutomationOwnerRegistry();
     let preparation = 0;
+    let physicalFills = 0;
     const service = createBrowserAutomationDaemonService({ owners, adapter: createBrowserAutomationCdpAdapter({ transport: {
       ownsView: () => true,
       dispatchControlCommand: async () => { throw new Error('unexpected navigation'); },
@@ -122,9 +123,9 @@ describe('browser automation daemon service', () => {
         const ordinal = ++preparation;
         return { recheck: async () => true,
           isSafe: async () => ordinal === 3,
-          fill: async () => ordinal === 3 ? { status: 'refused', code: 'target_changed' }
+          fill: async () => { physicalFills += 1; return ordinal === 3 ? { status: 'refused', code: 'target_changed' }
             : ordinal === 1 && firstStatus === 'unknown' ? { status: 'unknown', code: 'delivery_unknown' }
-              : { status: 'filled', code: 'filled' },
+              : { status: 'filled', code: 'filled' }; },
           finish: async () => undefined,
         };
       },
@@ -140,12 +141,18 @@ describe('browser automation daemon service', () => {
         if ('status' in target) throw new Error('expected independently approved physical target');
         try {
           expect(await target.fill(new Uint8Array([1]))).toMatchObject({
-            status: index === 0 ? firstStatus : index === 1 ? 'filled' : 'refused',
+            status: index === 0 ? firstStatus : firstStatus === 'unknown' ? 'refused' : index === 1 ? 'filled' : 'refused',
           });
         } finally { await target.finish(); }
         expect(owners.isObservationHeld(view)).toBe(true);
       }
       expect(preparation).toBe(3);
+      expect(physicalFills).toBe(firstStatus === 'unknown' ? 1 : 3);
+      expect(service.getStatus(view).uncertain).toBe(firstStatus === 'unknown');
+      if (firstStatus === 'unknown') {
+        expect(owners.getInputControl(view).observe(owners.getControlEpoch(view))).toBe(false);
+        expect(service.getInputControl(view).getAdmissionFailure('human')).toBe('uncertain');
+      }
       expect(await service.execute(request())).toMatchObject({ status: 'failed', errorCode: 'policy_denied' });
     } finally { service.dispose(); }
   });

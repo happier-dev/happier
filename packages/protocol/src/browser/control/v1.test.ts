@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import * as mod from '../index.js';
 
 describe('browser control protocol v1', () => {
+  it('validates optional known or unknown failed-command completion without relaxing the envelope', () => {
+    const result = { v: 1, commandId: 'command', status: 'failed', adapterKind: 'chromiumSidecar',
+      error: { code: 'adapter_unavailable', message: 'CDP unavailable' } };
+    expect(mod.BrowserCommandDispatchResultV1Schema.safeParse(result).success).toBe(true);
+    for (const completion of ['known', 'unknown']) {
+      expect(mod.BrowserCommandDispatchResultV1Schema.parse({ ...result, completion })).toEqual({ ...result, completion });
+    }
+    expect(mod.BrowserCommandDispatchResultV1Schema.safeParse({ ...result, completion: 'success' }).success).toBe(false);
+    expect(mod.BrowserCommandDispatchResultV1Schema.safeParse({ ...result, dispatched: false }).success).toBe(false);
+  });
   it('accepts browser navigation commands and rejects shell-only address input commands', () => {
     expect(mod.BrowserCommandV1Schema.safeParse({
       kind: 'openView',

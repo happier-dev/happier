@@ -6,6 +6,18 @@ const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as cons
 const otherView = { browserSessionId: 'browser_session_1', viewId: 'view_2' } as const;
 
 describe('browser automation owner registry', () => {
+  it('projects the confidential hold until the source is authoritatively destroyed', async () => {
+    const registry = createBrowserAutomationOwnerRegistry();
+    expect(registry.getControllerState(view).confidentialityHeld).toBeUndefined();
+    await registry.acquireConfidentiality(view);
+    expect(registry.getControllerState(view).confidentialityHeld).toBe(true);
+    registry.handBack(view);
+    expect(registry.getControllerState(view).confidentialityHeld).toBe(true);
+    registry.closeView(view);
+    expect(registry.getControllerState(view).confidentialityHeld).toBe(true);
+    registry.closeView(view, { sourceDestroyed: true });
+    expect(registry.getControllerState(view).confidentialityHeld).toBeUndefined();
+  });
   it('does not mistake an ordinarily closed input target for a confidential source', async () => {
     const registry = createBrowserAutomationOwnerRegistry();
     await registry.getInputControl(view).close('view_closed');

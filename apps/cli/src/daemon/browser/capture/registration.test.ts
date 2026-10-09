@@ -16,6 +16,80 @@ import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { createBrowserAutomationOwnerRegistry } from '../automation/owners';
 
 describe('browser live capture', () => {
+    it('holds the triggering and subsequent human sideband after uncertain takeover until fresh observation', async () => {
+        const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        const view = { browserSessionId: 'browser', viewId: 'view' };
+        const commands: string[] = [];
+        let rejectAck: (error: Error) => void = () => undefined;
+        let inputStarted: () => void = () => undefined;
+        const started = new Promise<void>(resolve => { inputStarted = resolve; });
+        const pendingAck = new Promise<unknown>((_resolve, reject) => { rejectAck = reject; });
+        // Only the CDP peer is substituted; all source, sideband, service and control owners are real.
+        const transport = {
+            openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+            dispatchPageCommand: async (command: { method: string; params?: Record<string, unknown> }) => {
+                if (command.method === 'Input.insertText') {
+                    commands.push(String(command.params?.text));
+                    if (command.params?.text === 'agent effect') { inputStarted(); return pendingAck; }
+                }
+                return command.method === 'Runtime.evaluate' ? { result: { type: 'string', value: 'safe page' } } : {};
+            },
+            dispatchBrowserCommand: async () => ({ success: true }),
+            subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => {
+                listeners.add(listener); return () => { listeners.delete(listener); };
+            },
+        };
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
+        const contextCapture = { transport, resolvePageHandle: adapter.resolvePageHandle,
+            getNavigationState: adapter.getNavigationState, subscribeCdpEvents: transport.subscribeCdpEvents,
+            subscribeViewLifecycle: adapter.subscribeViewLifecycle };
+        const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
+            transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
+        }) });
+        const producer = createBrowserCdpScreencastProducer({ contextCapture });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const registration = registerBrowserLiveCapture({ registry, contextCapture, producer, automation: () => automation });
+        const envelopes: MachineLiveStreamRelayEnvelopeV1[] = [];
+        const relay = createMachineLiveStreamRelayTerminator({ registry, machineId: 'machine', nowMs: Date.now,
+            emitEnvelope: envelope => { envelopes.push(envelope); } });
+        try {
+            await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+            const sourceId = browserViewKey(view);
+            expect(await relay.start({ v: 1, streamId: 'human', streamFamily: 'browser.streamed', sourceId,
+                sourceMachineId: 'machine', targetMachineId: 'viewer', routeKind: 'server_relay',
+                authorization: { payload: { v: 1, grantId: 'grant', accountId: 'account', flowKind: 'live_stream',
+                    routeKind: 'server_relay', sourceMachineId: 'machine', targetMachineId: 'viewer', streamId: 'human',
+                    streamFamily: 'browser.streamed', sourceId, iat: Date.now(), exp: Date.now() + 60_000,
+                    aud: 'happier-live-stream-relay-authorization' },
+                    signature: { keyId: 'key', alg: 'Ed25519', valueBase64Url: 'AQID' } } }, 'present_user'))
+                .toEqual({ ok: true, streamId: 'human' });
+            const input = (eventId: string) => relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer',
+                message: { kind: 'sideband_control', control: { v: 1, streamId: 'human', sourceId,
+                    eventId, kind: 'keyboard_text', text: eventId } } });
+            const request = { v: 1 as const, ...view, navigationGeneration: 0, timeoutMs: 10_000,
+                requesterRef: { kind: 'agent' as const, id: 'agent' } };
+            const agent = automation.execute({ ...request, automationRequestId: 'agent', requestedBy: 'agent',
+                actionKind: 'type', payload: { text: 'agent effect' } });
+            await started;
+            expect(input('trigger')).toEqual({ ok: true });
+            rejectAck(new Error('acknowledgement lost'));
+            expect(await agent).toMatchObject({ status: 'canceled', resultSummary: { completion: 'uncertain' } });
+            await vi.waitFor(() => expect(automation.getStatus(view)).toMatchObject({ controller: 'human', uncertain: true }));
+            expect(input('next')).toEqual({ ok: true });
+            await vi.waitFor(() => expect(automation.getTimeline(view).entries.some(entry => entry.automationRequestId === 'next')).toBe(true));
+            expect(commands).toEqual(['agent effect']);
+            expect(envelopes.filter(envelope => envelope.message.kind === 'receipt'
+                && envelope.message.receipt.terminal === false)).toHaveLength(2);
+            expect(await automation.recordHumanInput({ ...view, authority: 'present_user' }))
+                .toEqual({ ok: true, completion: 'uncertain' });
+            expect(await automation.execute({ ...request, automationRequestId: 'observe', requestedBy: 'user',
+                actionKind: 'snapshot', payload: {} })).toMatchObject({ status: 'succeeded' });
+            expect(automation.getStatus(view).uncertain).toBe(false);
+            expect(input('recovered')).toEqual({ ok: true });
+            await vi.waitFor(() => expect(commands).toEqual(['agent effect', 'recovered']));
+        } finally { await relay.dispose(); registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose(); }
+    });
     it('preserves only the verified human RPC viewer while a confidential view is held', async () => {
         const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
         const view = { browserSessionId: 'browser', viewId: 'view' };

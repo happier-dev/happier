@@ -160,6 +160,7 @@ describe('browser automation CDP adapter', () => {
 
     expect(result.status).toBe('failed');
     expect(result.errorCode).toBe('runtime_unavailable');
+    expect(result.interruptionCompletion).toBe('uncertain');
   });
 
   it('returns unsupported_action for a mutating action with no CDP translation when no input transport exists', async () => {

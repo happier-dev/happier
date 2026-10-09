@@ -16,6 +16,7 @@ import type {
 import type { BrowserContextRoutes } from '../../context/routes';
 import { interactiveElementsExpression, parseInteractiveElements, SNAPSHOT_MAX_INTERACTIVE_ELEMENTS, SNAPSHOT_MAX_NAME_CHARS, SNAPSHOT_MAX_VISIBLE_TEXT_CHARS } from '../../context/cdp/snapshotEvaluators';
 import type { BrowserDaemonControlAdapter } from '../../control/types';
+import { BrowserSidecarCdpTransportError, isBrowserSidecarCdpCommandNotDispatched } from '../../sidecar/cdpTransport';
 import type { BrowserAutomationAdapterExecuteResult, BrowserAutomationAdapterExecutionContext } from './types';
 import type { BrowserAutomationViewRef } from '../owners';
 import {
@@ -342,8 +343,8 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           issued = true;
           await dispatchPageCommand(handle, 'Input.insertText', parameters);
           return settlement = { status: 'filled', code: 'filled' };
-        } catch {
-          return settlement = issued ? { status: 'unknown', code: 'delivery_unknown' }
+        } catch (error) {
+          return settlement = issued && !isBrowserSidecarCdpCommandNotDispatched(error) ? { status: 'unknown', code: 'delivery_unknown' }
             : signal?.aborted ? { status: 'canceled', code: 'canceled' }
               : { status: 'refused', code: 'target_changed' };
         } finally {
@@ -396,8 +397,8 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           return submitSettlement = clicked === true ? { status: 'submitted', code: 'submitted' }
             : clicked === false ? { status: 'refused', code: 'submit_refused' }
               : { status: 'unknown', code: 'submit_unknown' };
-        } catch {
-          return submitSettlement = issued ? { status: 'unknown', code: 'submit_unknown' }
+        } catch (error) {
+          return submitSettlement = issued && !isBrowserSidecarCdpCommandNotDispatched(error) ? { status: 'unknown', code: 'submit_unknown' }
             : { status: 'refused', code: 'submit_refused' };
         }
       } } : {}),
@@ -485,7 +486,9 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
   ): Promise<unknown> {
     if (!contextCapture) return undefined;
     if (context.signal?.aborted) throw new DOMException('Browser automation canceled', 'AbortError');
-    if (context.deadlineMs !== undefined && Date.now() >= context.deadlineMs) throw new Error('cdp_request_timeout');
+    if (context.deadlineMs !== undefined && Date.now() >= context.deadlineMs) {
+      throw new BrowserSidecarCdpTransportError('cdp_request_timeout', 'Browser automation deadline elapsed before dispatch.', 'not_dispatched');
+    }
     return contextCapture.transport.dispatchPageCommand({
       ...(context.signal ? { signal: context.signal } : {}),
       ...(context.deadlineMs !== undefined ? { deadlineMs: context.deadlineMs } : {}),
@@ -517,11 +520,15 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     const kinds = new Set<string>();
     let dismissed = 0;
     let failed = false;
+    let uncertainDismissal = false;
     const unsubscribe = contextCapture?.subscribeCdpEvents?.(event => {
       if (event.method !== 'Page.javascriptDialogOpening' || event.sessionId !== handle.sessionId) return;
       const kind = ['alert', 'confirm', 'prompt', 'beforeunload'].includes(String(event.params?.type)) ? String(event.params?.type) : 'unknown';
       const dismissal = dispatchPageCommand(handle, 'Page.handleJavaScriptDialog', { accept: false }, { deadlineMs: context.deadlineMs })
-        .then(() => { dismissed += 1; kinds.add(kind); }, () => { failed = true; });
+        .then(() => { dismissed += 1; kinds.add(kind); }, error => {
+          failed = true;
+          if (!isBrowserSidecarCdpCommandNotDispatched(error)) uncertainDismissal = true;
+        });
       dismissals.push(dismissal);
     });
     try {
@@ -530,7 +537,8 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       for (let index = 0; index < dismissals.length; index += 1) await dismissals[index];
       if (failed) {
         const error = operationError(context);
-        return { ...result, status: context.signal?.aborted ? 'canceled' : error.ok === false && error.errorCode === 'timed_out' ? 'timed_out' : 'failed', errorCode: error.ok === false ? error.errorCode : 'runtime_unavailable', interruptionCompletion: 'uncertain' };
+        return { ...result, status: context.signal?.aborted ? 'canceled' : error.ok === false && error.errorCode === 'timed_out' ? 'timed_out' : 'failed', errorCode: error.ok === false ? error.errorCode : 'runtime_unavailable',
+          interruptionCompletion: uncertainDismissal || result.interruptionCompletion === 'uncertain' ? 'uncertain' : 'stopped' };
       }
       if (dismissed === 0) return result;
       return { ...result, resultSummary: { ...result.resultSummary, javascriptDialogs: { count: dismissed, kinds: [...kinds], handling: 'dismissed' } } };
@@ -693,9 +701,12 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     }
     const selector = typeof command.payload.selector === 'string' ? command.payload.selector : typeof command.payload.locator === 'string' ? command.payload.locator : '';
     const heldInput: { mouse: Record<string, unknown> | null; key: string | null } = { mouse: null, key: null };
-    let transportFailed = false;
+    let uncertainEffect = false;
+    let cleanupFailed = false;
     const send = async (method: string, params?: Record<string, unknown>) => {
       command.signal?.throwIfAborted();
+      const previousMouse = heldInput.mouse;
+      const previousKey = heldInput.key;
       if (method === 'Input.dispatchMouseEvent' && params?.type === 'mousePressed') heldInput.mouse = { ...params };
       if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseMoved' && heldInput.mouse) heldInput.mouse = { ...heldInput.mouse, x: params.x, y: params.y };
       if (method === 'Input.dispatchKeyEvent' && params?.type === 'keyDown' && typeof params.key === 'string') heldInput.key = params.key;
@@ -706,27 +717,37 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
         if (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased') heldInput.mouse = null;
         if (method === 'Input.dispatchKeyEvent' && params?.type === 'keyUp') heldInput.key = null;
         return result;
-      } catch (error) { transportFailed = true; throw error; }
+      } catch (error) {
+        if (isBrowserSidecarCdpCommandNotDispatched(error)) {
+          heldInput.mouse = previousMouse;
+          heldInput.key = previousKey;
+        } else if (method.startsWith('Input.') || method === 'DOM.setFileInputFiles') {
+          uncertainEffect = true;
+        }
+        throw error;
+      }
     };
-    const read = async (expression: string) => {
+    const read = async (expression: string, affectsPage = false) => {
       command.signal?.throwIfAborted();
       try {
         const result = await evaluate(handle, expression, { deadlineMs: command.deadlineMs });
         return result;
       } catch (error) {
-        transportFailed = true;
+        if (affectsPage && !isBrowserSidecarCdpCommandNotDispatched(error)) {
+          uncertainEffect = true;
+        }
         throw error;
       }
     };
 
-    const readAndCheck = async (expression: string) => {
-      const result = await read(expression);
+    const readAndCheck = async (expression: string, affectsPage = false) => {
+      const result = await read(expression, affectsPage);
       command.signal?.throwIfAborted();
       return result;
     };
 
     const targetPoint = async (locator = selector, prepareInput = true) => {
-      const value = evaluateValue(await readAndCheck(elementCenterExpression(locator, prepareInput)));
+      const value = evaluateValue(await readAndCheck(elementCenterExpression(locator, prepareInput), prepareInput));
       const target = BrowserActiveTargetV1Schema.safeParse(record(value)?.activeTarget);
       if (target.success) command.onActiveTarget?.(target.data);
       return readPoint(value);
@@ -779,14 +800,14 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           if (!selector) return { ok: false, errorCode: 'unsupported_action' };
           await targetPoint(selector, false);
           const value = typeof command.payload.value === 'string' ? command.payload.value : '';
-          const ok = evaluateValue(await read(setValueExpression(selector, value)));
+          const ok = evaluateValue(await read(setValueExpression(selector, value), true));
           return ok === true ? { ok: true } : { ok: false, errorCode: 'selector_not_found' };
         }
         case 'select': {
           if (!selector) return { ok: false, errorCode: 'unsupported_action' };
           await targetPoint(selector, false);
           const value = typeof command.payload.value === 'string' ? command.payload.value : '';
-          const ok = evaluateValue(await read(selectOptionExpression(selector, value)));
+          const ok = evaluateValue(await read(selectOptionExpression(selector, value), true));
           return ok === true ? { ok: true } : { ok: false, errorCode: 'selector_not_found' };
         }
         case 'upload': {
@@ -877,17 +898,17 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       // action's abort/deadline. A failed acknowledgement is reported as uncertain, never stopped.
       if (heldInput.mouse) {
         try { await dispatchPageCommand(handle, 'Input.dispatchMouseEvent', { ...heldInput.mouse, type: 'mouseReleased', buttons: 0 }); }
-        catch { transportFailed = true; }
+        catch { cleanupFailed = true; }
       }
       if (heldInput.key) {
         try { await dispatchPageCommand(handle, 'Input.dispatchKeyEvent', { type: 'keyUp', key: heldInput.key }); }
-        catch { transportFailed = true; }
+        catch { cleanupFailed = true; }
       }
     }
     if (command.signal?.aborted) {
-      return { ok: false, errorCode: 'user_canceled', interruptionCompletion: transportFailed ? 'uncertain' : 'stopped' };
+      return { ok: false, errorCode: 'user_canceled', interruptionCompletion: uncertainEffect || cleanupFailed ? 'uncertain' : 'stopped' };
     }
-    return transportFailed && (heldInput.mouse || heldInput.key)
+    return uncertainEffect || cleanupFailed
       ? { ok: false, errorCode: 'runtime_unavailable', interruptionCompletion: 'uncertain' }
       : result;
   }

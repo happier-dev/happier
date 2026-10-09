@@ -3,6 +3,7 @@ import { BrowserEventV1Schema, BrowserTitleChangedEventV1Schema } from '@happier
 import { BrowserHttpUrlV1Schema } from '@happier-dev/protocol/browser/url';
 import type { BrowserEventV1, BrowserCommandDispatchResultV1, BrowserCommandErrorCodeV1, BrowserCommandV1, BrowserSidecarErrorCodeV1, BrowserProfileV1, BrowserViewTargetV1, BrowserPlatformV1 } from '@happier-dev/protocol';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
+import { isBrowserSidecarCdpCommandNotDispatched } from './cdpTransport';
 
 import {
     browserCommandDispatchFailure,
@@ -183,6 +184,7 @@ function failed(
     code: BrowserCommandErrorCodeV1,
     message: string,
     retryable?: boolean,
+    completion?: 'known' | 'unknown',
 ): BrowserCommandDispatchResultV1 {
     return browserCommandDispatchFailure({
         commandId: command.commandId,
@@ -190,11 +192,12 @@ function failed(
         code,
         message,
         ...(typeof retryable === 'boolean' ? { retryable } : {}),
+        ...(completion ? { completion } : {}),
     });
 }
 
-function cdpFailure(command: BrowserCommandV1): BrowserCommandDispatchResultV1 {
-    return failed(command, 'adapter_unavailable', 'Browser sidecar CDP command failed.', true);
+function cdpFailure(command: BrowserCommandV1, completion: 'known' | 'unknown' = 'unknown'): BrowserCommandDispatchResultV1 {
+    return failed(command, 'adapter_unavailable', 'Browser sidecar CDP command failed.', true, completion);
 }
 
 function recordValue(input: unknown): Record<string, unknown> | null {
@@ -332,8 +335,10 @@ export function createBrowserSidecarCdpControlAdapter(
             return failed(command, 'view_not_found', 'Browser sidecar does not own this view.');
         }
 
+        let issued = false;
         try {
             scope.signal?.throwIfAborted();
+            issued = true;
             await input.transport.dispatchPageCommand({
                 // Once issued, abort must not discard the CDP acknowledgement before drain.
                 ...(scope.deadlineMs !== undefined ? { deadlineMs: scope.deadlineMs } : {}),
@@ -343,8 +348,8 @@ export function createBrowserSidecarCdpControlAdapter(
                 ...(params ? { params } : {}),
             });
             return dispatchState(command);
-        } catch {
-            return cdpFailure(command);
+        } catch (error) {
+            return cdpFailure(command, !issued || isBrowserSidecarCdpCommandNotDispatched(error) ? 'known' : 'unknown');
         }
     }
 
@@ -358,6 +363,7 @@ export function createBrowserSidecarCdpControlAdapter(
             return failed(command, 'view_not_found', 'Browser sidecar does not own this view.');
         }
 
+        let issued = false;
         try {
             scope.signal?.throwIfAborted();
             const history = await input.transport.dispatchPageCommand({
@@ -371,6 +377,7 @@ export function createBrowserSidecarCdpControlAdapter(
                 return failed(command, 'unsupported_command', 'Browser sidecar history entry is unavailable.');
             }
             scope.signal?.throwIfAborted();
+            issued = true;
             await input.transport.dispatchPageCommand({
                 ...(scope.deadlineMs !== undefined ? { deadlineMs: scope.deadlineMs } : {}),
                 targetId: boundView.targetId,
@@ -379,8 +386,8 @@ export function createBrowserSidecarCdpControlAdapter(
                 params: { entryId },
             });
             return dispatchState(command);
-        } catch {
-            return cdpFailure(command);
+        } catch (error) {
+            return cdpFailure(command, !issued || isBrowserSidecarCdpCommandNotDispatched(error) ? 'known' : 'unknown');
         }
     }
 
@@ -415,8 +422,8 @@ export function createBrowserSidecarCdpControlAdapter(
                 return { ...dispatched(command), events: [event] };
             }
             return dispatchState(command);
-        } catch {
-            return cdpFailure(command);
+        } catch (error) {
+            return cdpFailure(command, isBrowserSidecarCdpCommandNotDispatched(error) ? 'known' : 'unknown');
         }
     }
 
@@ -462,13 +469,13 @@ export function createBrowserSidecarCdpControlAdapter(
             return !disposed && supportsOpenViewCommand(command, input.browserSessionId);
         },
         async dispatchCommand(command, scope = {}) {
-            if (disposed) return cdpFailure(command);
+            if (disposed) return cdpFailure(command, 'known');
             switch (command.kind) {
                 case 'openView': {
                     if (command.browserSessionId !== input.browserSessionId || command.target.kind !== 'externalUrl') {
                         return failed(command, 'unsupported_command', 'Browser sidecar supports only external URL views.');
                     }
-                    if (input.resolveInputControl?.(command)?.isObservationHeld()) return cdpFailure(command);
+                    if (input.resolveInputControl?.(command)?.isObservationHeld()) return cdpFailure(command, 'known');
                     try {
                         const page = await input.transport.openPage({
                             ...scope,

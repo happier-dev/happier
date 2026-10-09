@@ -11,6 +11,7 @@ import { SecretFillSettlementV1Schema } from '@happier-dev/protocol/computer/v1'
 import type { SecretFillSettlementV1 } from '@happier-dev/protocol/computer/v1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { SurfaceInputAdmissionFailure, SurfaceInputControl, SurfaceInputExecutionResult } from '../../surfaces/inputControl';
+import { classifyBrowserCommandCompletion } from '../control/types';
 import {
   createBrowserAutomationOwnerRegistry,
   type BrowserAutomationOwnerRegistry,
@@ -302,8 +303,10 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       }
     };
 
+    const wasUncertainBeforeRead = runtime.inputControl.getStatus().uncertain;
     try {
-      const readOutcome = !mutating ? await runtime.inputControl.observeWhile(() => effect(abortController.signal)) : undefined;
+      const readOutcome = !mutating ? await runtime.inputControl.observeWhile(() => effect(abortController.signal),
+        outcome => outcome.interruptionCompletion === 'uncertain' ? 'unknown' : 'known') : undefined;
       if (!mutating && !readOutcome) return failureResult(request, controlEpoch, runtime.navigationGeneration, 'policy_denied');
       const execution = mutating ? await runtime.inputControl.execute({
         requestedBy,
@@ -345,7 +348,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       if (mutating) {
         if (runtime.inputControl.isClosed()) runtimes.delete(browserViewKey(request));
         else emitController(request);
-      }
+      } else if (!wasUncertainBeforeRead && runtime.inputControl.getStatus().uncertain) emitController(request);
     }
   }
 
@@ -362,7 +365,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       return { ok: false, errorCode: 'owner_mismatch' };
     }
     const result = await interruption;
-    return result.active ? { ok: true, completion: result.completion === 'known' ? 'stopped' : 'uncertain' }
+    return result.active || result.completion === 'unknown' ? { ok: true, completion: result.completion === 'known' ? 'stopped' : 'uncertain' }
       : { ok: false, errorCode: 'no_active_action' };
   }
   return {
@@ -377,12 +380,18 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       if (runtime.confidentialPreparationActive) return { status: 'refused', code: 'observation_unavailable' };
       runtime.confidentialPreparationActive = true;
       const alreadyHeld = owners.isObservationHeld(request);
-      const clearUnusedHold = () => { if (!alreadyHeld) runtime.inputControl.clearConfidentialityHold(); };
+      const clearUnusedHold = () => {
+        if (!alreadyHeld && runtime.inputControl.clearConfidentialityHold()) emitController(request);
+      };
       const abandonPreparation = () => {
         runtime.confidentialPreparationActive = false;
         clearUnusedHold();
       };
-      try { await owners.acquireConfidentiality(request); }
+      try {
+        const hold = owners.acquireConfidentiality(request);
+        emitController(request);
+        await hold;
+      }
       catch { abandonPreparation(); return { status: 'refused', code: 'observation_unavailable' }; }
       if (context.signal?.aborted || runtime.inputControl.isClosed()) {
         abandonPreparation(); return { status: 'refused', code: 'target_changed' };
@@ -444,6 +453,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
             else await owners.tryReleaseConfidentiality(request);
           } finally {
             runtime.confidentialPreparationActive = false;
+            emitController(request);
           }
         },
       };
@@ -464,10 +474,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
             // abort cannot retract a page command already issued to Chromium.
             return await dispatch();
           },
-          // The broker/sidecar refuse missing views and unavailable history before a page effect.
-          // Transport/invalid-result failures cannot establish whether Chromium applied the command.
-          classifyCompletion: result => result.status === 'dispatched' || result.error.code === 'view_not_found'
-            || result.error.code === 'unsupported_command' ? 'known' : 'unknown',
+          classifyCompletion: classifyBrowserCommandCompletion,
         });
       } finally { emitController(view); }
     },

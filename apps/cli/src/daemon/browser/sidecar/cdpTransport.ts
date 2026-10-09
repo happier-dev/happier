@@ -24,12 +24,29 @@ export type BrowserSidecarCdpTransportErrorCode =
 
 export class BrowserSidecarCdpTransportError extends Error {
     readonly code: BrowserSidecarCdpTransportErrorCode;
+    /** Only transport preflight can prove nondispatch; pending/send failures may have landed. */
+    readonly dispatchStatus: 'not_dispatched' | 'unknown';
 
-    constructor(code: BrowserSidecarCdpTransportErrorCode, message: string) {
+    constructor(code: BrowserSidecarCdpTransportErrorCode, message: string, dispatchStatus: 'not_dispatched' | 'unknown' = 'unknown') {
         super(message);
         this.name = 'BrowserSidecarCdpTransportError';
         this.code = code;
+        this.dispatchStatus = dispatchStatus;
     }
+}
+
+class BrowserSidecarCdpRequestAbortedError extends DOMException {
+    readonly dispatchStatus: 'not_dispatched' | 'unknown';
+
+    constructor(dispatchStatus: 'not_dispatched' | 'unknown') {
+        super('Browser sidecar CDP request was aborted.', 'AbortError');
+        this.dispatchStatus = dispatchStatus;
+    }
+}
+
+export function isBrowserSidecarCdpCommandNotDispatched(error: unknown): boolean {
+    return (error instanceof BrowserSidecarCdpTransportError || error instanceof BrowserSidecarCdpRequestAbortedError)
+        && error.dispatchStatus === 'not_dispatched';
 }
 
 export type BrowserSidecarCdpTransport = BrowserSidecarCdpControlTransport & Readonly<{
@@ -230,13 +247,14 @@ export function createBrowserSidecarCdpTransport(input: Readonly<{
 
     async function sendCommand(command: CdpCommandInput): Promise<unknown> {
         if (disposedError) {
-            throw disposedError;
+            throw new BrowserSidecarCdpTransportError(disposedError.code, disposedError.message, 'not_dispatched');
         }
         if (command.signal?.aborted) {
-            throw new DOMException('Browser sidecar CDP request was aborted.', 'AbortError');
+            throw new BrowserSidecarCdpRequestAbortedError('not_dispatched');
         }
         if (command.deadlineMs !== undefined && command.deadlineMs <= Date.now()) {
-            throw privateError('cdp_request_timeout');
+            const error = privateError('cdp_request_timeout');
+            throw new BrowserSidecarCdpTransportError(error.code, error.message, 'not_dispatched');
         }
 
         const id = nextId;
@@ -250,7 +268,7 @@ export function createBrowserSidecarCdpTransport(input: Readonly<{
 
         return await new Promise<unknown>((resolve, reject) => {
             let timeout: NodeJS.Timeout | undefined;
-            const onAbort = () => rejectPending(request, new DOMException('Browser sidecar CDP request was aborted.', 'AbortError'));
+            const onAbort = () => rejectPending(request, new BrowserSidecarCdpRequestAbortedError('unknown'));
             const request: PendingRequest = {
                 id,
                 resolve,

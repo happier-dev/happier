@@ -101,13 +101,14 @@ describe('surface input control', () => {
     expect(control.getStatus()).toMatchObject({ controller: 'human', stopping: false, uncertain: true });
     expect(control.observe(0)).toBe(false);
     expect(control.getAdmissionFailure('agent')).toBe('uncertain');
-    expect(control.getAdmissionFailure('human')).toBeUndefined();
+    expect(control.getAdmissionFailure('human')).toBe('uncertain');
     expect(await control.execute({ requestedBy: 'human', effect: async () => 'click', classifyCompletion: () => 'known' }))
-      .toMatchObject({ ok: true, value: 'click' });
+      .toEqual({ ok: false, errorCode: 'uncertain' });
     expect(control.getStatus().uncertain).toBe(true);
     expect(control.handBack()).toBe(true);
     expect(control.getStatus()).toMatchObject({ controller: 'idle', controlEpoch: 2, stopping: false, uncertain: true });
     expect(control.getAdmissionFailure('agent')).toBe('observation_required');
+    expect(control.getAdmissionFailure('human')).toBe('uncertain');
     let agentEffects = 0;
     const agentInput = {
       requestedBy: 'agent',
@@ -122,6 +123,7 @@ describe('surface input control', () => {
     expect(control.observe(2)).toBe(true);
     expect(control.getStatus().uncertain).toBe(false);
     expect(control.getAdmissionFailure('agent')).toBeUndefined();
+    expect(control.getAdmissionFailure('human')).toBeUndefined();
     expect(await control.execute(agentInput)).toMatchObject({ ok: true, value: 'click', completion: 'known' });
     expect(agentEffects).toBe(1);
   });
@@ -131,6 +133,8 @@ describe('surface input control', () => {
     await control.execute({ requestedBy: 'agent', effect: async () => 'unknown', classifyCompletion: () => 'unknown' });
     expect(control.observe(0)).toBe(false);
     await control.takeOver();
+    expect(control.getAdmissionFailure('human')).toBe('uncertain');
+    expect(control.observe(1)).toBe(true);
     let finish: () => void = () => undefined;
     const running = control.execute({ requestedBy: 'human', effect: () => new Promise<void>(resolve => { finish = resolve; }), classifyCompletion: () => 'known' });
     expect(control.observe(1)).toBe(false);

@@ -370,6 +370,8 @@ export const BrowserAutomationControllerStateV1Schema = lazyZodSchema(() => z
     activeTarget: BrowserActiveTargetV1Schema.optional(),
     interruptionSettling: z.boolean().optional(),
     uncertain: z.boolean().optional(),
+    /** Advisory privacy projection; only the source/input owner can release its observation hold. */
+    confidentialityHeld: z.boolean().optional(),
   })
   .strict());
 export type BrowserAutomationControllerStateV1 = z.infer<typeof BrowserAutomationControllerStateV1Schema>;

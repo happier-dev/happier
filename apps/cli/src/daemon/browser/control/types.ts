@@ -48,6 +48,7 @@ export function browserCommandDispatchFailure(
     message: string;
     adapterKind?: BrowserDaemonControlAdapterKind;
     retryable?: boolean;
+    completion?: 'known' | 'unknown';
   }>,
 ): BrowserCommandDispatchResultV1 {
   return {
@@ -55,10 +56,18 @@ export function browserCommandDispatchFailure(
     commandId: input.commandId,
     status: 'failed',
     ...(input.adapterKind ? { adapterKind: input.adapterKind } : {}),
+    ...(input.completion ? { completion: input.completion } : {}),
     error: {
       code: input.code,
       message: input.message,
       ...(typeof input.retryable === 'boolean' ? { retryable: input.retryable } : {}),
     },
   };
+}
+
+/** Missing transport provenance cannot establish that Chromium did not apply an effect. */
+export function classifyBrowserCommandCompletion(result: BrowserCommandDispatchResultV1): 'known' | 'unknown' {
+  if (result.status === 'dispatched') return 'known';
+  if (result.completion) return result.completion;
+  return result.error.code === 'view_not_found' || result.error.code === 'unsupported_command' ? 'known' : 'unknown';
 }

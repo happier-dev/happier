@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { MachineLiveStreamCaptureSourceV1Schema } from '../../machines/peer/mediation/stream/captureV1.js';
 
@@ -7,21 +8,21 @@ import { BrowserViewTargetV1Schema } from '../target/v1.js';
 import { BrowserHttpUrlV1Schema } from '../url.js';
 import { BrowserPlatformV1Schema } from '../view/v1.js';
 
-const BrowserCommandBaseV1Schema = z
+const BrowserCommandBaseV1Schema = lazyZodSchema(() => z
   .object({
     commandId: z.string().trim().min(1).max(256),
   })
-  .strict();
+  .strict());
 
-const BrowserSessionCommandBaseV1Schema = BrowserCommandBaseV1Schema.extend({
+const BrowserSessionCommandBaseV1Schema = lazyZodSchema(() => BrowserCommandBaseV1Schema.extend({
   browserSessionId: z.string().trim().min(1).max(256),
-});
+}));
 
-const BrowserViewCommandBaseV1Schema = BrowserSessionCommandBaseV1Schema.extend({
+const BrowserViewCommandBaseV1Schema = lazyZodSchema(() => BrowserSessionCommandBaseV1Schema.extend({
   viewId: z.string().trim().min(1).max(256),
-});
+}));
 
-export const BrowserCommandKindV1Schema = z.enum([
+export const BrowserCommandKindV1Schema = lazyZodSchema(() => z.enum([
   'openView',
   'closeView',
   'focusView',
@@ -33,10 +34,10 @@ export const BrowserCommandKindV1Schema = z.enum([
   'setTarget',
   'takeControl',
   'handBack',
-]);
+]));
 export type BrowserCommandKindV1 = z.infer<typeof BrowserCommandKindV1Schema>;
 
-export const BrowserOpenViewCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserOpenViewCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('openView'),
   target: BrowserViewTargetV1Schema,
   platform: BrowserPlatformV1Schema,
@@ -44,47 +45,47 @@ export const BrowserOpenViewCommandV1Schema = BrowserViewCommandBaseV1Schema.ext
   currentUrlExpiresAt: z.number().int().nonnegative().optional(),
   focus: z.boolean().optional().default(true),
   openerViewId: z.string().trim().min(1).max(256).optional(),
-});
+}));
 
-export const BrowserCloseViewCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserCloseViewCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('closeView'),
-});
+}));
 
-export const BrowserFocusViewCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserFocusViewCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('focusView'),
-});
+}));
 
-export const BrowserNavigateCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserNavigateCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('navigate'),
   url: BrowserHttpUrlV1Schema,
-});
+}));
 
-export const BrowserGoBackCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserGoBackCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('goBack'),
-});
+}));
 
-export const BrowserGoForwardCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserGoForwardCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('goForward'),
-});
+}));
 
-export const BrowserReloadCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserReloadCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('reload'),
-});
+}));
 
-export const BrowserStopCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserStopCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('stop'),
-});
+}));
 
-export const BrowserSetTargetCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({
+export const BrowserSetTargetCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({
   kind: z.literal('setTarget'),
   target: BrowserViewTargetV1Schema,
   currentUrl: BrowserHttpUrlV1Schema.optional(),
-});
+}));
 
-export const BrowserTakeControlCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({ kind: z.literal('takeControl') });
-export const BrowserHandBackCommandV1Schema = BrowserViewCommandBaseV1Schema.extend({ kind: z.literal('handBack') });
+export const BrowserTakeControlCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({ kind: z.literal('takeControl') }));
+export const BrowserHandBackCommandV1Schema = lazyZodSchema(() => BrowserViewCommandBaseV1Schema.extend({ kind: z.literal('handBack') }));
 
-export const BrowserCommandV1Schema = z.discriminatedUnion('kind', [
+export const BrowserCommandV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   BrowserOpenViewCommandV1Schema,
   BrowserCloseViewCommandV1Schema,
   BrowserFocusViewCommandV1Schema,
@@ -96,10 +97,10 @@ export const BrowserCommandV1Schema = z.discriminatedUnion('kind', [
   BrowserSetTargetCommandV1Schema,
   BrowserTakeControlCommandV1Schema,
   BrowserHandBackCommandV1Schema,
-]);
+]));
 export type BrowserCommandV1 = z.infer<typeof BrowserCommandV1Schema>;
 
-export const BrowserCommandErrorCodeV1Schema = z.enum([
+export const BrowserCommandErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'adapter_unavailable',
   'sandbox_unavailable',
   'command_malformed',
@@ -109,19 +110,19 @@ export const BrowserCommandErrorCodeV1Schema = z.enum([
   'session_not_found',
   'unsupported_command',
   'view_not_found',
-]);
+]));
 export type BrowserCommandErrorCodeV1 = z.infer<typeof BrowserCommandErrorCodeV1Schema>;
 
-export const BrowserCommandDispatchErrorV1Schema = z
+export const BrowserCommandDispatchErrorV1Schema = lazyZodSchema(() => z
   .object({
     code: BrowserCommandErrorCodeV1Schema,
     message: z.string().trim().min(1).max(512),
     retryable: z.boolean().optional(),
   })
-  .strict();
+  .strict());
 export type BrowserCommandDispatchErrorV1 = z.infer<typeof BrowserCommandDispatchErrorV1Schema>;
 
-export const BrowserCommandDispatchResultV1Schema = z.discriminatedUnion('status', [
+export const BrowserCommandDispatchResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z
     .object({
       v: z.literal(1),
@@ -137,13 +138,15 @@ export const BrowserCommandDispatchResultV1Schema = z.discriminatedUnion('status
       commandId: z.string().trim().min(1).max(256),
       status: z.literal('failed'),
       adapterKind: BrowserSemanticAdapterKindV1Schema.optional(),
+      /** Physical-effect settlement supplied by the executing adapter, not caller authority. */
+      completion: z.enum(['known', 'unknown']).optional(),
       error: BrowserCommandDispatchErrorV1Schema,
     })
     .strict(),
-]);
+]));
 export type BrowserCommandDispatchResultV1 = z.infer<typeof BrowserCommandDispatchResultV1Schema>;
 
-const IdSchema = z.string().trim().min(1).max(256);
+const IdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
 /**
  * Daemon machine-RPC envelope (W2-A-1): the single canonical UI→daemon transport for a
@@ -155,28 +158,28 @@ const IdSchema = z.string().trim().min(1).max(256);
  * stays approval-floored at the action surface; this owner-scoped (account+machine) direct route is
  * the user-initiated `ui` path, which never prompts.
  */
-export const DaemonBrowserControlDispatchRequestV1Schema = z
+export const DaemonBrowserControlDispatchRequestV1Schema = lazyZodSchema(() => z
   .object({
     machineId: IdSchema,
     command: BrowserCommandV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserControlDispatchRequestV1 = z.infer<
   typeof DaemonBrowserControlDispatchRequestV1Schema
 >;
 
-export const DaemonBrowserControlDispatchResponseV1Schema = z
+export const DaemonBrowserControlDispatchResponseV1Schema = lazyZodSchema(() => z
   .object({
     protocolVersion: z.literal(1),
     result: BrowserCommandDispatchResultV1Schema,
   })
-  .strict();
+  .strict());
 export type DaemonBrowserControlDispatchResponseV1 = z.infer<
   typeof DaemonBrowserControlDispatchResponseV1Schema
 >;
 
 /** Read-only projection of an owned view, never a CDP handle or a second view registry. */
-export const BrowserDaemonViewV1Schema = z.object({
+export const BrowserDaemonViewV1Schema = lazyZodSchema(() => z.object({
   browserSessionId: IdSchema,
   viewId: IdSchema,
   sourceId: z.string().min(1),
@@ -185,15 +188,15 @@ export const BrowserDaemonViewV1Schema = z.object({
   adapterKind: BrowserSemanticAdapterKindV1Schema.extract(['chromiumSidecar', 'streamedBrowserSurface']),
   events: z.array(BrowserEventV1Schema),
   captureSource: MachineLiveStreamCaptureSourceV1Schema.optional(),
-}).strict();
+}).strict());
 export type BrowserDaemonViewV1 = z.infer<typeof BrowserDaemonViewV1Schema>;
 
-export const DaemonBrowserViewListRequestV1Schema = z.object({
+export const DaemonBrowserViewListRequestV1Schema = lazyZodSchema(() => z.object({
   machineId: IdSchema,
   browserSessionId: IdSchema,
-}).strict();
-export const DaemonBrowserViewListResponseV1Schema = z.object({
+}).strict());
+export const DaemonBrowserViewListResponseV1Schema = lazyZodSchema(() => z.object({
   protocolVersion: z.literal(1),
   views: z.array(BrowserDaemonViewV1Schema),
-}).strict();
+}).strict());
 export type DaemonBrowserViewListResponseV1 = z.infer<typeof DaemonBrowserViewListResponseV1Schema>;

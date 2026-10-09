@@ -1,5 +1,5 @@
 import { access, readFile } from 'node:fs/promises';
-import type { BrowserCommandV1 } from '@happier-dev/protocol';
+import type { BrowserAutomationActionRequestV1, BrowserCommandV1 } from '@happier-dev/protocol';
 import type { BrowserAutomationSecretFillRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +14,10 @@ import { createBrowserAutomationCdpAdapter } from './cdp';
 import { createBrowserAutomationDaemonService } from '../service';
 import { createBrowserAutomationRoutes } from '../routes';
 import { createBrowserSidecarCdpControlAdapter } from '../../sidecar/controlAdapter';
+import { createBrowserDaemonControlBroker } from '../../control/broker';
+import { createBrowserDaemonControlRoutes } from '../../control/routes';
+import { BrowserSidecarCdpTransportError, createBrowserSidecarCdpTransport } from '../../sidecar/cdpTransport';
+import type { LoopbackWebSocketJsonClientV1 } from '@/plugins/runtime/exec/privateContract';
 import { createBrowserContextRoutes } from '../../context/routes';
 import { createCdpBrowserContextSource } from '../../context/cdp/source';
 
@@ -35,6 +39,67 @@ function controlAdapter(overrides: Partial<BrowserDaemonControlAdapter> = {}): B
 
 const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' } as const;
 const HANDLE: BrowserSidecarCdpPageHandle = { targetId: 'target_1', sessionId: 'cdp_1' };
+
+// Only the websocket/CDP peer is substituted. Controller, page binding, input adapter and
+// settlement remain the production path, including known pre-send boundary failures.
+async function inputSettlementBoundary() {
+  const listeners = new Set<(message: unknown) => void | Promise<void>>();
+  let closePeer: () => void = () => undefined;
+  const state = { loseAck: false, disposedBeforeInput: false, failedRead: false, dialogOnRead: false, dialogRaised: false };
+  const effects: string[] = [];
+  const client: LoopbackWebSocketJsonClientV1 = {
+    closed: new Promise<void>(resolve => { closePeer = resolve; }),
+    subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    async sendJson(message) {
+      const command = message as { id: number; method: string; params?: Record<string, unknown> };
+      const mutatingExpression = command.method === 'Runtime.evaluate' && String(command.params?.expression).includes('el.value');
+      if (command.method.startsWith('Input.') || command.method === 'Page.navigate'
+        || command.method === 'Page.handleJavaScriptDialog' || mutatingExpression) {
+        effects.push(command.method);
+        if (state.loseAck) { closePeer(); return; }
+      }
+      const result = command.method === 'Target.createTarget' ? { targetId: HANDLE.targetId }
+        : command.method === 'Target.attachToTarget' ? { sessionId: HANDLE.sessionId }
+        : command.method === 'Runtime.evaluate' ? cdpEvaluateValue('safe page') : {};
+      if (command.method === 'Runtime.evaluate' && state.failedRead) throw new Error('read unavailable');
+      if (command.method === 'Runtime.evaluate' && state.dialogOnRead && !state.dialogRaised) {
+        state.dialogRaised = true;
+        for (const listener of [...listeners]) await listener({ method: 'Page.javascriptDialogOpening',
+          sessionId: HANDLE.sessionId, params: { type: 'alert' } });
+      }
+      for (const listener of [...listeners]) await listener({ id: command.id, result });
+    },
+  };
+  const transport = createBrowserSidecarCdpTransport({ client });
+  const boundaryTransport = {
+    ...transport,
+    dispatchPageCommand: (command: Parameters<typeof transport.dispatchPageCommand>[0]) => {
+      if (state.disposedBeforeInput && (command.method.startsWith('Input.') || command.method === 'Page.navigate'
+        || command.method === 'Page.handleJavaScriptDialog')) transport.dispose();
+      return transport.dispatchPageCommand(command);
+    },
+  };
+  const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: view.browserSessionId, sidecarId: 'sidecar', transport: boundaryTransport });
+  await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', ...view, platform: 'web', focus: false,
+    target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+  const contextCapture: BrowserSidecarContextCaptureSurface = {
+    transport: boundaryTransport,
+    resolvePageHandle: adapter.resolvePageHandle,
+    getNavigationState: adapter.getNavigationState,
+    subscribeCdpEvents: transport.subscribeCdpEvents,
+  };
+  const bridge = createControlAdapterAutomationTransport({ adapter, contextCapture });
+  const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: bridge }) });
+  const broker = createBrowserDaemonControlBroker();
+  broker.registerAdapter(adapter);
+  const routes = createBrowserDaemonControlRoutes({ broker, automation: () => service });
+  const execute = (actionKind: BrowserAutomationActionRequestV1['actionKind'], payload: Record<string, unknown> = {}) => service.execute({
+    v: 1, ...view, automationRequestId: `request:${actionKind}:${service.getTimeline(view).entries.length}`,
+    requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'agent' },
+    navigationGeneration: adapter.getNavigationState(view)?.navigationGeneration ?? 0, actionKind, payload, timeoutMs: 10_000,
+  });
+  return { state, effects, service, routes, execute, dispose() { service.dispose(); adapter.dispose(); transport.dispose(); } };
+}
 
 const confidentialRequest: BrowserAutomationSecretFillRequestV1 = {
   serverId: 'home', sessionId: 'session', machineId: 'machine', purpose: 'Sign in', ...view,
@@ -131,6 +196,20 @@ function confidentialBoundary(nativeObservation?: 'not_observable' | 'unknown') 
 }
 
 type Responder = (method: string, params: Record<string, unknown> | undefined) => unknown;
+
+async function confidentialServiceBoundary() {
+  const boundary = confidentialBoundary();
+  const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: view.browserSessionId, sidecarId: 'sidecar',
+    transport: { ...boundary.contextCapture.transport, openPage: async () => HANDLE,
+      dispatchBrowserCommand: async () => ({ success: true }) } });
+  await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', ...view, platform: 'web', focus: true,
+    target: { kind: 'externalUrl', targetId: 'external', url: confidentialRequest.origin } });
+  const bridge = createControlAdapterAutomationTransport({ adapter, contextCapture: {
+    ...boundary.contextCapture, resolvePageHandle: adapter.resolvePageHandle,
+  } });
+  const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: bridge }) });
+  return { state: boundary.state, service, dispose() { service.dispose(); adapter.dispose(); } };
+}
 
 function fakeContextCapture(
   responder: Responder,
@@ -242,6 +321,77 @@ function createAggregateTextDocument(): Readonly<{
 }
 
 describe('control adapter automation transport bridge', () => {
+  it.each([
+    ['type', { text: 'ordinary text' }, 'Input.insertText'],
+    ['scroll', { deltaY: 120 }, 'Input.dispatchMouseEvent'],
+    ['setValue', { selector: '#field', value: 'ordinary value' }, 'Runtime.evaluate'],
+    ['navigate', { url: 'https://example.test/next' }, 'Page.navigate'],
+  ] as const)('quarantines %s after its physical effect loses the CDP acknowledgement', async (actionKind, payload, method) => {
+    const boundary = await inputSettlementBoundary();
+    try {
+      expect(await boundary.execute('snapshot')).toMatchObject({ status: 'succeeded' });
+      boundary.state.loseAck = true;
+      expect(await boundary.execute(actionKind, payload)).toMatchObject({ status: 'failed' });
+      expect(boundary.service.getStatus(view).uncertain).toBe(true);
+      expect(boundary.effects).toEqual([method]);
+      expect(await boundary.execute('type', { text: 'next' })).toMatchObject({ status: 'failed', errorCode: 'runtime_unavailable' });
+      expect(boundary.effects).toEqual([method]);
+    } finally { boundary.dispose(); }
+  });
+
+  it.each(['type', 'navigate'] as const)('keeps a proven pre-dispatch %s refusal known without physical effects', async actionKind => {
+    const boundary = await inputSettlementBoundary();
+    try {
+      expect(await boundary.execute('snapshot')).toMatchObject({ status: 'succeeded' });
+      boundary.state.disposedBeforeInput = true;
+      expect(await boundary.execute(actionKind, actionKind === 'type' ? { text: 'ordinary text' } : { url: 'https://example.test/next' }))
+        .toMatchObject({ status: 'failed' });
+      expect(boundary.service.getStatus(view).uncertain).toBe(false);
+      expect(boundary.effects).toEqual([]);
+      expect(boundary.service.getInputControl(view).getAdmissionFailure('agent')).toBeUndefined();
+    } finally { boundary.dispose(); }
+  });
+
+  it('does not treat a failed read-only snapshot as uncertain physical input', async () => {
+    const boundary = await inputSettlementBoundary();
+    try {
+      boundary.state.failedRead = true;
+      expect(await boundary.execute('snapshot')).toMatchObject({ status: 'failed' });
+      expect(boundary.service.getStatus(view).uncertain).toBe(false);
+      expect(boundary.effects).toEqual([]);
+    } finally { boundary.dispose(); }
+  });
+
+  it('preserves proven navigation nondispatch through the real control broker and input owner', async () => {
+    const boundary = await inputSettlementBoundary();
+    try {
+      boundary.state.disposedBeforeInput = true;
+      expect(await boundary.routes.dispatchCommand({ kind: 'navigate', commandId: 'navigate', ...view,
+        url: 'https://example.test/next' }, { authority: 'present_user' }))
+        .toMatchObject({ status: 'failed', completion: 'known' });
+      expect(boundary.service.getStatus(view).uncertain).toBe(false);
+      expect(boundary.effects).toEqual([]);
+    } finally { boundary.dispose(); }
+  });
+
+  it.each(['ack_lost', 'pre_send_refused'] as const)('settles read-triggered dialog dismissal honestly (%s)', async failure => {
+    const boundary = await inputSettlementBoundary();
+    try {
+      expect(await boundary.execute('snapshot')).toMatchObject({ status: 'succeeded' });
+      boundary.state.dialogOnRead = true;
+      boundary.state.loseAck = failure === 'ack_lost';
+      boundary.state.disposedBeforeInput = failure === 'pre_send_refused';
+      expect(await boundary.execute('snapshot')).toMatchObject({ status: 'failed' });
+      expect(boundary.service.getStatus(view).uncertain).toBe(failure === 'ack_lost');
+      expect(boundary.effects).toEqual(failure === 'ack_lost' ? ['Page.handleJavaScriptDialog'] : []);
+      if (failure === 'ack_lost') {
+        expect(await boundary.execute('type', { text: 'next' }))
+          .toMatchObject({ status: 'failed', errorCode: 'runtime_unavailable' });
+        expect(boundary.effects).toEqual(['Page.handleJavaScriptDialog']);
+      }
+    } finally { boundary.dispose(); }
+  });
+
   it.each([undefined, 'unknown', 'not_observable'] as const)('retains only producer native-observation provenance through the real private route (fact=%s)', async nativeObservation => {
     const { bridge } = confidentialBoundary(nativeObservation);
     const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: bridge }) });
@@ -261,6 +411,49 @@ describe('control adapter automation transport bridge', () => {
       .toEqual({ status: 'refused', code: 'target_changed' });
     expect(calls).toEqual([]);
     service.dispose();
+  });
+
+  it('publishes the existing confidential hold and known nondelivery release through controller events', async () => {
+    const boundary = await confidentialServiceBoundary();
+    const { service } = boundary;
+    const states: Array<{ confidentialityHeld?: boolean }> = [];
+    service.subscribeBrowserEvents(event => { if (event.kind === 'controllerChanged') states.push(event.state); });
+    try {
+      const target = await service.prepareConfidentialFill(confidentialRequest, { authority: 'present_user' });
+      if ('status' in target) throw new Error('Expected supported confidential target');
+      expect(service.getStatus(view).confidentialityHeld).toBe(true);
+      expect(states.at(-1)?.confidentialityHeld).toBe(true);
+      await target.finish();
+      expect(service.getStatus(view).confidentialityHeld).toBeUndefined();
+      expect(states.at(-1)?.confidentialityHeld).toBeUndefined();
+    } finally { boundary.dispose(); }
+  });
+
+  it.each(['fill', 'submit'] as const)('keeps proven pre-dispatch confidential %s refusal known without clearing an older delivered hold', async effect => {
+    const boundary = await confidentialServiceBoundary();
+    try {
+      const request = effect === 'submit' ? { ...confidentialRequest, submit: {
+        controlId: '51', locator: '#submit', label: 'Sign in', consequence: 'Submit credentials',
+      } } : confidentialRequest;
+      const target = await boundary.service.prepareConfidentialFill(request, { authority: 'present_user' });
+      if ('status' in target) throw new Error('Expected supported confidential target');
+      const value = new TextEncoder().encode('fixture-credential');
+      if (effect === 'submit') expect(await target.fill(value)).toEqual({ status: 'filled', code: 'filled' });
+      boundary.state.beforeCommand = (method, params) => {
+        if (effect === 'fill' && method === 'Input.insertText' || effect === 'submit'
+          && method === 'Runtime.callFunctionOn' && String(params?.functionDeclaration).includes('HTMLElement.prototype.click')) {
+          throw new BrowserSidecarCdpTransportError('cdp_transport_disposed', 'Not sent', 'not_dispatched');
+        }
+      };
+      expect(effect === 'fill' ? await target.fill(value) : await target.submit?.())
+        .toEqual(effect === 'fill' ? { status: 'refused', code: 'target_changed' } : { status: 'refused', code: 'submit_refused' });
+      expect(value.every(byte => byte === 0)).toBe(true);
+      expect(boundary.state.inserted).toBe(effect === 'submit');
+      expect(boundary.state.submitted).toBe(false);
+      expect(boundary.service.getStatus(view).uncertain).toBe(false);
+      await target.finish();
+      expect(boundary.service.getStatus(view).confidentialityHeld).toBe(effect === 'submit' ? true : undefined);
+    } finally { boundary.dispose(); }
   });
 
   it('refuses unsupported confidential verification without issuing native input', async () => {

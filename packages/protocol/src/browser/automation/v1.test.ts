@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BrowserAutomationControllerStateV1Schema } from './v1';
 
 async function loadAutomationModule(): Promise<Record<string, unknown> | null> {
   const path = './v1.js';
@@ -20,6 +21,14 @@ const baseRequest = {
 } as const;
 
 describe('browser automation protocol contracts', () => {
+  it('accepts the optional advisory confidentiality fact and retains strict controller validation', () => {
+    const state = { browserSessionId: 'browser', viewId: 'view', controller: 'none', controlEpoch: 0 };
+    expect(BrowserAutomationControllerStateV1Schema.safeParse(state).success).toBe(true);
+    expect(BrowserAutomationControllerStateV1Schema.parse({ ...state, confidentialityHeld: true }))
+      .toEqual({ ...state, confidentialityHeld: true });
+    expect(BrowserAutomationControllerStateV1Schema.safeParse({ ...state, confidentialityHeld: 'true' }).success).toBe(false);
+    expect(BrowserAutomationControllerStateV1Schema.safeParse({ ...state, privacyOverride: true }).success).toBe(false);
+  });
   it('admits mutating and read-only requests alike, and refuses a resurrected action lease', async () => {
     const mod = await loadAutomationModule();
 

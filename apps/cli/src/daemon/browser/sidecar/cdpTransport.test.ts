@@ -266,6 +266,43 @@ describe('browser sidecar CDP JSON-RPC transport', () => {
             vi.useRealTimers();
         }
     });
+    it('distinguishes pre-dispatch abort from aborting a sent command while preserving AbortError', async () => {
+        const fake = createFakeJsonClient();
+        const transport = createBrowserSidecarCdpTransport({ client: fake.client });
+        try {
+            const preflight = new AbortController();
+            preflight.abort();
+            await expect(transport.dispatchBrowserCommand({ method: 'Input.insertText', signal: preflight.signal }))
+                .rejects.toMatchObject({ name: 'AbortError', dispatchStatus: 'not_dispatched' });
+            expect(fake.sent).toEqual([]);
+            const issued = new AbortController();
+            const command = transport.dispatchBrowserCommand({ method: 'Input.insertText', signal: issued.signal });
+            const canceled = expect(command).rejects.toMatchObject({ name: 'AbortError', dispatchStatus: 'unknown' });
+            await waitForSent(fake.sent, 1);
+            issued.abort();
+            await canceled;
+            expect(fake.sent).toHaveLength(1);
+        } finally { transport.dispose(); }
+    });
+
+    it('distinguishes proven pre-send refusal from an outstanding command losing its acknowledgement', async () => {
+        const fake = createFakeJsonClient();
+        const transport = createBrowserSidecarCdpTransport({ client: fake.client });
+        try {
+            await expect(transport.dispatchBrowserCommand({ method: 'Input.insertText', deadlineMs: Date.now() - 1 }))
+                .rejects.toMatchObject({ code: 'cdp_request_timeout', dispatchStatus: 'not_dispatched' });
+            expect(fake.sent).toEqual([]);
+            const pending = transport.dispatchBrowserCommand({ method: 'Input.insertText', params: { text: 'ordinary text' } });
+            const failed = expect(pending).rejects.toMatchObject({ code: 'cdp_transport_closed', dispatchStatus: 'unknown' });
+            await waitForSent(fake.sent, 1);
+            fake.close();
+            await failed;
+            await expect(transport.dispatchBrowserCommand({ method: 'Input.insertText' }))
+                .rejects.toMatchObject({ code: 'cdp_transport_closed', dispatchStatus: 'not_dispatched' });
+            expect(fake.sent).toHaveLength(1);
+        } finally { transport.dispose(); }
+    });
+
     it('keeps large screenshot responses and screencast events healthy alongside unrelated responses on a real socket', async () => {
         const data = 'A'.repeat(1024 * 1024 + 4);
         let screenshotId: unknown;

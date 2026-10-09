@@ -2,6 +2,7 @@ import { isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/bro
 import type { BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationErrorCodeV1, BrowserCommandDispatchResultV1, BrowserCommandV1 } from '@happier-dev/protocol';
 
 import type { BrowserAutomationViewRef } from '../owners';
+import { classifyBrowserCommandCompletion } from '../../control/types';
 import type { BrowserAutomationSecretFillRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
 import type { BrowserFocusedCredentialTargetV1 } from '@happier-dev/protocol/browser/context/v1';
 import type {
@@ -230,10 +231,12 @@ export function createBrowserAutomationCdpAdapter(input: Readonly<{
     }
 
     const dispatch = await input.transport.dispatchControlCommand(command, executionContext);
+    const interruptionCompletion = classifyBrowserCommandCompletion(dispatch) === 'known' ? 'stopped' : 'uncertain';
     if (executionContext.signal?.aborted || Date.now() >= executionContext.deadlineMs) {
       // Navigation may already have started in Chromium; canceling its command response cannot
       // prove that the page effect was retracted.
-      return { status: executionContext.signal?.aborted ? 'canceled' : 'timed_out', fidelity: 'cdp', trustedInput, errorCode: executionContext.signal?.aborted ? 'user_canceled' : 'timed_out', interruptionCompletion: 'uncertain' };
+      return { status: executionContext.signal?.aborted ? 'canceled' : 'timed_out', fidelity: 'cdp', trustedInput, errorCode: executionContext.signal?.aborted ? 'user_canceled' : 'timed_out',
+        interruptionCompletion: dispatch.status === 'failed' ? interruptionCompletion : 'uncertain' };
     }
     if (dispatch.status === 'failed') {
       return {
@@ -241,6 +244,7 @@ export function createBrowserAutomationCdpAdapter(input: Readonly<{
         fidelity: 'cdp',
         trustedInput,
         errorCode: controlErrorToAutomationError(dispatch),
+        interruptionCompletion,
       };
     }
     return { status: 'succeeded', fidelity: 'cdp', trustedInput };
