@@ -71,6 +71,42 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         } | null | undefined;
+    } | {
+        scope: 'account';
+        text: string;
+        expiresAtMs?: number | undefined;
+        topic?: string | undefined;
+        reviewedTarget?: {
+            ref: {
+                artifactId: string;
+                kind: 'doc';
+                serverId?: string | undefined;
+            };
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | null | undefined;
+    } | {
+        scope: 'project';
+        projectRef: {
+            serverId: string;
+            projectKey: string;
+        };
+        text: string;
+        expiresAtMs?: number | undefined;
+        topic?: string | undefined;
+        reviewedTarget?: {
+            ref: {
+                artifactId: string;
+                kind: 'doc';
+                serverId?: string | undefined;
+            };
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | null | undefined;
     };
     readonly "memory.update": {
         ref: {
@@ -86,6 +122,20 @@ export type MemoryActionInputById = {
         text: string;
         topic?: string | undefined;
         expiresAtMs?: number | null | undefined;
+    } | {
+        ref: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        expectedRevision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        topic: 'archive';
+        factId: string;
+        restore: true;
+        restoreTopic?: string | undefined;
     };
     readonly "memory.forget": {
         ref: {
@@ -140,7 +190,7 @@ export type MemoryActionResultById = {
                 headerVersion: number;
                 bodyVersion: number;
             };
-            location: 'facts' | 'archive' | 'document' | {
+            location: 'archive' | 'facts' | 'document' | {
                 type: 'topic';
                 title: string;
             };
