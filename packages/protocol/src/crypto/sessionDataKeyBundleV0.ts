@@ -19,7 +19,7 @@ export type SessionDataKeyBundleV0ReadResult =
   | Readonly<{ status: 'unsupported' }>;
 
 /** Version 0: [0x00 | nonce(12) | ciphertext | authentication tag(16)]. */
-export function frameSessionDataKeyBundleV0(payload: Uint8Array): Uint8Array {
+export function frameSessionDataKeyBundleV0(payload: Uint8Array): Uint8Array<ArrayBuffer> {
   if (payload.length < SESSION_DATA_KEY_NONCE_BYTES + SESSION_DATA_KEY_TAG_BYTES) {
     throw new Error('Invalid session data-key AES-GCM payload');
   }

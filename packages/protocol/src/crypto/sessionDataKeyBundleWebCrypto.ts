@@ -35,7 +35,7 @@ export async function openAesGcmPayloadWebCrypto(payload: Uint8Array, keyBytes: 
   return new Uint8Array(plaintext);
 }
 
-export async function sealSessionDataKeyBundleV0(value: unknown, key: Uint8Array): Promise<Uint8Array> {
+export async function sealSessionDataKeyBundleV0(value: unknown, key: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
   if (key.length !== SESSION_DATA_KEY_BYTES) {
     throw new Error('Session data-key encryption requires a 32-byte key');
   }

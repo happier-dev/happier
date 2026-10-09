@@ -38,7 +38,7 @@ export function sealEncryptedDataKeyEnvelopeV1(params: {
   dataKey: Uint8Array;
   recipientPublicKey: Uint8Array;
   randomBytes: (length: number) => Uint8Array;
-}): Uint8Array {
+}): Uint8Array<ArrayBuffer> {
   if (params.dataKey.length !== ENCRYPTED_DATA_KEY_V1_BYTES) {
     throw new Error(`Invalid data key length: ${params.dataKey.length}`);
   }
