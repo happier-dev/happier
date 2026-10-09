@@ -8,6 +8,7 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createGithubRepositoryProvisioningAdapter } from './createRepositoryWithAuthFallback.js';
+import { createGithubRepositoryRestAdapter } from './githubRepositoryRestAdapter.js';
 
 const githubProvider: ScmHostingProviderRef = {
   id: 'scm.github',
@@ -53,6 +54,32 @@ function createAmbientProcessSpy() {
 }
 
 describe('GitHub repository provisioning authority', () => {
+  it.each(['public', 'private', 'missing'] as const)('discovers public clone metadata anonymously, retaining bound-account authority for %s', async visibility => {
+    const requests: Array<Readonly<{ url: string; authenticated: boolean }>> = [];
+    const ambient = createAmbientProcessSpy();
+    const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({
+      fetcher: async (url, init) => {
+        const authenticated = new Headers(init?.headers).has('Authorization');
+        requests.push({ url, authenticated });
+        const body = visibility === 'missing' ? { message: 'Not Found' } : { full_name: 'octocat/Hello-World',
+          html_url: 'https://github.com/octocat/Hello-World', clone_url: 'https://github.com/octocat/Hello-World.git', visibility };
+        return { ok: visibility !== 'missing', status: visibility === 'missing' ? 404 : 200, statusText: 'test',
+          json: async () => body, text: async () => JSON.stringify(body) };
+      },
+    }) });
+    const result = adapter.describeCloneTargets({ provider: githubProvider,
+      repository: { nameWithOwner: 'octocat/Hello-World', visibility: 'public', cloneUrl: 'file:///untrusted.git' },
+      runtimeServices: ambient.runtimeServices });
+    if (visibility === 'public') {
+      await expect(result).resolves.toMatchObject({ auth: { profileKind: 'no_auth' },
+        targets: [{ protocol: 'https', url: 'https://github.com/octocat/Hello-World.git', isDefault: true }] });
+    } else {
+      await expect(result).rejects.toMatchObject({ errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED });
+    }
+    expect(requests).toEqual([{ url: 'https://api.github.com/repos/octocat/Hello-World', authenticated: false }]);
+    expect(ambient.executeCommand).not.toHaveBeenCalled();
+  });
+
   it('fails repository creation typed instead of running ambient gh when the bound account is unauthenticated', async () => {
     const ambient = createAmbientProcessSpy();
     const error = Object.assign(new Error('GitHub REST authentication failed'), {
@@ -243,14 +270,20 @@ describe('GitHub repository provisioning authority', () => {
   });
 
   it('describes clone targets through provider-owned repository lookup', async () => {
-    const calls: string[] = [];
+    const calls: boolean[] = [];
     const adapter = createGithubRepositoryProvisioningAdapter({
-      restAdapter: {
-        getRepository: async (input: Readonly<{ owner: string; repositoryName: string }>) => {
-          calls.push(`${input.owner}/${input.repositoryName}`);
-          return repository;
+      restAdapter: createGithubRepositoryRestAdapter({
+        resolveToken: async () => ({ kind: 'available', token: 'test-bound-token' }),
+        fetcher: async (url, init) => {
+          expect(url).toBe('https://api.github.com/repos/happier-dev/happier');
+          const authenticated = new Headers(init?.headers).has('Authorization');
+          calls.push(authenticated);
+          const body = authenticated ? { full_name: repository.nameWithOwner, html_url: repository.webUrl,
+            clone_url: repository.cloneUrl, ssh_url: repository.sshUrl, visibility: 'private' } : { message: 'Not Found' };
+          return { ok: authenticated, status: authenticated ? 200 : 404, statusText: 'test',
+            json: async () => body, text: async () => JSON.stringify(body) };
         },
-      },
+      }),
     });
 
     await expect(adapter.describeCloneTargets({
@@ -282,7 +315,7 @@ describe('GitHub repository provisioning authority', () => {
         },
       ],
     });
-    expect(calls).toEqual(['happier-dev/happier']);
+    expect(calls).toEqual([false, true]);
   });
 
   it('refuses Enterprise clone-target description typed without running ambient gh', async () => {

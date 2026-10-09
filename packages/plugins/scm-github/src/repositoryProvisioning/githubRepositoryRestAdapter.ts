@@ -66,7 +66,7 @@ export type GithubRepositoryRestAdapter = Readonly<{
     input: ScmHostingProviderRepositoryDescribePublishTargetsInput
   ): Promise<ScmHostingProviderRepositoryDescribePublishTargetsResult>;
   createRepository(input: ScmHostingProviderRepositoryCreateInput): Promise<ScmHostingRepositorySummary>;
-  getRepository(input: ScmHostingProviderRepositoryGetInput): Promise<ScmHostingRepositorySummary | null>;
+  getRepository(input: ScmHostingProviderRepositoryGetInput & Readonly<{ publicOnly?: true }>): Promise<ScmHostingRepositorySummary | null>;
 }>;
 
 
@@ -96,10 +96,10 @@ function defaultFetcher(url: string, init?: RequestInit): Promise<GithubRestResp
   return fetch(url, init);
 }
 
-function buildHeaders(token: string): Record<string, string> {
+function buildHeaders(token?: string): Record<string, string> {
   return {
     Accept: 'application/vnd.github+json',
-    Authorization: `Bearer ${token}`,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     'Content-Type': 'application/json',
     'X-GitHub-Api-Version': GITHUB_API_VERSION,
   };
@@ -245,11 +245,12 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     init?: Omit<RequestInit, 'headers'>,
     runtimeServices?: ScmHostingProviderRuntimeServices,
     signal?: AbortSignal,
+    publicOnly?: true,
   ): Promise<Readonly<{
     raw: unknown;
     profileKey?: string;
   }>> {
-    const auth = await resolveToken(provider, runtimeServices);
+    const auth: Readonly<{ token?: string; profileKey?: string }> = publicOnly ? {} : await resolveToken(provider, runtimeServices);
     const raw = await requestScmForgeJson({
       url: `${resolveGithubRepositoryApiBaseUrl(provider)}${path}`,
       init: {
@@ -338,13 +339,15 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     },
     async getRepository(input) {
       try {
-        const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}`, { method: 'GET' }, input.runtimeServices, input.signal);
+        const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}`, { method: 'GET' }, input.runtimeServices, input.signal, input.publicOnly);
         const mapped = mapGithubRepositorySummary({
           provider: input.provider,
           raw,
           fallbackNameWithOwner: `${input.owner}/${input.repositoryName}`,
         });
         if (!mapped) throw createGithubRepositoryCommandFailedError('GitHub returned an invalid repository payload');
+        // Anonymous visibility is an observed GitHub fact, never caller-supplied authority.
+        if (input.publicOnly && mapped.visibility !== 'public') return null;
         return mapped;
       } catch (error) {
         if (isGithubRepositoryNotFoundError(error)) return null;

@@ -1,5 +1,6 @@
 import {
   SCM_OPERATION_ERROR_CODES,
+  normalizeScmOperationOutcome,
   type ScmHostingRepositoryAuthSummary,
   type ScmHostingRepositorySummary,
   type ScmOperationErrorCode,
@@ -80,8 +81,22 @@ function errorResponse(
         success: false,
         error,
         errorCode,
+        outcome: normalizeScmOperationOutcome({ success: false, error, errorCode }),
         ...extra,
     };
+}
+
+function unpublishedCloneFailure(response: ScmRepositoryCloneOutput): ScmRepositoryCloneOutput {
+    return response.success ? response : {
+        ...response, outcome: normalizeScmOperationOutcome(response),
+    };
+}
+
+function unconfirmedPublishedClone(response: ScmRepositoryCloneOutput, cwd: string): ScmRepositoryCloneOutput {
+    return response.success ? response : { ...response, outcome: {
+        v: 1, kind: 'outcome_unknown', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_OUTCOME_UNKNOWN,
+        reconciliation: { kind: 'repository_status', cwd }, nextActions: [{ kind: 'refresh' }], message: response.error,
+    } };
 }
 
 function sanitizeRepositorySelector(
@@ -326,7 +341,7 @@ export function createGitRepositoryCloneOperation(
     return Object.freeze({
         async clone({ context, request }) {
             const destination = await preflightDestination(request);
-            if (!destination.ok) return destination.response;
+            if (!destination.ok) return unpublishedCloneFailure(destination.response);
 
             const cloneTarget = await describeCloneTargets({
                 request,
@@ -335,9 +350,9 @@ export function createGitRepositoryCloneOperation(
             if (!cloneTarget.ok) return cloneTarget.response;
 
             const finalDestination = await preflightDestination(request);
-            if (!finalDestination.ok) return finalDestination.response;
+            if (!finalDestination.ok) return unpublishedCloneFailure(finalDestination.response);
             const reservedDestination = await reserveCloneDestination(finalDestination);
-            if (!reservedDestination.ok) return reservedDestination.response;
+            if (!reservedDestination.ok) return unpublishedCloneFailure(reservedDestination.response);
 
             let clone;
             try {
@@ -362,7 +377,7 @@ export function createGitRepositoryCloneOperation(
             }
 
             const publishResult = await publishPrivateCloneDestination(reservedDestination);
-            if (!publishResult.ok) return publishResult.response;
+            if (!publishResult.ok) return unconfirmedPublishedClone(publishResult.response, reservedDestination.finalDestinationPath);
 
             const snapshot = await readClonedSnapshot({
                 context,
@@ -371,7 +386,7 @@ export function createGitRepositoryCloneOperation(
                 detectRepo,
                 readSnapshot,
             });
-            if (isFailureResponse(snapshot)) return snapshot;
+            if (isFailureResponse(snapshot)) return unconfirmedPublishedClone(snapshot, reservedDestination.finalDestinationPath);
 
             return {
                 success: true,

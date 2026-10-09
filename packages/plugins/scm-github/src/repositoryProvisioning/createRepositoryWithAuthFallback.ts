@@ -211,14 +211,16 @@ export function createGithubRepositoryProvisioningAdapter(params?: Readonly<{
       if (!repositorySelector) {
         throw createGithubRepositoryUnsupportedError('GitHub repository clone requires a valid owner/name selector');
       }
-      const repository = restAdapter.getRepository
-        ? await restAdapter.getRepository({
-            provider: input.provider,
-            owner: repositorySelector.owner,
-            repositoryName: repositorySelector.repositoryName,
-            ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
-          })
-        : null;
+      const lookup = { provider: input.provider, owner: repositorySelector.owner,
+        repositoryName: repositorySelector.repositoryName,
+        ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}) };
+      // Public HTTPS repositories do not require a Connected Account. Discover
+      // them through the same REST owner, without probing ambient credentials.
+      const publicRepository = await restAdapter.getRepository?.({ ...lookup, publicOnly: true });
+      if (publicRepository?.visibility === 'public') return describeRepositoryCloneTargets({
+        provider: input.provider, repository: publicRepository, auth: { state: 'authenticated', profileKind: 'no_auth' },
+      });
+      const repository = await restAdapter.getRepository?.(lookup);
       if (!repository) throw createGithubRepositoryNotFoundError();
       return describeRepositoryCloneTargets({
         provider: input.provider,
