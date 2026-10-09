@@ -126,6 +126,19 @@ export function evaluateUpgrade(observed) {
 }
 
 /**
+ * Drive the released predecessor through its process boundaries.
+ * @param {{ relayUrl: string; webappUrl: string; setupParams: unknown; inspectionParams: unknown; runHsetup: (kind: string, params: unknown, env?: Record<string, string>) => Promise<{ exitCode: unknown; result: { ok: boolean; error?: { code: string; message: string } } | null }>; runCli: (args: string[]) => unknown }} options
+ */
+export async function runPredecessorSetup({ relayUrl, webappUrl, setupParams, inspectionParams, runHsetup, runCli }) {
+  // 0.2.12's server current reads the saved profile, not URL environment overrides. Its
+  // default-following service does too. Acquire through the app's read-only inspection, then
+  // select the relay using that released CLI's public command before the old app reads it.
+  await runHsetup('daemon.service.status.v1', inspectionParams);
+  runCli(['server', 'set', '--server-url', relayUrl, '--webapp-url', webappUrl, '--json']);
+  return runHsetup('setup.thisComputer.v1', setupParams);
+}
+
+/**
  * Observe the installed Linux unit reported by the CLI, rather than its daemon ownership label.
  * @param {{ serviceStatus: { installed?: boolean; installedPath?: string } | null; run: (command: string) => { stdout: string } }} options
  */
@@ -422,13 +435,15 @@ async function main() {
       const machine = 'desktop2';
       log(`upgrade: desktop2 from ${baseline.desktopTag} + ${baseline.cliTag}`);
       setStage('prev');
-      // 0.2.12's setup takes no relay parameter: it sets up whatever relay the CLI reports as
-      // current, so the relay reaches it the way that version read it — the CLI's env override.
-      // Its params are exactly what that released app sent (PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG).
-      const previousSetup = await hsetup(machine, 'prev', 'setup.thisComputer.v1', PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[baseline.desktopTag], { approvePairing, serviceConsent: 'decline' }, {
-        HAPPIER_SERVER_URL: RELAY_URL,
-        HAPPIER_WEBAPP_URL: RELAY_URL,
-        HAPPIER_PUBLIC_SERVER_URL: RELAY_URL,
+      // 0.2.12's setup takes no relay parameter; select the CLI's persisted current relay first.
+      // Its setup params remain exactly what that released app sent.
+      const previousSetup = await runPredecessorSetup({
+        relayUrl: RELAY_URL,
+        webappUrl: RELAY_URL,
+        setupParams: PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[baseline.desktopTag],
+        inspectionParams,
+        runHsetup: (kind, params, env) => hsetup(machine, 'prev', kind, params, { approvePairing, serviceConsent: 'decline' }, env),
+        runCli: (args) => execAs(machine, `"$HOME/.happier/bin/happier" ${args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')}`),
       });
       const previousStatus = daemonStatus(machine);
       const previousProbe = probe(machine, previousStatus);

@@ -201,6 +201,33 @@ const UPGRADE_OK = () => ({
   finalProbe: { ok: true, machineId: 'm1' },
 });
 
+test('the released predecessor sets up the persisted relay, not a caller-only URL override', async () => {
+  // The separate shipped 0.2.12 hsetup/CLI processes are the boundary. Its tagged source reads
+  // server current's persisted profile; service units follow that profile, not caller URL env.
+  let acquired = false;
+  let selectedRelay = 'https://api.happier.dev';
+  const previousSetup = await desktopSetup.runPredecessorSetup({
+    relayUrl: 'http://relay:3005',
+    webappUrl: 'http://relay:3005',
+    setupParams: { surface: 'desktop.ui', target: 'thisComputer' },
+    inspectionParams: { target: { kind: 'local' }, mode: 'user' },
+    runHsetup: async (kind, _params, env) => {
+      if (kind === 'daemon.service.status.v1') {
+        acquired = true;
+        return { exitCode: 0, result: { ok: true } };
+      }
+      return { exitCode: 0, result: { ok: selectedRelay === 'http://relay:3005' && !env?.HAPPIER_SERVER_URL } };
+    },
+    runCli: (args) => {
+      assert.ok(acquired, 'CLI must be acquired before selecting the relay');
+      assert.deepEqual(args, ['server', 'set', '--server-url', 'http://relay:3005', '--webapp-url', 'http://relay:3005', '--json']);
+      selectedRelay = args[args.indexOf('--server-url') + 1];
+      return { status: 0 };
+    },
+  });
+  assert.equal(previousSetup.result.ok, true, 'old setup and its service must use the Docker relay');
+});
+
 test('upgrade fails when the service keeps running the previous CLI (stale daemon)', () => {
   assert.ok(evaluateUpgrade(UPGRADE_OK()).every((entry) => entry.pass));
 

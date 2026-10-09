@@ -141,6 +141,11 @@ node scripts/release/release-assets-e2e/desktop-setup.mjs --desktop-artifact <de
   (`PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG` in `desktop-setup-driver.mjs`; 0.2.12 sent
   `{ surface: 'desktop.ui', target: 'thisComputer' }`). A baseline not listed there is reported
   BLOCKED instead of being driven with another version's contract.
+- The 0.2.12 predecessor's read-only first-launch inspection acquires its staged CLI, then that
+  CLI's public `server set` selects the Docker relay before setup. Both the released hsetup's
+  `server current` and its default-following service read the persisted profile. Caller-only URL
+  overrides would pair against Docker while leaving the service pointed at the saved cloud relay;
+  the harness therefore runs predecessor setup and subsequent observations without those overrides.
 - Requires an x86_64 Linux Docker host (Linux desktop artifacts ship for x86_64 only). The suite
   gates the desktop build, not release verification: `build-tauri.yml` job `desktop_setup` runs it
   on `ubuntu-latest` against the just-finalized `tauri-updates-production-linux-x86_64` `.deb`, and
