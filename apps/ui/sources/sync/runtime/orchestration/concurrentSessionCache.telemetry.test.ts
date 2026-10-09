@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createSocketIoManagerBoundaryStub } from '@/dev/testkit/mocks/socketIo';
+import type { Socket } from 'socket.io-client';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { act } from 'react-test-renderer';
 
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -24,8 +25,9 @@ import { createSessionListQueryHomeController } from '@/sync/domains/session/lis
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 
 const secureStore = vi.hoisted(() => new Map<string, string>());
+type TelemetrySocket = Socket & Readonly<{ dispatch: (event: string, payload: unknown) => void }>;
 const socketState = vi.hoisted(() => ({
-    byUrl: new Map<string, ReturnType<typeof createSocketStub>>(),
+    byUrl: new Map<string, TelemetrySocket>(),
     failForToken: null as string | null,
 }));
 let restoreLocalStorage: (() => void) | null = null;
@@ -36,55 +38,26 @@ vi.mock('expo-secure-store', () => ({
     deleteItemAsync: async (key: string) => { secureStore.delete(key); },
 }));
 
-vi.mock('socket.io-client', () => ({
-    io: (serverUrl: string, options?: { auth?: { token?: string } }) => {
-        if (socketState.failForToken && options?.auth?.token === socketState.failForToken) {
-            throw new Error('Socket transport construction failed');
-        }
-        const socket = createSocketStub();
-        socketState.byUrl.set(serverUrl, socket);
+// The barrel reaches this same transport boundary through providerSettingsHarness.
+// Keep one factory so later graph imports cannot replace the recorder or failures.
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installDisconnectedServerSocketBoundary((socket, serverUrl) => {
+    if (socketState.failForToken && typeof socket.auth === 'object' && socket.auth.token === socketState.failForToken) {
+        throw new Error('Socket transport construction failed');
+    }
+    socket.connect = vi.fn(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
         return socket;
-    },
-}));
-
-type SocketListener = (...args: unknown[]) => void;
-
-function createSocketStub() {
-    const listeners = new Map<string, Set<SocketListener>>();
-    const socket = {
-        io: createSocketIoManagerBoundaryStub(),
-        connected: false,
-        on(event: string, listener: SocketListener) {
-            const bucket = listeners.get(event) ?? new Set<SocketListener>();
-            bucket.add(listener);
-            listeners.set(event, bucket);
-            return socket;
-        },
-        off(event: string, listener?: SocketListener) {
-            if (listener) listeners.get(event)?.delete(listener);
-            else listeners.delete(event);
-            return socket;
-        },
-        emit: vi.fn(),
-        connect() {
-            socket.connected = true;
-            for (const listener of listeners.get('connect') ?? []) listener();
-            return socket;
-        },
-        disconnect() {
-            socket.connected = false;
-            return socket;
-        },
-        removeAllListeners() {
-            listeners.clear();
-            return socket;
-        },
+    });
+    const observed = Object.assign(socket, {
         dispatch(event: string, payload: unknown) {
-            for (const listener of listeners.get(event) ?? []) listener(payload);
+            for (const listener of socket.listeners(event)) listener(payload);
         },
-    };
-    return socket;
-}
+    });
+    if (serverUrl) socketState.byUrl.set(serverUrl, observed);
+});
 
 function sessionRow(id: string, overrides: Partial<V2SessionRecord> = {}): V2SessionRecord {
     const session = createSessionFixture({ id });
@@ -336,6 +309,13 @@ describe('concurrent session cache telemetry', () => {
             const rows = storage.getState().sessionListRowsByServerId[homeId];
             const membership = storage.getState().ordinarySessionListMembershipByServerId[homeId];
             const frontier = cache.readConcurrentOrdinarySessionListLifecycle(homeId).frontier;
+            // A completed HTTP snapshot is not proof that its socket exists.
+            await vi.waitFor(() => expect(socketState.byUrl.has(secondary.serverUrl), JSON.stringify({
+                socketEndpoints: [...socketState.byUrl.keys()],
+                online: cache.isConcurrentSessionListQueryHomeOnline(homeId),
+                observation: storage.getState().concurrentSessionListCacheByServerId[homeId]?.listObservation,
+                ordinaryReads,
+            })).toBe(true));
             const previousSocket = socketState.byUrl.get(secondary.serverUrl)!;
             await profiles.reconcileServerProfileHomeConnectionDescriptor({
                 serverUrl: secondary.serverUrl, observedServerIdentityId: homeId,
