@@ -146,6 +146,66 @@ describe('Machine fresh-copy model', () => {
     await hook.unmount();
   });
 
+  it('rejects repeated removal in the pending mutation lifetime and accepts renewed intent after settlement', async () => {
+    await seed(); answerFacts(); await waiveRetirement();
+    const readFacts = rpc.machine.getMockImplementation()!;
+    const receipts: Array<() => void> = [];
+    rpc.machine.mockImplementation(async input => input.method === 'projects.worker.copy.retire'
+      ? await new Promise(resolve => receipts.push(() => resolve({ ok: false, error: 'in_use',
+          errorCode: 'workspace_sync_relationship_in_use' })))
+      : await readFacts(input));
+    const hook = await renderHook(() => useMachineFreshCopies(serverId, 'worker'));
+    const pending: Promise<void>[] = [];
+    try {
+      // Two calls before React commits must still share the existing pending interaction.
+      await act(async () => {
+        const copy = hook.getCurrent().copies![0]!;
+        pending.push(hook.getCurrent().remove(copy), hook.getCurrent().remove(copy));
+      });
+      await waitForHomeGovernance(() => expect(receipts.length).toBeGreaterThan(0));
+      expect(receipts).toHaveLength(1);
+      await act(async () => { receipts.forEach(receipt => receipt()); await Promise.all(pending); });
+      expect(hook.getCurrent().busy).toBe(false);
+      expect(hook.getCurrent().copies).toHaveLength(1);
+      await act(async () => { pending.push(hook.getCurrent().remove(hook.getCurrent().copies![0]!)); });
+      await waitForHomeGovernance(() => expect(receipts).toHaveLength(2));
+      await act(async () => { receipts[1]!(); await pending.at(-1); });
+    } finally {
+      await act(async () => { receipts.forEach(receipt => receipt()); await Promise.all(pending); });
+      await hook.unmount();
+    }
+  });
+
+  it('rejects another removal while the existing approval is pending, then permits renewed intent after denial', async () => {
+    await seed(); answerFacts();
+    const disposeExecutor = await installRealActionExecutorModuleLoader();
+    const hook = await renderHook(() => useMachineFreshCopies(serverId, 'worker'));
+    let pending: Promise<void> | null = null;
+    try {
+      await act(async () => { pending = hook.getCurrent().remove(hook.getCurrent().copies![0]!); });
+      await waitForHomeGovernance(() => expect(hook.getCurrent().approvalId).toBeTypeOf('string'));
+      const originalApproval = hook.getCurrent().approvalId!;
+      let repeatedSettled = false;
+      await act(async () => { void hook.getCurrent().remove(hook.getCurrent().copies![0]!).then(() => { repeatedSettled = true; }); });
+      await waitForHomeGovernance(() => expect(repeatedSettled).toBe(true));
+      expect(hook.getCurrent().approvalId).toBe(originalApproval);
+      expect(await decideApprovalAsInbox(serverId, originalApproval, 'reject')).toMatchObject({ ok: true });
+      await act(async () => { await hook.getCurrent().refreshApproval(); });
+      await act(async () => { await pending; });
+      expect(hook.getCurrent().busy).toBe(false);
+      expect(hook.getCurrent().copies).toHaveLength(1);
+      await act(async () => { pending = hook.getCurrent().remove(hook.getCurrent().copies![0]!); });
+      await waitForHomeGovernance(() => {
+        expect(hook.getCurrent().approvalId).toBeTypeOf('string');
+        expect(hook.getCurrent().approvalId).not.toBe(originalApproval);
+      });
+      expect(await decideApprovalAsInbox(serverId, hook.getCurrent().approvalId!, 'reject')).toMatchObject({ ok: true });
+      await act(async () => { await hook.getCurrent().refreshApproval(); });
+      await act(async () => { await pending; });
+      expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(0);
+    } finally { await hook.unmount(); disposeExecutor(); }
+  });
+
   it('gets the exact current preview for explicitly selected files removal', async () => {
     await seed(); answerFacts(); vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
     await waiveRetirement();

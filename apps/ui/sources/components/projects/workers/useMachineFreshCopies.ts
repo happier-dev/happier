@@ -83,6 +83,8 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
       sourceRefId: row.source.id, sourceMachineId: row.source.machineId };
   }) ?? null, [facts, key, rawCopies, retired]);
   const [scopedNotice, setNotice] = React.useState<Readonly<{ key: string; value: MachineFreshCopyNotice | null }> | null>(null);
+  // Read the same pending interaction synchronously, before React commits a second click.
+  const noticeRef = React.useRef(scopedNotice);
   const keyRef = React.useRef(key);
   keyRef.current = key;
   const copiesRef = React.useRef(copies);
@@ -95,7 +97,13 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
     const isCurrentCopy = () => copiesRef.current?.some(row => row.relationship === copy.relationship
       && row.source.id === copy.source.id && row.target.id === copy.target.id);
     if (!accountId || !isCurrent() || !isCurrentCopy()) return;
-    const publishNotice = (value: MachineFreshCopyNotice | null) => { if (isCurrent()) setNotice({ key, value }); };
+    const pendingNotice = noticeRef.current?.key === key ? noticeRef.current.value : null;
+    if (pendingNotice?.kind === 'saving' || pendingNotice?.kind === 'approval') return;
+    const publishNotice = (value: MachineFreshCopyNotice | null) => {
+      if (!isCurrent()) return;
+      noticeRef.current = { key, value };
+      setNotice(noticeRef.current);
+    };
     publishNotice({ relationshipId: copy.relationship.relationshipId, kind: 'saving', text: t('projectWorkers.saving') });
     try {
       const input: ProjectWorkerCopyRetireInputV1 = {
