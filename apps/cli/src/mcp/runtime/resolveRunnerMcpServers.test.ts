@@ -1,397 +1,194 @@
-import { describe, expect, it, vi } from 'vitest';
-import { accountSettingsParse, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
-
-const { createHappierMcpBridgeMock } = vi.hoisted(() => ({
-  createHappierMcpBridgeMock: vi.fn(async () => ({
-    happierMcpServer: { url: 'http://127.0.0.1:4000', stop: () => undefined },
-    mcpServers: {
-      happier: {
-        command: 'node',
-        args: ['built-in'],
-      },
-    },
-  })),
-}));
-
-vi.mock('@/agent/runtime/createHappierMcpBridge', () => ({
-  createHappierMcpBridge: createHappierMcpBridgeMock,
-}));
-
-import { resolveRunnerMcpServers } from './resolveRunnerMcpServers';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { Server } from 'node:http';
+import { accountSettingsParse, FeaturesResponseSchema, formatSavedSecretCatalogReferenceV1,
+  sealSavedSecretResourceStoredContentV1, type McpServerCatalogEntryV1 } from '@happier-dev/protocol';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot,
+  type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createDeferred } from '@/testkit/async/deferred';
+import * as persistence from '@/persistence';
 import type { HappyMcpSessionClient } from '../startHappyServer';
+import { resolveRunnerMcpServers } from './resolveRunnerMcpServers';
 
-function createSessionStub(): HappyMcpSessionClient {
-  return {
-    sessionId: 'session-1',
-    getServerBinding: () => ({
-      serverId: 'test-home',
-      serverUrl: 'https://test-home.example.test',
-    }),
-    rpcHandlerManager: {
-      registerHandler: () => undefined,
-      invokeLocal: async () => ({}),
-    },
-    updateMetadata: () => undefined,
-  };
+// The daemon catalog is an IPC boundary. Runtime, bridge, selectors and
+// materialization remain real, including the local HTTP listener lifecycle.
+vi.mock('@/daemon/controlClient', async importOriginal => ({
+  ...await importOriginal<typeof import('@/daemon/controlClient')>(),
+  readDaemonPluginCatalog: async () => ({ kind: 'available', plugins: [], tools: [] }),
+}));
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); resetActiveAccountSettingsSnapshotForTests(); });
+const credentials = { token: 'runner-account', encryption: null };
+function server(id: string): McpServerCatalogEntryV1 {
+  return { id, name: id, transport: 'stdio', stdio: { command: 'echo', args: [id] }, env: {}, createdAt: 1, updatedAt: 1 };
+}
+function snapshot(servers: McpServerCatalogEntryV1[] = []): ActiveAccountSettingsSnapshot {
+  return { source: 'network', settings: accountSettingsParse({ mcpServersStrictMode: true }),
+    rawSettings: {}, settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [],
+    scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
+    mcpServerCatalog: { status: 'ready', authority: 'active', revision: 2, diagnostics: [],
+      catalog: { v: 1, servers, bindings: servers.map(entry => ({ id: `binding-${entry.id}`, serverId: entry.id,
+        enabled: true, target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 })) } } };
+}
+function session(): HappyMcpSessionClient {
+  return { sessionId: 'session-1', getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example.test' }),
+    rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'session-1', encryptionMode: 'plain' }),
+    updateMetadata: () => undefined };
+}
+function resolve(input: Readonly<{ snapshot: ActiveAccountSettingsSnapshot | null; accountCredentials?: null }>) {
+  vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
+  return resolveRunnerMcpServers({ session: session(), credentials,
+    ...(input.accountCredentials === null ? { accountCredentials: null } : {}),
+    accountSettings: input.snapshot?.settings ?? accountSettingsParse({}), accountSettingsSnapshot: input.snapshot,
+    machineId: 'machine-1', directory: '/tmp/repo', env: {}, tmpDir: null });
 }
 
-describe('resolveRunnerMcpServers', () => {
-  it('does not silently drop a selected non-strict MCP server whose Saved Secret is forbidden', async () => {
-    const promise = resolveRunnerMcpServers({
-      session: createSessionStub(),
-      credentials: { token: 'plain-token', encryption: null },
-      accountSettings: accountSettingsParse({
-        mcpServersSettingsV1: {
-          v: 1,
-          strictMode: false,
-          servers: [{
-            id: 'shared-server',
-            name: 'shared-server',
-            transport: 'stdio',
-            stdio: { command: 'node', args: ['server.js'] },
-            env: { API_KEY: { t: 'savedSecret', secretId: 'happier:shared-secret:v1:resource_1' } },
-            createdAt: 1,
-            updatedAt: 1,
-          }],
-          bindings: [{
-            id: 'shared-binding',
-            serverId: 'shared-server',
-            enabled: true,
-            target: { t: 'allMachines' },
-            createdAt: 1,
-            updatedAt: 1,
-          }],
-        },
-      }),
-      savedSecretResources: [{
-        resourceId: 'resource_1',
-        ownerAccountId: 'owner-account',
-        displayName: 'Shared MCP token',
-        kind: 'token',
-        encryptionMode: 'plain',
-        revision: 3,
-        materialStatus: 'access_removed',
-        storedContent: sealSavedSecretResourceStoredContentV1({
-          resourceId: 'resource_1',
-          mode: 'plain',
-          content: { v: 1, name: 'Shared MCP token', kind: 'token', value: 'unused' },
-        }),
-      }],
-      machineId: 'machine-1',
-      directory: '/tmp/repo',
-      env: {},
-      tmpDir: null,
+describe('resolveRunnerMcpServers catalog admission', () => {
+  it('refuses ordinary Account material after retirement while the real bridge listener is starting', async () => {
+    // Credential disk I/O is the persistence boundary used by ordinary Home
+    // admission; it supplies the same credentials as the real active owner.
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    const serverHttpBaseUrl = session().getServerBinding().serverUrl;
+    const resourceId = 'ordinary-private';
+    const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+    const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content: {
+      v: 1, name: 'Ordinary private credential', kind: 'token', value: 'ordinary-private-value',
+    } });
+    const capturedSource = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => snapshot([{ ...server('private-server'),
+      env: { API_KEY: { t: 'savedSecret', secretId: ref } } }]));
+    setActiveAccountSettingsSnapshot({ ...capturedSource, savedSecretCatalogState: 'ready', savedSecretResources: [{
+      resourceId, ownerAccountId: 'ordinary-owner', displayName: 'Ordinary private credential', kind: 'token',
+      encryptionMode: 'plain', revision: 1, materialStatus: 'ready', storedContent,
+    }] });
+    const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true,
+      credentialResources: { enabled: true } } }, capabilities: {} });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(features), { status: 200 })));
+    const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{ resourceId,
+      encryptionMode: 'plain', entry: { ref, source: 'shared_resource', relationship: 'owner',
+        name: 'Ordinary private credential', kind: 'token', ownerAccountId: 'ordinary-owner', revision: 1,
+        materialStatus: 'ready', capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+      storedContent, recipientEnvelope: null,
+    }] });
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      if (!String(input).endsWith('/v1/account/saved-secrets/resources/materials')) throw new Error('Unexpected Home request');
+      return { status: 200, data: materials };
     });
-
-    await expect(promise).rejects.toMatchObject({ status: 'forbidden', consumer: 'mcp' });
+    const captured = getActiveAccountSettingsSnapshot();
+    if (!captured) throw new Error('Account fixture is unavailable');
+    const listenerStarted = createDeferred<void>();
+    const releaseListener = createDeferred<void>();
+    let listener: Server | undefined;
+    const emit = Server.prototype.emit;
+    // The HTTP listener's OS completion is held; the real bridge, command
+    // resolution, Account owner and SavedSecret materializer remain unmocked.
+    vi.spyOn(Server.prototype, 'emit').mockImplementation(function (this: Server, event: string | symbol, ...args: unknown[]) {
+      if (event !== 'listening') return emit.call(this, event, ...args);
+      listener = this;
+      listenerStarted.resolve();
+      void releaseListener.promise.then(() => emit.call(this, event, ...args));
+      return true;
+    });
+    const pending = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolve({ snapshot: captured }));
+    void pending.catch(() => undefined);
+    try {
+      await Promise.race([listenerStarted.promise, pending.then(() => { throw new Error('Bridge did not reach its listener boundary'); })]);
+      clearActiveAccountSettingsSnapshot();
+      setActiveAccountSettingsSnapshot(runWithServerHttpBaseUrl(serverHttpBaseUrl, () => snapshot([server('replacement-server')])));
+      releaseListener.resolve();
+      await expect(pending).rejects.toMatchObject({ code: 'mcp_catalog_unavailable', reason: 'scope-retired' });
+    } finally {
+      releaseListener.resolve();
+      await pending.then(result => result.happierMcpServer.stop(), () => undefined);
+      if (listener?.listening) await new Promise<void>((resolveClose, rejectClose) => listener!.close(error => error ? rejectClose(error) : resolveClose()));
+    }
   });
 
-  it('materializes plain Settings secrets for a token-only runner without fabricating a write key', async () => {
-    const result = await resolveRunnerMcpServers({
-      session: createSessionStub(),
-      credentials: {
-        token: 'plain-token',
-        encryption: null,
-      },
-      accountSettings: accountSettingsParse({
-        secrets: [
-          {
-            id: 'plain-secret',
-            name: 'Plain secret',
-            encryptedValue: {
-              _isSecretValue: true,
-              value: 'plain-secret-value',
-            },
-          },
-        ],
-        mcpServersSettingsV1: {
-          v: 1,
-          strictMode: true,
-          servers: [
-            {
-              id: 'plain-server',
-              name: 'plain-server',
-              transport: 'stdio',
-              stdio: { command: 'node', args: ['server.js'] },
-              env: {
-                API_KEY: { t: 'savedSecret', secretId: 'plain-secret' },
-              },
-              createdAt: 1,
-              updatedAt: 1,
-            },
-          ],
-          bindings: [
-            {
-              id: 'plain-binding',
-              serverId: 'plain-server',
-              enabled: true,
-              target: { t: 'allMachines' },
-              createdAt: 1,
-              updatedAt: 1,
-            },
-          ],
-        },
-      }),
-      machineId: 'machine-1',
-      directory: '/tmp/repo',
-      env: {},
-      tmpDir: null,
-    });
-
-    expect(result.mcpServers['plain-server']).toMatchObject({
-      command: 'node',
-      args: ['server.js'],
-      env: { API_KEY: 'plain-secret-value' },
-    });
+  it('materializes the admitted row after the authored root has been removed', async () => {
+    const result = await resolve({ snapshot: snapshot([server('row-server')]) });
+    try { expect(Object.keys(result.mcpServers).sort()).toEqual(['happier', 'row-server']); }
+    finally { result.happierMcpServer.stop(); }
   });
 
-  it('keeps retained encrypted Settings secrets unavailable to a token-only runner', async () => {
-    await expect(resolveRunnerMcpServers({
-      session: createSessionStub(),
-      credentials: {
-        token: 'plain-token',
-        encryption: null,
-      },
-      accountSettings: accountSettingsParse({
-        secrets: [
-          {
-            id: 'retained-encrypted-secret',
-            name: 'Retained encrypted secret',
-            encryptedValue: {
-              _isSecretValue: true,
-              encryptedValue: {
-                t: 'enc-v1',
-                c: 'AAAA',
-              },
-            },
-          },
-        ],
-        mcpServersSettingsV1: {
-          v: 1,
-          strictMode: true,
-          servers: [
-            {
-              id: 'retained-server',
-              name: 'retained-server',
-              transport: 'stdio',
-              stdio: { command: 'node', args: ['server.js'] },
-              env: {
-                API_KEY: { t: 'savedSecret', secretId: 'retained-encrypted-secret' },
-              },
-              createdAt: 1,
-              updatedAt: 1,
-            },
-          ],
-          bindings: [
-            {
-              id: 'retained-binding',
-              serverId: 'retained-server',
-              enabled: true,
-              target: { t: 'allMachines' },
-              createdAt: 1,
-              updatedAt: 1,
-            },
-          ],
-        },
-      }),
-      machineId: 'machine-1',
-      directory: '/tmp/repo',
-      env: {},
-      tmpDir: null,
-    })).rejects.toMatchObject({
-      code: 'saved_secret_resolution_failed',
-      status: 'temporarily_unavailable',
-      consumer: 'mcp',
-      field: 'env:API_KEY',
-    });
+  it('refuses unobserved and partial catalogs rather than silently dropping custom servers', async () => {
+    setActiveAccountSettingsSnapshot(snapshot([server('ambient-server')]));
+    await expect(resolve({ snapshot: null })).rejects.toMatchObject({ code: 'mcp_catalog_unavailable', reason: 'catalog-unobserved' });
+    const withoutPreferences = resolveRunnerMcpServers({ session: session(), credentials, accountSettings: null,
+      machineId: 'machine-1', directory: '/tmp/repo' }).then(result => { result.happierMcpServer.stop(); return result; });
+    await expect(withoutPreferences).rejects.toMatchObject({ code: 'mcp_catalog_unavailable', reason: 'catalog-unobserved' });
+    const opened = snapshot([server('valid-neighbor')]);
+    if (opened.mcpServerCatalog?.status !== 'ready') throw new Error('Fixture is not ready');
+    await expect(resolve({ snapshot: { ...opened, mcpServerCatalog: { ...opened.mcpServerCatalog, status: 'partial',
+      diagnostics: [{ path: 'servers[1]', reason: 'invalid-stored-content' }] } } })).rejects.toMatchObject({ code: 'mcp_catalog_unavailable' });
   });
 
-  it('materializes a shared Saved Secret for a Session-owned MCP server', async () => {
-    const resourceId = 'shared-mcp-resource';
-    const secretId = `happier:shared-secret:v1:${resourceId}`;
-    const result = await resolveRunnerMcpServers({
-      session: createSessionStub(),
-      credentials: { token: 'plain-token', encryption: null },
-      accountSettings: accountSettingsParse({
-        mcpServersSettingsV1: {
-          v: 1,
-          strictMode: true,
-          servers: [{
-            id: 'shared-server',
-            name: 'shared-server',
-            transport: 'stdio',
-            stdio: { command: 'node', args: ['server.js'] },
-            env: { API_KEY: { t: 'savedSecret', secretId } },
-            createdAt: 1,
-            updatedAt: 1,
-          }],
-          bindings: [{
-            id: 'shared-binding',
-            serverId: 'shared-server',
-            enabled: true,
-            target: { t: 'allMachines' },
-            createdAt: 1,
-            updatedAt: 1,
-          }],
-        },
-      }),
-      savedSecretResources: [{
-        resourceId,
-        ownerAccountId: 'owner-account',
-        displayName: 'Shared MCP token',
-        kind: 'token',
-        encryptionMode: 'plain',
-        revision: 3,
-        materialStatus: 'ready',
-        storedContent: sealSavedSecretResourceStoredContentV1({
-          resourceId,
-          mode: 'plain',
-          content: { v: 1, name: 'Shared MCP token', kind: 'token', value: 'shared-mcp-token' },
-        }),
-      }],
-      machineId: 'machine-1',
-      directory: '/tmp/repo',
-      env: {},
-      tmpDir: null,
-    });
-
-    expect(result.mcpServers['shared-server']).toMatchObject({
-      env: { API_KEY: 'shared-mcp-token' },
-    });
+  it('does not admit an unavailable row even when non-strict policy is selected', async () => {
+    await expect(resolve({ snapshot: { ...snapshot(), settings: accountSettingsParse({ mcpServersStrictMode: false }),
+      mcpServerCatalog: { status: 'unavailable', reason: 'unreachable' } } })).rejects.toMatchObject({ code: 'mcp_catalog_unavailable' });
   });
 
-  it('passes runner credentials and account settings into the built-in Happier MCP bridge', async () => {
-    const session = {} as any;
-    const credentials = {
-      token: 'token_1',
-      encryption: {
-        type: 'legacy',
-        secret: new Uint8Array(32).fill(7),
-      },
-    } as any;
-    const accountSettings = {
-      actionsSettingsV1: {
-        v: 1,
-        actions: {
-          'session.list': { disabledSurfaces: [] },
-        },
-      },
-    } as any;
+  it('keeps restricted Session authority independent from Account catalog availability', async () => {
+    const result = await resolve({ snapshot: { ...snapshot(), mcpServerCatalog: { status: 'unavailable', reason: 'forbidden' } }, accountCredentials: null });
+    try { expect(Object.keys(result.mcpServers)).toEqual(['happier']); }
+    finally { result.happierMcpServer.stop(); }
+  });
 
-    await resolveRunnerMcpServers({
-      session,
-      credentials,
-      accountSettings,
-      machineId: 'machine-1',
-      directory: '/tmp/repo',
-      env: {},
-      tmpDir: null,
-    });
+  it('does not let retained root contents override a row-owned server set', async () => {
+    const result = await resolve({ snapshot: { ...snapshot([server('row-server')]),
+      rawSettings: { mcpServersSettingsV1: { v: 1, strictMode: false, servers: [server('retained-server')], bindings: [] } } } });
+    try { expect(Object.keys(result.mcpServers).sort()).toEqual(['happier', 'row-server']); }
+    finally { result.happierMcpServer.stop(); }
+  });
 
-    expect(createHappierMcpBridgeMock).toHaveBeenCalledWith(session, expect.objectContaining({
-      credentials,
-      accountSettings,
+  it('admits selected SavedSecret references only through the captured foreign Home invocation', async () => {
+    vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
+    const serverHttpBaseUrl = 'https://private-runner-home.test';
+    const resourceId = 'private-runner-resource';
+    const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+    const resource = { resourceId, ownerAccountId: 'private-owner', displayName: 'Private key', kind: 'apiKey' as const,
+      encryptionMode: 'plain' as const, revision: 3, materialStatus: 'ready' as const,
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content: {
+        v: 1, name: 'Private key', kind: 'apiKey', value: 'stale-private-value',
+      } }),
+    };
+    const captured = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => snapshot([
+      { ...server('private-server'), env: { API_KEY: { t: 'savedSecret', secretId: ref } } },
+    ]));
+    const operationContext = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createInvocationSavedSecretOperationContextV1({
+      credentials, serverHttpBaseUrl, snapshot: { ...captured, savedSecretCatalogState: 'ready', savedSecretResources: [resource] },
+      isCurrent: async () => true,
     }));
-  });
-
-  it('separates restricted Session transport authentication from Account Action authority', async () => {
-    const session = createSessionStub();
-    const credentials = { token: 'restricted-token', encryption: null } as const;
-    const sessionList = vi.fn();
-
-    await resolveRunnerMcpServers({
-      session,
-      credentials,
-      accountCredentials: null,
-      sessionList,
-      accountSettings: accountSettingsParse({}),
-      machineId: 'runner-machine',
-      directory: '/tmp/restricted-run',
-      env: {},
-      tmpDir: null,
+    setActiveAccountSettingsSnapshot({ ...snapshot([server('unrelated-ambient-server')]),
+      scopeKey: resolveAccountSettingsScopeKeyForToken('unrelated-ambient-account') });
+    const ambient = getActiveAccountSettingsSnapshot();
+    const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true, credentialResources: { enabled: true } } }, capabilities: {} });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(features), { status: 200 })));
+    const fresh = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{ resourceId, encryptionMode: 'plain',
+      entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Private key', kind: 'apiKey', ownerAccountId: 'private-owner',
+        revision: 4, materialStatus: 'ready', capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content: {
+        v: 1, name: 'Private key', kind: 'apiKey', value: 'fresh-private-value',
+      } }), recipientEnvelope: null,
+    }] });
+    let revoked = false;
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      if (String(input) !== `${serverHttpBaseUrl}/v1/account/saved-secrets/resources/materials`) throw new Error('Wrong Home material request');
+      return { status: 200, data: revoked ? { resources: [] } : fresh };
     });
-
-    expect(createHappierMcpBridgeMock).toHaveBeenCalledWith(session, expect.objectContaining({
-      sessionCredentials: credentials,
-      credentials: null,
-      authorityScope: 'session',
-      sessionList,
-      accountSettings: null,
-    }));
-  });
-
-  it('applies session metadata mcpSelection to managed MCP materialization', async () => {
-    const result = await resolveRunnerMcpServers({
-      session: {} as any,
-      credentials: {
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array(32).fill(7),
-        },
-      } as any,
-      accountSettings: {
-        mcpServersSettingsV1: {
-          v: 1,
-          strictMode: false,
-          servers: [
-            {
-              id: 'portable-playwright',
-              name: 'playwright',
-              transport: 'stdio',
-              stdio: { command: 'node', args: ['playwright.js'] },
-              env: {},
-              createdAt: 1,
-              updatedAt: 1,
-            },
-            {
-              id: 'workspace-db',
-              name: 'db',
-              transport: 'stdio',
-              stdio: { command: 'node', args: ['db.js'] },
-              env: {},
-              createdAt: 1,
-              updatedAt: 1,
-            },
-          ],
-          bindings: [
-            {
-              id: 'binding-portable',
-              serverId: 'portable-playwright',
-              enabled: true,
-              target: { t: 'allMachines' },
-              createdAt: 1,
-              updatedAt: 1,
-            },
-            {
-              id: 'binding-workspace',
-              serverId: 'workspace-db',
-              enabled: true,
-              target: { t: 'workspace', machineId: 'machine-1', workspaceRoot: '/tmp/repo' },
-              createdAt: 1,
-              updatedAt: 1,
-            },
-          ],
-        },
-      } as any,
-      sessionMetadata: {
-        mcpSelectionV1: {
-          v: 1,
-          managedServersEnabled: false,
-          forceIncludeServerIds: ['portable-playwright'],
-          forceExcludeServerIds: [],
-        },
-      },
-      machineId: 'machine-1',
-      directory: '/tmp/repo',
-      env: {},
-      tmpDir: null,
-    });
-
-    expect(Object.keys(result.mcpServers).sort()).toEqual(['happier', 'playwright']);
-    expect(result.mcpServers.playwright).toMatchObject({
-      command: 'node',
-      args: ['playwright.js'],
-    });
-    expect(result.mcpServers.db).toBeUndefined();
+    const privateSession: HappyMcpSessionClient = { ...session(), getServerBinding: () => ({ serverId: 'private-home', serverUrl: serverHttpBaseUrl }) };
+    const input = { session: privateSession, credentials, accountSettings: captured.settings, accountSettingsSnapshot: captured,
+      savedSecretResources: [resource], operationContext, machineId: 'machine-1', directory: '/tmp/repo', env: {}, tmpDir: null };
+    const result = await resolveRunnerMcpServers(input);
+    try {
+      expect(result.mcpServers['private-server']?.env?.API_KEY).toBe('fresh-private-value');
+      expect(getActiveAccountSettingsSnapshot()).toBe(ambient);
+    } finally { result.happierMcpServer.stop(); }
+    revoked = true;
+    await expect(resolveRunnerMcpServers(input)).rejects.toMatchObject({ code: 'saved_secret_resolution_failed', status: 'forbidden', reference: ref });
+    expect(getActiveAccountSettingsSnapshot()).toBe(ambient);
   });
 });

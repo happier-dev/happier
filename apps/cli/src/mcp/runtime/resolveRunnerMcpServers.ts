@@ -9,16 +9,16 @@ import { isSharedSavedSecretReferenceV1 } from '@happier-dev/protocol/account/se
 import { SESSION_RUN_PROMPT_READ_ACTION_IDS_V1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { AccountSettings, ActionExecutorDeps, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
 
-import { readMcpServersSettingsFromAccountSettings } from '../servers/readMcpServersSettingsFromAccountSettings';
+import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '../servers/readMcpServersSettingsFromAccountSettings';
 import { resolveManagedSessionMcpSelectionForDirectory } from '../servers/resolveManagedSessionMcpSelectionForDirectory';
 import {
-  deriveSettingsSecretsKeyForCredentials,
   deriveSettingsSecretsReadKeysForCredentials,
 } from '../servers/resolveMcpValueRefPlaintext';
 import { materializeMcpServerConfigRecord } from '../servers/materializeMcpServerConfigRecord';
 import { mergeWithBuiltInHappierMcpServer } from '../servers/mergeWithBuiltInHappierMcpServer';
 import {
   createSavedSecretMaterializerV1,
+  createSavedSecretMaterializerFromSnapshotV1,
   SavedSecretResolutionError,
   type SavedSecretCatalogResourceInputV1,
 } from '@/settings/secrets/savedSecretCatalog';
@@ -26,8 +26,13 @@ import {
   refreshSavedSecretCatalogForOperation,
   savedSecretOperationAdmissionStatus,
   SavedSecretOperationAdmissionError,
+  createInvocationSavedSecretOperationContextV1,
+  type SavedSecretOperationContextV1,
 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
+  type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import type { HappyMcpSessionClient } from '../startHappyServer';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -134,6 +139,9 @@ export async function resolveRunnerMcpServers(params: Readonly<{
   accountCredentials?: StoredCredentials | null;
   sessionList?: ActionExecutorDeps['sessionList'];
   accountSettings: AccountSettings | null;
+  accountSettingsSnapshot?: ActiveAccountSettingsSnapshot | null;
+  /** The existing invocation's Home/Account custody; never borrowed by Session authority. */
+  operationContext?: SavedSecretOperationContextV1;
   /** Exact runtime policy when ambient Account settings are intentionally unavailable. */
   actionsSettingsProvider?: RuntimeActionSettingsProvider;
   /** Exact caller-owned registry lease for daemonless scoped runtimes. */
@@ -168,7 +176,28 @@ export async function resolveRunnerMcpServers(params: Readonly<{
   const accountCredentials = Object.hasOwn(params, 'accountCredentials')
     ? params.accountCredentials ?? null
     : params.credentials;
-  let accountSettings = accountCredentials ? params.accountSettings ?? null : null;
+  let operationContext = accountCredentials ? params.operationContext : undefined;
+  const initialAccountSnapshot = params.accountSettingsSnapshot;
+  if (accountCredentials && !operationContext && initialAccountSnapshot
+    && initialAccountSnapshot === getActiveAccountSettingsSnapshot()) {
+    // Ordinary Home callers use this same admitted Account owner. Capture its
+    // existing lifetime before bridge startup, never after an awaited boundary.
+    // Foreign invocation snapshots still require their explicit context.
+    const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+    const scopeKey = initialAccountSnapshot.scopeKey;
+    const serverHttpBaseUrl = params.session.getServerBinding().serverUrl;
+    const boundScopeKey = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolveAccountSettingsScopeKeyForToken(accountCredentials.token));
+    if (!scopeKey || scopeKey !== boundScopeKey) throw new McpServerCatalogUnavailableError('scope-retired');
+    operationContext = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createInvocationSavedSecretOperationContextV1({
+      credentials: accountCredentials, snapshot: initialAccountSnapshot, serverHttpBaseUrl,
+      isCurrent: async () => getActiveAccountSettingsSnapshot()?.scopeKey === scopeKey
+        && getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken,
+    }));
+  }
+  if (operationContext && (operationContext.credentials.token !== accountCredentials?.token || !await operationContext.isCurrent())) {
+    throw new McpServerCatalogUnavailableError('scope-retired');
+  }
+  let accountSettings = accountCredentials ? params.accountSettings ?? params.accountSettingsSnapshot?.settings ?? null : null;
   let savedSecretResources = params.savedSecretResources;
   let savedSecretCatalogState = params.savedSecretCatalogState;
 
@@ -176,7 +205,15 @@ export async function resolveRunnerMcpServers(params: Readonly<{
   const scopedSession: HappyMcpSessionClient = run
     ? createRunScopedMcpSessionView(params.session, run)
     : params.session;
-  let mcpSettings = accountSettings ? readMcpServersSettingsFromAccountSettings(accountSettings) : null;
+  const accountSnapshot = params.accountSettingsSnapshot ?? null;
+  const accountScopeKey = accountCredentials ? operationContext
+    ? runWithServerHttpBaseUrl(operationContext.serverHttpBaseUrl, () => resolveAccountSettingsScopeKeyForToken(accountCredentials.token))
+    : resolveAccountSettingsScopeKeyForToken(accountCredentials.token) : null;
+  if (accountCredentials && accountSnapshot?.scopeKey
+    && accountSnapshot.scopeKey !== accountScopeKey) {
+    throw new McpServerCatalogUnavailableError('scope-retired');
+  }
+  let mcpSettings = accountCredentials ? readMcpServersSettingsFromAccountSettings(accountSnapshot) : null;
   let resolvedSelection: ReturnType<typeof resolveManagedSessionMcpSelectionForDirectory> | null = null;
   if (mcpSettings && accountCredentials) {
     const selection = readSessionMcpSelectionV1FromMetadata(params.sessionMetadata ?? null);
@@ -201,11 +238,13 @@ export async function resolveRunnerMcpServers(params: Readonly<{
     if (sharedReferences.size > 0) {
       let admitted: Awaited<ReturnType<typeof refreshSavedSecretCatalogForOperation>>;
       try {
-        admitted = await refreshSavedSecretCatalogForOperation({
+        const refresh = () => refreshSavedSecretCatalogForOperation({
           expectedScopeKey: resolveAccountSettingsScopeKeyForToken(accountCredentials.token),
           references: [...sharedReferences.values()],
+          ...(operationContext ? { operationContext } : {}),
           ...(run?.signal ? { signal: run.signal } : {}),
         });
+        admitted = await (operationContext ? runWithServerHttpBaseUrl(operationContext.serverHttpBaseUrl, refresh) : refresh());
       } catch (error) {
         if (error instanceof SavedSecretOperationAdmissionError) {
           throw new SavedSecretResolutionError({
@@ -220,7 +259,7 @@ export async function resolveRunnerMcpServers(params: Readonly<{
       accountSettings = admitted.settings;
       savedSecretResources = admitted.savedSecretResources;
       savedSecretCatalogState = admitted.savedSecretCatalogState;
-      mcpSettings = readMcpServersSettingsFromAccountSettings(accountSettings);
+      mcpSettings = readMcpServersSettingsFromAccountSettings({ ...admitted, mcpServerCatalog: admitted.mcpServerCatalog ?? accountSnapshot?.mcpServerCatalog });
     }
     resolvedSelection = resolveManagedSessionMcpSelectionForDirectory({
       settings: mcpSettings,
@@ -229,6 +268,7 @@ export async function resolveRunnerMcpServers(params: Readonly<{
       selection,
     });
   }
+  if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
   const builtIn = await createHappierMcpBridge(scopedSession, {
     commandMode: params.commandMode,
     sessionCredentials: params.credentials,
@@ -245,6 +285,11 @@ export async function resolveRunnerMcpServers(params: Readonly<{
     requiredDirectActionIds: run ? SESSION_RUN_PROMPT_READ_ACTION_IDS_V1 : undefined,
   });
 
+  if (operationContext && !await operationContext.isCurrent()) {
+    builtIn.happierMcpServer.stop();
+    throw new McpServerCatalogUnavailableError('scope-retired');
+  }
+
   if (!accountSettings || !accountCredentials) {
     return { happierMcpServer: builtIn.happierMcpServer, mcpServers: params.resolvedMcpServers ? mergeWithBuiltInHappierMcpServer({ builtIn: builtIn.mcpServers, extra: params.resolvedMcpServers }) : builtIn.mcpServers };
   }
@@ -253,11 +298,15 @@ export async function resolveRunnerMcpServers(params: Readonly<{
     return { happierMcpServer: builtIn.happierMcpServer, mcpServers: builtIn.mcpServers };
   }
 
-  const settingsSecretsKey = accountCredentials.encryption
-    ? deriveSettingsSecretsKeyForCredentials(accountCredentials)
-    : null;
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(accountCredentials);
-  const savedSecretMaterializer = createSavedSecretMaterializerV1({
+  const invocationSnapshot = operationContext?.readSnapshot();
+  if (operationContext && !invocationSnapshot) {
+    builtIn.happierMcpServer.stop();
+    throw new McpServerCatalogUnavailableError('scope-retired');
+  }
+  const savedSecretMaterializer = operationContext && invocationSnapshot
+    ? createSavedSecretMaterializerFromSnapshotV1(invocationSnapshot, { isCurrent: () => operationContext.readSnapshot() === invocationSnapshot })
+    : createSavedSecretMaterializerV1({
     accountSettings,
     settingsSecretsReadKeys,
     resources: savedSecretResources,
@@ -270,14 +319,16 @@ export async function resolveRunnerMcpServers(params: Readonly<{
       strictMode: resolvedSelection.strictMode,
       serversByName: resolvedSelection.selectedServersByName,
     },
-    savedSecretsById: new Map(),
     savedSecretMaterializer,
-    settingsSecretsKey,
-    settingsSecretsReadKeys,
     processEnv: env,
     tmpDir: params.tmpDir ?? null,
     strictMode: mcpSettings.strictMode,
   });
+  if (operationContext && !await operationContext.isCurrent()) {
+    materialized.cleanup();
+    builtIn.happierMcpServer.stop();
+    throw new McpServerCatalogUnavailableError('scope-retired');
+  }
 
   if (materialized.warnings.length > 0) {
     logger.debug('[mcp] Materialization warnings', {
