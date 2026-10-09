@@ -64,6 +64,8 @@ const configureRelay: NonNullable<Parameters<typeof installDisconnectedServerSoc
 };
 installDisconnectedServerSocketBoundary(configureRelay);
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+// Load the real UI graph during collection; compilation is not a Script behavior deadline.
+await import('@/components/projects/projectSetup/ProjectScriptsBody');
 let serverId: string;
 let requesterHomeId: string;
 const serverUrl = 'https://finite-requester.test';
