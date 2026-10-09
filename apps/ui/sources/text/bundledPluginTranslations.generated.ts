@@ -10,6 +10,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     BundledPluginTranslationLocale, Readonly<Partial<Record<BundledPluginTranslationKey, string>>>
 >> = Object.freeze({
   "ca": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -2559,6 +2560,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Connecta una font per veure aquí noves pull requests i incidències.",
     "plugins.triage.widget.retry": "Torna-ho a provar",
     "plugins.triage.widget.setUp": "Configura",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CLI de CodeBuddy Code (experimental)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (experimental)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (experimental)",
     "profiles.aiBackend.fxSubtitleExperimental": "Agent de programació FX (experimental)",
@@ -2566,6 +2568,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "CLI de Kimi (experimental)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un equip o inicia un company amb ordres estructurades d’equips Claude.",
     "session.subagents.panel.launchTeammateAction": "Inicia company",
+    "sessionInfo.codebuddySessionId": "ID de la sessió de CodeBuddy",
+    "sessionInfo.codebuddySessionIdCopied": "ID de la sessió de CodeBuddy copiat al porta-retalls",
     "sessionInfo.devinSessionId": "ID de sessió de Devin",
     "sessionInfo.devinSessionIdCopied": "S’ha copiat l’ID de sessió de Devin",
     "sessionInfo.droidSessionId": "ID de sessió de Droid",
@@ -2576,6 +2580,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "S’ha copiat l’ID de sessió de Grok",
     "sessionInfo.kimiSessionId": "ID de la sessió de Kimi",
     "sessionInfo.kimiSessionIdCopied": "S’ha copiat l’ID de la sessió de Kimi",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Arrel de dades opcional d’Oh My Pi. Deixa-ho buit per utilitzar ~/.omp/agent.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Directori de l’agent",
@@ -2615,6 +2620,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Agents d’equip de Claude"
   },
   "de": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -5164,6 +5170,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Verbinde eine Quelle, um neue Pull Requests und Issues hier zu sehen.",
     "plugins.triage.widget.retry": "Erneut versuchen",
     "plugins.triage.widget.setUp": "Einrichten",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (experimentell)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (experimentell)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (experimentell)",
     "profiles.aiBackend.fxSubtitleExperimental": "FX-Coding-Agent (experimentell)",
@@ -5171,6 +5178,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (experimentell)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Ein Team erstellen oder ein Teammitglied mit strukturierten Claude-Team-Befehlen starten.",
     "session.subagents.panel.launchTeammateAction": "Teammitglied starten",
+    "sessionInfo.codebuddySessionId": "CodeBuddy-Session-ID",
+    "sessionInfo.codebuddySessionIdCopied": "CodeBuddy-Session-ID in die Zwischenablage kopiert",
     "sessionInfo.devinSessionId": "Devin-Sitzungs-ID",
     "sessionInfo.devinSessionIdCopied": "Devin-Sitzungs-ID kopiert",
     "sessionInfo.droidSessionId": "Droid-Sitzungs-ID",
@@ -5181,6 +5190,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "Grok-Sitzungs-ID kopiert",
     "sessionInfo.kimiSessionId": "Kimi-Sitzungs-ID",
     "sessionInfo.kimiSessionIdCopied": "Kimi-Sitzungs-ID kopiert",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Optionales Stammverzeichnis für Oh My Pi-Daten. Leer lassen, um ~/.omp/agent zu verwenden.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Agentenverzeichnis",
@@ -5220,6 +5230,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Claude-Team-Agents"
   },
   "en": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -7769,6 +7780,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Connect a source to see new pull requests and issues here.",
     "plugins.triage.widget.retry": "Try again",
     "plugins.triage.widget.setUp": "Set up",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (experimental)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (experimental)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (experimental)",
     "profiles.aiBackend.fxSubtitleExperimental": "FX coding agent (experimental)",
@@ -7776,6 +7788,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (experimental)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Create a team or spawn a teammate with structured Claude team commands.",
     "session.subagents.panel.launchTeammateAction": "Launch teammate",
+    "sessionInfo.codebuddySessionId": "CodeBuddy Session ID",
+    "sessionInfo.codebuddySessionIdCopied": "CodeBuddy Session ID copied to clipboard",
     "sessionInfo.devinSessionId": "Devin session ID",
     "sessionInfo.devinSessionIdCopied": "Devin session ID copied",
     "sessionInfo.droidSessionId": "Droid session ID",
@@ -7786,6 +7800,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "Grok session ID copied",
     "sessionInfo.kimiSessionId": "Kimi session ID",
     "sessionInfo.kimiSessionIdCopied": "Kimi session ID copied",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Optional Oh My Pi data root. Leave empty to use ~/.omp/agent.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Agent directory",
@@ -7825,6 +7840,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Claude team agents"
   },
   "es": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -10374,6 +10390,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Conecta una fuente para ver aquí nuevas pull requests e issues.",
     "plugins.triage.widget.retry": "Reintentar",
     "plugins.triage.widget.setUp": "Configurar",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CLI de CodeBuddy Code (experimental)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (experimental)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (experimental)",
     "profiles.aiBackend.fxSubtitleExperimental": "Agente de programación FX (experimental)",
@@ -10381,6 +10398,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "CLI de Kimi (experimental)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un equipo o lanza un compañero con comandos estructurados de equipos Claude.",
     "session.subagents.panel.launchTeammateAction": "Lanzar compañero",
+    "sessionInfo.codebuddySessionId": "ID de sesión de CodeBuddy",
+    "sessionInfo.codebuddySessionIdCopied": "ID de sesión de CodeBuddy copiado al portapapeles",
     "sessionInfo.devinSessionId": "ID de sesión de Devin",
     "sessionInfo.devinSessionIdCopied": "ID de sesión de Devin copiado",
     "sessionInfo.droidSessionId": "ID de sesión de Droid",
@@ -10391,6 +10410,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "ID de sesión de Grok copiado",
     "sessionInfo.kimiSessionId": "ID de sesión de Kimi",
     "sessionInfo.kimiSessionIdCopied": "ID de sesión de Kimi copiado",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Raíz de datos opcional de Oh My Pi. Déjalo vacío para usar ~/.omp/agent.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Directorio del agente",
@@ -10430,6 +10450,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Agentes de equipo de Claude"
   },
   "fr": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -12979,6 +13000,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Connectez une source pour voir ici les nouvelles pull requests et tickets.",
     "plugins.triage.widget.retry": "Réessayer",
     "plugins.triage.widget.setUp": "Configurer",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (expérimental)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (expérimental)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (expérimental)",
     "profiles.aiBackend.fxSubtitleExperimental": "Agent de codage FX (expérimental)",
@@ -12986,6 +13008,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (expérimental)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Crée une équipe ou lance un équipier avec les commandes structurées d’équipe Claude.",
     "session.subagents.panel.launchTeammateAction": "Lancer l’équipier",
+    "sessionInfo.codebuddySessionId": "ID de session CodeBuddy",
+    "sessionInfo.codebuddySessionIdCopied": "ID de session CodeBuddy copié dans le presse-papiers",
     "sessionInfo.devinSessionId": "Identifiant de session Devin",
     "sessionInfo.devinSessionIdCopied": "Identifiant de session Devin copié",
     "sessionInfo.droidSessionId": "Identifiant de session Droid",
@@ -12996,6 +13020,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "Identifiant de session Grok copié",
     "sessionInfo.kimiSessionId": "ID de session Kimi",
     "sessionInfo.kimiSessionIdCopied": "ID de session Kimi copié",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Racine de données Oh My Pi facultative. Laissez vide pour utiliser ~/.omp/agent.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Répertoire de l’agent",
@@ -13035,6 +13060,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Agents d’équipe Claude"
   },
   "it": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -15584,6 +15610,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Collega una fonte per vedere qui le nuove pull request e issue.",
     "plugins.triage.widget.retry": "Riprova",
     "plugins.triage.widget.setUp": "Configura",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (sperimentale)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (sperimentale)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (sperimentale)",
     "profiles.aiBackend.fxSubtitleExperimental": "Agente di programmazione FX (sperimentale)",
@@ -15591,6 +15618,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (sperimentale)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un team o avvia un compagno con comandi strutturati dei team Claude.",
     "session.subagents.panel.launchTeammateAction": "Avvia compagno",
+    "sessionInfo.codebuddySessionId": "ID sessione CodeBuddy",
+    "sessionInfo.codebuddySessionIdCopied": "ID sessione CodeBuddy copiato negli appunti",
     "sessionInfo.devinSessionId": "ID sessione Devin",
     "sessionInfo.devinSessionIdCopied": "ID sessione Devin copiato",
     "sessionInfo.droidSessionId": "ID sessione Droid",
@@ -15601,6 +15630,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "ID sessione Grok copiato",
     "sessionInfo.kimiSessionId": "ID sessione Kimi",
     "sessionInfo.kimiSessionIdCopied": "ID sessione Kimi copiato",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Directory principale facoltativa dei dati di Oh My Pi. Lascia vuoto per usare ~/.omp/agent.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Directory dell’agente",
@@ -15640,6 +15670,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Agenti del team Claude"
   },
   "ja": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -18189,6 +18220,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "ソースを接続すると、新しいプルリクエストと Issue がここに表示されます。",
     "plugins.triage.widget.retry": "再試行",
     "plugins.triage.widget.setUp": "設定",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI（実験）",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI（実験的）",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid（実験的）",
     "profiles.aiBackend.fxSubtitleExperimental": "FX コーディングエージェント（実験的）",
@@ -18196,6 +18228,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI（実験）",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "構造化された Claude チームコマンドでチームを作成するか、チームメイトを起動します。",
     "session.subagents.panel.launchTeammateAction": "チームメイトを起動",
+    "sessionInfo.codebuddySessionId": "CodeBuddy セッション ID",
+    "sessionInfo.codebuddySessionIdCopied": "CodeBuddy セッション ID をクリップボードにコピーしました",
     "sessionInfo.devinSessionId": "Devin セッション ID",
     "sessionInfo.devinSessionIdCopied": "Devin セッション ID をコピーしました",
     "sessionInfo.droidSessionId": "Droid セッション ID",
@@ -18206,6 +18240,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "Grok セッション ID をコピーしました",
     "sessionInfo.kimiSessionId": "Kimi セッション ID",
     "sessionInfo.kimiSessionIdCopied": "Kimi セッション ID をコピーしました",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "任意の Oh My Pi データルートです。空欄の場合は ~/.omp/agent を使用します。",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "エージェントディレクトリ",
@@ -18245,6 +18280,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Claude チームエージェント"
   },
   "pl": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -20794,6 +20830,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Połącz źródło, aby widzieć tu nowe pull requesty i zgłoszenia.",
     "plugins.triage.widget.retry": "Spróbuj ponownie",
     "plugins.triage.widget.setUp": "Skonfiguruj",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (eksperymentalne)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (eksperymentalne)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (eksperymentalne)",
     "profiles.aiBackend.fxSubtitleExperimental": "Agent kodowania FX (eksperymentalne)",
@@ -20801,6 +20838,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (eksperymentalne)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Utwórz zespół lub uruchom członka zespołu za pomocą uporządkowanych poleceń zespołów Claude.",
     "session.subagents.panel.launchTeammateAction": "Uruchom członka zespołu",
+    "sessionInfo.codebuddySessionId": "ID sesji CodeBuddy",
+    "sessionInfo.codebuddySessionIdCopied": "ID sesji CodeBuddy skopiowane do schowka",
     "sessionInfo.devinSessionId": "Identyfikator sesji Devin",
     "sessionInfo.devinSessionIdCopied": "Skopiowano identyfikator sesji Devin",
     "sessionInfo.droidSessionId": "Identyfikator sesji Droid",
@@ -20811,6 +20850,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "Skopiowano identyfikator sesji Grok",
     "sessionInfo.kimiSessionId": "Identyfikator sesji Kimi",
     "sessionInfo.kimiSessionIdCopied": "Skopiowano identyfikator sesji Kimi",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Opcjonalny katalog główny danych Oh My Pi. Pozostaw puste, aby użyć ~/.omp/agent.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Katalog agenta",
@@ -20850,6 +20890,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Agenci zespołowi Claude"
   },
   "pt": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -23399,6 +23440,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Conecte uma fonte para ver aqui novos pull requests e issues.",
     "plugins.triage.widget.retry": "Tentar novamente",
     "plugins.triage.widget.setUp": "Configurar",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CLI do CodeBuddy Code (experimental)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (experimental)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (experimental)",
     "profiles.aiBackend.fxSubtitleExperimental": "Agente de programação FX (experimental)",
@@ -23406,6 +23448,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "CLI do Kimi (experimental)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Crie uma equipe ou inicie um colega com comandos estruturados de equipes Claude.",
     "session.subagents.panel.launchTeammateAction": "Iniciar colega",
+    "sessionInfo.codebuddySessionId": "ID da sessão CodeBuddy",
+    "sessionInfo.codebuddySessionIdCopied": "ID da sessão CodeBuddy copiado para a área de transferência",
     "sessionInfo.devinSessionId": "ID da sessão Devin",
     "sessionInfo.devinSessionIdCopied": "ID da sessão Devin copiado",
     "sessionInfo.droidSessionId": "ID da sessão Droid",
@@ -23416,6 +23460,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "ID da sessão Grok copiado",
     "sessionInfo.kimiSessionId": "ID da sessão Kimi",
     "sessionInfo.kimiSessionIdCopied": "ID da sessão Kimi copiado",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Raiz de dados opcional do Oh My Pi. Deixe em branco para usar ~/.omp/agent.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Diretório do agente",
@@ -23455,6 +23500,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Agentes de equipa Claude"
   },
   "ru": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -26004,6 +26050,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "Подключите источник, чтобы видеть здесь новые pull request и задачи.",
     "plugins.triage.widget.retry": "Повторить",
     "plugins.triage.widget.setUp": "Настроить",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (экспериментально)",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (экспериментально)",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (экспериментально)",
     "profiles.aiBackend.fxSubtitleExperimental": "Кодинг-агент FX (экспериментально)",
@@ -26011,6 +26058,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (экспериментально)",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "Создайте команду или запустите участника с помощью структурированных команд Claude для команд.",
     "session.subagents.panel.launchTeammateAction": "Запустить участника",
+    "sessionInfo.codebuddySessionId": "ID сессии CodeBuddy",
+    "sessionInfo.codebuddySessionIdCopied": "ID сессии CodeBuddy скопирован в буфер обмена",
     "sessionInfo.devinSessionId": "Идентификатор сессии Devin",
     "sessionInfo.devinSessionIdCopied": "Идентификатор сессии Devin скопирован",
     "sessionInfo.droidSessionId": "Идентификатор сессии Droid",
@@ -26021,6 +26070,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "Идентификатор сессии Grok скопирован",
     "sessionInfo.kimiSessionId": "Идентификатор сессии Kimi",
     "sessionInfo.kimiSessionIdCopied": "Идентификатор сессии Kimi скопирован",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Необязательный корневой каталог данных Oh My Pi. Оставьте пустым, чтобы использовать ~/.omp/agent.",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Каталог агента",
@@ -26060,6 +26110,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Командные агенты Claude"
   },
   "zh-Hans": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -28609,6 +28660,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "连接一个来源，即可在这里看到新的拉取请求和议题。",
     "plugins.triage.widget.retry": "重试",
     "plugins.triage.widget.setUp": "设置",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code 命令行（实验）",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI（实验性）",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid（实验性）",
     "profiles.aiBackend.fxSubtitleExperimental": "FX 编程智能体（实验性）",
@@ -28616,6 +28668,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi 命令行（实验）",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "使用结构化的 Claude 团队命令创建团队或启动队友。",
     "session.subagents.panel.launchTeammateAction": "启动队友",
+    "sessionInfo.codebuddySessionId": "CodeBuddy 会话 ID",
+    "sessionInfo.codebuddySessionIdCopied": "CodeBuddy 会话 ID 已复制到剪贴板",
     "sessionInfo.devinSessionId": "Devin 会话 ID",
     "sessionInfo.devinSessionIdCopied": "已复制 Devin 会话 ID",
     "sessionInfo.droidSessionId": "Droid 会话 ID",
@@ -28626,6 +28680,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "已复制 Grok 会话 ID",
     "sessionInfo.kimiSessionId": "Kimi 会话 ID",
     "sessionInfo.kimiSessionIdCopied": "已复制 Kimi 会话 ID",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "可选的 Oh My Pi 数据根目录。留空则使用 ~/.omp/agent。",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "代理目录",
@@ -28665,6 +28720,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "subAgentGuidance.settings.agents.claude.title": "Claude 团队代理"
   },
   "zh-Hant": {
+    "agentInput.agent.codebuddy": "CodeBuddy",
     "agentInput.agent.devin": "Devin",
     "agentInput.agent.droid": "Factory Droid",
     "agentInput.agent.fx": "FX",
@@ -31214,6 +31270,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.widget.noSources": "連接一個來源，即可在這裡看到新的提取要求與議題。",
     "plugins.triage.widget.retry": "重試",
     "plugins.triage.widget.setUp": "設定",
+    "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code 命令列（實驗性）",
     "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI（實驗性）",
     "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid（實驗性）",
     "profiles.aiBackend.fxSubtitleExperimental": "FX 編程代理（實驗性）",
@@ -31221,6 +31278,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI（實驗性）",
     "session.subagents.panel.launchClaudeTeamsSubtitle": "使用結構化的 Claude 團隊指令建立團隊或啟動隊友。",
     "session.subagents.panel.launchTeammateAction": "啟動隊友",
+    "sessionInfo.codebuddySessionId": "CodeBuddy 工作階段 ID",
+    "sessionInfo.codebuddySessionIdCopied": "已複製 CodeBuddy 工作階段 ID",
     "sessionInfo.devinSessionId": "Devin 工作階段 ID",
     "sessionInfo.devinSessionIdCopied": "已複製 Devin 工作階段 ID",
     "sessionInfo.droidSessionId": "Droid 工作階段 ID",
@@ -31231,6 +31290,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "sessionInfo.grokSessionIdCopied": "已複製 Grok 工作階段 ID",
     "sessionInfo.kimiSessionId": "Kimi 工作階段 ID",
     "sessionInfo.kimiSessionIdCopied": "已複製 Kimi 工作階段 ID",
+    "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
     "settingsAgents.plugins.devin.title": "Devin",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "可選的 Oh My Pi 資料根目錄。留空則使用 ~/.omp/agent。",
     "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "代理目錄",
@@ -31273,6 +31333,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
 
 export type BundledPluginTranslationKey =
     'agentInput.agent.devin'
+    'agentInput.agent.codebuddy'
     | 'agentInput.agent.droid'
     | 'agentInput.agent.fx'
     | 'agentInput.agent.grok'
@@ -33821,6 +33882,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.triage.widget.noSources'
     | 'plugins.triage.widget.retry'
     | 'plugins.triage.widget.setUp'
+    | 'profiles.aiBackend.codebuddySubtitleExperimental'
     | 'profiles.aiBackend.devinSubtitleExperimental'
     | 'profiles.aiBackend.droidSubtitleExperimental'
     | 'profiles.aiBackend.fxSubtitleExperimental'
@@ -33828,6 +33890,8 @@ export type BundledPluginTranslationKey =
     | 'profiles.aiBackend.kimiSubtitleExperimental'
     | 'session.subagents.panel.launchClaudeTeamsSubtitle'
     | 'session.subagents.panel.launchTeammateAction'
+    | 'sessionInfo.codebuddySessionId'
+    | 'sessionInfo.codebuddySessionIdCopied'
     | 'sessionInfo.devinSessionId'
     | 'sessionInfo.devinSessionIdCopied'
     | 'sessionInfo.droidSessionId'
@@ -33838,6 +33902,7 @@ export type BundledPluginTranslationKey =
     | 'sessionInfo.grokSessionIdCopied'
     | 'sessionInfo.kimiSessionId'
     | 'sessionInfo.kimiSessionIdCopied'
+    | 'settingsAgents.plugins.codebuddy.title'
     | 'settingsAgents.plugins.devin.title'
     | 'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle'
     | 'settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title'

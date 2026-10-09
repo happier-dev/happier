@@ -18,7 +18,7 @@ export const FX_PLUGIN = definePlugin({
     declaration: {
       title: { key: 'agentInput.agent.fx', fallback: 'FX' },
       description: { key: 'profiles.aiBackend.fxSubtitleExperimental', fallback: 'FX coding agent (experimental)' },
-      runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fx-cli' }, args: [...FX_ACP_COMMAND.args] }, definition: { modelConfigOptionId: 'model', mcp: { policy: 'pass_through' } } },
+      runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fx-cli' }, args: [...FX_ACP_COMMAND.args] }, definition: { modelConfigOptionId: 'model', permissionModeMapping: { default: null, 'read-only': 'ask', 'safe-yolo': 'code' }, mcp: { policy: 'pass_through' } } },
       cli: {
         displayName: 'FX CLI', executable: { binaryName: 'fx', knownUserBinDirSuffixes: ['.local/bin'], sourcePreference: 'system-first', systemCommandResolutionStrategy: 'path-first' },
         install: { managed: null, manual: { kind: 'vendor_recipe', recipes: { darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://fx.sh/setup.sh | bash'] }], linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://fx.sh/setup.sh | bash'] }] } }, guideUrl: 'https://github.com/vercel-labs/fx', docsUrl: 'https://github.com/vercel-labs/fx' },

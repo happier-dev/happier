@@ -19,6 +19,33 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('sessionModeControl', () => {
+  it.each(['antigravity', 'acp:fixture', 'opencode'])('infers legacy Plan only when %s advertises it, while preserving explicit intent', async (agentId) => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      permissionMode: 'plan',
+      sessionModesV2: { v: 2, agentId, updatedAt: 1, currentModeId: 'default', availableModes: [
+        { id: 'default', name: 'Default' }, { id: 'auto_edit', name: 'Auto edit' },
+      ] },
+    });
+    expect(computeSessionModePickerControl({ agentId, metadata })).toMatchObject({
+      requestedModeId: null, effectiveModeId: 'default', isPending: false,
+    });
+    metadata.sessionModesV2 = { ...metadata.sessionModesV2!, availableModes: [
+      ...metadata.sessionModesV2!.availableModes, { id: 'plan', name: 'Plan' },
+    ] };
+    expect(computeSessionModePickerControl({ agentId, metadata })).toMatchObject({ requestedModeId: 'plan', isPending: true });
+    metadata.sessionModesV2 = { ...metadata.sessionModesV2, availableModes: metadata.sessionModesV2.availableModes.filter((mode) => mode.id !== 'plan') };
+    metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 2, modeId: 'plan' };
+    expect(computeSessionModePickerControl({ agentId, metadata })).toMatchObject({ requestedModeId: 'plan', effectiveModeId: 'plan', isPending: true });
+    metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 3, modeId: null };
+    metadata.sessionModesV2 = {
+      ...metadata.sessionModesV2!,
+      availableModes: [...metadata.sessionModesV2!.availableModes, { id: 'plan', name: 'Plan' }],
+    };
+    expect(computeSessionModePickerControl({ agentId, metadata })).toMatchObject({
+      requestedModeId: null, effectiveModeId: 'default', isPending: false,
+    });
+  });
   it('keeps known native choices selectable when current is unknown, without accepting desired state or stale V1 current', async () => {
     const { computeSessionModePickerControl } = await import('./sessionModeControl');
     const metadata = createMetadata({
@@ -116,6 +143,10 @@ describe('sessionModeControl', () => {
     const res = computeSessionModePickerControl({ agentId: 'claude', metadata });
     expect(res?.requestedModeId).toBe('plan');
     expect(res?.effectiveModeId).toBe('plan');
+    metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 11, modeId: null };
+    expect(computeSessionModePickerControl({ agentId: 'claude', metadata })).toMatchObject({
+      requestedModeId: null, effectiveModeId: 'default', isPending: false,
+    });
   });
 
   it('falls back to legacy ACP metadata keys when canonical keys are absent', async () => {
@@ -194,6 +225,23 @@ describe('sessionModeControl', () => {
 
     const control = computeSessionModePickerControl({ agentId: 'codex', metadata });
     expect(resolveRequestedSessionModeIdForMetadata(control, 'default')).toBe('default');
+    const { serializeSessionModeActionOptions } = await import('@/sync/ops/actions/sessionModeActionSupport');
+    expect(serializeSessionModeActionOptions(control).map((option) => option.value)).toEqual(['default', 'plan']);
+  });
+
+  it('offers mapped permission restoration separately from a provider native default', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const { serializeSessionModeActionOptions } = await import('@/sync/ops/actions/sessionModeActionSupport');
+    const control = computeSessionModePickerControl({
+      agentId: 'devin',
+      metadata: createMetadata({
+        sessionModesV2: {
+          v: 2, agentId: 'devin', updatedAt: 1, currentModeId: 'plan',
+          availableModes: [{ id: 'default', name: 'Provider default' }, { id: 'plan', name: 'Plan' }],
+        },
+      }),
+    });
+    expect(serializeSessionModeActionOptions(control).map((option) => option.value)).toEqual(['', 'default', 'plan']);
   });
 
   it('treats default as a clear sentinel when the provider does not expose a real default option', async () => {

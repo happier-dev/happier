@@ -456,6 +456,13 @@ const QWEN_CORE: AgentCoreConfig = {
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
+        permissionModeMapping: {
+  "default": null,
+  "plan": "plan",
+  "read-only": "plan",
+  "safe-yolo": "auto-edit",
+  "yolo": "yolo"
+},
     },
     sessionModes: {
         kind: getAgentSessionModesKind('qwen'),
@@ -659,6 +666,13 @@ const DEVIN_CORE: AgentCoreConfig = {
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
+        permissionModeMapping: {
+  "default": null,
+  "plan": "plan",
+  "read-only": "ask",
+  "safe-yolo": "smart",
+  "yolo": "bypass"
+},
     },
     sessionModes: {
         kind: getAgentSessionModesKind('devin'),
@@ -716,6 +730,11 @@ const FX_CORE: AgentCoreConfig = {
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
+        permissionModeMapping: {
+  "default": null,
+  "read-only": "ask",
+  "safe-yolo": "code"
+},
     },
     sessionModes: {
         kind: getAgentSessionModesKind('fx'),
@@ -807,6 +826,71 @@ const DROID_UI: AgentUiConfig = {
         iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
     },
     cliGlyph: 'DR',
+};
+
+const CODEBUDDY_SVG_ICON_XML: AgentIconSvgXmlResolver = (theme): string => createGeneratedSvgIconXml(
+    '0 0 873 612',
+    `
+        <path fill="${theme.colors.text.primary}" d="M611.24 0C631.42 0.472994 652.67 0.151247 672.917 0.149414L783.53 0.125977L783.58 114.446C783.58 131.188 782.828 155.62 783.732 171.959C793.764 172.165 866.262 170.817 869.239 173.294C869.728 173.699 870.138 174.379 870.486 174.905L872.008 175.384C873.402 179.664 872.344 228.902 872.338 236.71C872.313 263.731 873.157 518.745 871.959 521.349C871.837 521.605 871.58 521.905 871.415 522.119L869.141 522.375C841.374 521.684 811.566 522.247 783.646 522.271C784.001 538.325 783.695 555.229 783.72 571.344C783.738 583.932 784.056 598.74 783.451 611.182C613.783 610.846 273.598 611.469 87.6807 611.041C87.3452 610.736 87.0093 610.436 86.6738 610.137L86.2393 607.375C86.831 602.028 86.4052 585.668 86.3984 579.416L86.2812 521.838C82.9453 522.522 63.9127 522.272 59.0283 522.266L0.391602 522.259L0.398438 278.798L0.427734 209.334C0.430803 201.523 0.934097 181.445 0 174.62C0.578928 172.779 0.0735528 173.48 1.33105 172.293C17.2444 171.377 36.4875 172.458 52.7188 172.065C59.0087 171.913 81.4327 171.805 86.0195 172.717L85.9805 56.9336L85.9072 21.3467C85.895 15.7024 85.6474 5.58945 86.2832 0.297852L89.3057 0.0224609C145.847 1.00635 204.767 0.149918 261.493 0.137695L261.571 58.8008C261.576 63.634 261.865 82.5764 261.06 86.293C288.984 85.6006 319.108 86.1736 347.17 86.1797L509.068 86.1846L576.67 86.1357C582.985 86.1314 604.124 85.7374 608.728 86.8135C607.982 81.7879 608.33 64.0733 608.33 58.0186L608.428 1.34473C609.424 -0.0534957 608.978 0.391111 611.24 0ZM697.12 173.048C694.553 171.797 619.805 172.389 610.134 172.389L279.41 172.397L201.266 172.392C193.899 172.39 184.497 172.27 176.995 172.399C175.636 172.423 175.324 173.65 174.702 174.81L172.704 175.383C172.033 177.999 172.341 204.836 172.348 208.9L172.398 294.312L172.37 445.969L172.349 494.032C172.347 501.781 172.011 513.954 172.658 521.324C174.533 523.401 174.111 521.52 174.854 522.534C175.611 523.561 175.655 525.034 177.928 525.016C181.545 524.988 185.335 524.97 189.044 524.966H347.752L604.785 524.96L669.054 525.009C673.406 525.009 693.575 525.296 696.857 524.643C697.499 523.408 697.493 523.505 697.542 522.118C696.815 500.607 697.389 475.931 697.389 454.243V327.045L697.383 228.248C697.383 211.843 696.729 190.781 697.64 174.935L697.12 173.048Z"/>
+        <path fill="${theme.colors.text.primary}" d="M347.56 260.864L349.808 261.441C351.42 265.483 350.329 418.222 350.229 435.792C344.53 436.85 263.503 436.929 260.894 435.722L261.464 433.765C261.114 420.392 261.416 405.532 261.413 392.005L261.412 313.381C261.422 299.699 262.22 276.275 261.106 263.652C261.428 261.859 261.059 262.619 262.19 261.257C268.232 260.664 277.082 261.319 283.456 261.111C303.554 260.454 327.973 262.241 347.56 260.864Z"/>
+        <path fill="${theme.colors.text.primary}" d="M608.752 260.881L610.641 261.353C612.854 266.169 610.268 347.019 611.302 358.962C611.693 363.539 611.436 434.199 610.892 435.767C610.293 435.847 609.248 436.027 608.685 436.028C584.88 436.436 548.549 435.89 523.533 435.943C522.702 435.945 522.567 435.098 522.127 434.149C522.787 429.284 522.445 415.565 522.445 410.114L522.415 362.246L522.457 298.316C522.463 288.598 522.94 272.837 522.097 263.668L522.586 261.78C525.887 259.891 595.756 261.699 608.752 260.881Z"/>
+    `,
+);
+
+const CODEBUDDY_CORE: AgentCoreConfig = {
+    id: 'codebuddy',
+    displayNameKey: 'agentInput.agent.codebuddy',
+    subtitleKey: 'profiles.aiBackend.codebuddySubtitleExperimental',
+    permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
+    availability: { experimental: true },
+    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'codebuddy' }),
+    uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codebuddy', connectRoute: null },
+    flavorAliases: ['codebuddy-code'],
+    providerOwnedEnvironmentKeys: [],
+    cli: buildCatalogAgentCliUiConfig('codebuddy'),
+    permissions: {
+        modeGroup: 'codexLike',
+        promptProtocol: 'codexDecision',
+        permissionModeMapping: {
+  "default": null,
+  "plan": "plan",
+  "read-only": "dontAsk",
+  "safe-yolo": "auto",
+  "yolo": "bypassPermissions"
+},
+    },
+    sessionModes: {
+        kind: getAgentSessionModesKind('codebuddy'),
+    },
+    model: getAgentModelConfig('codebuddy'),
+    resume: buildAgentResumeUiConfig({
+        agentId: 'codebuddy',
+        uiVendorResumeIdLabelKey: 'sessionInfo.codebuddySessionId',
+        uiVendorResumeIdCopiedKey: 'sessionInfo.codebuddySessionIdCopied',
+    }),
+    localControl: buildAgentLocalControlUiConfig({ agentId: 'codebuddy' }),
+    toolRendering: {
+        hideUnknownToolsByDefault: false,
+    },
+    tools: buildAgentToolsUiConfig({ agentId: 'codebuddy' }),
+    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: 'codebuddy' }),
+    ui: {
+        agentPickerIconName: 'code-slash-outline',
+        cliGlyphScale: 1,
+        profileCompatibilityGlyphScale: 1,
+    },
+};
+
+const CODEBUDDY_UI: AgentUiConfig = {
+    id: 'codebuddy',
+    icon: null,
+    svgIconXml: CODEBUDDY_SVG_ICON_XML,
+    tintColor: null,
+    avatarOverlay: {
+        circleScale: 0.42,
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.3),
+    },
+    cliGlyph: 'CB',
 };
 
 const PI_CORE: AgentCoreConfig = {
@@ -1062,6 +1146,7 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Objec
   "@happier-dev/plugins-channels",
   "@happier-dev/plugins-claude",
   "@happier-dev/plugins-cliproxyapi",
+  "@happier-dev/plugins-codebuddy",
   "@happier-dev/plugins-codex",
   "@happier-dev/plugins-copilot",
   "@happier-dev/plugins-cursor",
@@ -1119,6 +1204,7 @@ export const BUNDLED_CANONICAL_AGENTS_CORE: Readonly<Record<CanonicalAgentId, Ag
     devin: DEVIN_CORE,
     fx: FX_CORE,
     droid: DROID_CORE,
+    codebuddy: CODEBUDDY_CORE,
     pi: PI_CORE,
     ohMyPi: OH_MY_PI_CORE,
     copilot: COPILOT_CORE,
@@ -1142,6 +1228,7 @@ export const BUNDLED_CANONICAL_AGENTS_UI: Readonly<Record<CanonicalAgentId, Agen
     devin: DEVIN_UI,
     fx: FX_UI,
     droid: DROID_UI,
+    codebuddy: CODEBUDDY_UI,
     pi: PI_UI,
     ohMyPi: OH_MY_PI_UI,
     copilot: COPILOT_UI,

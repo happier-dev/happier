@@ -2,6 +2,7 @@
 import type { BundledPluginTranslationKey } from '../bundledPluginTranslations.generated';
 export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginTranslationKey, string>>> =
     Object.freeze({
+  "agentInput.agent.codebuddy": "CodeBuddy",
   "agentInput.agent.devin": "Devin",
   "agentInput.agent.droid": "Factory Droid",
   "agentInput.agent.fx": "FX",
@@ -2551,6 +2552,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.widget.noSources": "ソースを接続すると、新しいプルリクエストと Issue がここに表示されます。",
   "plugins.triage.widget.retry": "再試行",
   "plugins.triage.widget.setUp": "設定",
+  "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI（実験）",
   "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI（実験的）",
   "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid（実験的）",
   "profiles.aiBackend.fxSubtitleExperimental": "FX コーディングエージェント（実験的）",
@@ -2558,6 +2560,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI（実験）",
   "session.subagents.panel.launchClaudeTeamsSubtitle": "構造化された Claude チームコマンドでチームを作成するか、チームメイトを起動します。",
   "session.subagents.panel.launchTeammateAction": "チームメイトを起動",
+  "sessionInfo.codebuddySessionId": "CodeBuddy セッション ID",
+  "sessionInfo.codebuddySessionIdCopied": "CodeBuddy セッション ID をクリップボードにコピーしました",
   "sessionInfo.devinSessionId": "Devin セッション ID",
   "sessionInfo.devinSessionIdCopied": "Devin セッション ID をコピーしました",
   "sessionInfo.droidSessionId": "Droid セッション ID",
@@ -2568,6 +2572,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "sessionInfo.grokSessionIdCopied": "Grok セッション ID をコピーしました",
   "sessionInfo.kimiSessionId": "Kimi セッション ID",
   "sessionInfo.kimiSessionIdCopied": "Kimi セッション ID をコピーしました",
+  "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
   "settingsAgents.plugins.devin.title": "Devin",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "任意の Oh My Pi データルートです。空欄の場合は ~/.omp/agent を使用します。",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "エージェントディレクトリ",

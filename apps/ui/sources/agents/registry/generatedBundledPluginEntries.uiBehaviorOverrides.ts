@@ -287,6 +287,14 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
   }
 } as const),
     }),
+    codebuddy: Object.freeze({
+        agentId: 'codebuddy' as CanonicalAgentId,
+        descriptor: Object.freeze({
+  "components": {
+    "slots": []
+  }
+} as const),
+    }),
     codex: Object.freeze({
         agentId: 'codex' as CanonicalAgentId,
         descriptor: Object.freeze({

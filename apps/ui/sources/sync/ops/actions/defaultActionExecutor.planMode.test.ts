@@ -186,6 +186,7 @@ describe('default Action executor mode and catalog contracts', () => {
     ['claude', { flavor: 'claude' }, 'plan', 'plan'],
     ['opencode', { flavor: 'opencode', acpSessionModesV1: modes('opencode', 'build', ['build', 'plan']), acpSessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' } }, 'default', null],
     ['codex', { flavor: 'codex', sessionModesV1: modes('codex', 'plan', ['default', 'plan']), sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' } }, 'default', 'default'],
+    ['codebuddy', { flavor: 'codebuddy', sessionModesV1: modes('codebuddy', 'plan', ['default', 'plan']), sessionModeOverrideV1: { v: 1, updatedAt: 5, modeId: 'plan' } }, '', null],
   ] as const)('publishes %s mode intent through the real owner metadata tuple', async (_agent, metadata, modeId, expectedModeId) => {
     const read = installSession('s1', { path: '/tmp/project', host: 'localhost', ...metadata });
     const result = await createDefaultActionExecutor().execute('session.mode.set', { sessionId: 's1', modeId }, context());

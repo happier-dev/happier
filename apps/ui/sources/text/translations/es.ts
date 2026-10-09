@@ -9087,6 +9087,7 @@ const esValues = {
       }) => `${title}: ${prefix}…${suffix}`,
     },
     permissionMode: {
+      usePermissionSetting: 'Usar el ajuste de permisos',
       nativeModeOverrides: ({ mode }: { mode: string }) => `El modo del agente ${mode} sustituye la configuración de aprobación. Borra la anulación del modo para usar el permiso seleccionado.`,
       title: "MODO DE PERMISOS",
       effectiveLabel: ({ label }: { label: string }) => `Efectivo: ${label}`,

@@ -9023,6 +9023,7 @@ export const de: TranslationStructure = {
                 `${title}: ${prefix}…${suffix}`,
         },
         permissionMode: {
+          usePermissionSetting: 'Berechtigungseinstellung verwenden',
           nativeModeOverrides: ({ mode }: { mode: string }) => `Der Agentenmodus ${mode} überschreibt die Genehmigungsvorgabe. Entferne die Modusüberschreibung, um die Berechtigungseinstellung zu verwenden.`,
             title: 'BERECHTIGUNGSMODUS',
             effectiveLabel: ({ label }: { label: string }) => `Effektiv: ${label}`,

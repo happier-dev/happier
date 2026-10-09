@@ -19,6 +19,7 @@ export const BUNDLED_AGENT_DEFINITION_IDS: readonly string[] = Object.freeze([
   "antigravity",
   "auggie",
   "claude",
+  "codebuddy",
   "codex",
   "copilot",
   "cursor",
@@ -967,6 +968,111 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "source": "provider-native"
   },
   "sessionModesKind": "staticAgentModes"
+}) as const),
+  "codebuddy": Object.freeze(({
+  "cli": {
+    "auth": {
+      "environmentVariables": [
+        "CODEBUDDY_API_KEY"
+      ],
+      "loginLaunches": [
+        {
+          "args": [],
+          "initialInput": "/login\r",
+          "kind": "primary"
+        }
+      ],
+      "missingCredentialState": "unknown",
+      "support": "login_terminal"
+    },
+    "displayName": "CodeBuddy Code CLI",
+    "executable": {
+      "binaryName": "codebuddy",
+      "sourcePreference": "system-first",
+      "systemCommandResolutionStrategy": "path-first"
+    },
+    "install": {
+      "docsUrl": "https://www.codebuddy.ai/docs/cli/acp",
+      "guideUrl": "https://www.codebuddy.ai/docs/cli/quickstart",
+      "managed": {
+        "binaryName": "codebuddy",
+        "kind": "managed_package",
+        "packageName": "@tencent-ai/codebuddy-code"
+      },
+      "manual": {
+        "kind": "command"
+      }
+    }
+  },
+  "core": {
+    "cliSubcommand": "codebuddy",
+    "cloudConnect": null,
+    "connectedServices": null,
+    "detectKey": "codebuddy",
+    "flavorAliases": [
+      "codebuddy-code"
+    ],
+    "handoff": {
+      "vendorStateTransfer": "unsupported"
+    },
+    "id": "codebuddy",
+    "localControl": {
+      "attachStrategy": "terminal_host",
+      "supported": true,
+      "topology": "exclusive"
+    },
+    "media": {
+      "acceptsImageInput": "experimental",
+      "emitsSessionMedia": "supported",
+      "nativeImageGeneration": "unsupported"
+    },
+    "resume": {
+      "vendorResume": "supported",
+      "vendorResumeIdField": "codebuddySessionId"
+    },
+    "runtimeInput": {
+      "inFlightSteerSupported": false,
+      "terminalPromptInjectionSupported": false
+    },
+    "sessionCapabilities": {
+      "sessionFork": {
+        "conversation": "unsupported",
+        "fromMessage": "unsupported"
+      },
+      "sessionListing": "unsupported",
+      "sessionRollback": {
+        "conversation": "unsupported"
+      }
+    },
+    "sessionStorage": {
+      "direct": false,
+      "persisted": true
+    },
+    "tools": {
+      "delivery": "native_mcp",
+      "support": "experimental"
+    }
+  },
+  "id": "codebuddy",
+  "modelConfig": {
+    "acpApplyBehavior": "set_model",
+    "acpModelConfigOptionId": "model",
+    "acpModelSetMethod": "config_option",
+    "allowedModes": [
+      "default"
+    ],
+    "defaultMode": "default",
+    "dynamicProbe": "auto",
+    "nonAcpApplyScope": "next_prompt",
+    "supportsFreeform": false,
+    "supportsSelection": true
+  },
+  "sessionModeDescriptor": {
+    "runtimeSwitch": "acp-setSessionMode",
+    "semantics": "agent-modes",
+    "source": "acp"
+  },
+  "sessionModesKind": "acpAgentModes"
 }) as const),
   "codex": Object.freeze(({
   "cli": {

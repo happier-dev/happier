@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveRequestedSessionModeId } from '@happier-dev/protocol/actions/sessionModeIds';
 import { Platform, ScrollView, View, useWindowDimensions, type View as RNView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Color from 'color';
@@ -740,7 +741,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         acpSessionModeOptionsOverrideProbe={props.agent.acpSessionModeProbe}
                                         onAcpSessionModeChange={
                                             (props.agent.acpSessionModeOptions?.length ?? 0) > 0 && props.agent.setAcpSessionModeId
-                                                ? (modeId) => props.agent.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                                ? (modeId) => props.agent.setAcpSessionModeId?.(resolveRequestedSessionModeId(modeId, props.agent.acpSessionModeOptions) || null)
                                                 : undefined
                                         }
                                         acpConfigOptionsOverride={props.agent.acpConfigOptions}

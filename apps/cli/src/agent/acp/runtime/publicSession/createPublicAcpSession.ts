@@ -1449,7 +1449,9 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       configurationFieldChanged(previous?.options[id], value)
     ));
 
-    if (permissionChanged && !applyOptions?.initial) {
+    const permissionMapping = options.definition?.permissionModeMapping;
+    const nextConfiguration = mergeConfigurationSnapshot(previous, update);
+    if (permissionChanged && !applyOptions?.initial && !permissionMapping) {
       return {
         status: 'unsupported',
         diagnostic: diagnostic(
@@ -1459,7 +1461,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       };
     }
     if (!applyOptions?.initial && (
-      (modeChanged && update.mode.value === null)
+      (modeChanged && update.mode.value === null && !permissionMapping)
       || (modelChanged && update.model.value === null)
       || changedOptions.some(([, value]) => value.value === null)
     )) {
@@ -1476,16 +1478,21 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     };
     try {
       applyOptions?.signal?.throwIfAborted();
-      if (modeChanged && update.mode.value !== null) {
-        await applyAcpRuntimeSessionMode(controlContext, update.mode.value);
-        changed.push('mode');
-      }
-      if (applyOptions?.initial && permissionChanged && update.permissionIntent.value !== null) {
-        const mappedMode = options.definition?.permissionModeMapping?.[update.permissionIntent.value];
+      if (nextConfiguration.mode.value !== null) {
+        if (modeChanged) {
+          await applyAcpRuntimeSessionMode(controlContext, nextConfiguration.mode.value);
+        }
+      } else if (modeChanged || permissionChanged) {
+        // Native overrides own the ACP mode until cleared. Null mappings deliberately
+        // retain the provider's actual policy rather than inventing a reset mode.
+        const permissionIntent = nextConfiguration.permissionIntent.value;
+        const mappedMode = permissionIntent === null ? null : permissionMapping?.[permissionIntent];
         if (typeof mappedMode === 'string' && mappedMode.trim().length > 0) {
           await applyAcpRuntimeSessionMode(controlContext, mappedMode);
         }
       }
+      if (modeChanged) changed.push('mode');
+      if (permissionChanged && permissionMapping) changed.push('permissionIntent');
       if (modelChanged && update.model.value !== null) {
         const modelConfigOptionId = options.definition?.modelConfigOptionId;
         if (modelConfigOptionId) {

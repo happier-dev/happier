@@ -2,6 +2,7 @@
 import type { BundledPluginTranslationKey } from '../bundledPluginTranslations.generated';
 export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginTranslationKey, string>>> =
     Object.freeze({
+  "agentInput.agent.codebuddy": "CodeBuddy",
   "agentInput.agent.devin": "Devin",
   "agentInput.agent.droid": "Factory Droid",
   "agentInput.agent.fx": "FX",
@@ -2551,6 +2552,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.widget.noSources": "Connect a source to see new pull requests and issues here.",
   "plugins.triage.widget.retry": "Try again",
   "plugins.triage.widget.setUp": "Set up",
+  "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (experimental)",
   "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (experimental)",
   "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (experimental)",
   "profiles.aiBackend.fxSubtitleExperimental": "FX coding agent (experimental)",
@@ -2558,6 +2560,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (experimental)",
   "session.subagents.panel.launchClaudeTeamsSubtitle": "Create a team or spawn a teammate with structured Claude team commands.",
   "session.subagents.panel.launchTeammateAction": "Launch teammate",
+  "sessionInfo.codebuddySessionId": "CodeBuddy Session ID",
+  "sessionInfo.codebuddySessionIdCopied": "CodeBuddy Session ID copied to clipboard",
   "sessionInfo.devinSessionId": "Devin session ID",
   "sessionInfo.devinSessionIdCopied": "Devin session ID copied",
   "sessionInfo.droidSessionId": "Droid session ID",
@@ -2568,6 +2572,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "sessionInfo.grokSessionIdCopied": "Grok session ID copied",
   "sessionInfo.kimiSessionId": "Kimi session ID",
   "sessionInfo.kimiSessionIdCopied": "Kimi session ID copied",
+  "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
   "settingsAgents.plugins.devin.title": "Devin",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Optional Oh My Pi data root. Leave empty to use ~/.omp/agent.",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Agent directory",

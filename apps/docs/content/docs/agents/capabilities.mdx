@@ -3,7 +3,7 @@ title: Agent capabilities
 description: What each coding agent supports in Happier — session modes, resuming, handoff, listing and forking — generated from the bundled agent definitions.
 ---
 
-Happier drives 20 coding agents, and they do not all support the same
+Happier drives 21 coding agents, and they do not all support the same
 things. This page is generated from the agent definitions the app ships with, so
 it says what your build actually does rather than what an agent's own
 documentation claims.
@@ -31,6 +31,7 @@ than only when starting one.
 | Antigravity CLI | No ACP modes | No runtime switch |
 | Auggie CLI | No ACP modes | No runtime switch |
 | Claude Code CLI | Static agent modes | Agent native |
+| CodeBuddy Code CLI | ACP agent modes | ACP setSessionMode |
 | CodeRabbit | No ACP modes | No runtime switch |
 | Cursor Agent CLI | ACP agent modes | ACP setSessionMode |
 | DeepSec | No ACP modes | No runtime switch |
@@ -64,6 +65,7 @@ works and is not yet considered settled.
 | Antigravity CLI | Supported | Not supported | Not supported | Not supported |
 | Auggie CLI | Supported | Not supported | Not supported | Not supported |
 | Claude Code CLI | Supported | Supported | Supported | Not supported |
+| CodeBuddy Code CLI | Supported | Not supported | Not supported | Not supported |
 | CodeRabbit | Not supported | Not supported | Not supported | Not supported |
 | Cursor Agent CLI | Supported (experimental) | Not supported | Not supported | Not supported |
 | DeepSec | Not supported | Not supported | Not supported | Not supported |

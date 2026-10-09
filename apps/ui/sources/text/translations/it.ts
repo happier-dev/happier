@@ -9298,6 +9298,7 @@ const itValues = {
       }) => `${title}: ${prefix}…${suffix}`,
     },
     permissionMode: {
+      usePermissionSetting: 'Usa l’impostazione dei permessi',
       nativeModeOverrides: ({ mode }: { mode: string }) => `La modalità dell’agente ${mode} sostituisce la preimpostazione di approvazione. Rimuovi la sostituzione della modalità per usare il permesso selezionato.`,
       title: "MODALITÀ PERMESSI",
       effectiveLabel: ({ label }: { label: string }) => `Effettivo: ${label}`,

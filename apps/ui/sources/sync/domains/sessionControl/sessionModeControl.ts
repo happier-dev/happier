@@ -26,11 +26,27 @@ export type SessionModeOption = Readonly<{
     description?: string;
 }>;
 
+// The empty id reuses clear intent without hiding the provider's native Default.
+export function getSessionModePickerOptions(options: readonly SessionModeOption[], agentId: string): readonly SessionModeOption[] {
+    const nativeOptions = Array.from(new Map(options.map((option) => [option.id, option])).values());
+    const hasNativeDefault = nativeOptions.some((option) => option.id === 'default');
+    if (hasNativeDefault && !getAgentCore(agentId)?.permissions.permissionModeMapping) return nativeOptions;
+    return [
+        {
+            id: hasNativeDefault ? '' : 'default',
+            name: tLoose(hasNativeDefault ? 'agentInput.permissionMode.usePermissionSetting' : 'common.default'),
+        },
+        ...nativeOptions,
+    ];
+}
+
 export type SessionModePickerControl = Readonly<{
+    agentId: string;
     options: readonly SessionModeOption[];
     currentModeId: string | null;
     currentModeName: string;
     requestedModeId: string | null;
+    isExplicitOverride: boolean;
     requestedModeName: string | null;
     effectiveModeId: string | null;
     effectiveModeName: string;
@@ -44,10 +60,10 @@ export function resolveRequestedSessionModeIdForMetadata(
     return resolveRequestedSessionModeId(requestedModeId, control?.options ?? []);
 }
 
-function computeLegacyRequestedModeIdFromPermissionMode(metadata: Metadata | null | undefined): string | null {
-    const raw = typeof (metadata as any)?.permissionMode === 'string' ? String((metadata as any).permissionMode) : '';
+function computeLegacyRequestedModeIdFromPermissionMode(metadata: Metadata | null | undefined, options: readonly SessionModeOption[]): string | null {
+    const raw = typeof metadata?.permissionMode === 'string' ? metadata.permissionMode : '';
     const intent = raw ? parsePermissionIntentAlias(raw) : null;
-    return intent === 'plan' ? 'plan' : null;
+    return intent === 'plan' && options.some((option) => option.id === 'plan') ? 'plan' : null;
 }
 
 function computeStaticSessionModePickerControl(params: {
@@ -75,8 +91,8 @@ function computeStaticSessionModePickerControl(params: {
         ?? parseSessionModeOverrideState(
             readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY),
         );
-    const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata);
-    const requestedModeId = modeOverride?.modeId ?? legacy ?? null;
+    const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata, options);
+    const requestedModeId = modeOverride ? modeOverride.modeId : legacy;
     const requestedMode = requestedModeId ? options.find((mode) => mode.id === requestedModeId) ?? null : null;
 
     const currentModeId = 'default';
@@ -88,10 +104,12 @@ function computeStaticSessionModePickerControl(params: {
     const isPending = false;
 
     return {
+        agentId: params.agentId,
         options,
         currentModeId,
         currentModeName,
         requestedModeId,
+        isExplicitOverride: modeOverride?.modeId != null,
         requestedModeName: requestedMode?.name ?? requestedModeId,
         effectiveModeId,
         effectiveModeName: effectiveMode?.name ?? effectiveModeId,
@@ -115,8 +133,8 @@ function computeDynamicSessionModePickerControlInternal(params: {
         ?? parseSessionModeOverrideState(
             readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY),
         );
-    const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata);
-    const requestedModeId = modeOverride?.modeId ?? legacy ?? null;
+    const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata, options);
+    const requestedModeId = modeOverride ? modeOverride.modeId : legacy;
     const effectiveModeId = requestedModeId ?? currentModeId;
 
     const currentMode = options.find((mode) => mode.id === currentModeId) ?? null;
@@ -125,10 +143,12 @@ function computeDynamicSessionModePickerControlInternal(params: {
     const isPending = Boolean(requestedModeId && requestedModeId !== currentModeId);
 
     return {
+        agentId: params.agentId,
         options,
         currentModeId,
         currentModeName: currentMode?.name ?? currentModeId ?? tLoose('agentInput.mode.sectionTitle'),
         requestedModeId,
+        isExplicitOverride: modeOverride?.modeId != null,
         requestedModeName: requestedMode?.name ?? requestedModeId,
         effectiveModeId,
         effectiveModeName: effectiveMode?.name ?? effectiveModeId ?? tLoose('agentInput.mode.sectionTitle'),

@@ -18,7 +18,7 @@ import { parseSessionAwarenessListResultV1 } from '../sessions/awareness/action.
 import { isSessionAwarenessContentReadableV1 } from '../sessions/awareness/availability.js';
 import { readSessionAwarenessWorkStatusV1, readSessionWorkStateGroupV1 } from '../sessions/awareness/presentationV1.js';
 
-export function normalizeResolvedOptions(value: unknown): readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[] {
+export function normalizeResolvedOptions(value: unknown, options: Readonly<{ allowEmptyValue?: boolean }> = {}): readonly Readonly<{ value: string; label: string; description?: string; disabled?: boolean }>[] {
   const items = readRecordListProperty(value, 'items').length > 0
     ? readRecordListProperty(value, 'items')
     : Array.isArray(value)
@@ -41,7 +41,7 @@ export function normalizeResolvedOptions(value: unknown): readonly Readonly<{ va
                 : typeof item?.engineId === 'string'
                   ? item.engineId
                   : null;
-      if (!valueCandidate) return null;
+      if (valueCandidate === null || (valueCandidate === '' && options.allowEmptyValue !== true)) return null;
       const labelCandidate =
         typeof item?.label === 'string'
           ? item.label
@@ -335,7 +335,7 @@ export async function resolveInputOptions(params: Readonly<{
     const result = await deps.sessionModesList({ sessionId });
     const failure = params.readFailure(result);
     if (failure) return failure;
-    return { ok: true, result: normalizeResolvedOptions(result) };
+    return { ok: true, result: normalizeResolvedOptions(result, { allowEmptyValue: true }) };
   }
 
   if (optionsSourceId === 'agents.models.available') {

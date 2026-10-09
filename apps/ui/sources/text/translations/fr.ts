@@ -8927,6 +8927,7 @@ const frValues = {
       }) => `${title}: ${prefix}…${suffix}`,
     },
     permissionMode: {
+      usePermissionSetting: 'Utiliser le réglage des permissions',
       nativeModeOverrides: ({ mode }: { mode: string }) => `Le mode de l’agent ${mode} remplace le préréglage d’approbation. Supprimez la dérogation du Mode pour utiliser le paramètre de permission.`,
       title: "MODE DE PERMISSION",
       effectiveLabel: ({ label }: { label: string }) => `Effectif : ${label}`,

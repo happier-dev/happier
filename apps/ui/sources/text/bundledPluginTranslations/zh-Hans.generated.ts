@@ -2,6 +2,7 @@
 import type { BundledPluginTranslationKey } from '../bundledPluginTranslations.generated';
 export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginTranslationKey, string>>> =
     Object.freeze({
+  "agentInput.agent.codebuddy": "CodeBuddy",
   "agentInput.agent.devin": "Devin",
   "agentInput.agent.droid": "Factory Droid",
   "agentInput.agent.fx": "FX",
@@ -2551,6 +2552,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.widget.noSources": "连接一个来源，即可在这里看到新的拉取请求和议题。",
   "plugins.triage.widget.retry": "重试",
   "plugins.triage.widget.setUp": "设置",
+  "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code 命令行（实验）",
   "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI（实验性）",
   "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid（实验性）",
   "profiles.aiBackend.fxSubtitleExperimental": "FX 编程智能体（实验性）",
@@ -2558,6 +2560,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "profiles.aiBackend.kimiSubtitleExperimental": "Kimi 命令行（实验）",
   "session.subagents.panel.launchClaudeTeamsSubtitle": "使用结构化的 Claude 团队命令创建团队或启动队友。",
   "session.subagents.panel.launchTeammateAction": "启动队友",
+  "sessionInfo.codebuddySessionId": "CodeBuddy 会话 ID",
+  "sessionInfo.codebuddySessionIdCopied": "CodeBuddy 会话 ID 已复制到剪贴板",
   "sessionInfo.devinSessionId": "Devin 会话 ID",
   "sessionInfo.devinSessionIdCopied": "已复制 Devin 会话 ID",
   "sessionInfo.droidSessionId": "Droid 会话 ID",
@@ -2568,6 +2572,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "sessionInfo.grokSessionIdCopied": "已复制 Grok 会话 ID",
   "sessionInfo.kimiSessionId": "Kimi 会话 ID",
   "sessionInfo.kimiSessionIdCopied": "已复制 Kimi 会话 ID",
+  "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
   "settingsAgents.plugins.devin.title": "Devin",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "可选的 Oh My Pi 数据根目录。留空则使用 ~/.omp/agent。",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "代理目录",

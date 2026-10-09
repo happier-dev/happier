@@ -3,7 +3,7 @@ title: What ships in the box
 description: Every plugin Happier bundles — agents, model providers, voice engines, source control and channels — generated from their projected manifests.
 ---
 
-Happier bundles 46 plugins. That number is the clearest statement
+Happier bundles 56 plugins. That number is the clearest statement
 of how this version is built: coding agents, model providers, voice engines,
 version-control backends and hosting forges all use the plugin platform.
 
@@ -26,6 +26,7 @@ One plugin per agent. This is why adding an agent no longer means changing Happi
 | **Antigravity** | `happier.agent.antigravity` | — |
 | **Auggie** | `happier.agent.auggie` | — |
 | **Claude** | `happier.agent.claude` | Claude Code coding agent. |
+| **CodeBuddy** | `happier.agent.codebuddy` | — |
 | **Codex** | `happier.agent.codex` | OpenAI Codex coding agent. |
 | **Cursor** | `happier.agent.cursor` | — |
 | **Devin** | `happier.agent.devin` | — |
@@ -107,6 +108,22 @@ Places a session can talk to people outside Happier.
 | **Discord Channels** | `happier.channel.discord` | Connects Discord conversations to Happier Channels. |
 | **Telegram Channels** | `happier.channel.telegram` | Connects Telegram bot conversations to Happier Channels. |
 
+### Managed machines
+
+Machine provisioning plugins in the 0.3 development source.
+
+| Plugin | Id | What it does |
+| --- | --- | --- |
+| **Crabbox Machines** | `happier.machine.crabbox` | Native Crabbox leases with exact resource custody and host-owned SSH enrollment. |
+| **Cua Machines** | `happier.machine.cua` | Exact Cua local, BYOC and Fleet resources with private native bootstrap IO. |
+| **DigitalOcean Machines** | `happier.machine.digitalocean` | Manage exact reviewed DigitalOcean resources through captured cloud credentials. |
+| **Docker Sandbox Machines** | `happier.machine.docker-sandboxes` | Native local Docker Sandboxes with retained names and private bootstrap IO. |
+| **Fly Machines** | `happier.machine.fly` | Native Fly Machine control and private buffered bootstrap IO. |
+| **Hetzner Machines** | `happier.machine.hetzner` | Manage exact reviewed Hetzner resources through captured cloud credentials. |
+| **Lima Machines** | `happier.machine.lima` | Managed local Lima guests using native, private bootstrap IO. |
+| **Lume Machines** | `happier.machine.lume` | Managed Lume guests on the selected Apple silicon Mac. |
+| **Modal Machines** | `happier.machine.modal` | Finite Modal Sandboxes with private native bootstrap IO. |
+
 ### Everything else
 
 Single-purpose plugins that do not belong to a family.
@@ -127,19 +144,20 @@ useful to know before you build on it.
 
 | Family | Plugins |
 | --- | --- |
-| `mcp` | 46 |
-| `ui` | 46 |
-| `systemTools` | 22 |
-| `agents` | 20 |
-| `actions` | 12 |
-| `connectedAccountDescriptors` | 12 |
-| `settings` | 12 |
+| `mcp` | 56 |
+| `ui` | 56 |
+| `systemTools` | 27 |
+| `actions` | 21 |
+| `agents` | 21 |
+| `connectedAccountDescriptors` | 19 |
+| `settings` | 13 |
+| `machineProvisioners` | 9 |
+| `managedDependencies` | 9 |
 | `providers` | 9 |
 | `targetedPluginContributions` | 8 |
 | `resources` | 7 |
 | `voiceProviders` | 6 |
 | `hooks` | 4 |
-| `managedDependencies` | 4 |
 | `scmHostingProviders` | 4 |
 | `accountCollections` | 3 |
 | `backgroundServices` | 3 |

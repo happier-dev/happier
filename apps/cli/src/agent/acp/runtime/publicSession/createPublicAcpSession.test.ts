@@ -145,6 +145,7 @@ function writePublicComposerAgent(dir: string): string {
       let extensionSession = null;
       let permissionPrompt = null;
       let permissionSession = null;
+      let modeClearRejected = false;
       let delayedPrompt = null;
       let cancelledPrompt = null;
       let successorPrompt = null;
@@ -260,6 +261,7 @@ function writePublicComposerAgent(dir: string): string {
                       }
                     : scenario.startsWith('history-fork')
                       || scenario === 'resume-replay'
+                      || scenario.startsWith('configuration-update')
                       || scenario.startsWith('resume-extension-notification')
                       ? { loadSession: true }
                       : {},
@@ -418,6 +420,11 @@ function writePublicComposerAgent(dir: string): string {
                   }
               : { configOptions: [] });
           } else if (request.method === 'session/set_mode') {
+            if (scenario === 'configuration-update-clear-retry' && request.params.modeId === 'ask' && !modeClearRejected) {
+              modeClearRejected = true;
+              send({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'mode clear rejected once' } });
+              continue;
+            }
             if (scenario === 'configuration-update-concurrent' && request.params.modeId === 'slow-old') {
               setTimeout(() => {
                 selectedMode = request.params.modeId;
@@ -786,8 +793,7 @@ function writePublicComposerAgent(dir: string): string {
               });
               ok(request.id, { stopReason: 'end_turn' });
             } else if (
-              scenario === 'configuration-update'
-              || scenario === 'configuration-update-concurrent'
+              scenario.startsWith('configuration-update')
               || scenario === 'projected-config-models'
             ) {
               update(sessionId, JSON.stringify({ selectedMode, selectedModel, selectedOptions }));
@@ -2573,13 +2579,19 @@ describe('createPublicAcpSession', () => {
     });
   });
 
-  it('applies newer native configuration fields through the canonical ACP session controls', async () => {
+  it.each([false, true])('applies newer native configuration fields through the canonical ACP session controls (launch-only enforcement=%s)', async (launchOnly) => {
     await withTempDir('happier-public-acp-configuration-update-', async (dir) => {
       const fixture = createFixture(dir, 'configuration-update');
       const options = {
         ...fixture.options,
         definition: {
           modelConfigOptionId: 'model',
+          ...(launchOnly ? {
+            permissionModeArgv: {
+              flag: '--approval-mode',
+              map: { default: null, 'read-only': 'ask', 'safe-yolo': 'smart', yolo: 'bypass', plan: 'plan' },
+            },
+          } : {}),
           mcp: { policy: 'pass_through' },
         },
       } as const satisfies AgentAcpRuntimeOptions;
@@ -2757,6 +2769,107 @@ describe('createPublicAcpSession', () => {
           kind: 'message-delta',
           text: JSON.stringify({ selectedMode: expectedMode, selectedModel: null, selectedOptions: {} }),
         }));
+      } finally {
+        subscription.dispose();
+        await session.dispose();
+      }
+    });
+  });
+
+
+  it.each(['create', 'resume'] as const)('preserves explicit native mode precedence through %s, permission changes, and clear', async (kind) => {
+    await withTempDir('happier-public-acp-mode-precedence-', async (dir) => {
+      const fixture = createFixture(dir, 'configuration-update-clear-retry');
+      let configuration: NonNullable<AgentSessionOpenRequest['configuration']> = {
+        mode: { value: 'plan', updatedAtMs: 10 },
+        model: { value: null, updatedAtMs: 10 },
+        permissionIntent: { value: 'safe-yolo', updatedAtMs: 10 },
+        options: {},
+      };
+      const request: AgentSessionOpenRequest = {
+        ...(kind === 'create'
+          ? { kind, sessionId: 'host-mode-precedence' }
+          : { kind, sessionId: 'host-mode-precedence', providerSessionId: 'provider-restored' }),
+        cwd: dir,
+        configuration,
+      };
+      const session = await createPublicAcpSession(request, {
+        ...fixture.options,
+        definition: {
+          mcp: { policy: 'drop' },
+          permissionModeMapping: {
+            default: null, 'read-only': 'ask', 'safe-yolo': 'smart', yolo: 'bypass', plan: 'plan',
+          },
+        },
+      }, fixture.dependencies);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch((event) => { events.push(event); });
+      let sequence = 0;
+      const expectProviderMode = async (selectedMode: string) => {
+        events.length = 0;
+        const turnId = `turn-mode-precedence-${++sequence}`;
+        await session.send({
+          inputIds: [`input-mode-precedence-${sequence}`],
+          input: { text: 'report configuration' },
+          delivery: { kind: 'newTurn', turnId },
+        });
+        await collectUntil(events, 'turn-complete');
+        expect(events).toContainEqual(expect.objectContaining({
+          kind: 'message-delta',
+          text: JSON.stringify({ selectedMode, selectedModel: null, selectedOptions: {} }),
+        }));
+      };
+      try {
+        await expectProviderMode('plan');
+        configuration = {
+          ...configuration,
+          permissionIntent: { value: 'read-only', updatedAtMs: 20 },
+        };
+        await expect(session.updateConfiguration?.(configuration)).resolves.toEqual({
+          status: 'applied', changed: ['permissionIntent'],
+        });
+        await expectProviderMode('plan');
+
+        configuration = { ...configuration, mode: { value: null, updatedAtMs: 30 } };
+        await expect(session.updateConfiguration?.(configuration)).resolves.toMatchObject({
+          status: 'rejected', diagnostic: { code: 'acp_configuration_update_failed' },
+        });
+        await expectProviderMode('plan');
+        await expect(session.updateConfiguration?.(configuration)).resolves.toEqual({
+          status: 'applied', changed: ['mode'],
+        });
+        await expectProviderMode('ask');
+
+        configuration = { ...configuration, mode: { value: 'bypass', updatedAtMs: 40 } };
+        await expect(session.updateConfiguration?.(configuration)).resolves.toEqual({
+          status: 'applied', changed: ['mode'],
+        });
+        await expectProviderMode('bypass');
+
+        configuration = {
+          ...configuration,
+          mode: { value: null, updatedAtMs: 35 },
+          permissionIntent: { value: 'default', updatedAtMs: 50 },
+        };
+        await expect(session.updateConfiguration?.(configuration)).resolves.toEqual({
+          status: 'applied', changed: ['permissionIntent'],
+        });
+        await expectProviderMode('bypass');
+
+        configuration = { ...configuration, mode: { value: null, updatedAtMs: 60 } };
+        await expect(session.updateConfiguration?.(configuration)).resolves.toEqual({
+          status: 'applied', changed: ['mode'],
+        });
+        await expectProviderMode('bypass');
+
+        configuration = {
+          ...configuration,
+          permissionIntent: { value: 'safe-yolo', updatedAtMs: 70 },
+        };
+        await expect(session.updateConfiguration?.(configuration)).resolves.toEqual({
+          status: 'applied', changed: ['permissionIntent'],
+        });
+        await expectProviderMode('smart');
       } finally {
         subscription.dispose();
         await session.dispose();

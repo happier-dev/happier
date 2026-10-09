@@ -1,3 +1,4 @@
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { AcpConfigOptionOverridesV1Schema, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { buildBackendTargetKeyV2, BackendTargetKeyV2Schema, parseBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input, type BackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
@@ -131,11 +132,6 @@ function normalizeServerScopeId(serverId: string | null | undefined): string {
     return normalized || 'default';
 }
 
-function normalizeOptionalSelectionValue(value: string | null | undefined): string | null {
-    const normalized = typeof value === 'string' ? value.trim() : '';
-    return normalized && normalized !== 'default' ? normalized : null;
-}
-
 export function buildRememberedEngineSelectionScopeKeyForTargetKey(params: Readonly<{
     serverId: string | null | undefined;
     targetKey: BackendTargetKeyV2 | string;
@@ -196,7 +192,7 @@ export function upsertRememberedEngineSelection(params: Readonly<{
         serverId: params.serverId,
         backendTarget: params.backendTarget,
     });
-    const acpSessionModeId = normalizeOptionalSelectionValue(params.selection.acpSessionModeId);
+    const acpSessionModeId = readNonBlankOpaqueIdentifier(params.selection.acpSessionModeId);
     const agentTargetKey = buildBackendTargetKeyV2(params.backendTarget);
     const modelSelection = params.selection.modelSelection === null
         ? null

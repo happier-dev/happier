@@ -8733,6 +8733,7 @@ const zhHansValues = {
       }) => `${title}: ${prefix}…${suffix}`,
     },
     permissionMode: {
+      usePermissionSetting: '使用权限设置',
       nativeModeOverrides: ({ mode }: { mode: string }) => `代理模式 ${mode} 会覆盖审批预设。清除模式覆盖以使用权限设置。`,
       title: "权限模式",
       effectiveLabel: ({ label }: { label: string }) => `生效：${label}`,

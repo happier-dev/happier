@@ -124,6 +124,7 @@
     "@happier-dev/plugins-channels",
     "@happier-dev/plugins-claude",
     "@happier-dev/plugins-cliproxyapi",
+    "@happier-dev/plugins-codebuddy",
     "@happier-dev/plugins-codex",
     "@happier-dev/plugins-copilot",
     "@happier-dev/plugins-cursor",
@@ -357,7 +358,8 @@
     "@happier-dev/plugins-machine-lume": "0.0.0",
     "@happier-dev/plugins-machine-crabbox": "0.0.0",
     "@happier-dev/plugins-machine-docker-sandboxes": "0.0.0",
-    "@happier-dev/plugins-machine-modal": "0.0.0"
+    "@happier-dev/plugins-machine-modal": "0.0.0",
+    "@happier-dev/plugins-codebuddy": "0.0.0"
   },
   "devDependencies": {
     "@happier-dev/plugins-devcontainer": "0.0.0",

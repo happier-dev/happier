@@ -266,6 +266,7 @@ export type DescriptorAgentUiProjectionSource = Readonly<{
   uiConst: string;
   descriptor: AgentUiDescriptor;
   providerOwnedEnvironmentKeys: readonly string[];
+  permissionModeMapping?: JsonObject;
   svgIcon?: DescriptorGeneratedSvgIconSource;
 }>;
 

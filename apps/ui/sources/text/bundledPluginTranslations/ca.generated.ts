@@ -2,6 +2,7 @@
 import type { BundledPluginTranslationKey } from '../bundledPluginTranslations.generated';
 export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginTranslationKey, string>>> =
     Object.freeze({
+  "agentInput.agent.codebuddy": "CodeBuddy",
   "agentInput.agent.devin": "Devin",
   "agentInput.agent.droid": "Factory Droid",
   "agentInput.agent.fx": "FX",
@@ -2551,6 +2552,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.widget.noSources": "Connecta una font per veure aquí noves pull requests i incidències.",
   "plugins.triage.widget.retry": "Torna-ho a provar",
   "plugins.triage.widget.setUp": "Configura",
+  "profiles.aiBackend.codebuddySubtitleExperimental": "CLI de CodeBuddy Code (experimental)",
   "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (experimental)",
   "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (experimental)",
   "profiles.aiBackend.fxSubtitleExperimental": "Agent de programació FX (experimental)",
@@ -2558,6 +2560,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "profiles.aiBackend.kimiSubtitleExperimental": "CLI de Kimi (experimental)",
   "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un equip o inicia un company amb ordres estructurades d’equips Claude.",
   "session.subagents.panel.launchTeammateAction": "Inicia company",
+  "sessionInfo.codebuddySessionId": "ID de la sessió de CodeBuddy",
+  "sessionInfo.codebuddySessionIdCopied": "ID de la sessió de CodeBuddy copiat al porta-retalls",
   "sessionInfo.devinSessionId": "ID de sessió de Devin",
   "sessionInfo.devinSessionIdCopied": "S’ha copiat l’ID de sessió de Devin",
   "sessionInfo.droidSessionId": "ID de sessió de Droid",
@@ -2568,6 +2572,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "sessionInfo.grokSessionIdCopied": "S’ha copiat l’ID de sessió de Grok",
   "sessionInfo.kimiSessionId": "ID de la sessió de Kimi",
   "sessionInfo.kimiSessionIdCopied": "S’ha copiat l’ID de la sessió de Kimi",
+  "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
   "settingsAgents.plugins.devin.title": "Devin",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Arrel de dades opcional d’Oh My Pi. Deixa-ho buit per utilitzar ~/.omp/agent.",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Directori de l’agent",

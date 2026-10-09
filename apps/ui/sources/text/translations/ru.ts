@@ -8935,6 +8935,7 @@ const ruValues = {
       }) => `${title}: ${prefix}…${suffix}`,
     },
     permissionMode: {
+      usePermissionSetting: 'Использовать настройку разрешений',
       nativeModeOverrides: ({ mode }: { mode: string }) => `Режим агента ${mode} переопределяет настройку подтверждений. Сбросьте переопределение режима, чтобы использовать настройку разрешений.`,
       title: "РЕЖИМ РАЗРЕШЕНИЙ",
       effectiveLabel: ({ label }: { label: string }) => `Эффективно: ${label}`,

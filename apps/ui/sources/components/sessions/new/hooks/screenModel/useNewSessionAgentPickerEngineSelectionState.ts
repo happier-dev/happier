@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -79,8 +80,7 @@ function normalizeSessionModeIdForEntry(
     sessionModeId: string | null | undefined,
 ): string | null {
     if (!backendEntrySupportsSessionModeSelection(entry)) return null;
-    const trimmed = typeof sessionModeId === 'string' ? sessionModeId.trim() : '';
-    return trimmed.length > 0 ? trimmed : 'default';
+    return readNonBlankOpaqueIdentifier(sessionModeId);
 }
 
 export function useNewSessionAgentPickerEngineSelectionState(
@@ -120,7 +120,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
             return {
                 modelId: remembered.modelSelection?.ref.modelId ?? 'default',
                 modelSelection: remembered.modelSelection,
-                sessionModeId: remembered.acpSessionModeId ?? 'default',
+                sessionModeId: remembered.acpSessionModeId ?? null,
                 configOverrides: Object.fromEntries(
                     Object.entries(remembered.sessionConfigOptionOverrides?.overrides ?? {})
                         .map(([configId, override]) => [configId, typeof override?.value === 'string' ? override.value.trim() : ''])
@@ -131,7 +131,7 @@ export function useNewSessionAgentPickerEngineSelectionState(
 
         return {
             modelId: 'default',
-            sessionModeId: 'default',
+            sessionModeId: null,
             configOverrides: {},
         };
     }, [

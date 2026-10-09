@@ -46,6 +46,7 @@ const AGENT_UI_PROJECTION_ORDER = Object.freeze([
   'devin',
   'fx',
   'droid',
+  'codebuddy',
   'pi',
   'ohMyPi',
   'copilot',
@@ -223,18 +224,32 @@ function readProviderOwnedEnvironmentKeys(
   return raw;
 }
 
+function readPermissionModeMapping(
+  pluginPackage: BundledPluginPackage,
+  agentId: string,
+): JsonObject | undefined {
+  const contribution = readManifestContributionArray(pluginPackage.manifest, 'agents')
+    .find((entry) => readRequiredContributionId(entry, 'agents', pluginPackage.packageName) === agentId);
+  const runtime = contribution ? readJsonObjectProperty(contribution, 'runtime') : null;
+  if (runtime?.kind !== 'acp') return undefined;
+  const definition = readJsonObjectProperty(runtime, 'definition');
+  return definition ? readJsonObjectProperty(definition, 'permissionModeMapping') ?? undefined : undefined;
+}
+
 function createDescriptorAgentUiProjectionSource(
   pluginPackage: BundledPluginPackage,
   descriptor: AgentUiDescriptor,
 ): DescriptorAgentUiProjectionSource {
   const constPrefix = toAgentConstPrefix(descriptor.agentId);
   const svgIcon = readDescriptorGeneratedSvgIcon(descriptor, constPrefix);
+  const permissionModeMapping = readPermissionModeMapping(pluginPackage, descriptor.agentId);
   return {
     agentId: descriptor.agentId,
     coreConst: `${constPrefix}_CORE`,
     uiConst: `${constPrefix}_UI`,
     descriptor,
     providerOwnedEnvironmentKeys: readProviderOwnedEnvironmentKeys(pluginPackage, descriptor.agentId),
+    ...(permissionModeMapping === undefined ? {} : { permissionModeMapping }),
     ...(svgIcon === undefined ? {} : { svgIcon }),
   };
 }
@@ -409,8 +424,8 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
     let projectionLines = descriptorSource
       ? renderDescriptorGeneratedUiProjectionLines(descriptorSource)
       : generatedSource?.renderLines() ?? [];
+    const pluginPackage = pluginPackageByAgentId.get(agentId);
     if (!descriptorSource && generatedSource) {
-      const pluginPackage = pluginPackageByAgentId.get(agentId);
       const providerOwnedEnvironmentKeys = pluginPackage
         ? readProviderOwnedEnvironmentKeys(pluginPackage, agentId)
         : [];
@@ -419,6 +434,18 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
       projectionLines = [
         ...projectionLines.slice(0, insertionIndex + 1),
         `    providerOwnedEnvironmentKeys: ${renderTsStringArrayLiteral(providerOwnedEnvironmentKeys)},`,
+        ...projectionLines.slice(insertionIndex + 1),
+      ];
+    }
+    const permissionModeMapping = descriptorSource
+      ? descriptorSource.permissionModeMapping
+      : pluginPackage ? readPermissionModeMapping(pluginPackage, agentId) : undefined;
+    if (permissionModeMapping !== undefined) {
+      const insertionIndex = projectionLines.findIndex((line) => line.trimStart().startsWith('promptProtocol:'));
+      if (insertionIndex < 0) throw new Error(`Generated UI projection '${agentId}' has no permissions insertion anchor`);
+      projectionLines = [
+        ...projectionLines.slice(0, insertionIndex + 1),
+        `        permissionModeMapping: ${renderJsonLiteral(permissionModeMapping)},`,
         ...projectionLines.slice(insertionIndex + 1),
       ];
     }

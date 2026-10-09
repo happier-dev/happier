@@ -23,6 +23,11 @@ export const GENERATED_SESSION_PRESENTATION_COMPAT_V1 = Object.freeze([
     vendorResumeIdField: 'claudeSessionId',
   }),
   Object.freeze({
+    agentId: 'codebuddy',
+    flavorAliases: Object.freeze(['codebuddy', 'codebuddy-code']),
+    vendorResumeIdField: 'codebuddySessionId',
+  }),
+  Object.freeze({
     agentId: 'codex',
     flavorAliases: Object.freeze(['codex', 'codex-acp', 'codex-mcp', 'openai', 'gpt']),
     vendorResumeIdField: 'codexSessionId',

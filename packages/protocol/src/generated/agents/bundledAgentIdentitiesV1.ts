@@ -70,6 +70,10 @@ export const BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1: Readonly<Record<
     pluginId: 'happier.agent.droid',
     localId: 'droid',
   }),
+  'codebuddy': Object.freeze({
+    pluginId: 'happier.agent.codebuddy',
+    localId: 'codebuddy',
+  }),
   'cursor': Object.freeze({
     pluginId: 'happier.agent.cursor',
     localId: 'cursor',

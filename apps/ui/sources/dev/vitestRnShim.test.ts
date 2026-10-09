@@ -87,6 +87,13 @@ describe('vitestRnShim', () => {
         );
     });
 
+    it('uses the canonical SVG native boundary for Node requires and Vitest imports', async () => {
+        const svg = await import('react-native-svg');
+        const loaded = nodeRuntime.require('react-native-svg') as typeof svg;
+        expect(loaded.SvgXml).toBe(svg.SvgXml);
+        expect(loaded.Path).toBe(svg.Path);
+    });
+
     it('stubs posthog-react-native requires in the Node test runtime', () => {
         const posthogModule = nodeRuntime.require('posthog-react-native') as {
             __isHappierPostHogReactNativeStub?: unknown;

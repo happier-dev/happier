@@ -8922,6 +8922,7 @@ const plValues = {
       }) => `${title}: ${prefix}…${suffix}`,
     },
     permissionMode: {
+      usePermissionSetting: 'Użyj ustawienia uprawnień',
       nativeModeOverrides: ({ mode }: { mode: string }) => `Tryb agenta ${mode} zastępuje ustawienie zatwierdzania. Usuń nadpisanie trybu, aby użyć ustawienia uprawnień.`,
       title: "TRYB UPRAWNIEŃ",
       effectiveLabel: ({ label }: { label: string }) => `Obowiązuje: ${label}`,

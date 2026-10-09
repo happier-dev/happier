@@ -566,6 +566,7 @@ const STABLE_AGENT_ID_ORDER = Object.freeze([
   'devin',
   'fx',
   'droid',
+  'codebuddy',
   'cursor',
   'ohMyPi',
   'pi',

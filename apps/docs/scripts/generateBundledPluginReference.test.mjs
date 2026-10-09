@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
-  BUNDLED_PLUGIN_REGISTRY_PATH,
   categorize,
   contributedFamilies,
-  readBundledPluginIds,
+  readBundledPluginRegistry,
   renderBundledPluginMarkdown,
+  renderBundledPluginReferenceMarkdown,
 } from './generateBundledPluginReference.mjs';
 
 const plugin = (id, name, families = []) => ({ id, name, description: '', families, dir: id });
@@ -59,22 +58,24 @@ test('a bundled id with no built manifest is a broken build, not a shorter page'
   );
 });
 
-test('the registry is parsed from the bundled manifest projection', () => {
-  const ids = readBundledPluginIds('{ "pluginId": "happier.agent.claude" }, { "pluginId": "happier.triage" }');
-  assert.deepEqual([...ids].sort(), ['happier.agent.claude', 'happier.triage']);
-  assert.throws(() => readBundledPluginIds('{}'), /parsed to zero ids/);
-});
-
-test('the configured bundled registry source contains projected plugin ids', () => {
-  const ids = readBundledPluginIds(readFileSync(BUNDLED_PLUGIN_REGISTRY_PATH, 'utf8'));
+test('the admitted bundled registry contains projected plugin ids', async () => {
+  const registry = await readBundledPluginRegistry();
+  const ids = new Set(registry.BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map((entry) => entry.pluginId));
   assert.ok(ids.has('happier.channels'));
 });
 
-test('the bundled Machine family is categorized without dropping its plugins', () => {
-  const plugins = [...readBundledPluginIds(readFileSync(BUNDLED_PLUGIN_REGISTRY_PATH, 'utf8'))]
+test('the bundled Machine family is categorized without dropping its plugins', async () => {
+  const registry = await readBundledPluginRegistry();
+  const plugins = registry.BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map((entry) => entry.pluginId)
     .map((id) => plugin(id, id));
   const machines = plugins.filter((entry) => entry.id.startsWith('happier.machine.'));
   assert.ok(machines.length > 0);
   const section = categorize(plugins).find((entry) => entry.prefix === 'happier.machine.');
   assert.deepEqual(section?.plugins, machines);
+});
+
+// CodeBuddy is admitted by ordinary source publication without a packed plugin.json.
+test('source-admitted CodeBuddy is included without requiring a packed plugin artifact', async () => {
+  const markdown = await renderBundledPluginReferenceMarkdown();
+  assert.ok(markdown.includes('`happier.agent.codebuddy`'));
 });

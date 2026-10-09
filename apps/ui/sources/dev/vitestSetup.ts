@@ -2,7 +2,8 @@ import './vitestDomTextEncoding';
 import * as React from 'react';
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
-import { installVitestRnShim } from './vitestRnShim';
+import { installVitestRnShim, loadVitestModuleForNodeRequire } from './vitestRnShim';
+import { getVitestNodeBuiltin } from './vitestNodeBuiltins';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
@@ -516,6 +517,15 @@ vi.mock('react-native-svg', () => {
         Mask: makeHost('Mask'),
     };
 });
+
+// Call-time Node requires must share the native boundary that Vitest imports use.
+const svgBoundaryRequire = getVitestNodeBuiltin<typeof import('node:module')>('node:module').createRequire(import.meta.url);
+const { pathToFileURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
+const svgBoundaryBridge = await loadVitestModuleForNodeRequire(
+    pathToFileURL(svgBoundaryRequire.resolve('react-native-svg')),
+    () => import('react-native-svg'),
+);
+afterAll(() => svgBoundaryBridge.dispose());
 
 // `react-native-reanimated` requires native bindings; provide a lightweight mock for node/Vitest.
 vi.mock('react-native-reanimated', () => createReanimatedModuleMock());

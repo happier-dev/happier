@@ -2516,7 +2516,7 @@ const SessionInteractionResponseSuccessSchema = lazyZodSchema(() => z.object({
 
 const SessionModeSetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
-  modeId: z.string().min(1),
+  modeId: z.string(),
 }).passthrough());
 
 const SessionPrimaryTargetInputSchema = lazyZodSchema(() => z.union([

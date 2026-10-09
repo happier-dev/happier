@@ -8325,6 +8325,7 @@ const caValues = {
                 `${title}: ${prefix}…${suffix}`,
         },
         permissionMode: {
+          usePermissionSetting: 'Utilitza la configuració de permisos',
           nativeModeOverrides: ({ mode }: { mode: string }) => `El Mode de l’agent ${mode} substitueix el preajust d’aprovació. Esborra la substitució del Mode per utilitzar el permís seleccionat.`,
             title: 'MODE DE PERMISOS',
             effectiveLabel: ({ label }: { label: string }) => `Efectiu: ${label}`,

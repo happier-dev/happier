@@ -8,29 +8,21 @@
  * agent, every model provider, every voice engine, both version-control
  * backends and all four hosting forges.
  *
- * The source is `.happier-plugin/plugin.json` — the *projected* manifest that
- * pack writes, which is also what the daemon reads to build catalogs without
- * executing plugin code. Reading the same artifact means this page cannot
- * describe a plugin differently from the way the host discovers it.
- *
- * The id set is cross-checked against the bundled registry the CLI compiles in.
- * A plugin whose manifest is on disk but which nothing bundles is not shipped,
- * and a bundled id with no manifest is a broken build; either way the reader
- * would be told something false, so both throw here instead.
+ * The CLI's admitted source registry contains both bundled membership and the
+ * normalized cold manifests. Use it directly so ordinary source publication
+ * and documentation share one authority without requiring packed artifacts.
+ * Metadata and locator ids are cross-checked before rendering.
  *
  * Regenerate with `yarn --cwd apps/docs generate:reference`.
  */
-import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
-const PLUGINS_DIR = join(REPO, 'packages', 'plugins');
 const REGISTRY = join(
   REPO, 'apps', 'cli', 'src', 'plugins', 'projection', 'registry', 'sources', 'generatedBundledPluginManifests.ts',
 );
-export const BUNDLED_PLUGIN_REGISTRY_PATH = REGISTRY;
 export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'plugins', 'bundled.mdx');
 
 /**
@@ -89,10 +81,8 @@ const STANDALONE = {
   ids: ['happier.channels', 'happier.triage', 'happier.inspector', 'happier.posthog', 'happier.sentry'],
 };
 
-export function readBundledPluginIds(source) {
-  const ids = [...source.matchAll(/"pluginId":\s*"([^"]+)"/g)].map((m) => m[1]);
-  if (ids.length === 0) throw new Error('bundled plugin registry parsed to zero ids');
-  return new Set(ids);
+export async function readBundledPluginRegistry() {
+  return await import(pathToFileURL(REGISTRY).href);
 }
 
 export function categorize(plugins) {
@@ -125,25 +115,16 @@ export function contributedFamilies(contributes) {
     .sort();
 }
 
-function readPlugins() {
-  const plugins = [];
-  for (const entry of readdirSync(PLUGINS_DIR, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name.startsWith('_')) continue;
-    let manifest;
-    try {
-      manifest = JSON.parse(readFileSync(join(PLUGINS_DIR, entry.name, '.happier-plugin', 'plugin.json'), 'utf8'));
-    } catch {
-      continue; // not built in this checkout
-    }
-    plugins.push({
+function readPlugins(locators) {
+  return locators.map((entry) => {
+    const manifest = entry.manifest;
+    return {
       id: manifest.id,
       name: manifest.displayName ?? manifest.id,
       description: (manifest.description ?? '').trim(),
       families: contributedFamilies(manifest.contributes),
-      dir: entry.name,
-    });
-  }
-  return plugins.sort((a, b) => a.name.localeCompare(b.name));
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function table(headers, rows) {
@@ -220,9 +201,10 @@ ${table(['Family', 'Plugins'], familyRows)}
 }
 
 export async function renderBundledPluginReferenceMarkdown() {
+  const { BUNDLED_FIRST_PARTY_PLUGIN_METADATA: metadata, BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: locators } = await readBundledPluginRegistry();
   return renderBundledPluginMarkdown({
-    plugins: readPlugins(),
-    bundledIds: readBundledPluginIds(readFileSync(REGISTRY, 'utf8')),
+    plugins: readPlugins(locators),
+    bundledIds: new Set(metadata.map((entry) => entry.pluginId)),
   });
 }
 

@@ -10985,6 +10985,7 @@ const enAgentInput = {
     }) => `${title}: ${prefix}…${suffix}`,
   },
   permissionMode: {
+    usePermissionSetting: 'Use permission setting',
     nativeModeOverrides: ({ mode }: { mode: string }) => `Agent Mode ${mode} overrides the approval preset. Clear the Mode override to use the permission setting.`,
     title: 'PERMISSION MODE',
     effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,

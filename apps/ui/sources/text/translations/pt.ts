@@ -9217,6 +9217,7 @@ const ptValues = {
       }) => `${title}: ${prefix}…${suffix}`,
     },
     permissionMode: {
+      usePermissionSetting: 'Usar a configuração de permissões',
       nativeModeOverrides: ({ mode }: { mode: string }) => `O modo do agente ${mode} substitui a predefinição de aprovação. Remova a substituição do modo para usar a configuração de permissão.`,
       title: "MODO DE PERMISSÃO",
       effectiveLabel: ({ label }: { label: string }) => `Efetivo: ${label}`,

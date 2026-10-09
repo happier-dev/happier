@@ -34,6 +34,14 @@ export const BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS: readonly BundledFi
   }),
   Object.freeze({
     identity: Object.freeze({
+      pluginId: "happier.agent.codebuddy",
+      localId: "codebuddy",
+    }),
+    implementationOwnerId: "codebuddy",
+    registrationFamily: "agents",
+  }),
+  Object.freeze({
+    identity: Object.freeze({
       pluginId: "happier.agent.codex",
       localId: "codex",
     }),

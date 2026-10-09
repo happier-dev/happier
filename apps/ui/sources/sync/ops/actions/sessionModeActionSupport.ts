@@ -3,10 +3,10 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 import {
   computeSessionModePickerControl,
+  getSessionModePickerOptions,
   resolveRequestedSessionModeIdForMetadata,
   type SessionModePickerControl,
 } from '@/sync/domains/sessionControl/sessionModeControl';
-import { t } from '@/text';
 
 export function normalizeRequestedSessionModeId(
   control: SessionModePickerControl | null,
@@ -50,23 +50,11 @@ export function serializeSessionModeActionOptions(
 ): readonly ResolvedActionOption[] {
   if (!control) return [];
 
-  const options: ResolvedActionOption[] = control.options.map((option) => ({
+  return getSessionModePickerOptions(control.options, control.agentId).map((option) => ({
     value: option.id,
     label: option.name,
     ...(typeof option.description === 'string' && option.description.trim().length > 0
       ? { description: option.description }
       : {}),
   }));
-
-  if (options.some((option) => option.value === 'default')) {
-    return options;
-  }
-
-  return [
-    {
-      value: 'default',
-      label: t('common.default'),
-    },
-    ...options,
-  ];
 }

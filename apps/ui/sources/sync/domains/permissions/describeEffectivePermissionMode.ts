@@ -9,9 +9,13 @@ import {
     readSessionModesState,
 } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { parsePermissionIntentAlias, resolveProviderNativePermissionModeForAgent } from '@happier-dev/agents';
+import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/sessionModeControl';
+import { t } from '@/text';
 
 export type EffectivePermissionModeDescription = Readonly<{
     effectiveMode: PermissionMode;
+    /** Provider-reported approval preset; host permission enforcement remains separate. */
+    nativeModeLabel?: string;
     reasons: EffectivePermissionModeReason[];
     notes: string[];
 }>;
@@ -23,6 +27,8 @@ export type EffectivePermissionModeReasonCode =
     | 'approval_setting_controls_auto_approval'
     | 'read_only_best_effort'
     | 'mcp_sandbox_restrictions_apply_on_spawn'
+    | 'native_mode_overrides_permissions'
+    | 'native_mode_pending'
     | 'applies_on_next_message';
 
 export type EffectivePermissionModeReason = Readonly<{
@@ -32,6 +38,12 @@ export type EffectivePermissionModeReason = Readonly<{
 
 function noteForReason(reason: EffectivePermissionModeReason): string {
     switch (reason.code) {
+        case 'native_mode_overrides_permissions':
+            return t('agentInput.permissionMode.nativeModeOverrides', { mode: reason.params?.mode ?? '' });
+        case 'native_mode_pending':
+            return reason.params?.from
+                ? t('agentInput.mode.pendingSwitching', { from: reason.params.from, to: reason.params.to ?? '' })
+                : t('agentInput.mode.badgePending', { name: reason.params?.to ?? '' });
         case 'plan_not_supported_for_provider':
             return 'Plan mode is not a permission for this provider; fallback to Read-only. Tip: use the separate “Mode” control when it is available.';
         case 'mode_mapped_for_provider':
@@ -65,7 +77,7 @@ export function describeEffectivePermissionMode(_params: {
         readSessionConfigOptionsState(_params.metadata),
     );
 
-    const selected = (parsePermissionIntentAlias(_params.selectedMode) ?? 'default') as PermissionMode;
+    const selected = parsePermissionIntentAlias(_params.selectedMode) ?? 'default';
     const normalized = normalizePermissionModeForAgentType(selected, _params.agentType);
     const reasons: EffectivePermissionModeReason[] = [];
 
@@ -80,18 +92,32 @@ export function describeEffectivePermissionMode(_params: {
     }
 
     const group = core.permissions.modeGroup;
+    const permissionMapping = core.permissions.permissionModeMapping;
+    const nativePolicy = permissionMapping
+        ? computeSessionModePickerControl({ agentId, metadata: _params.metadata })
+        : null;
+    if (permissionMapping?.[selected]) effectiveMode = selected;
+    if (nativePolicy?.isExplicitOverride && nativePolicy.requestedModeId) {
+        reasons.push({ code: 'native_mode_overrides_permissions', params: { mode: nativePolicy.requestedModeName ?? nativePolicy.requestedModeId } });
+        if (nativePolicy.isPending) {
+            reasons.push({ code: 'native_mode_pending', params: {
+                ...(nativePolicy.currentModeId !== null ? { from: nativePolicy.currentModeName } : {}),
+                to: nativePolicy.requestedModeName ?? nativePolicy.requestedModeId,
+            } });
+        }
+    }
 
-    if (selected === 'plan') {
+    if (selected === 'plan' && !permissionMapping?.[selected]) {
         reasons.push({ code: 'plan_not_supported_for_provider' });
     }
 
-    const providerNative = resolveProviderNativePermissionModeForAgent({ agentId, mode: _params.selectedMode });
-    if (providerNative !== effectiveMode) {
+    const providerNative = permissionMapping?.[parsePermissionIntentAlias(effectiveMode) ?? 'default'] ?? resolveProviderNativePermissionModeForAgent({ agentId, mode: _params.selectedMode });
+    if (!nativePolicy?.isExplicitOverride && providerNative !== effectiveMode) {
         reasons.push({ code: 'mode_mapped_for_provider', params: { providerMode: providerNative } });
     }
 
     if (group === 'codexLike') {
-        if (effectiveMode === 'read-only') {
+        if (effectiveMode === 'read-only' || effectiveMode === 'plan') {
             reasons.push({ code: 'read_only_enforced_by_tool_gating' });
         } else if (effectiveMode === 'safe-yolo' || effectiveMode === 'yolo') {
             reasons.push({ code: 'approval_setting_controls_auto_approval' });
@@ -111,5 +137,5 @@ export function describeEffectivePermissionMode(_params: {
     }
 
     const notes = reasons.map(noteForReason).filter(Boolean);
-    return { effectiveMode, reasons, notes };
+    return { effectiveMode, ...(nativePolicy?.currentModeId != null ? { nativeModeLabel: nativePolicy.currentModeName } : {}), reasons, notes };
 }

@@ -39,7 +39,21 @@ That means these combinations are valid:
 - **Mode = Plan** + **Permission = Read Only**
 - **Mode = Build** + **Permission = YOLO**
 
-Mode does **not** replace permissions.
+Behavioral modes such as Plan and Build are separate from permissions. Some
+Agents also expose native approval presets through **Mode**.
+
+In unreleased 0.3 development builds, an explicit native approval mode takes
+precedence over the Agent's mapped permission preset. Changing Permissions keeps
+that override, including after resume. The existing Permissions explanation shows
+the reported native preset and any pending switch. Happier still applies the
+selected permissions to host-mediated tools.
+
+Clear the Mode override to apply the current mapped permission preset. When an
+Agent has its own native **Default** mode and declares a permission mapping,
+choose **Use permission setting** to clear the override; native **Default**
+remains available as a separate choice. If the
+Agent declares no mapping for that setting, including a null **Default** mapping,
+Happier leaves the native policy in place rather than inventing a reset mode.
 
 ## Plan mode
 

@@ -9,6 +9,13 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('FX plugin manifest', () => {
+  it('retains the released v0.0.13 native permission presets', () => {
+    // Installer latest.txt resolves to v0.0.13, commit 4d966e272cfc4296cdf703f409480088cf2e72ba.
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.runtime).toMatchObject({
+      kind: 'acp',
+      definition: { permissionModeMapping: { default: null, 'read-only': 'ask', 'safe-yolo': 'code' } },
+    });
+  });
   it('ingests and declares the `fx acp` session runtime without a custom factory', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
     expect(PLUGIN_MANIFEST).toHaveProperty('entrypoints.daemon', './.happier-plugin/daemon.js');

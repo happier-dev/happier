@@ -2142,6 +2142,24 @@ describe('createActionExecutor (inventory/discovery)', () => {
     });
   });
 
+  it('preserves explicit empty mode clear choices without accepting missing values', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    vi.mocked(deps.sessionModesList).mockResolvedValueOnce({
+      items: [{ id: '', label: 'Use permission setting' }, { id: 'default', label: 'Provider default' }, { id: 'plan', label: 'Plan' }, { label: 'Missing mode id' }],
+    });
+    const res = await executor.execute('action.options.resolve', {
+      actionId: 'session.mode.set', fieldPath: 'modeId', sessionId: 's1',
+    });
+    expect(res).toMatchObject({
+      ok: true, result: { options: [
+        { value: '', label: 'Use permission setting' },
+        { value: 'default', label: 'Provider default' },
+        { value: 'plan', label: 'Plan' },
+      ] },
+    });
+  });
+
   it('uses a direct optionsSourceId fallback when actionId + fieldPath are also provided', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
@@ -2194,7 +2212,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionModeSet).toHaveBeenCalledWith({ sessionId: 's1', modeId: 'plan' });
   });
 
-  it('preserves default as a real mode id when the available modes literally include default', async () => {
+  it.each(['default', ''])('preserves default as a real mode id or explicit clear %s when available modes include default', async (modeId) => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
     (deps.sessionModesList as any).mockResolvedValueOnce({
@@ -2203,11 +2221,11 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     const res = await executor.execute('session.mode.set', {
       sessionId: 's1',
-      modeId: 'default',
+      modeId,
     });
 
     expect(res.ok).toBe(true);
-    expect(deps.sessionModeSet).toHaveBeenCalledWith({ sessionId: 's1', modeId: 'default' });
+    expect(deps.sessionModeSet).toHaveBeenCalledWith({ sessionId: 's1', modeId });
   });
 
   it('rejects session.mode.set when the requested mode is unavailable', async () => {

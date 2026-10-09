@@ -12,6 +12,7 @@ import {
     type AgentCore as SharedAgentCore,
     type AgentId,
     type AgentModelConfig,
+    type PermissionIntent,
     type AgentSessionStorage,
     type AgentToolsDelivery,
     type AgentToolsSupportLevel,
@@ -119,6 +120,8 @@ export type AgentCoreConfig = Readonly<{
     permissions: Readonly<{
         modeGroup: PermissionModeGroupId;
         promptProtocol: PermissionPromptProtocol;
+        /** Manifest-declared ACP policy mapping; null leaves the provider policy in place. */
+        permissionModeMapping?: Readonly<Partial<Record<PermissionIntent, string | null>>>;
     }>;
     runtimeInput?: Readonly<{
         /**

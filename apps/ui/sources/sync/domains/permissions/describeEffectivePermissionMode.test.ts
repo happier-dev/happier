@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { t } from '@/text';
 
 import type { Metadata } from '@happier-dev/session-core/state';
 
@@ -18,6 +19,127 @@ function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('describeEffectivePermissionMode', () => {
+    it.each(['codebuddy', 'devin', 'fx'] as const)('describes %s native policy native approval policy while preserving host permission enforcement', (agentType) => {
+        const res = describeEffectivePermissionMode({
+            agentType,
+            selectedMode: 'read-only',
+            applyTiming: 'immediate',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1, agentId: agentType, updatedAt: 2, currentModeId: 'unrestricted',
+                    availableModes: [{ id: 'unrestricted', name: 'Unrestricted' }],
+                },
+                sessionModeOverrideV1: { v: 1, updatedAt: 1, modeId: 'unrestricted' },
+            }),
+        });
+        expect(res).toMatchObject({ effectiveMode: 'read-only', nativeModeLabel: 'Unrestricted' });
+        expect(reasonCodes(res)).toContain('native_mode_overrides_permissions');
+        expect(reasonCodes(res)).toContain('read_only_enforced_by_tool_gating');
+    });
+
+    it('keeps the reported policy visible while a native override is pending', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codebuddy', selectedMode: 'read-only', applyTiming: 'immediate',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1, agentId: 'codebuddy', updatedAt: 1, currentModeId: 'dontAsk',
+                    availableModes: [{ id: 'dontAsk', name: 'No prompts' }, { id: 'bypassPermissions', name: 'Bypass permissions' }],
+                },
+                sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'bypassPermissions' },
+            }),
+        });
+        expect(res).toMatchObject({ nativeModeLabel: 'No prompts' });
+        expect(res.reasons).toContainEqual({ code: 'native_mode_pending', params: { from: 'No prompts', to: 'Bypass permissions' } });
+    });
+
+    it('uses a declared ACP plan mapping instead of claiming an unsupported permission fallback', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codebuddy', selectedMode: 'plan', metadata: buildMetadata(), applyTiming: 'immediate',
+        });
+        expect(res.effectiveMode).toBe('plan');
+        expect(reasonCodes(res)).toContain('read_only_enforced_by_tool_gating');
+        expect(reasonCodes(res)).not.toContain('plan_not_supported_for_provider');
+        expect(res.reasons).not.toContainEqual({ code: 'mode_mapped_for_provider', params: { providerMode: 'dontAsk' } });
+    });
+
+
+    it('describes mapped generic Plan without claiming an explicit native override', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'devin', selectedMode: 'plan', applyTiming: 'immediate',
+            metadata: buildMetadata({
+                permissionMode: 'plan',
+                sessionModesV2: {
+                    v: 2, agentId: 'devin', updatedAt: 1, currentModeId: 'plan',
+                    availableModes: [{ id: 'plan', name: 'Plan' }],
+                },
+            }),
+        });
+        expect(res.effectiveMode).toBe('plan');
+        expect(reasonCodes(res)).toContain('read_only_enforced_by_tool_gating');
+        expect(reasonCodes(res)).not.toContain('native_mode_overrides_permissions');
+        expect(reasonCodes(res)).not.toContain('native_mode_pending');
+    });
+
+    it.each([null, 'bypass'] as const)('uses current V2 policy %s after clear without borrowing stale V1 policy', (currentModeId) => {
+        const metadata = buildMetadata({
+            sessionModesV2: {
+                v: 2, agentId: 'devin', updatedAt: 3, currentModeId,
+                availableModes: [{ id: 'bypass', name: 'Bypass permissions' }, { id: 'plan', name: 'Plan' }],
+            },
+            sessionModesV1: {
+                v: 1, agentId: 'devin', updatedAt: 1, currentModeId: 'plan',
+                availableModes: [{ id: 'plan', name: 'Stale Plan' }],
+            },
+            sessionModeOverrideV1: { v: 1, updatedAt: 4, modeId: null },
+        });
+        const params = { agentType: 'devin', selectedMode: 'default', applyTiming: 'immediate', metadata } as const;
+        const res = describeEffectivePermissionMode(params);
+        expect(res.nativeModeLabel).toBe(currentModeId === null ? undefined : 'Bypass permissions');
+        expect(reasonCodes(res)).not.toContain('native_mode_overrides_permissions');
+
+        metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 5, modeId: 'plan' };
+        const pending = describeEffectivePermissionMode(params);
+        expect(pending.nativeModeLabel).toBe(currentModeId === null ? undefined : 'Bypass permissions');
+        expect(pending.reasons).toContainEqual({
+            code: 'native_mode_pending',
+            params: { ...(currentModeId === null ? {} : { from: 'Bypass permissions' }), to: 'Plan' },
+        });
+        expect(pending.notes).toContain(currentModeId === null
+            ? t('agentInput.mode.badgePending', { name: 'Plan' })
+            : t('agentInput.mode.pendingSwitching', { from: 'Bypass permissions', to: 'Plan' }));
+    });
+
+    it('stops describing override precedence after an explicit clear', () => {
+        const res = describeEffectivePermissionMode({
+            agentType: 'codebuddy', selectedMode: 'read-only', applyTiming: 'immediate',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1, agentId: 'codebuddy', updatedAt: 3, currentModeId: 'dontAsk',
+                    availableModes: [{ id: 'dontAsk', name: 'No prompts' }],
+                },
+                sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: '' },
+            }),
+        });
+        expect(res).toMatchObject({ nativeModeLabel: 'No prompts' });
+        expect(reasonCodes(res)).not.toContain('native_mode_overrides_permissions');
+    });
+
+    it.each(['codebuddy', 'opencode'] as const)('does not borrow an unrelated or behavioral native mode for %s permissions', (agentType) => {
+        const res = describeEffectivePermissionMode({
+            agentType, selectedMode: 'read-only', applyTiming: 'immediate',
+            metadata: buildMetadata({
+                sessionModesV1: {
+                    v: 1, agentId: 'opencode', updatedAt: 2, currentModeId: 'build',
+                    availableModes: [{ id: 'build', name: 'Build' }],
+                },
+                sessionModeOverrideV1: { v: 1, updatedAt: 1, modeId: 'build' },
+            }),
+        });
+        expect(res.nativeModeLabel).toBeUndefined();
+        expect(reasonCodes(res)).not.toContain('native_mode_overrides_permissions');
+    });
+
+
     it.each(['default', 'acceptEdits', 'bypassPermissions', 'safe-yolo', 'yolo', 'read-only'] as const)(
         'describes the Claude-native mode actually selected by the runtime for %s',
         (selectedMode) => {

@@ -10,14 +10,12 @@ import { settingsDefaults, type Settings } from '@/sync/domains/settings/setting
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastOptionPickerOverlayProps: any = null;
-let mockSessionModePickerControl: any = null;
 const modalShowMock = vi.fn();
 const modalPromptMock = vi.fn();
 let lastPopoverProps: any = null;
 let lastActionMenuPopoverContentProps: any = null;
 let mockAgentInputActionBarLayout: 'wrap' | 'collapsed' = 'wrap';
 let mockWindowWidth = 800;
-const supportsFreeformModelSelectionState = vi.hoisted(() => ({ value: false }));
 const storageSettings: Settings = {
     ...settingsDefaults,
     profiles: [],
@@ -137,10 +135,6 @@ vi.mock('@/sync/domains/state/storageStore', async () => {
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/agents/catalog/catalog')>()),
-    AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
-    DEFAULT_AGENT_ID: 'codex',
-    isBundledAgentId: (agentId: string) => ['codex', 'claude', 'opencode', 'gemini'].includes(agentId),
-    resolveAgentIdFromFlavor: () => null,
     getAgentIconSvgXml: (agentId: string) => (
         agentId === 'codex' || agentId === 'pi' || agentId === 'opencode'
             ? '<svg viewBox="0 0 16 16"><path fill="#111111" d="M8 0 16 8 8 16 0 8Z" /></svg>'
@@ -148,22 +142,6 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
     ),
     getAgentIconSource: () => null,
     getAgentIconTintColor: () => null,
-    getAgentCore: () => ({
-        displayNameKey: 'agents.codex',
-        toolRendering: { hideUnknownToolsByDefault: false },
-        uiConnectedService: { serviceId: 'openai-codex', labelKey: 'agentInput.agent.codex', connectRoute: null },
-        flavorAliases: [],
-        availability: { experimental: false },
-        model: {
-            supportsSelection: true,
-            supportsFreeform: supportsFreeformModelSelectionState.value,
-            dynamicProbe: 'auto',
-            allowedModes: [],
-            defaultMode: 'default',
-            nonAcpApplyScope: 'spawn_only',
-            acpApplyBehavior: 'none',
-        },
-    }),
 }));
 
 vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
@@ -191,12 +169,6 @@ vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeBadgeLabelForAgentType: () => 'Default',
-    getPermissionModeLabelForAgentType: () => 'Default',
-    getPermissionModeOptionsForSession: () => [{ value: 'default', label: 'Default' }],
-    getPermissionModeTitleForAgentType: () => 'Permissions',
-}));
 
 vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
     describeEffectivePermissionMode: () => ({ effectiveMode: 'default', notes: [] }),
@@ -312,9 +284,6 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
-    computeSessionModePickerControl: () => mockSessionModePickerControl,
-}));
 
 vi.mock('@/sync/domains/sessionControl/configOptionsControl', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/sessionControl/configOptionsControl')>();
@@ -353,7 +322,6 @@ const { AgentInput } = await import('./AgentInput');
 
 describe('AgentInput (modelOptionsOverride)', () => {
     beforeEach(() => {
-        supportsFreeformModelSelectionState.value = false;
         modalPromptMock.mockReset();
         modalShowMock.mockReset();
         mockAgentInputActionBarLayout = 'wrap';
@@ -456,7 +424,6 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
     it('submits inline custom models through OptionPickerOverlay without opening a modal prompt', async () => {
         const onModelModeChange = vi.fn();
-        supportsFreeformModelSelectionState.value = true;
         lastOptionPickerOverlayProps = null;
 
         const screen = await renderScreen(React.createElement(AgentInput, {
@@ -466,7 +433,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
                     onSend: () => {},
                     autocompleteKinds: [],
                     autocompleteSuggestions: async () => [],
-                    agentType: 'codex',
+                    agentType: 'claude',
                     permissionMode: 'default',
                     onPermissionModeChange: () => {},
                     modelMode: 'default',
@@ -724,6 +691,64 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
         expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
         expect(screen.findByTestId('agent-input-selection-list-popover')).toBeNull();
+    });
+
+    it.each([null, 'default'] as const)('distinguishes unset permissions from native Default in preflight (%s)', async (selectedModeId) => {
+        const onAcpSessionModeChange = vi.fn();
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: '',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'codebuddy',
+            metadata: { path: '/tmp', host: 'test-host', flavor: 'codebuddy' },
+            onAcpSessionModeChange,
+            acpSessionModeOptionsOverride: [
+                { id: 'default', name: 'Native Default' },
+                { id: 'plan', name: 'Plan' },
+                { id: 'auto', name: 'Auto' },
+                { id: 'dontAsk', name: "Don't ask" },
+            ],
+            acpSessionModeSelectedIdOverride: selectedModeId,
+        }));
+
+        await screen.pressByTestIdAsync('agent-input-session-mode-chip');
+        const clearChoice = screen.findByTestId('selection-list:session-mode-root:option-wrapper');
+        const nativeDefaultChoice = screen.findByTestId('selection-list:session-mode-root:option-wrapper:default');
+        expect(clearChoice).toBeTruthy();
+        expect(nativeDefaultChoice).toBeTruthy();
+        const selectedState = (row: NonNullable<typeof clearChoice>) => row.findAll(
+            (node) => typeof node.props.accessibilityState?.selected === 'boolean',
+        )[0]?.props.accessibilityState.selected;
+        expect(selectedState(clearChoice!)).toBe(selectedModeId === null);
+        expect(selectedState(nativeDefaultChoice!)).toBe(selectedModeId === 'default');
+        await screen.pressByTestIdAsync('selection-list:session-mode-root:option');
+        expect(onAcpSessionModeChange).toHaveBeenCalledWith('');
+    });
+
+    it('cycles a small mapped native-mode list back to the permission setting', async () => {
+        const onAcpSessionModeChange = vi.fn();
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: '',
+            placeholder: 'placeholder',
+            onChangeText: () => {},
+            onSend: () => {},
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+            agentType: 'codebuddy',
+            metadata: { path: '/tmp', host: 'test-host', flavor: 'codebuddy' },
+            onAcpSessionModeChange,
+            acpSessionModeOptionsOverride: [
+                { id: 'default', name: 'Native Default' },
+                { id: 'plan', name: 'Plan' },
+            ],
+            acpSessionModeSelectedIdOverride: 'plan',
+        }));
+
+        await screen.pressByTestIdAsync('agent-input-session-mode-chip');
+        expect(onAcpSessionModeChange).toHaveBeenCalledWith('');
     });
 
     it('calls onAcpSessionModeChange when selecting a preflight ACP mode', async () => {
@@ -1725,21 +1750,6 @@ describe('AgentInput (modelOptionsOverride)', () => {
     it('uses the collapsed settings action as a launcher for the shared session mode popover', async () => {
         mockAgentInputActionBarLayout = 'collapsed';
         lastPopoverProps = null;
-        mockSessionModePickerControl = {
-            options: [
-                { id: 'build', name: 'Build', description: 'Default behavior' },
-                { id: 'plan', name: 'Plan', description: 'Think first' },
-            ],
-            currentModeId: 'build',
-            currentModeName: 'Build',
-            requestedModeId: null,
-            requestedModeName: null,
-            effectiveModeId: 'build',
-            effectiveModeName: 'Build',
-            isPending: false,
-            label: 'Build',
-            selectedId: 'build',
-        };
         const onAcpSessionModeChange = vi.fn();
 
         try {
@@ -1751,6 +1761,13 @@ describe('AgentInput (modelOptionsOverride)', () => {
                         autocompleteKinds: [],
                         autocompleteSuggestions: async () => [],
                         agentType: 'codex',
+                        metadata: {
+                            path: '/tmp', host: 'test-host', flavor: 'codex',
+                            sessionModesV1: { v: 1, provider: 'codex', updatedAt: 1, currentModeId: 'build', availableModes: [
+                                { id: 'build', name: 'Build', description: 'Default behavior' },
+                                { id: 'plan', name: 'Plan', description: 'Think first' },
+                            ] },
+                        },
                         permissionMode: 'default',
                         onPermissionModeChange: () => {},
                         onAcpSessionModeChange,
@@ -1768,29 +1785,14 @@ describe('AgentInput (modelOptionsOverride)', () => {
 
             expect(screen.findByTestId('agent-input-action-menu-overlay')).toBeNull();
             expect(screen.findByTestId('agent-input-selection-list-popover')).toBeNull();
-            expect(onAcpSessionModeChange).toHaveBeenCalledWith('plan');
+            expect(onAcpSessionModeChange).toHaveBeenCalledWith('build');
         } finally {
-            mockSessionModePickerControl = null;
             mockAgentInputActionBarLayout = 'wrap';
         }
     });
 
     it('renders preflight session mode controls for Claude even when static session modes exist', async () => {
         const onRefresh = vi.fn();
-        mockSessionModePickerControl = {
-            options: [
-                { id: 'default', name: 'Build', description: 'Default behavior' },
-                { id: 'plan', name: 'Plan', description: 'Think first' },
-            ],
-            currentModeId: 'default',
-            currentModeName: 'Build',
-            requestedModeId: null,
-            requestedModeName: null,
-            effectiveModeId: 'default',
-            effectiveModeName: 'Build',
-            isPending: false,
-        };
-
         const screen = await renderScreen(React.createElement(AgentInput, {
                     value: 'hello',
                     placeholder: 'placeholder',
@@ -1823,7 +1825,6 @@ describe('AgentInput (modelOptionsOverride)', () => {
         expect(screen.findByTestId('agent-input-agent-picker-refresh')).toBeNull();
         expect(screen.findByTestId('model-picker-overlay-refresh')).toBeTruthy();
 
-        mockSessionModePickerControl = null;
     });
 
     it('calls refresh handler for preflight ACP mode lists when provided', async () => {

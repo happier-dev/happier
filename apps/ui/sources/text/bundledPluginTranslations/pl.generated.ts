@@ -2,6 +2,7 @@
 import type { BundledPluginTranslationKey } from '../bundledPluginTranslations.generated';
 export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginTranslationKey, string>>> =
     Object.freeze({
+  "agentInput.agent.codebuddy": "CodeBuddy",
   "agentInput.agent.devin": "Devin",
   "agentInput.agent.droid": "Factory Droid",
   "agentInput.agent.fx": "FX",
@@ -2551,6 +2552,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.widget.noSources": "Połącz źródło, aby widzieć tu nowe pull requesty i zgłoszenia.",
   "plugins.triage.widget.retry": "Spróbuj ponownie",
   "plugins.triage.widget.setUp": "Skonfiguruj",
+  "profiles.aiBackend.codebuddySubtitleExperimental": "CodeBuddy Code CLI (eksperymentalne)",
   "profiles.aiBackend.devinSubtitleExperimental": "Devin CLI (eksperymentalne)",
   "profiles.aiBackend.droidSubtitleExperimental": "Factory Droid (eksperymentalne)",
   "profiles.aiBackend.fxSubtitleExperimental": "Agent kodowania FX (eksperymentalne)",
@@ -2558,6 +2560,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "profiles.aiBackend.kimiSubtitleExperimental": "Kimi CLI (eksperymentalne)",
   "session.subagents.panel.launchClaudeTeamsSubtitle": "Utwórz zespół lub uruchom członka zespołu za pomocą uporządkowanych poleceń zespołów Claude.",
   "session.subagents.panel.launchTeammateAction": "Uruchom członka zespołu",
+  "sessionInfo.codebuddySessionId": "ID sesji CodeBuddy",
+  "sessionInfo.codebuddySessionIdCopied": "ID sesji CodeBuddy skopiowane do schowka",
   "sessionInfo.devinSessionId": "Identyfikator sesji Devin",
   "sessionInfo.devinSessionIdCopied": "Skopiowano identyfikator sesji Devin",
   "sessionInfo.droidSessionId": "Identyfikator sesji Droid",
@@ -2568,6 +2572,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "sessionInfo.grokSessionIdCopied": "Skopiowano identyfikator sesji Grok",
   "sessionInfo.kimiSessionId": "Identyfikator sesji Kimi",
   "sessionInfo.kimiSessionIdCopied": "Skopiowano identyfikator sesji Kimi",
+  "settingsAgents.plugins.codebuddy.title": "CodeBuddy",
   "settingsAgents.plugins.devin.title": "Devin",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.subtitle": "Opcjonalny katalog główny danych Oh My Pi. Pozostaw puste, aby użyć ~/.omp/agent.",
   "settingsAgents.plugins.ohmypi.fields.ohMyPiAgentDir.title": "Katalog agenta",

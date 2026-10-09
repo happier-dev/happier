@@ -22,6 +22,7 @@ export const AGENT_IDS = Object.freeze([
   'devin',
   'fx',
   'droid',
+  'codebuddy',
   'cursor',
   'ohMyPi',
   'pi',
@@ -109,6 +110,10 @@ export const BUNDLED_AGENT_CONTRIBUTION_IDENTITIES: Readonly<Record<
   'droid': Object.freeze({
     pluginId: 'happier.agent.droid',
     localId: 'droid',
+  }),
+  'codebuddy': Object.freeze({
+    pluginId: 'happier.agent.codebuddy',
+    localId: 'codebuddy',
   }),
   'cursor': Object.freeze({
     pluginId: 'happier.agent.cursor',

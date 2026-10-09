@@ -774,6 +774,16 @@ session composer used by normal Sessions and Session-adapted execution runs. A `
 mapping deliberately performs no mode request, preserving the Agent's own configured default; this
 policy remains plugin-owned data rather than an Agent-id branch in the host.
 
+`createPublicAcpSession` is the single configuration owner for create, resume,
+fork and live updates. It resolves the merged native-mode override before the
+permission mapping: explicit mode wins, clearing selects the current mapped
+permission intent, and a null mapping leaves the reported native policy intact.
+Mapped live permission changes use ACP `session/set_mode`; launch-only permission
+arguments still require restart. Host-mediated tool permission enforcement stays
+separate. The bundled UI generator derives the same mapping from the admitted
+Agent runtime declaration, and the existing permission description consumes that
+fact with the canonical current/requested/pending session-mode projection.
+
 Two further declarations stay data-only for the same reason as the rest: a Session opened by the
 out-of-process Session runner rebuilds its runtime from the attested manifest and never loads plugin
 code, so behavior expressed as a plugin callback would silently disappear on that path.
@@ -934,17 +944,19 @@ Prefer:
 
 If you need variants, use `flavorAliases` (and keep canonical ids stable).
 
-### Step 1 — add/extend the canonical manifest (`@happier-dev/agents`)
+### Step 1 — author the shared Agent definition in its plugin
 
-Edit:
-- `packages/agents/src/manifest.ts`
+For a bundled Agent, edit `packages/plugins/<agentId>/src/agent/definition.ts`.
+The bundled-plugin generator projects that definition into `@happier-dev/agents`;
+`packages/agents/src/manifest.ts` consumes the projection and is not an authoring
+table. Do not hand-edit generated definitions or add a parallel resume-key list.
 
-Add/update:
+Declare the applicable shared facts:
 - `id`, `cliSubcommand`, `detectKey`
 - `flavorAliases` (if needed)
-- `localCli.ts` metadata when the agent has a local CLI/auth surface
-- `auth.ts` declarative probe metadata when the auth status can be described centrally
-- `acp.ts` built-in ACP metadata when the built-in agent runs through generic ACP
+- local CLI/auth metadata when the agent has that surface
+- declarative auth probe metadata when the auth status can be described declaratively
+- ACP metadata when the bundled agent runs through generic ACP
 - `resume.vendorResume` (`supported | unsupported | experimental`)
 - `resume.vendorResumeIdField` (optional)
 - `cloudConnect` (optional)
@@ -965,7 +977,7 @@ Common files (as needed):
 If the built-in agent is generic ACP-backed, do not add a bespoke plugin runtime leaf just to shell out to ACP.
 
 Instead:
-- add its built-in metadata in `@happier-dev/agents`
+- declare its shared definition and ACP transport in its plugin, then regenerate the bundled projections
 - let `apps/cli/src/agent/acp/catalog/**` instantiate it generically
 
 Configured user-defined ACP backends/presets do not become `AgentId`s.

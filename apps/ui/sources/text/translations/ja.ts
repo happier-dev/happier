@@ -9383,6 +9383,7 @@ localTailscale: {
       }) => `${title}: ${prefix}…${suffix}`,
     },
     permissionMode: {
+      usePermissionSetting: '権限設定を使用',
       nativeModeOverrides: ({ mode }: { mode: string }) => `エージェントモード ${mode} は承認設定を上書きします。権限設定を使うにはモードの上書きを解除してください。`,
       title: "権限モード",
       effectiveLabel: ({ label }: { label: string }) => `適用中: ${label}`,

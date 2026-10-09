@@ -42,7 +42,7 @@ import {
     type AcpConfigOptionControl,
     type SessionConfigOptionInput,
 } from '@/sync/domains/sessionControl/configOptionsControl';
-import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/sessionModeControl';
+import { computeSessionModePickerControl, getSessionModePickerOptions, resolveRequestedSessionModeIdForMetadata } from '@/sync/domains/sessionControl/sessionModeControl';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { t } from '@/text';
@@ -163,8 +163,8 @@ export function useSessionAuthoringControls(
     }, [agentId, input.permissionMode, metadata, sessionPermissionModeApplyTiming]);
 
     const effectivePermissionLabel = React.useMemo(() => {
-        return getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-    }, [agentId, effectivePermissionPolicy.effectiveMode]);
+        return effectivePermissionPolicy.nativeModeLabel ?? getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
+    }, [agentId, effectivePermissionPolicy.effectiveMode, effectivePermissionPolicy.nativeModeLabel]);
 
     const permissionChipLabel = React.useMemo(() => {
         return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
@@ -253,21 +253,28 @@ export function useSessionAuthoringControls(
         const selected = typeof input.acpSessionModeSelectedIdOverride === 'string'
             ? input.acpSessionModeSelectedIdOverride.trim()
             : '';
-        const effectiveId = selected || 'default';
-        const option = preflightAcpSessionModeOptions?.find((candidate) => candidate.id === effectiveId) ?? null;
+        const pickerOptions = preflightAcpSessionModeOptions
+            ? getSessionModePickerOptions(preflightAcpSessionModeOptions, agentId)
+            : [];
+        const effectiveId = selected || (pickerOptions.some((option) => option.id === '') ? '' : 'default');
+        const option = pickerOptions.find((candidate) => candidate.id === effectiveId) ?? null;
         return {
             id: effectiveId,
             name: option?.name ?? (effectiveId === 'default' ? t('common.default') : effectiveId),
         };
-    }, [input.acpSessionModeSelectedIdOverride, preflightAcpSessionModeOptions]);
+    }, [agentId, input.acpSessionModeSelectedIdOverride, preflightAcpSessionModeOptions]);
 
     const sessionModeChipControl = React.useMemo<SessionAuthoringSessionModeChipControl | null>(() => {
         if (!canChangeSessionMode) return null;
         if (sessionModePickerControl) {
+            const clearOption = sessionModePickerControl.isExplicitOverride ? undefined
+                : getSessionModePickerOptions(sessionModePickerControl.options, agentId).find((option) =>
+                    resolveRequestedSessionModeIdForMetadata(sessionModePickerControl, option.id) === '');
             return {
                 options: sessionModePickerControl.options,
                 selectedId: (
-                    sessionModePickerControl.requestedModeId
+                    clearOption?.id
+                    ?? sessionModePickerControl.requestedModeId
                     ?? sessionModePickerControl.effectiveModeId
                 ),
                 label: sessionModePickerControl.effectiveModeName,
@@ -284,6 +291,7 @@ export function useSessionAuthoringControls(
         }
         return null;
     }, [
+        agentId,
         canChangeSessionMode,
         preflightAcpSessionModeEffective.id,
         preflightAcpSessionModeEffective.name,
@@ -293,19 +301,12 @@ export function useSessionAuthoringControls(
 
     const sessionModePickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
         if (!sessionModeChipControl) return [];
-        const optionsById = new Map(sessionModeChipControl.options.map((option) => [option.id, option]));
-        const uniqueIds = Array.from(
-            new Set([
-                'default',
-                ...sessionModeChipControl.options.map((option) => option.id).filter((id) => id && id !== 'default'),
-            ]),
-        );
-        return uniqueIds.map((id) => ({
-            id,
-            label: optionsById.get(id)?.name ?? (id === 'default' ? t('common.default') : id),
-            subtitle: optionsById.get(id)?.description,
+        return getSessionModePickerOptions(sessionModeChipControl.options, agentId).map((option) => ({
+            id: option.id,
+            label: option.name,
+            subtitle: option.description,
         }));
-    }, [sessionModeChipControl]);
+    }, [agentId, sessionModeChipControl]);
 
     const shouldRenderSessionModeChip = React.useMemo(() => {
         return shouldRenderChipForOptions({
@@ -321,17 +322,13 @@ export function useSessionAuthoringControls(
 
     const sessionModeChipInteraction = React.useMemo(() => {
         if (!sessionModeChipControl) return null;
-        const selectableOptionIds = Array.from(new Set(
-            sessionModeChipControl.options
-                .map((option) => option.id?.trim?.() ?? option.id)
-                .filter((id): id is string => typeof id === 'string' && id.length > 0),
-        ));
+        const selectableOptionIds = sessionModePickerOptions.map((option) => option.id);
         return resolveChipOptionInteraction({
             currentOptionId: sessionModeChipControl.selectedId,
             selectableOptionIds,
             cycleMaxOptions: DEFAULT_OPTION_CHIP_CYCLE_MAX_OPTIONS,
         });
-    }, [sessionModeChipControl]);
+    }, [sessionModeChipControl, sessionModePickerOptions]);
 
     const acpConfigOptionControls = React.useMemo(() => {
         if (!canChangeConfigOption) return null;

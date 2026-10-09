@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveRequestedSessionModeId } from '@happier-dev/protocol/actions/sessionModeIds';
 import { View, useWindowDimensions } from 'react-native';
 
 import { AgentInput } from '@/components/sessions/agentInput';
@@ -191,7 +192,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         acpSessionModeOptionsOverrideProbe={props.acpSessionModeProbe}
                         onAcpSessionModeChange={
                             (props.acpSessionModeOptions?.length ?? 0) > 0 && props.setAcpSessionModeId
-                                ? (modeId) => props.setAcpSessionModeId?.(modeId === 'default' ? null : modeId)
+                                ? (modeId) => props.setAcpSessionModeId?.(resolveRequestedSessionModeId(modeId, props.acpSessionModeOptions) || null)
                                 : undefined
                         }
                         acpConfigOptionsOverride={props.acpConfigOptions}

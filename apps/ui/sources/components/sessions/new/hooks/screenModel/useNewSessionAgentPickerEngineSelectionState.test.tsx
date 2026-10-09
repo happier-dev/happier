@@ -8,18 +8,20 @@ import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
 import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
 
-function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi', title: string): ResolvedBackendCatalogEntry {
+function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi' | 'gemini', title: string): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId };
+    const agentId = `happier.agent.${backendId}/${backendId}`;
+    const agentCatalogEntry = createResolvedAgentCatalogEntryFixture({ agentId: backendId });
     return {
-        agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: backendId }),
+        agentCatalogEntry,
         backendTarget,
         backendTargetKey: formatBackendTargetKeyV2(backendTarget),
         kind: 'builtInAgent',
         backendId,
-        agentId: backendId,
-        catalogAgentId: backendId as any,
-        builtInAgentId: backendId as any,
-        iconAgentId: backendId as any,
+        agentId,
+        catalogAgentId: agentCatalogEntry.catalogAgentId,
+        builtInAgentId: agentCatalogEntry.catalogAgentId,
+        iconAgentId: agentCatalogEntry.catalogAgentId,
         title,
         subtitle: null,
         cliAuthBackgroundCheckSafe: false,
@@ -146,6 +148,42 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
             .toEqual(providerSelection);
     });
 
+    it.each([null, 'default'] as const)('preserves remembered mode %s without inventing an override for a fresh engine', async (sessionModeId) => {
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude');
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex');
+        const kimiEntry = createBuiltInBackendEntry('kimi', 'Kimi');
+        const hook = await renderHook(() => useNewSessionAgentPickerEngineSelectionState({
+            selectedBackendEntry: claudeEntry,
+            selectedBackendTargetKey: claudeEntry.backendTargetKey,
+            modelMode: 'default',
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            setBackendTarget: vi.fn(),
+            setModelMode: vi.fn(),
+            setAcpSessionModeId: vi.fn(),
+            setSessionConfigOptionOverrides: vi.fn(),
+            rememberEngineSelectionsEnabled: true,
+            rememberedEngineSelectionServerId: 'server-1',
+            rememberedEngineSelectionsByScope: {
+                [`server-1:${codexEntry.backendTargetKey}`]: {
+                    v: 1,
+                    modelSelection: null,
+                    acpSessionModeId: sessionModeId,
+                    updatedAt: 123,
+                },
+            },
+        }));
+
+        expect(hook.getCurrent().getEngineSelectionForTargetKey(claudeEntry.backendTargetKey).sessionModeId).toBeNull();
+        expect(hook.getCurrent().getEngineSelectionForTargetKey(codexEntry.backendTargetKey)).toEqual({
+            modelId: 'default',
+            modelSelection: null,
+            sessionModeId,
+            configOverrides: {},
+        });
+        expect(hook.getCurrent().getEngineSelectionForTargetKey(kimiEntry.backendTargetKey).sessionModeId).toBeNull();
+    });
+
     it('hydrates non-focused engine selections from remembered account preferences', async () => {
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude');
         const codexEntry = createBuiltInBackendEntry('codex', 'Codex');
@@ -258,7 +296,7 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
 
     it('clears ACP session mode when selecting a backend that does not expose session modes', async () => {
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude');
-        const kimiEntry = createBuiltInBackendEntry('kimi', 'Kimi');
+        const geminiEntry = createBuiltInBackendEntry('gemini', 'Gemini');
         const setAcpSessionModeId = vi.fn();
         const onRememberEngineSelection = vi.fn();
 
@@ -275,21 +313,21 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
             onRememberEngineSelection,
         } as any));
 
-        hook.getCurrent().selectEngineSelection(kimiEntry, {
-            modelId: 'kimi-code/kimi-for-coding',
+        hook.getCurrent().selectEngineSelection(geminiEntry, {
+            modelId: 'gemini-3-pro',
             sessionModeId: 'default',
             configOverrides: {},
         });
 
         expect(setAcpSessionModeId).toHaveBeenCalledWith(null);
-        expect(onRememberEngineSelection).toHaveBeenCalledWith(kimiEntry.backendTarget, {
+        expect(onRememberEngineSelection).toHaveBeenCalledWith(geminiEntry.backendTarget, {
             modelSelection: {
                 v: 1,
                 updatedAt: expect.any(Number),
                 ref: {
-                    agentTargetKey: kimiEntry.backendTargetKey,
+                    agentTargetKey: geminiEntry.backendTargetKey,
                     providerConnectionId: null,
-                    modelId: 'kimi-code/kimi-for-coding',
+                    modelId: 'gemini-3-pro',
                 },
             },
             acpSessionModeId: null,

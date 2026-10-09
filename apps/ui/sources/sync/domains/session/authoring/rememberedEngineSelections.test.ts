@@ -162,6 +162,24 @@ describe('remembered engine selections', () => {
         })?.modelSelection).toBeNull();
     });
 
+    it.each([null, 'default'] as const)('round-trips native mode %s independently of automatic model selection', (acpSessionModeId) => {
+        const written = upsertRememberedEngineSelection({
+            selectionsByScope: {},
+            serverId: 'server-a',
+            backendTarget: codexTarget,
+            selection: { modelSelection: null, acpSessionModeId },
+            updatedAt: 52,
+        });
+        const restored = readRememberedEngineSelection({
+            enabled: true,
+            selectionsByScope: RememberedEngineSelectionsByScopeV1Schema.parse(written),
+            serverId: 'server-a',
+            backendTarget: codexTarget,
+        });
+        expect(restored?.acpSessionModeId).toBe(acpSessionModeId);
+        expect(restored?.modelSelection).toBeNull();
+    });
+
     it('preserves provider connection identity and refuses a different target', () => {
         const modelSelection = SessionModelSelectionV1Schema.parse({
             v: 1,

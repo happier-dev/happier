@@ -15,6 +15,18 @@ describe('chipOptionInteraction', () => {
         });
     });
 
+    it('cycles to an explicit empty clear choice', () => {
+        expect(resolveChipOptionInteraction({
+            currentOptionId: 'plan',
+            selectableOptionIds: ['', 'default', 'plan'],
+            cycleMaxOptions: 3,
+        })).toEqual({
+            kind: 'cycle',
+            selectableOptionIds: ['', 'default', 'plan'],
+            nextOptionId: '',
+        });
+    });
+
     it('opens picker when selectable options exceed the cycle threshold', () => {
         expect(resolveChipOptionInteraction({
             currentOptionId: 'claude',
