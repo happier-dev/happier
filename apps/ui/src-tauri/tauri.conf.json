@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Happier",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "identifier": "dev.happier.app",
   "build": {
     "frontendDist": "../dist",

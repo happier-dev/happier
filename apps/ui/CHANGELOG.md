@@ -1,5 +1,21 @@
 # Changelog
 
+## Release 2026-10-09.1 - 2026-10-09
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": { "message": "Remote machine setup over SSH now works on a fresh machine that is not yet signed in. Fix connections to stable OpenCode servers. Claude permission changes apply during running sessions, and delivered cross-session messages are visible." },
+  "appStore": { "whatsNew": "Remote machine setup over SSH now works on a fresh machine that is not yet signed in. Fix connections to stable OpenCode servers. Claude permission changes apply during running sessions, and delivered cross-session messages are visible." },
+  "playStore": { "whatsNew": "Remote machine setup over SSH now works on a fresh machine that is not yet signed in. Fix connections to stable OpenCode servers. Claude permission changes apply during running sessions, and delivered cross-session messages are visible." }
+}
+-->
+
+### Reliability
+
+- Remote machine setup over SSH now works on a fresh machine that is not yet signed in.
+- Fix connections to stable OpenCode servers.
+- Claude permission changes apply during running sessions, and delivered cross-session messages are visible.
+
 ## Release 2026-10-07.1 - 2026-10-07
 
 <!-- happier-release-note-projections:v1
