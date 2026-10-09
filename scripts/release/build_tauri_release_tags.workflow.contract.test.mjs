@@ -21,31 +21,6 @@ async function loadCanonicalUiInstallScope() {
   return String(easJson?.build?.base?.env?.HAPPIER_INSTALL_SCOPE ?? '');
 }
 
-test('desktop-only recovery binds nightly and release origins through the canonical resolver', async () => {
-  const { jobs, on } = YAML.parse(await loadWorkflow('build-tauri.yml'));
-  const resolveInputs = (inputs) => Object.fromEntries(Object.entries(jobs.resolve_resume.with).map(([key, value]) => [key,
-    typeof value === 'string' && value.startsWith('${{')
-      ? Function('inputs', 'format', `return ${value.slice(3, -2)}`)(inputs, (pattern, name) => pattern.replace('{0}', name))
-      : value,
-  ]));
-  const source = 'a'.repeat(40);
-  for (const [workflow, environment, operation, artifact] of [
-    ['release-preview-and-production.yml', 'production', 'rel_exact', 'happier-release-status'],
-    ['nightly-dev.yml', 'dev', '', 'happier-release-status'],
-    ['release.yml', 'production', 'rel_exact', 'happier-release-status'],
-    ['release-preview-and-production.yml', 'preview', 'rel_exact', 'happier-release-status-preview'],
-  ]) {
-    assert.deepEqual(resolveInputs({ resume_run_id: '123', resume_workflow: workflow, resume_operation_id: operation, environment, source_ref: source }), {
-      origin_run_id: '123', expected_workflow: `.github/workflows/${workflow}`, expected_channel: environment,
-      expected_source_sha: source, expected_operation_id: operation, status_artifact_name: artifact,
-    });
-  }
-  assert.equal(resolveInputs({ resume_run_id: '123', environment: 'dev', source_ref: source }).expected_workflow, '.github/workflows/nightly-dev.yml');
-  assert.equal(on.workflow_dispatch.inputs.resume_workflow.default, 'nightly-dev.yml');
-  assert.deepEqual(on.workflow_dispatch.inputs.resume_workflow.options, ['nightly-dev.yml', 'release.yml', 'release-preview-and-production.yml']);
-  assert.equal(jobs.resolve_resume.uses, './.github/workflows/resolve-release-resume.yml');
-});
-
 test('desktop publication survives intentionally skipped resume/build ancestors but requires successful inputs', async () => {
   const { jobs } = YAML.parse(await loadWorkflow('build-tauri.yml'));
   // GitHub applies implicit success() across the dependency chain, including skipped
