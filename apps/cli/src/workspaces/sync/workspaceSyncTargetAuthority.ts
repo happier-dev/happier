@@ -67,6 +67,7 @@ import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/
 import type {
   WorkspaceExportMaterializationCustody,
   WorkspaceTargetMaterializationFence,
+  WorkspaceTargetMaterializationWorkerCopyCreation,
 } from '@/scm/workspace/workspaceExportMaterialization';
 import {
   createFirstBytesLocalCapability,
@@ -507,6 +508,27 @@ async function resolveEnabledRelationshipReplayTarget(input: Readonly<{
   return targetCanonicalRoot === input.canonicalRoot
     ? { relationship: matches[0]!, target }
     : null;
+}
+
+/** Initial materialization and recovery share the receiving target's persisted Home proof. */
+function resolvePersistedWorkerCopyCreation(
+  snapshot: ActiveProjectAccountRowsSnapshot | null,
+  relationship: WorkspaceSyncRelationshipV1 | null,
+  sourceWorkspaceRefId: string,
+  targetWorkspaceRefId: string,
+  serverId: string,
+): WorkspaceTargetMaterializationWorkerCopyCreation | undefined {
+  if (!relationship) return undefined;
+  const matches = snapshot?.relationships.filter(candidate => candidate.relationshipId === relationship.relationshipId) ?? [];
+  const persisted = matches.length === 1 ? matches[0] : undefined;
+  const workerCopy = persisted && getWorkspaceSyncWorkerCopyV1(persisted);
+  if (!persisted || !workerCopy
+    || !areWorkspaceSyncRelationshipDefinitionsEqual(persisted, relationship)
+    || !areWorkspaceSyncWorkerCopyProvenancesEqual(persisted, relationship)
+    || workerCopy.sourceWorkspaceRefId !== sourceWorkspaceRefId
+    || workerCopy.targetWorkspaceRefId !== targetWorkspaceRefId) return undefined;
+  return { serverId, relationshipId: persisted.relationshipId,
+    sourceWorkspaceRefId: workerCopy.sourceWorkspaceRefId, targetWorkspaceRefId: workerCopy.targetWorkspaceRefId };
 }
 
 /**
@@ -1228,6 +1250,8 @@ export function createWorkspaceSyncTargetAuthority(
     targetWorkspace: WorkspaceRefV1;
     sourceWorkspace: WorkspaceRefV1;
     recoverMaterializationOnly?: boolean;
+    /** The exact current invocation's Home rows, when they differ from daemon custody. */
+    projectSnapshot?: ActiveProjectAccountRowsSnapshot | null;
   }>): Promise<RetainedBootstrap | null> => {
     if (!bootstrap || input.targetWorkspace.machineId.trim() !== localMachineId) return null;
     assertLocalWorkspacePlacement(input.targetWorkspace, localServerId, localMachineId);
@@ -1243,6 +1267,10 @@ export function createWorkspaceSyncTargetAuthority(
         await commitPublishedMaterializationCustody(existing);
         return existing;
       }
+      const workerCopyCreation = resolvePersistedWorkerCopyCreation(
+        input.projectSnapshot === undefined ? getSnapshot() : input.projectSnapshot,
+        input.relationship, input.sourceWorkspace.id, input.targetWorkspace.id, localServerId,
+      );
       const prepared = await rehydrateWorkspaceSyncTargetBootstrap({
         rootPath: input.targetWorkspace.rootPath,
         relationshipId: input.relationship.relationshipId,
@@ -1250,6 +1278,7 @@ export function createWorkspaceSyncTargetAuthority(
         targetWorkspaceRefId: input.targetWorkspace.id,
         policyDigest: input.relationship.contentPolicy.policyDigest,
         contentSelection: input.relationship.contentPolicy.selection,
+        ...(workerCopyCreation ? { workerCopyCreation } : {}),
         materializationDirectory: bootstrap.materializationDirectory,
         rootOwnershipManager: bootstrap.rootOwnershipManager,
         ...(input.recoverMaterializationOnly ? { requireMaterializationReceipt: true } : {}),
@@ -2507,16 +2536,8 @@ export function createWorkspaceSyncTargetAuthority(
       assertLocalWorkspacePlacement(owner.targetWorkspace, localServerId, localMachineId);
       // resolveBootstrapOwner may use a caller's transient runtime definition. Only
       // the receiving target's already-staged Home row can prove original creation.
-      const persistedRelationship = invocationSnapshot?.relationships.find(relationship => relationship.relationshipId === owner.relationshipId);
-      const persistedWorkerCopy = persistedRelationship && getWorkspaceSyncWorkerCopyV1(persistedRelationship);
-      const workerCopyCreation = persistedRelationship && persistedWorkerCopy && owner.relationship
-        && areWorkspaceSyncRelationshipDefinitionsEqual(persistedRelationship, owner.relationship)
-        && areWorkspaceSyncWorkerCopyProvenancesEqual(persistedRelationship, owner.relationship)
-        && persistedWorkerCopy.sourceWorkspaceRefId === owner.sourceWorkspaceRefId
-        && persistedWorkerCopy.targetWorkspaceRefId === owner.targetWorkspaceRefId
-        ? { serverId: localServerId, relationshipId: persistedRelationship.relationshipId,
-          sourceWorkspaceRefId: persistedWorkerCopy.sourceWorkspaceRefId, targetWorkspaceRefId: persistedWorkerCopy.targetWorkspaceRefId }
-        : undefined;
+      const workerCopyCreation = resolvePersistedWorkerCopyCreation(invocationSnapshot, owner.relationship,
+        owner.sourceWorkspaceRefId, owner.targetWorkspaceRefId, localServerId);
       const localSourceRootPath = owner.sourceMachineId === localMachineId ? owner.sourceRootPath : undefined;
       if (owner.sourceMachineId === localMachineId && localSourceRootPath === undefined) {
         throw authorityError('workspace_ref_not_ready', 'The local source root is unavailable');
@@ -2616,6 +2637,7 @@ export function createWorkspaceSyncTargetAuthority(
           if (!owner.sourceWorkspace) throw authorityError('workspace_ref_not_ready', 'The relationship source is unavailable');
           const rehydrated = await rehydrateRelationshipEndpoint({
             relationship: owner.relationship,
+            projectSnapshot: invocationSnapshot,
             endpointRole: owner.endpointRole,
             targetWorkspace: owner.targetWorkspace,
             sourceWorkspace: owner.sourceWorkspace,
