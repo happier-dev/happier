@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createStore } from 'zustand/vanilla';
 import { buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { createProjectAccountRowsDomain, readProjectWorkspaceRefs, type ProjectAccountRowsDomain, type ProjectAccountRowsSnapshot } from './projectAccountRows';
+import { createProjectAccountRowsDomain, readMachineFreshCopies, readProjectWorkspaceRefs, type ProjectAccountRowsDomain, type ProjectAccountRowsSnapshot } from './projectAccountRows';
 
 const scope = { serverId: 'home-a', accountId: 'account-a' };
 function snapshot(): ProjectAccountRowsSnapshot {
@@ -14,6 +14,61 @@ function snapshot(): ProjectAccountRowsSnapshot {
 function store() { return createStore<ProjectAccountRowsDomain>()((set, get) => createProjectAccountRowsDomain({ set, get })); }
 
 describe('Project Account row projection', () => {
+    it('reads Machine fresh copies only from canonical worker provenance and its exact target direction', () => {
+        const state = store();
+        const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const ordinary: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'ordinary', controllerMachineId: 'machine-a',
+            alphaWorkspaceRefId: 'ref-a', betaWorkspaceRefId: 'ref-b', mode: 'keep_synced', enabled: true,
+            contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 };
+        const forward: WorkspaceSyncRelationshipV1 = { ...ordinary, relationshipId: 'worker-forward',
+            provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'ref-a', targetWorkspaceRefId: 'ref-b' } };
+        const reversedEndpoints: WorkspaceSyncRelationshipV1 = { ...forward, relationshipId: 'worker-reversed-endpoints',
+            alphaWorkspaceRefId: 'ref-b', betaWorkspaceRefId: 'ref-a' };
+        const oppositeTarget: WorkspaceSyncRelationshipV1 = { ...forward, relationshipId: 'worker-opposite-target',
+            provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'ref-b', targetWorkspaceRefId: 'ref-a' } };
+        const rows = { ...snapshot(), relationships: [ordinary, forward, reversedEndpoints, oppositeTarget] };
+        state.getState().activateProjectAccountRowsScope(scope);
+        state.getState().applyProjectAccountRowsForScope(scope, rows);
+        const current = state.getState().projectAccountRows!;
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' }))
+            .toEqual([forward, reversedEndpoints].map(relationship => ({ relationship,
+                source: current.workspaceRefs[0], target: current.workspaceRefs[1] })));
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-a' }))
+            .toEqual([{ relationship: oppositeTarget, source: current.workspaceRefs[1], target: current.workspaceRefs[0] }]);
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'unrelated-machine' })).toEqual([]);
+    });
+    it('keeps Fresh-copy observation unknown for incomplete, failed or retired Account/Home rows', () => {
+        const state = store();
+        state.getState().activateProjectAccountRowsScope(scope);
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
+        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), coverage: 'partial' });
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
+        state.getState().applyProjectAccountRowsForScope(scope, snapshot());
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toEqual([]);
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: { ...scope, accountId: 'retired-account' } },
+            { scope, machineId: 'machine-b' })).toBeNull();
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope },
+            { scope: { ...scope, serverId: 'another-home' }, machineId: 'machine-b' })).toBeNull();
+        state.getState().setProjectAccountRowsStatusForScope(scope, 'error');
+        expect(state.getState().projectAccountRows?.workspaceRefs).toHaveLength(2);
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
+    });
+    it('does not turn an unresolved marked source or target into an authoritative empty Fresh-copy list', () => {
+        const state = store();
+        const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const relationship: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'worker-copy', controllerMachineId: 'machine-a',
+            alphaWorkspaceRefId: 'ref-a', betaWorkspaceRefId: 'ref-b', mode: 'keep_synced', enabled: true,
+            contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1,
+            provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'ref-a', targetWorkspaceRefId: 'ref-b' } };
+        state.getState().activateProjectAccountRowsScope(scope);
+        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), workspaceRefs: [snapshot().workspaceRefs[0]!], relationships: [relationship] });
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
+        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), workspaceRefs: [snapshot().workspaceRefs[1]!], relationships: [relationship] });
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
+        state.getState().applyProjectAccountRowsForScope(scope, { ...snapshot(), workspaceRefs: [snapshot().workspaceRefs[0]!,
+            { ...snapshot().workspaceRefs[1]!, serverId: 'unrelated-home' }], relationships: [relationship] });
+        expect(readMachineFreshCopies({ ...state.getState(), profileScope: scope }, { scope, machineId: 'machine-b' })).toBeNull();
+    });
     it('isolates Home/Account switches and refuses responses for a retired scope', () => {
         const state = store();
         state.getState().activateProjectAccountRowsScope(scope);
