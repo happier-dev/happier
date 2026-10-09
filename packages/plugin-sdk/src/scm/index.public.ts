@@ -1,4 +1,6 @@
 export type { PluginScmRegistrationApi } from './projections.js';
+export type { ScmEntryHistoryV1, ScmHistoryEntriesInputV1, ScmHistoryEntriesOutputV1, ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from './projections.js';
+export { ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from './projections.js';
 export { SCM_COMMIT_MESSAGE_MAX_LENGTH } from './projections.js';
 export { SCM_COMMIT_PATCH_MAX_COUNT } from './projections.js';
 export { SCM_COMMIT_PATCH_MAX_LENGTH } from './projections.js';

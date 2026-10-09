@@ -33,6 +33,8 @@ import type {
     ScmHostingRepositoryPublishResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmHistoryEntriesRequest,
+    ScmHistoryEntriesResponse,
     ScmPullRequestGetRequest,
     ScmPullRequestGetResponse,
     ScmPullRequestListRequest,
@@ -169,6 +171,7 @@ export type ScmBackendCapabilities = {
         diffFile?: ScmBackendCapabilityLeaf;
         diffCommit?: ScmBackendCapabilityLeaf;
         log?: ScmBackendCapabilityLeaf;
+        historyEntries?: ScmBackendCapabilityLeaf;
         branches?: ScmBackendCapabilityLeaf;
         stash?: ScmBackendCapabilityLeaf;
         defaultBranch?: ScmBackendCapabilityLeaf;
@@ -552,6 +555,9 @@ export type BackendRuntimeHandlers = Readonly<{
         logList?: (
             input: BackendRuntimeHandlerInput<ScmLogListRequest>
         ) => Promise<ScmLogListResponse> | ScmLogListResponse;
+        historyEntries?: (
+            input: BackendRuntimeHandlerInput<ScmHistoryEntriesRequest>
+        ) => Promise<ScmHistoryEntriesResponse> | ScmHistoryEntriesResponse;
         stashList?: (
             input: BackendRuntimeHandlerInput<ScmStashListRequest>
         ) => Promise<ScmStashListResponse> | ScmStashListResponse;

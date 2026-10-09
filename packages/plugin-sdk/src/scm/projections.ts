@@ -14,6 +14,17 @@ import { ScmComparisonSourceProtocolSchema as canonicalScmComparisonSourceProtoc
 import type { ScmComparison, ScmComparisonSource as CanonicalScmComparisonSource } from '@happier-dev/protocol/scm';
 import type { JsonValue, PluginContributionRef } from '../identity.js';
 import type { ProtocolComposableSchema } from '../protocol/index.js';
+import { ScmHistoryEntriesInputV1Schema as canonicalHistoryInput, ScmHistoryEntriesResponseSchema as canonicalHistoryResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
+export type { ScmEntryHistoryV1, ScmHistoryEntriesInputV1, ScmHistoryEntriesOutputV1, ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
+import type { ScmHistoryEntriesRequest, ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
+export const ScmHistoryEntriesInputV1Schema: {
+    parse(value: unknown): ScmHistoryEntriesRequest;
+    safeParse(value: unknown): { success: true; data: ScmHistoryEntriesRequest } | { success: false; error: unknown };
+} = canonicalHistoryInput;
+export const ScmHistoryEntriesResponseSchema: {
+    parse(value: unknown): ScmHistoryEntriesResponse;
+    safeParse(value: unknown): { success: true; data: ScmHistoryEntriesResponse } | { success: false; error: unknown };
+} = canonicalHistoryResponse;
 
 export type { ScmComparison } from '@happier-dev/protocol/scm';
 /** Declaration-neutral projection; the portable Protocol parser is the sole validator. */
@@ -178,6 +189,7 @@ export type ScmCapabilities = {
     readDiffFile: boolean;
     readDiffCommit: boolean;
     readLog: boolean;
+    readHistoryEntries?: boolean;
     readBranches?: boolean;
     readStash?: boolean;
     writeStashCreate?: boolean;
