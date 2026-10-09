@@ -18,13 +18,143 @@ import {
   type AccountSettingsVoiceCredentialSourceMutation,
 } from './savedSecretMutationOwner.js';
 import { VoiceProviderContributionSchema } from '../../plugins/contributions/voiceProviders.js';
-import { SAVED_SECRET_COLLECTION_MAX_ENTRIES } from '../../profiles/backendProfileSchema.js';
+import { LegacyVoiceCredentialBindingV1Schema, VoiceCredentialBindingV1Schema } from '../../voice/realtime/providerSettings.js';
+import { SAVED_SECRET_COLLECTION_MAX_ENTRIES, SavedSecretSchema } from '../../profiles/backendProfileSchema.js';
 import { accountSettingsParse } from './accountSettings.js';
 import { ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES } from './catalog/accountSettingBounds.js';
 import { ProfileRecordV1Schema } from '../../profiles/profileRecordV1.js';
 import * as savedSecretOwner from './savedSecretMutationOwner.js';
 import type { ArtifactSharingResourceV1 } from '../../artifacts/artifactSharingV1.js';
 import { ProfileTransferControlV1Schema } from '../../profiles/profileTransferV1.js';
+import { McpServerCatalogV1Schema } from '../../mcp/servers/serverRowsV1.js';
+import { AcpCatalogRecordV1Schema } from '../../acp/catalog/catalogRowsV1.js';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '../../providers/connections/connectionRowsV1.js';
+import { ConnectedConfigurationCatalogV1Schema } from '../../connect/connectedAccountConfigurationRowsV1.js';
+import { NotificationChannelCatalogRecordV1Schema } from './notificationChannelSchemasV1.js';
+import { SecretStringV1Schema } from '../../crypto/settingsSecretStringSchemasV1.js';
+
+describe('notification signing-secret source identity', () => {
+  it('uses the exact Account and stable channel identity for resource preparation', () => {
+    const first = savedSecretOwner.deriveSavedSecretImportResourceIdV1({ accountId: 'owner',
+      source: { kind: 'notification-channel-signing-secret', channelId: 'workflow-hook' } });
+    expect(first).toMatch(/^[0-9a-f-]+$/);
+    expect(savedSecretOwner.deriveSavedSecretImportResourceIdV1({ accountId: 'owner',
+      source: { kind: 'notification-channel-signing-secret', channelId: 'workflow-hook' } })).toBe(first);
+    expect(savedSecretOwner.deriveSavedSecretImportResourceIdV1({ accountId: 'other',
+      source: { kind: 'notification-channel-signing-secret', channelId: 'workflow-hook' } })).not.toBe(first);
+    expect(savedSecretOwner.deriveSavedSecretImportResourceIdV1({ accountId: 'owner',
+      source: { kind: 'notification-channel-signing-secret', channelId: 'second-hook' } })).not.toBe(first);
+  });
+});
+
+describe('notification channel SavedSecret reference census', () => {
+  it('includes opened signing slots and rewrites only those slots through the complete owner', () => {
+    const reference = formatSharedSavedSecretRefV1('notification-signing');
+    const replacement = formatSharedSavedSecretRefV1('replacement-signing');
+    const notificationChannels = NotificationChannelCatalogRecordV1Schema.parse({ v: 1, channels: [
+      { v: 1, id: 'signed-webhook', kind: 'webhook', url: 'https://example.test/signed', topics: {}, signingSecretRef: reference },
+      { v: 1, id: 'unsigned-webhook', kind: 'webhook', url: 'https://example.test/unsigned', topics: {}, signingSecretRef: null },
+    ] });
+    const catalogs = { profileRecords: [], notificationChannels };
+    expect(listAccountSettingsSavedSecretReferences({}, reference, catalogs)).toEqual([
+      { owner: 'notificationChannel', path: 'notificationChannelsCatalog.channels[0].signingSecretRef' },
+    ]);
+    const rewritten = savedSecretOwner.rewriteSavedSecretReferenceCatalogsV1(catalogs, reference, replacement);
+    expect(rewritten).toEqual({ ...catalogs, notificationChannels: { ...notificationChannels, channels: [
+      { ...notificationChannels.channels[0], signingSecretRef: replacement }, notificationChannels.channels[1],
+    ] } });
+    expect(listAccountSettingsSavedSecretReferences({}, reference, rewritten)).toEqual([]);
+    expect(notificationChannels.channels[0]).toHaveProperty('signingSecretRef', reference);
+  });
+
+  it('refuses incomplete and malformed signing inventories instead of permitting resource deletion', () => {
+    const reference = formatSharedSavedSecretRefV1('notification-signing');
+    const channel = { v: 1, id: 'signed-webhook', kind: 'webhook', url: 'https://example.test/signed', topics: {}, signingSecretRef: reference };
+    for (const notificationChannels of [
+      { v: 1, channels: [{ ...channel, futureCredential: { savedSecretId: reference } }] },
+      { v: 1, channels: [{ ...channel, signingSecretRef: 'happier:shared-secret:v1:' }] },
+      { v: 1, channels: [channel, channel] },
+    ]) {
+      const catalogs = { profileRecords: [], notificationChannels };
+      expect(() => listAccountSettingsSavedSecretReferences({}, reference, catalogs)).toThrow(AccountSettingsSavedSecretMutationError);
+    }
+  });
+
+  it('keeps the captured signing inventory in the personal promotion result', () => {
+    const notificationChannels = NotificationChannelCatalogRecordV1Schema.parse({ v: 1, channels: [
+      { v: 1, id: 'signed-webhook', kind: 'webhook', url: 'https://example.test/signed', topics: {},
+        signingSecretRef: formatSharedSavedSecretRefV1('unrelated-signing') },
+    ] });
+    const settings = { secrets: [secret] };
+    const result = promotePersonalSavedSecretReference(settings, { secretId: secret.id,
+      expectedUpdatedAt: secret.updatedAt, sharedSecretRef: formatSharedSavedSecretRefV1('promoted-personal') },
+      { profileRecords: [], notificationChannels });
+    expect(result).toHaveProperty('notificationChannels', notificationChannels);
+    expect(result.settings.secrets).toEqual([]);
+    expect(settings.secrets).toEqual([secret]);
+  });
+});
+
+describe('remote host SavedSecret reference census', () => {
+  it('distinguishes inactive sources from active empty catalogs and authoritative tombstones', () => {
+    const reference = formatSharedSavedSecretRefV1('retained-source-reference');
+    const settings = { remoteHostsV1: [{ futureCredential: { savedSecretId: reference } }],
+      notificationChannelsV1: [{ futureCredential: { savedSecretId: reference } }] };
+    expect(listAccountSettingsSavedSecretReferences(settings, reference, { profileRecords: [] })).toHaveLength(2);
+    for (const catalogs of [
+      { profileRecords: [], remoteHostRecords: null, notificationChannels: null },
+      { profileRecords: [], remoteHostRecords: [], notificationChannels: { v: 1 as const, channels: [] } },
+    ]) {
+      expect(listAccountSettingsSavedSecretReferences(settings, reference, catalogs)).toEqual([]);
+    }
+    expect(settings.remoteHostsV1).toEqual([{ futureCredential: { savedSecretId: reference } }]);
+  });
+
+  it('propagates the exact host tombstone without rewriting retained source bytes during personal promotion', () => {
+    const settings = { secrets: [secret], remoteHostsV1: [{ futureCredential: { savedSecretId: secret.id } }],
+      notificationChannelsV1: [{ futureCredential: { savedSecretId: secret.id } }] };
+    const before = structuredClone(settings);
+    const result = promotePersonalSavedSecretReference(settings, { secretId: secret.id, expectedUpdatedAt: secret.updatedAt,
+      sharedSecretRef: formatSharedSavedSecretRefV1('promoted-personal') },
+      { profileRecords: [], remoteHostRecords: null, notificationChannels: null });
+    expect(result).toHaveProperty('remoteHostRecords', null);
+    expect(result).toHaveProperty('notificationChannels', null);
+    expect(result.settings).toEqual({ ...settings, secrets: [] });
+    expect(settings).toEqual(before);
+  });
+
+  it('identifies retained SSH credential resources by Account, host identity and slot', () => {
+    const source = { kind: 'remote-host-ssh-credential' as const, hostId: 'host-id', slot: 'password' as const };
+    const resourceId = savedSecretOwner.deriveSavedSecretImportResourceIdV1({ accountId: 'owner', source });
+    expect(savedSecretOwner.deriveSavedSecretImportResourceIdV1({ accountId: 'owner', source })).toBe(resourceId);
+    expect(savedSecretOwner.deriveSavedSecretImportResourceIdV1({ accountId: 'other', source })).not.toBe(resourceId);
+    expect(savedSecretOwner.deriveSavedSecretImportResourceIdV1({ accountId: 'owner',
+      source: { ...source, slot: 'identityPrivateKey' } })).not.toBe(resourceId);
+  });
+
+  it('finds password and identity-key references in the complete opened host inventory', () => {
+    const reference = formatSharedSavedSecretRefV1('ssh-reference');
+    const catalogs = { profileRecords: [], remoteHostRecords: [{ id: 'host-id', name: 'Build host',
+      ssh: { target: 'builder@example.test', authMode: 'password' as const,
+        passwordSecretRef: reference, identityPrivateKeySecretRef: reference },
+      createdAt: 1, updatedAt: 1, lastUsedAt: null }] };
+    expect(listAccountSettingsSavedSecretReferences({}, reference, catalogs)).toEqual([
+      { owner: 'remoteHost', path: 'remoteHostRows["host-id"].ssh.passwordSecretRef' },
+      { owner: 'remoteHost', path: 'remoteHostRows["host-id"].ssh.identityPrivateKeySecretRef' },
+    ]);
+    expect(listAccountSettingsSavedSecretReferences({}, formatSharedSavedSecretRefV1('other-reference'), catalogs)).toEqual([]);
+  });
+
+  it('refuses a partial or duplicate host inventory instead of permitting secret deletion', () => {
+    const reference = formatSharedSavedSecretRefV1('ssh-reference');
+    const host = { id: 'host-id', name: 'Build host', ssh: { target: 'builder@example.test', authMode: 'agent' as const },
+      createdAt: 1, updatedAt: 1, lastUsedAt: null };
+    for (const remoteHostRecords of [[host, host], [{ ...host, ssh: { ...host.ssh, futureCredentialSecretRef: reference } }]]) {
+      expect(() => listAccountSettingsSavedSecretReferences({}, reference, { profileRecords: [], remoteHostRecords }))
+        .toThrow(AccountSettingsSavedSecretMutationError);
+    }
+  });
+});
 
 const voiceContribution = Object.freeze({
   pluginId: 'happier.voice.openai',
@@ -132,7 +262,144 @@ const unrelatedSecret = {
   },
 };
 
+describe('destination catalog SavedSecret reference ownership', () => {
+  it('resolves and replaces the exact Voice purpose from its uncapped destination without a Settings mirror', () => {
+    const target = { kind: 'account', account: { service: { pluginId: 'happier.voice.openai', localId: 'openai' }, accountId: 'voice-account' } };
+    const unrelated = Array.from({ length: 257 }, (_, index) => ({
+      purpose: { consumer: { pluginId: 'happier.fixture', localId: 'voice' }, purpose: `credential-${index}` },
+      target,
+    }));
+    const connectedPurposes = { v: 1, bindings: [{ purpose: voicePurpose, target }, ...unrelated] };
+    const catalogs = { profileRecords: [], connectedPurposes };
+    const settings = { voiceSettingsV1: { credentialBindings: [{ contribution: voiceContribution, credentialSlotId: 'api_key',
+      credentialSource: { kind: 'connectedAccount' }, credentialBindings: {} }], diagnostics: { retained: true } }, preferredLanguage: 'de' };
+    const resolved = Reflect.apply(resolveAccountSettingsVoiceCredentialSource, undefined,
+      [settings, { contribution: voiceContribution, credentialSlotId: 'api_key', purpose: voicePurpose, machineId: null }, catalogs]);
+    expect(resolved.selection).toEqual({ kind: 'connectedAccount', target });
+    const result = Reflect.apply(applyAccountSettingsVoiceCredentialSourceMutation, undefined,
+      [settings, { contribution: voiceContribution, credentialSlotId: 'api_key', selection: { kind: 'none' }, expectedSettingsVersion: 4 }, voiceDeclaration, catalogs]);
+    expect(result.connectedPurposes).toEqual({ v: 1, bindings: unrelated });
+    expect(result.settings).not.toHaveProperty('connectedAccountPurposeBindingsV1');
+    expect(result.settings.voiceSettingsV1.diagnostics).toEqual({ retained: true });
+    expect(result.settings.preferredLanguage).toBe('de');
+  });
+
+  it('uses a catalog tombstone as empty authority while an absent catalog keeps its sole raw adapter', () => {
+    const settings = { mcpServersSettingsV1: { v: 1, strictMode: false, bindings: [],
+      servers: [{ id: 'retained-source', name: 'retained-source', transport: 'http',
+        remote: { url: 'https://example.test/mcp', headers: {} },
+        env: { TOKEN: { t: 'savedSecret', secretId: secret.id } }, createdAt: 1, updatedAt: 1 }] } };
+    expect(listAccountSettingsSavedSecretReferences(settings, secret.id, { profileRecords: [] })).toHaveLength(1);
+    expect(Reflect.apply(listAccountSettingsSavedSecretReferences, undefined,
+      [settings, secret.id, { profileRecords: [], mcp: null }])).toEqual([]);
+  });
+
+  it('rewrites every MCP destination slot atomically and preserves nullable patches and inactive source bytes', () => {
+    const reference = { t: 'savedSecret', secretId: secret.id };
+    const mcp = { v: 1, servers: [{ id: 'server-a', name: 'server-a', transport: 'http',
+      remote: { url: 'https://example.test/mcp', headers: { Authorization: reference } },
+      env: { TOKEN: reference }, createdAt: 1, updatedAt: 1 }],
+      bindings: [{ id: 'binding-a', serverId: 'server-a', enabled: true, target: { t: 'allMachines' },
+        overrides: { envPatch: { TOKEN: reference, REMOVED: null }, remote: { headersPatch: { Authorization: reference, Removed: null } } },
+        createdAt: 1, updatedAt: 1 }] };
+    const settings = { secrets: [secret], mcpServersSettingsV1: { v: 1, strictMode: true,
+      servers: [{ ...mcp.servers[0], id: 'retired-source', name: 'retired-source' }], bindings: [] },
+      preferredLanguage: 'de' };
+    const catalogs = { profileRecords: [], mcp };
+    const references = Reflect.apply(listAccountSettingsSavedSecretReferences, undefined, [settings, secret.id, catalogs]);
+    expect(references).toHaveLength(4);
+    expect(references.every((entry: { owner: string; path: string }) => entry.owner === 'mcp' && entry.path.startsWith('mcpCatalog'))).toBe(true);
+    const target = formatSharedSavedSecretRefV1('catalog-secret');
+    const rewrite = Reflect.apply(promotePersonalSavedSecretReference, undefined,
+      [settings, { secretId: secret.id, expectedUpdatedAt: 1, sharedSecretRef: target }, catalogs]);
+    expect(rewrite.settings.mcpServersSettingsV1).toEqual(settings.mcpServersSettingsV1);
+    expect(rewrite.settings.preferredLanguage).toBe('de');
+    expect(rewrite.mcp.bindings[0].overrides.envPatch.REMOVED).toBeNull();
+    expect(rewrite.mcp.bindings[0].overrides.remote.headersPatch.Removed).toBeNull();
+    expect(Reflect.apply(listAccountSettingsSavedSecretReferences, undefined,
+      [rewrite.settings, secret.id, { ...catalogs, mcp: rewrite.mcp }])).toEqual([]);
+    expect(Reflect.apply(listAccountSettingsSavedSecretReferences, undefined,
+      [rewrite.settings, target, { ...catalogs, mcp: rewrite.mcp }])).toHaveLength(4);
+  });
+
+  it('keeps Account and Machine Provider slots and qualified connected fields in the same complete census', () => {
+    const providerConnections = { v: 1, connections: [{ v: 1, id: 'connection.a',
+      source: { kind: 'contribution', contributionKey: 'happier.provider.fixture/default' }, role: 'default',
+      displayName: 'Fixture', displayNameMode: 'automatic', deployment: { kind: 'external' }, revision: 1, createdAt: 1, updatedAt: 1 }],
+      connectionTombstones: [], accountGrants: [], machineGrants: [],
+      secretBindingsByConnectionId: { 'connection.a': { account: { api_key: secret.id }, byMachineId: { 'machine.a': { api_key: secret.id } } } },
+      manualModelsByConnectionId: {}, modelVisibilityByRef: {}, experimentalBindingConfirmations: [] };
+    const connectedConfigurations = { v: 1, entries: [{ service: { pluginId: 'happier.fixture', localId: 'service' },
+      modeId: 'api', revision: 'v1', values: { unchanged: 'config' }, secretRefs: { 'api.key': secret.id } }] };
+    const catalogs = { profileRecords: [], providerConnections, connectedConfigurations };
+    const settings = { secrets: [secret] };
+    const target = formatSharedSavedSecretRefV1('mixed-catalog-secret');
+    const references = Reflect.apply(listAccountSettingsSavedSecretReferences, undefined, [settings, secret.id, catalogs]);
+    expect(references.map((entry: { owner: string }) => entry.owner).sort()).toEqual(['connectedAccountConfiguration', 'provider', 'provider']);
+    const rewrite = Reflect.apply(promotePersonalSavedSecretReference, undefined,
+      [settings, { secretId: secret.id, expectedUpdatedAt: 1, sharedSecretRef: target }, catalogs]);
+    expect(rewrite.providerConnections.secretBindingsByConnectionId['connection.a']).toEqual({
+      account: { api_key: target }, byMachineId: { 'machine.a': { api_key: target } } });
+    expect(rewrite.connectedConfigurations.entries[0]).toEqual({ ...connectedConfigurations.entries[0], secretRefs: { 'api.key': target } });
+    expect(Reflect.apply(listAccountSettingsSavedSecretReferences, undefined,
+      [rewrite.settings, target, { ...catalogs, providerConnections: rewrite.providerConnections,
+        connectedConfigurations: rewrite.connectedConfigurations }])).toHaveLength(3);
+  });
+});
+
 describe('classified legacy credential import', () => {
+  it.each(['mcp', 'acp', 'providerConnections', 'connectedConfigurations'] as const)(
+    'refuses a Profile literal import target already referenced by the captured %s catalog', (owner) => {
+      const rawProfile = { id: 'legacy', name: 'Legacy', createdAt: 1, updatedAt: 2,
+        environmentVariables: [{ name: 'TOKEN', value: 'private-literal', isSecret: true }] };
+      const record = ProfileRecordV1Schema.parse({ v: 1, id: 'legacy', definition: { kind: 'legacy', profile: rawProfile },
+        enabled: true, promptStack: [], secretBindings: {} });
+      const sharedSecretRef = formatSharedSavedSecretRefV1('occupied-import');
+      const mcp = McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'server', name: 'server', transport: 'http',
+        remote: { url: 'https://example.test/mcp', headers: {} }, env: { TOKEN: { t: 'savedSecret', secretId: sharedSecretRef } },
+        createdAt: 1, updatedAt: 1 }], bindings: [] });
+      const acp = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{ id: 'configured', name: 'configured', title: 'Configured',
+        command: 'agent', env: { TOKEN: { t: 'savedSecret', secretId: sharedSecretRef } }, createdAt: 1, updatedAt: 1 }] });
+      const providerConnections = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+        connections: [{ v: 1, id: 'connection', source: { kind: 'contribution', contributionKey: 'happier.provider.fixture/default' },
+          role: 'default', displayName: 'Fixture', displayNameMode: 'automatic', deployment: { kind: 'external' },
+          revision: 1, createdAt: 1, updatedAt: 1 }],
+        secretBindingsByConnectionId: { connection: { account: { api_key: sharedSecretRef } } } });
+      const connectedConfigurations = ConnectedConfigurationCatalogV1Schema.parse({ v: 1, entries: [{
+        service: { pluginId: 'happier.fixture', localId: 'service' }, modeId: 'api', revision: 'v1', values: {},
+        secretRefs: { 'api.key': sharedSecretRef } }] });
+      const destinations = { mcp, acp, providerConnections, connectedConfigurations };
+      const catalogs = { profileRecords: [record], mcp: null, acp: null, providerConnections: null,
+        connectedConfigurations: null, connectedPurposes: null, [owner]: destinations[owner] };
+      const settings = { profiles: [rawProfile], preferredLanguage: 'de' };
+      const input = { source: { kind: 'profile-environment-variable' as const, profileId: 'legacy', envName: 'TOKEN' }, sharedSecretRef };
+      for (const capture of [catalogs, { ...catalogs, profileRows: [{ record, revision: 4 }] }]) {
+        expect(() => savedSecretOwner.promoteProfileEnvironmentVariableSavedSecretReferenceV1(settings, input, capture))
+          .toThrowError(expect.objectContaining({ code: 'saved_secret_conflict' }));
+      }
+      expect(settings.profiles[0].environmentVariables[0].value).toBe('private-literal');
+      expect(record.secretBindings).toEqual({});
+    });
+
+  it('uses active destination authority for validation without replacing the retained raw Profile carrier', () => {
+    const rawProfile = { id: 'legacy', name: 'Legacy', createdAt: 1, updatedAt: 2,
+      environmentVariables: [{ name: 'TOKEN', value: 'private-literal', isSecret: true }] };
+    const record = ProfileRecordV1Schema.parse({ v: 1, id: 'legacy', definition: { kind: 'legacy', profile: rawProfile },
+      enabled: true, promptStack: [], secretBindings: {} });
+    const settings = { profiles: [rawProfile], providerSettingsV1: 'superseded-malformed-source', preferredLanguage: 'de' };
+    const catalogs = { profileRecords: [record], mcp: null, acp: null,
+      providerConnections: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connectedConfigurations: null, connectedPurposes: null };
+    const input = { source: { kind: 'profile-environment-variable' as const, profileId: 'legacy', envName: 'TOKEN' },
+      sharedSecretRef: formatSharedSavedSecretRefV1('available-import') };
+    const result = savedSecretOwner.promoteProfileEnvironmentVariableSavedSecretReferenceV1(settings, input, catalogs);
+    expect(result.value).toBe('private-literal');
+    expect(result.settings.providerSettingsV1).toBe(settings.providerSettingsV1);
+    expect(result.settings.preferredLanguage).toBe('de');
+    expect(result.settings.secretBindingsByProfileId).toEqual({ legacy: { TOKEN: input.sharedSecretRef } });
+    expect(() => savedSecretOwner.promoteProfileEnvironmentVariableSavedSecretReferenceV1(settings, input,
+      { profileRecords: [record] })).toThrowError(expect.objectContaining({ code: 'saved_secret_reference_invalid' }));
+  });
+
   it('classifies inference credentials separately from personal SavedSecret objects and preserves unknown material', () => {
     expect(savedSecretOwner.readSavedSecretTransferSourceV1({ inferenceOpenAIKey: ' exact-private-inference-fixture ' }))
       .toEqual({ secrets: [], complete: true, inferenceCredential: {
@@ -140,6 +407,97 @@ describe('classified legacy credential import', () => {
         displayName: expect.any(String), kind: 'apiKey',
       } });
     expect(savedSecretOwner.readSavedSecretTransferSourceV1({ inferenceOpenAIKey: { futureCredential: 'retain-fixture' } }))
+      .toEqual({ secrets: [], complete: false });
+  });
+
+  it('classifies the original inline legacy Chat envelope without synthesizing a personal SavedSecret record', () => {
+    const encryptedValue = { _isSecretValue: true as const,
+      encryptedValue: { t: 'enc-v1' as const, c: 'original-chat-ciphertext' } };
+    expect(SecretStringV1Schema.safeParse(encryptedValue).success).toBe(true);
+    const raw = { voice: { adapters: { local_conversation: { agent: { backend: 'openai_compat',
+      openaiCompat: { chatApiKey: encryptedValue, chatBaseUrl: 'https://example.test/chat',
+        chatModel: 'chat-model', commitModel: 'commit-model' } } } } }, preferredLanguage: 'de' };
+    const before = structuredClone(raw);
+    const source = { kind: 'personal-saved-secret' as const, secretId: 'voice:openai_compat:chat_api_key' };
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1(raw)).toEqual({ secrets: [], complete: true,
+      legacyChatCredential: { source, encryptedValue, displayName: expect.any(String), kind: 'apiKey' } });
+    expect(raw).toEqual(before);
+    expect(raw).not.toHaveProperty('secrets');
+  });
+
+  it('preserves malformed present inline legacy Chat material as an incomplete source', () => {
+    for (const chatApiKey of ['unwrapped-chat-material', { futureCredential: 'retain-chat-material' }]) {
+      expect(SecretStringV1Schema.safeParse(chatApiKey).success).toBe(false);
+      const raw = { voice: { adapters: { local_conversation: { agent: { backend: 'openai_compat',
+        openaiCompat: { chatApiKey } } } } } };
+      const before = structuredClone(raw);
+      expect(savedSecretOwner.readSavedSecretTransferSourceV1(raw)).toEqual({ secrets: [], complete: false });
+      expect(raw).toEqual(before);
+    }
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ voice: { adapters: { local_conversation: {
+      agent: { backend: 'openai_compat', openaiCompat: { chatApiKey: null } },
+    } } } })).toEqual({ secrets: [], complete: true });
+  });
+
+  it('does not merge inline legacy Chat material with a conflicting personal alias or existing binding', () => {
+    const inline = SecretStringV1Schema.parse({ _isSecretValue: true,
+      encryptedValue: { t: 'enc-v1', c: 'inline-chat-ciphertext' } });
+    const alias = 'voice:openai_compat:chat_api_key';
+    const voice = { adapters: { local_conversation: { agent: { backend: 'openai_compat',
+      openaiCompat: { chatApiKey: inline } } } } };
+    const record = SavedSecretSchema.parse({ id: alias, name: 'Retained personal credential', kind: 'apiKey',
+      encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'different-chat-ciphertext' } },
+      createdAt: 1, updatedAt: 2 });
+    const binding = LegacyVoiceCredentialBindingV1Schema.parse({ providerId: 'openai_compat',
+      credentialBindings: { account: { chat_api_key: 'custom-chat-source' } } });
+    for (const raw of [
+      { secrets: [record], voice },
+      { secrets: [{ ...record, id: 'custom-chat-source' }], voice: { ...voice, credentialBindings: [binding] } },
+    ]) {
+      const before = structuredClone(raw);
+      expect(savedSecretOwner.readSavedSecretTransferSourceV1(raw)).toEqual({ secrets: raw.secrets, complete: false });
+      expect(raw).toEqual(before);
+    }
+    const matching = { ...record, encryptedValue: inline };
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ secrets: [matching], voice }))
+      .toEqual({ secrets: [matching], complete: true });
+    const matchingBoundSource = { ...matching, id: 'custom-chat-source' };
+    const boundRaw = { secrets: [matchingBoundSource], voice: { ...voice, credentialBindings: [binding] } };
+    const before = structuredClone(boundRaw);
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1(boundRaw))
+      .toEqual({ secrets: boundRaw.secrets, complete: true });
+    expect(boundRaw).toEqual(before);
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ ...boundRaw, secrets: [matchingBoundSource, record] }))
+      .toEqual({ secrets: [matchingBoundSource, record], complete: true });
+  });
+
+  it('describes an already Shared-bound inline legacy Chat carrier without inventing a personal alias', () => {
+    const resourceRef = formatSharedSavedSecretRefV1('original-chat-resource');
+    const encryptedValue = SecretStringV1Schema.parse({ _isSecretValue: true,
+      encryptedValue: { t: 'enc-v1', c: 'original-chat-ciphertext' } });
+    const binding = LegacyVoiceCredentialBindingV1Schema.parse({ providerId: 'openai_compat',
+      credentialBindings: { account: { chat_api_key: resourceRef } } });
+    const voice = { credentialBindings: [binding], adapters: { local_conversation: { agent: { backend: 'openai_compat',
+      openaiCompat: { chatApiKey: encryptedValue } } } } };
+    const raw = { voice };
+    const before = structuredClone(raw);
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1(raw)).toEqual({ secrets: [], complete: true,
+      legacyChatCredential: { source: { kind: 'existing-resource-reference', resourceRef }, encryptedValue,
+        displayName: expect.any(String), kind: 'apiKey' } });
+    expect(raw).toEqual(before);
+    const colliding = SavedSecretSchema.parse({ id: resourceRef, name: 'Opaque retained personal source', kind: 'apiKey',
+      encryptedValue, createdAt: 1, updatedAt: 2 });
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ voice, secrets: [colliding] }))
+      .toEqual({ secrets: [colliding], complete: false });
+    const malformed = LegacyVoiceCredentialBindingV1Schema.parse({ ...binding,
+      credentialBindings: { account: { chat_api_key: 'happier:shared-secret:v1:' } } });
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ voice: { ...voice, credentialBindings: [malformed] } }))
+      .toEqual({ secrets: [], complete: false });
+    const unknownBinding = { providerId: 'openai_compat', credentialBindings: { account: {
+      chat_api_key: { futureReference: resourceRef },
+    } } };
+    expect(LegacyVoiceCredentialBindingV1Schema.safeParse(unknownBinding).success).toBe(false);
+    expect(savedSecretOwner.readSavedSecretTransferSourceV1({ voice: { ...voice, credentialBindings: [unknownBinding] } }))
       .toEqual({ secrets: [], complete: false });
   });
 
@@ -315,6 +673,90 @@ describe('SavedSecret census respects the opened Profile transfer authority', ()
     const knownRaw = { ...raw, profiles: [] };
     expect(listAccountSettingsSavedSecretReferences(knownRaw, secret.id, prepared)).toContainEqual({
       owner: 'profile', path: 'secretBindingsByProfileId.p.TOKEN' });
+  });
+});
+
+describe('Voice source mutation resource-use admission', () => {
+  const sharedA = formatSharedSavedSecretRefV1('voice-a');
+  const sharedB = formatSharedSavedSecretRefV1('voice-b');
+  const sharedC = formatSharedSavedSecretRefV1('voice-c');
+  const target = { contribution: voiceContribution, credentialSlotId: 'api_key', machineId: null };
+  const sourceMutation = { contribution: voiceContribution, credentialSlotId: 'api_key',
+    selection: { kind: 'savedSecret' as const }, expectedSettingsVersion: 4 };
+  const purposes = { connectedPurposes: { v: 1 as const, bindings: [] } };
+  const binding = (kind: 'none' | 'savedSecret' | 'connectedAccount', account?: string, machine?: string) =>
+    VoiceCredentialBindingV1Schema.parse({ contribution: voiceContribution, credentialSlotId: 'api_key',
+      credentialSource: { kind }, credentialBindings: {
+        ...(account ? { account: { api_key: account } } : {}),
+        ...(machine ? { byMachineId: { machine: { api_key: machine } } } : {}),
+      } });
+  const state = (...bindings: ReturnType<typeof binding>[]) => ({ voiceSettingsV1: { credentialBindings: bindings } });
+  const project = (current: Readonly<Record<string, unknown>>, next: Readonly<Record<string, unknown>>,
+    requestedReferences?: readonly string[]): readonly string[] => {
+    const owner = Reflect.get(savedSecretOwner, 'listSavedSecretVoiceCredentialMutationReferencesV1');
+    expect(typeof owner).toBe('function');
+    if (typeof owner !== 'function') throw new Error('missing_voice_resource_use_projection');
+    return owner(current, next, { requestedReferences });
+  };
+
+  it('binds with only opened purposes and retains user-owned personal secrets and unrelated source bytes', () => {
+    const settings = { ...state(binding('none', secret.id)), secrets: [secret],
+      profiles: 'unrelated-malformed-source', providerSettingsV1: 'unrelated-malformed-source' };
+    const result = savedSecretOwner.applySavedSecretCatalogVoiceCredentialSourceMutationV1(settings, {
+      ...sourceMutation, savedSecretMutation: { kind: 'bindVoiceCredentialSavedSecret', target,
+        expectedSecretId: secret.id, expectedSecretUpdatedAt: secret.updatedAt, secretId: sharedA },
+    }, voiceDeclaration, purposes);
+    expect(result.settings.secrets).toEqual([secret]);
+    expect(result.settings.profiles).toBe(settings.profiles);
+    expect(result.settings.providerSettingsV1).toBe(settings.providerSettingsV1);
+    expect(resolveVoiceCredentialSource(result.settings, null).savedSecret?.secretId).toBe(sharedA);
+  });
+
+  it('refuses replacement without full opened catalogs even when no old slot-local secret needs deletion', () => {
+    const mutation = { ...sourceMutation, savedSecretMutation: { kind: 'replaceVoiceCredentialSecret' as const,
+      target, expectedSecretId: null, expectedSecretUpdatedAt: null, secret: { ...secret, id: 'new-voice-secret' } } };
+    expect(() => savedSecretOwner.applySavedSecretCatalogVoiceCredentialSourceMutationV1({}, mutation,
+      voiceDeclaration, purposes)).toThrowError(expect.objectContaining({ code: 'saved_secret_reference_invalid' }));
+    const full = { ...purposes, profileRecords: [], mcp: null, acp: null, providerConnections: null,
+      connectedConfigurations: null };
+    expect(savedSecretOwner.applySavedSecretCatalogVoiceCredentialSourceMutationV1({}, mutation,
+      voiceDeclaration, full).settings.secrets).toEqual([mutation.savedSecretMutation.secret]);
+    expect(() => savedSecretOwner.applySavedSecretCatalogVoiceCredentialSourceMutationV1({}, mutation,
+      voiceDeclaration, { ...full, profileRecords: [{ invalid: true }] } as never))
+      .toThrowError(expect.objectContaining({ code: 'saved_secret_reference_invalid' }));
+  });
+
+  it('requires only changed or newly activated next selected shared references, not revoked or unrelated old refs', () => {
+    const sibling = VoiceCredentialBindingV1Schema.parse({ ...binding('savedSecret', sharedC), credentialSlotId: 'other',
+      credentialBindings: { account: { other: sharedC } } });
+    expect(project(state(binding('none', sharedA), sibling), state(binding('savedSecret', sharedA), sibling))).toEqual([sharedA]);
+    expect(project(state(binding('savedSecret', sharedA), sibling), state(binding('savedSecret', sharedB), sibling))).toEqual([sharedB]);
+    expect(project(state(binding('savedSecret', sharedA)), state(binding('none', sharedA)), [sharedA])).toEqual([]);
+    expect(project(state(binding('savedSecret', sharedA)), state(binding('connectedAccount', sharedA)), [sharedA])).toEqual([]);
+    expect(project({}, state(binding('savedSecret', sharedA)))).toEqual([sharedA]);
+  });
+
+  it('admits requested reselection only for references actually selected next, never dormant or ghost refs', () => {
+    const next = state(binding('savedSecret', sharedA, sharedB));
+    expect(project(next, next)).toEqual([]);
+    expect(project(next, next, [sharedA, sharedB, sharedC, sharedA])).toEqual([sharedA, sharedB]);
+    expect(project(state(binding('none', sharedA)), state(binding('none', sharedA)), [sharedA])).toEqual([]);
+    expect(project({}, {}, [sharedC])).toEqual([]);
+  });
+
+  it('uses exact machine override and account fallback when selected carriers change', () => {
+    expect(project(state(binding('savedSecret', sharedA, sharedB)), state(binding('savedSecret', sharedA)))).toEqual([sharedA]);
+    expect(project(state(binding('savedSecret', sharedA, sharedB)), state(binding('savedSecret', sharedC, sharedB)))).toEqual([sharedC]);
+    expect(project(state(binding('none', sharedA, sharedB)), state(binding('savedSecret', sharedA, sharedB)))).toEqual([sharedA, sharedB]);
+  });
+
+  it('fails malformed or duplicate qualified Voice state closed through the canonical typed owner', () => {
+    const canonical = binding('savedSecret', sharedA);
+    for (const invalid of [{ voiceSettingsV1: null }, state(canonical, canonical),
+      { voiceSettingsV1: { credentialBindings: [{ ...canonical, credentialSource: { kind: 'unknown' } }] } }]) {
+      expect(() => project({}, invalid)).toThrowError(expect.objectContaining({ code: 'saved_secret_reference_invalid' }));
+      expect(() => project(invalid, {})).toThrowError(expect.objectContaining({ code: 'saved_secret_reference_invalid' }));
+    }
   });
 });
 
@@ -543,6 +985,91 @@ describe('Account Settings SavedSecret mutation owner', () => {
       profile_a: { TOKEN: 'secret-after-collision-migration' },
     });
     expect(settings.secrets).toEqual([{ ...secret, id: collidingPersonalId }]);
+
+    const mcp = McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'active-server', name: 'active', transport: 'http',
+      remote: { url: 'https://example.test/mcp', headers: {} },
+      env: { TOKEN: { t: 'savedSecret', secretId: collidingPersonalId } }, createdAt: 1, updatedAt: 1 }], bindings: [] });
+    const catalogs = { profileRecords: [], mcp, acp: null, providerConnections: null,
+      connectedConfigurations: null, connectedPurposes: null };
+    const sourceQualified = rekeyPersonalSavedSecret(settings, { secretId: collidingPersonalId,
+      expectedUpdatedAt: secret.updatedAt, newSecretId: 'secret-after-collision-migration' }, catalogs);
+    expect(sourceQualified.mcp).toBe(mcp);
+    expect(sourceQualified.settings).toEqual(result.settings);
+    expect(listAccountSettingsSavedSecretReferences(sourceQualified.settings, collidingPersonalId, catalogs)
+      .map(reference => reference.owner)).toEqual(['mcp']);
+    expect(savedSecretOwner.listSavedSecretPersonalImportSourceReferencesV1(sourceQualified.settings,
+      collidingPersonalId, catalogs)).toEqual([]);
+    expect(() => rekeyPersonalSavedSecret({ ...settings,
+      futureCatalog: { value: { t: 'savedSecret', secretId: collidingPersonalId } } }, {
+      secretId: collidingPersonalId, expectedUpdatedAt: secret.updatedAt, newSecretId: 'repaired-personal-source',
+    }, catalogs)).toThrowError(expect.objectContaining({ code: 'saved_secret_ref_collision_migration_required' }));
+  });
+
+  it('promotes a proven reserved-prefix personal source without rebinding the same-string active MCP Resource', () => {
+    const collidingPersonalId = formatSharedSavedSecretRefV1('retained-collision');
+    const retained = { ...secret, id: collidingPersonalId };
+    const rawProfile = { id: 'predecessor-profile', name: 'Predecessor', createdAt: 1, updatedAt: 1,
+      environmentVariables: [{ name: 'TOKEN', value: '${TOKEN}', isSecret: true }] };
+    const record = ProfileRecordV1Schema.parse({ v: 1, id: rawProfile.id,
+      definition: { kind: 'legacy', profile: rawProfile }, enabled: true, promptStack: [], secretBindings: {} });
+    const mcp = McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'active-server', name: 'active', transport: 'http',
+      remote: { url: 'https://example.test/mcp', headers: {} },
+      env: { TOKEN: { t: 'savedSecret', secretId: collidingPersonalId } }, createdAt: 1, updatedAt: 1 }], bindings: [] });
+    const catalogs = { profileRecords: [record], mcp, acp: null, providerConnections: null,
+      connectedConfigurations: null, connectedPurposes: null };
+    const settings = { secrets: [retained], profiles: [rawProfile],
+      secretBindingsByProfileId: { [rawProfile.id]: { TOKEN: collidingPersonalId } } };
+    const before = structuredClone(settings);
+    const sharedSecretRef = formatSharedSavedSecretRefV1(savedSecretOwner.deriveSavedSecretImportResourceIdV1({
+      accountId: 'account', source: { kind: 'personal-saved-secret', secretId: collidingPersonalId },
+    }));
+    expect(savedSecretOwner.listSavedSecretPersonalImportSourceReferencesV1(settings, collidingPersonalId, catalogs)
+      .map(reference => reference.owner)).toEqual(['profile']);
+    const result = promotePersonalSavedSecretReference(settings, { secretId: collidingPersonalId,
+      expectedUpdatedAt: retained.updatedAt, sharedSecretRef }, catalogs);
+    expect(result.settings.secrets).toEqual([]);
+    expect(result.settings.secretBindingsByProfileId).toEqual({ [rawProfile.id]: { TOKEN: sharedSecretRef } });
+    expect(result.mcp).toBe(mcp);
+    expect(listAccountSettingsSavedSecretReferences(result.settings, collidingPersonalId, { ...catalogs, mcp: result.mcp })
+      .map(reference => reference.owner)).toEqual(['mcp']);
+    expect(savedSecretOwner.listSavedSecretPersonalImportSourceReferencesV1(result.settings, collidingPersonalId,
+      { ...catalogs, mcp: result.mcp })).toEqual([]);
+    expect(listAccountSettingsSavedSecretReferences(result.settings, sharedSecretRef, catalogs)
+      .map(reference => reference.owner)).toEqual(['profile']);
+    expect(settings).toEqual(before);
+  });
+
+  it.each(['voice', 'plugin'] as const)('refuses ambiguous live %s Shared bindings despite a same-string retained personal source', (owner) => {
+    const collidingPersonalId = formatSharedSavedSecretRefV1('ambiguous-live-resource');
+    const bound = owner === 'voice'
+      ? applyVoiceCredentialSourceMutation({}, { contribution: voiceContribution, credentialSlotId: 'api_key',
+        selection: { kind: 'savedSecret' }, savedSecretMutation: { kind: 'bindVoiceCredentialSavedSecret',
+          target: { contribution: voiceContribution, credentialSlotId: 'api_key', machineId: null },
+          expectedSecretId: null, expectedSecretUpdatedAt: null, secretId: collidingPersonalId } }).settings
+      : applyAccountSettingsSavedSecretMutation({}, { kind: 'bindPluginSecret',
+        target: { pluginId: 'acme.notifications', localId: 'webhook-token' }, expectedSecretId: null,
+        expectedSecretUpdatedAt: null, secretId: collidingPersonalId }).settings;
+    const settings = { ...bound, secrets: [{ ...secret, id: collidingPersonalId }] };
+    const record = ProfileRecordV1Schema.parse({ v: 1, id: 'unrelated-profile', definition: { kind: 'legacy',
+      profile: { id: 'unrelated-profile', name: 'Unrelated', createdAt: 1, updatedAt: 1, environmentVariables: [] } },
+      enabled: true, promptStack: [], secretBindings: {} });
+    const catalogs = { profileRecords: [record], mcp: null, acp: null, providerConnections: null,
+      connectedConfigurations: null, connectedPurposes: null };
+    const before = structuredClone(settings);
+    const sharedSecretRef = formatSharedSavedSecretRefV1(savedSecretOwner.deriveSavedSecretImportResourceIdV1({
+      accountId: 'account', source: { kind: 'personal-saved-secret', secretId: collidingPersonalId },
+    }));
+    expect(() => promotePersonalSavedSecretReference(settings, { secretId: collidingPersonalId,
+      expectedUpdatedAt: secret.updatedAt, sharedSecretRef }, catalogs))
+      .toThrowError(expect.objectContaining({ code: 'saved_secret_ref_collision_migration_required' }));
+    expect(() => savedSecretOwner.listSavedSecretPersonalImportSourceReferencesV1(settings, collidingPersonalId, catalogs))
+      .toThrowError(expect.objectContaining({ code: 'saved_secret_ref_collision_migration_required' }));
+    expect(() => rekeyPersonalSavedSecret(settings, { secretId: collidingPersonalId,
+      expectedUpdatedAt: secret.updatedAt, newSecretId: 'repaired-personal-source' }, catalogs))
+      .toThrowError(expect.objectContaining({ code: 'saved_secret_ref_collision_migration_required' }));
+    expect(settings).toEqual(before);
+    expect(listAccountSettingsSavedSecretReferences(settings, collidingPersonalId, catalogs).map(reference => reference.owner))
+      .toEqual([owner]);
   });
 
   it('rekeys the personal record and every recognized reference family without mutating input', () => {
