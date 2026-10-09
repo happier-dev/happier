@@ -20,7 +20,6 @@ import { resolveCliAuthBackgroundCheckSafe } from './resolveCliAuthBackgroundChe
 import { resolveAgentExecutionTargetForBackendTarget } from './resolveAgentExecutionTargetForBackendTarget';
 import {
     resolveAgentCatalogProjection,
-    resolveConfiguredAcpAgentCatalogProjection,
     type ResolvedAgentCatalogEntry,
 } from './agentCatalogProjection';
 
@@ -89,7 +88,6 @@ function resolveTargetAgentCatalogEntry(
     return resolveAgentCatalogProjection(agentId, {
         enabledAgentIds: params.enabledAgentIds ?? [],
         backendEnabledByTargetKey: params.backendEnabledByTargetKey,
-        acpCatalogSnapshot: params.acpCatalogSnapshot,
         mergedBackendProjectionById: params.mergedBackendProjectionById,
         mergedProviderProjectionById: params.mergedProviderProjectionById,
     });
@@ -253,12 +251,6 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
         const agentIdFromProjection = typeof backendProjection?.agentId === 'string' ? backendProjection.agentId.trim() : '';
         const agentId = agentIdFromProjection || backend.id;
         const providerProjection = agentId ? readMergedProviderProjection(agentId, params) : null;
-        const agentCatalogEntry = resolveConfiguredAcpAgentCatalogProjection(backend, {
-            enabledAgentIds: params.enabledAgentIds,
-            backendEnabledByTargetKey: params.backendEnabledByTargetKey,
-            mergedBackendProjectionById: params.mergedBackendProjectionById,
-            mergedProviderProjectionById: params.mergedProviderProjectionById,
-        });
         if (!isBackendTargetEnabled(
             params.backendEnabledByTargetKey,
             backendTargetKey,
@@ -266,7 +258,7 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
             continue;
         }
         entriesByTargetKey.set(backendTargetKey, {
-            agentCatalogEntry,
+            agentCatalogEntry: resolveTargetAgentCatalogEntry(agentId, params),
             backendTarget: canonicalTarget,
             backendTargetKey,
             kind: 'configuredBackend',
@@ -277,8 +269,8 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
             iconAgentId: resolveProjectionIconAgentId(agentId, backendProjection, providerProjection, null),
             capabilities: backendProjection?.capabilities ?? null,
             title: backendProjection?.title ?? providerProjection?.title ?? (backend.title || backend.name),
-            subtitle: backendProjection?.subtitle ?? providerProjection?.subtitle ?? null,
-            cliAuthBackgroundCheckSafe: agentCatalogEntry.cliAuthBackgroundCheckSafe,
+            subtitle: backendProjection?.subtitle ?? providerProjection?.subtitle ?? backend.name,
+            cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(agentId, providerProjection),
         });
     }
 

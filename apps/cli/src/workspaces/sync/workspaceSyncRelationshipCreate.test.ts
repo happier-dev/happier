@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   computeWorkspaceSyncPolicyDigest,
-  type AccountSettingsMutationResult,
   type WorkspaceSyncPersistentModeV1,
   type WorkspaceSyncRelationshipV1,
   type WorkspaceSyncStatusV1,
 } from '@happier-dev/protocol';
 
-import { createWorkspaceSyncRelationshipOwner } from './workspaceSyncRelationshipOwner';
+import { parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
+import type { ProjectAccountSnapshotMutationResult } from '@/workspaces/projectAccountRows';
+import { createWorkspaceSyncRelationshipOwner, type ProjectAccountSnapshotMutation } from './workspaceSyncRelationshipOwner';
 import { createWorkspaceSyncRelationshipForProject } from './workspaceSyncRelationshipCreate';
 
 const policy = Object.freeze({
@@ -55,18 +56,16 @@ function createHarness(options: Readonly<{
   preparedStatus?: (relationshipId: string) => WorkspaceSyncStatusV1;
   existingRelationships?: readonly WorkspaceSyncRelationshipV1[];
 }> = {}) {
-  let settings: Readonly<Record<string, unknown>> = {
-    workspaceRefsV1: [
+  let snapshot = parseProjectAccountSnapshotV1({
+    workspaceRefs: [
       { id: 'source_ref', serverId: 'server_a', machineId: 'machine_source', rootPath: '/source', createdAtMs: 1 },
       { id: 'target_ref', serverId: 'server_a', machineId: 'machine_target', rootPath: '/target', createdAtMs: 1 },
     ],
-    workspaceSyncRelationshipsV1: options.existingRelationships ?? [],
-  };
-  const mutateSettings = vi.fn(async (
-    mutate: (current: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>,
-  ) => {
-    settings = await mutate(settings);
-    return { status: 'applied', version: 1, settings: settings as never } satisfies AccountSettingsMutationResult;
+    relationships: options.existingRelationships ?? [],
+  });
+  const mutateProjectSnapshot: ProjectAccountSnapshotMutation = vi.fn(async mutate => {
+    snapshot = await mutate(snapshot);
+    return { status: 'applied', version: 1, snapshot } satisfies ProjectAccountSnapshotMutationResult;
   });
   const ensurePreparations: (EnsurePreparation | undefined)[] = [];
   const ensureRelationship = vi.fn(async (
@@ -84,13 +83,13 @@ function createHarness(options: Readonly<{
   const commitRelationshipTarget = vi.fn(async () => undefined);
   const owner = createWorkspaceSyncRelationshipOwner({
     localMachineId: 'machine_source',
-    mutateSettings,
-    readSettings: async () => settings,
+    mutateProjectSnapshot,
+    readProjectSnapshot: async () => snapshot,
     ensureRelationship,
     flushRelationship,
     terminateRelationshipRuntime,
     commitRelationshipTarget,
-    waitForSettingsReconciliation: async () => undefined,
+    waitForProjectReconciliation: async () => undefined,
     createId: (() => {
       const values = ['unexpected_source', 'unexpected_target'];
       return () => values.shift() ?? 'unexpected_id';
@@ -103,10 +102,7 @@ function createHarness(options: Readonly<{
       localServerId: 'server_a',
       localMachineId: 'machine_source',
       resolveWorkspaceRef: (workspaceRefId: string) => {
-        const refs = settings.workspaceRefsV1 as readonly Readonly<{
-          id: string; serverId: string; machineId: string; rootPath: string;
-        }>[];
-        return refs.find((ref) => ref.id === workspaceRefId) ?? null;
+        return snapshot.workspaceRefs.find(ref => ref.id === workspaceRefId) ?? null;
       },
       relationshipOwner: owner,
     },
@@ -114,7 +110,7 @@ function createHarness(options: Readonly<{
     ensureRelationship,
     terminateRelationshipRuntime,
     commitRelationshipTarget,
-    readRelationships: () => settings.workspaceSyncRelationshipsV1 as readonly WorkspaceSyncRelationshipV1[],
+    readRelationships: () => snapshot.relationships,
   };
 }
 

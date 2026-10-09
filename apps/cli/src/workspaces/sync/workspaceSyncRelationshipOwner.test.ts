@@ -3,10 +3,9 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
-import { beginWorkspaceTargetMaterialization } from '@/scm/workspace/workspaceExportMaterialization';
 import { createWorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
 import { createWorkspaceSyncTargetAuthority } from './workspaceSyncTargetAuthority';
-import { computeWorkspaceSyncRootFingerprint, workspaceSyncMaterializationReceiptPath } from './workspaceSyncTargetBootstrap';
+import { computeWorkspaceSyncRootFingerprint } from './workspaceSyncTargetBootstrap';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 
@@ -145,7 +144,7 @@ const createInput = {
 };
 
 /** Home persistence boundary fixture: an already-created worker copy, not ordinary prepareCreate conversion. */
-function workerCopySnapshot(sourceRootPath = '/source', targetRootPath = '/target') {
+function workerCopySnapshot(sourceRootPath = '/source', targetRootPath = '/target', enabled = true) {
   return parseProjectAccountSnapshotV1({
     workspaceRefs: [
       { id: 'source_ref', serverId: 'server_a', machineId: 'machine_source', rootPath: sourceRootPath, createdAtMs: 100 },
@@ -153,7 +152,7 @@ function workerCopySnapshot(sourceRootPath = '/source', targetRootPath = '/targe
     ],
     relationships: [{ v: 1, relationshipId: 'relationship_1', controllerMachineId: 'machine_source',
       alphaWorkspaceRefId: 'source_ref', betaWorkspaceRefId: 'target_ref', mode: 'keep_synced', contentPolicy: policy,
-      enabled: true, createdAtMs: 100, updatedAtMs: 100,
+      enabled, createdAtMs: 100, updatedAtMs: 100,
       provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: 'source_ref', targetWorkspaceRefId: 'target_ref' } }],
   });
 }
@@ -188,7 +187,7 @@ describe('WorkspaceSyncRelationshipOwner', () => {
         if (!approval) throw new Error('Missing host receipt carrier');
         await authority.removeCommittedCopyHere(approval);
       },
-    }, workerCopySnapshot(source, target));
+    }, workerCopySnapshot(source, target, false));
     const authority = createWorkspaceSyncTargetAuthority({
       localMachineId: 'machine_target', localServerId: 'server_a',
       getProjectSnapshot: () => ({ ...parseProjectAccountSnapshotV1(harness.read()), source: 'network',
@@ -202,14 +201,16 @@ describe('WorkspaceSyncRelationshipOwner', () => {
       bootstrap: { materializationDirectory, rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') }) },
     });
     try {
-      const materialization = await beginWorkspaceTargetMaterialization({
-        targetPath: target, backupDirectoryPrefix: '.happier-sync-backup',
-        receiptPath: workspaceSyncMaterializationReceiptPath(materializationDirectory, 'relationship_1', 'beta'),
+      const stagedRelationship = parseProjectAccountSnapshotV1(harness.read()).relationships[0]!;
+      const prepared = await authority.prepareBootstrapHere({
+        v: 1, bootstrapOperationId: 'relationship_1', owner: { kind: 'relationship', relationshipId: 'relationship_1' },
+        transientRelationship: { ...stagedRelationship, enabled: true }, targetWorkspaceRefId: 'target_ref', endpointRole: 'beta',
+        policyDigest: policy.policyDigest, createIfMissing: true, targetBootstrap: 'materialize_from_source_workspace',
       });
-      await mkdir(target);
       await writeFile(join(target, 'copy.txt'), 'committed copy');
-      await materialization.custody.bindPromotedTarget();
-      await materialization.custody.commit();
+      await harness.owner.setEnabled('relationship_1', true);
+      await authority.releaseBootstrapHere({ v: 1, bootstrapOperationId: prepared.bootstrapOperationId,
+        targetWorkspaceRefId: 'target_ref', reason: 'relationship_committed' });
       const expectedRelationship = parseProjectAccountSnapshotV1(harness.read()).relationships[0]!;
       const removeTargetCopy = { workspaceRefId: 'target_ref', rootFingerprint: await computeWorkspaceSyncRootFingerprint(target) };
       if (removeBytes) {
