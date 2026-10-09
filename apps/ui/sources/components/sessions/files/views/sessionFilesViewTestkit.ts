@@ -1,17 +1,26 @@
 import * as React from 'react';
 import { afterAll, vi } from 'vitest';
-import { AccountSettingsV2GetResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, ScmWorkingSnapshotSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema, AccountSettingsV2GetResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, ScmWorkingSnapshotSchema } from '@happier-dev/protocol';
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 
 export type FileViewRpcRequest = Readonly<{ targetId: string; method: string; payload: unknown }>;
-let dispatch: (request: FileViewRpcRequest) => unknown | Promise<unknown>;
+type FileViewTransport = Readonly<{
+    rpc: (request: FileViewRpcRequest) => unknown | Promise<unknown>;
+    http: NonNullable<Parameters<typeof restoreServerAccountForTest>[0]['request']>;
+}>;
+// Fake network routing, not application state: two real Homes must not share a responder.
+const transportsByOrigin = new Map<string, FileViewTransport>();
 let disposeActionLoader: (() => void) | undefined;
 afterAll(() => disposeActionLoader?.());
 
-installDisconnectedServerSocketBoundary((socket) => {
+installDisconnectedServerSocketBoundary((socket, serverUrl) => {
+    const origin = serverUrl ? new URL(serverUrl).origin : null;
     vi.mocked(socket.connect).mockImplementation(() => {
         socket.connected = true;
         for (const listener of socket.listeners('connect')) listener();
@@ -27,7 +36,9 @@ installDisconnectedServerSocketBoundary((socket) => {
         if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
         const request = payload as { method: string; params: unknown };
         const separator = request.method.indexOf(':');
-        return { ok: true, result: await dispatch({ targetId: request.method.slice(0, separator), method: request.method.slice(separator + 1), payload: request.params }) };
+        const transport = origin ? transportsByOrigin.get(origin) : undefined;
+        if (!transport) throw new Error(`No file-view RPC boundary for ${origin ?? 'an unaddressed socket'}`);
+        return { ok: true, result: await transport.rpc({ targetId: request.method.slice(0, separator), method: request.method.slice(separator + 1), payload: request.params }) };
     });
 });
 
@@ -41,9 +52,19 @@ export function installSessionFilesViewBoundaries() {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock();
     });
+    // The host renderer has no native measured viewport. Replace only the external
+    // recycler; the canonical backend, row projection, and browser stay real.
+    vi.doMock('@legendapp/list/react-native', async importOriginal => {
+        const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+        return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
+    });
     vi.doMock('@/modal', async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock().module;
+    });
+    vi.doMock('@/components/ui/popover', async importOriginal => {
+        const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+        return createInlinePopoverModuleMock(importOriginal);
     });
     vi.doMock('expo-router', async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -61,6 +82,7 @@ export async function prepareSessionFilesViewTestkit() {
 }
 
 export async function createSessionFilesViewFixture(input: Readonly<{
+    serverUrl?: string;
     rootPath?: string;
     sessionId?: string;
     machineId?: string;
@@ -73,48 +95,66 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
     const { transferMachine, transferFeatures, installTransferProjection } = await import('../sessionFileTransferTestkit');
     const { storage } = await import('@/sync/domains/state/storage');
-    const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
     const requests: FileViewRpcRequest[] = [];
-    dispatch = (request) => {
+    const dispatch = (request: FileViewRpcRequest) => {
         requests.push(request);
         return input.rpc?.(request) ?? { success: false, error: 'RPC method not available', errorCode: 'METHOD_NOT_AVAILABLE' };
     };
     const features = createRootLayoutFeaturesResponse({ features: { machines: transferFeatures().features.machines } });
+    const authoringMemory = createAuthoringMemoryHttpBoundary();
+    const machine = { ...transferMachine({ id: input.machineId ?? 'm1', storageMode: 'plain' }), active: true, activeAt: Date.now() };
+    const machineRow = { ...machine, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        metadata: encodePlainMachineStoredContent(machine.metadata),
+        daemonState: machine.daemonState ? encodePlainMachineStoredContent(machine.daemonState) : null };
     const homeRequest: NonNullable<Parameters<typeof restoreServerAccountForTest>[0]['request']> = async (url, init) => {
         const path = new URL(String(url)).pathname;
         const handled = await input.request?.(url, init);
         if (handled && handled.status !== 404) return handled;
+        const memoryResponse = await authoringMemory.handle(url, init);
+        if (memoryResponse) return memoryResponse;
+        if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
         if (path === '/health') return Response.json({ status: 'ok' });
         if (path === '/v1/features') return Response.json(features);
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'alice' }));
         if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
         if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 0 }));
         if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false });
-        if (path.startsWith('/v1/machines/')) return Response.json({ machine: { id: input.machineId ?? 'm1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
-        if (path.includes('/machines')) return Response.json({ machines: [] });
+        if (path === `/v1/machines/${machine.id}`) return Response.json({ machine: machineRow });
+        if (path === '/v1/machines') return Response.json([machineRow]);
         return Response.json({}, { status: 404 });
     };
-    const connection = await restoreServerAccountForTest({ serverUrl: 'https://session-file-views.test', accountId: 'alice', request: homeRequest });
-    if (input.machineCarrierOrigin) {
-        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
-        setRuntimeFetch(async (url, init) => {
-            const requestUrl = new URL(String(url));
-            if (requestUrl.origin === input.machineCarrierOrigin) {
-                if (!input.request) throw new Error('No machine carrier HTTP responder');
-                return input.request(url, init);
-            }
-            if (requestUrl.origin !== new URL(connection.home.serverUrl).origin) throw new Error(`Unexpected file view Home: ${requestUrl.origin}`);
-            if (requestUrl.pathname === '/v1/auth/ping') return Response.json({});
-            return homeRequest(url, init);
-        });
-    }
+    const serverUrl = input.serverUrl ?? 'https://session-file-views.test';
+    const origin = new URL(serverUrl).origin;
+    const transport = { rpc: dispatch, http: homeRequest } satisfies FileViewTransport;
+    transportsByOrigin.set(origin, transport);
+    const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homeRequest });
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    setRuntimeFetch(async (url, init) => {
+        const requestUrl = new URL(String(url));
+        if (requestUrl.origin === input.machineCarrierOrigin) {
+            if (!input.request) throw new Error('No machine carrier HTTP responder');
+            return input.request(url, init);
+        }
+        const addressed = transportsByOrigin.get(requestUrl.origin);
+        if (!addressed) throw new Error(`Unexpected file view Home: ${requestUrl.origin}`);
+        if (requestUrl.pathname === '/v1/auth/ping') return Response.json({});
+        return addressed.http(url, init);
+    });
     const scope = { serverId: connection.home.id, machineId: input.machineId ?? 'm1', rootPath: input.rootPath ?? '/workspace' };
     const session = createSessionFixture({ id: input.sessionId ?? 's1', serverId: scope.serverId, active: true, metadata: { path: scope.rootPath, machineId: scope.machineId, host: 'tester.local' } });
-    installTransferProjection({ serverId: scope.serverId, session, machine: transferMachine({ id: scope.machineId, storageMode: 'plain' }), features });
+    installTransferProjection({ serverId: scope.serverId, session, machine, features });
+    await vi.waitFor(() => {
+        const accountScope = getActiveServerAccountScope();
+        if (accountScope?.serverId !== connection.home.id || accountScope.accountId !== 'alice') {
+            throw new Error('File-view fixture is waiting for its admitted Account/Home');
+        }
+    });
     storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true, 'files.reviewComments': false, 'files.diffSyntaxHighlighting': false, 'files.editor': false } });
-    projectManager.clear();
     storage.getState().applySessions([session]);
     return {
         ...connection, scope, session, requests, storage,
@@ -122,6 +162,7 @@ export async function createSessionFilesViewFixture(input: Readonly<{
             const { scmStatusSync } = await import('@/scm/scmStatusSync');
             scmStatusSync.clearForSession(session.id, scope.serverId);
             await connection.dispose();
+            if (transportsByOrigin.get(origin) === transport) transportsByOrigin.delete(origin);
         },
         setSnapshot(snapshot: ScmWorkingSnapshot | null, error: { message: string; at: number; errorCode?: string } | null = null) {
             if (snapshot === null) {

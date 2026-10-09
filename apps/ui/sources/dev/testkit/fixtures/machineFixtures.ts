@@ -1,4 +1,7 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
+import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 export function createMachineFixture(overrides: Partial<Machine> = {}): Machine {
     const createdAt = overrides.createdAt ?? 1;
@@ -31,5 +34,21 @@ export function createMachineListByServerIdFixture(
 ): Record<string, Machine[]> {
     return {
         [serverId]: machines,
+    };
+}
+
+/** A Home census row, not an already-opened client projection. */
+export function createPlainMachineRowFixture(input: Readonly<{ id: string; accountId: string }>): FetchedMachineRow {
+    const machine = createMachineFixture({ id: input.id, activeAt: Date.now() });
+    return {
+        id: machine.id, kind: 'persistent', seq: machine.seq,
+        createdAt: machine.createdAt, updatedAt: machine.updatedAt,
+        active: machine.active, activeAt: machine.activeAt,
+        metadata: encodePlainMachineStoredContent(machine.metadata), metadataVersion: machine.metadataVersion,
+        daemonState: null, daemonStateVersion: machine.daemonStateVersion,
+        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        revokedAt: null, replacedByMachineId: null, installationId: 'test-installation',
+        access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: input.accountId, displayName: 'Test Account' },
+            role: 'manage', resourceMode: 'plain', accessState: 'ready' }),
     };
 }

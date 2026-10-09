@@ -386,7 +386,8 @@ describe('SegmentedTabBar', () => {
         expect(SEGMENTED_TAB_ICON_SIZE_PX).toBe(16);
     });
 
-    // Icons replace labels only when EVERY tab supplies one; a half-iconic row reads as broken.
+    // Icons replace labels only when EVERY tab supplies one. A mixed bar keeps all labels,
+    // including identity marks beside the named dashboard they identify.
     it('renders an icon-only bar with the label as its accessible name, and keeps mixed bars textual', async () => {
         const { SegmentedTabBar } = await import('./SegmentedTabBar');
         const { SEGMENTED_TAB_ICON_SIZE_PX } = await import('./SegmentedTabBar');
@@ -412,7 +413,10 @@ describe('SegmentedTabBar', () => {
             />,
         );
         expect(requireTabLabel(mixed, 'mix:alpha')).toBe('Alpha');
-        expect(requireTab(mixed, 'mix:alpha').findAllByType('Glyph' as never)).toHaveLength(0);
+        expect(requireTab(mixed, 'mix:alpha').findAllByType('Glyph' as never)).toHaveLength(1);
+        expect(requireTabLabel(mixed, 'mix:beta')).toBe('Beta');
+        expect(requireTab(mixed, 'mix:beta').findAllByType('Glyph' as never)).toHaveLength(0);
+        expect(requireTabLabel(mixed, 'mix:gamma')).toBe('Gamma');
         expect((requireTab(mixed, 'mix:alpha').props as { title?: string }).title).toBeUndefined();
     });
 
@@ -748,5 +752,63 @@ describe('SegmentedTabBar', () => {
 
         screen.pressByTestId('seg:gamma');
         expect(onSelectTab).toHaveBeenCalledWith('gamma');
+    });
+});
+
+/** Six page tabs; Context is last, so a narrow pane puts it behind More (D44). */
+const PAGE_TABS: ReadonlyArray<SegmentedTab<'overview' | 'code' | 'changes' | 'scripts' | 'services' | 'context'>> = [
+    { id: 'overview', label: 'Overview', icon: React.createElement('Glyph') },
+    { id: 'code', label: 'Code', icon: React.createElement('Glyph') },
+    { id: 'changes', label: 'Changes', count: '3', icon: React.createElement('Glyph') },
+    { id: 'scripts', label: 'Scripts', icon: React.createElement('Glyph') },
+    { id: 'services', label: 'Services', icon: React.createElement('Glyph') },
+    { id: 'context', label: 'Context', icon: React.createElement('Glyph') },
+];
+
+/** Feeds the measured boxes a browser would report: the row, each tab with and without its glyph, and More. */
+function layOut(screen: RenderedScreen, rowWidth: number) {
+    const layoutEvent = (width: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width, height: 30 } } });
+    act(() => {
+        const measurers = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function');
+        for (const node of measurers) {
+            // The outermost layout owner is the row; every other one is a measured caption or a live tab.
+            const text = node.findAll((child) => typeof child.type === 'string' && String(child.type) === 'Text');
+            const label = text.flatMap((child) => child.children.filter((entry): entry is string => typeof entry === 'string')).join('');
+            const hasGlyph = node.findAll((child) => String(child.type) === 'Glyph').length > 0;
+            const width = node === measurers[0] ? rowWidth : label.length * 8 + (hasGlyph ? 22 : 0) + 22;
+            node.props.onLayout(layoutEvent(width));
+        }
+    });
+}
+
+describe('SegmentedTabBar measured overflow', () => {
+    it('keeps every page tab in a wide row and offers no More', async () => {
+        const { SegmentedTabBar } = await import('./SegmentedTabBar');
+        const screen = await renderScreen(
+            <SegmentedTabBar presentation="plain" overflow={{ label: 'More' }} tabs={PAGE_TABS} activeTabId="overview" onSelectTab={() => {}} testIDPrefix="page" />,
+        );
+        layOut(screen, 1200);
+        for (const tab of PAGE_TABS) expect(screen.findHostByTestId(`page:${tab.id}`)).toBeTruthy();
+        expect(screen.findHostByTestId('page:more')).toBeNull();
+    });
+
+    it('moves the tabs that no longer fit behind More, which carries the selected hidden tab and selects through the same owner', async () => {
+        const { SegmentedTabBar } = await import('./SegmentedTabBar');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const onSelectTab = vi.fn();
+        const screen = await renderScreen(
+            <SegmentedTabBar presentation="plain" overflow={{ label: 'More' }} tabs={PAGE_TABS} activeTabId="context" onSelectTab={onSelectTab} testIDPrefix="page" />,
+        );
+        layOut(screen, 260);
+        expect(screen.findHostByTestId('page:overview')).toBeTruthy();
+        expect(screen.findHostByTestId('page:context')).toBeNull();
+        const more = requireTab(screen, 'page:more');
+        expect(more.props.accessibilityLabel).toBe('More, Context');
+        expect(more.props.accessibilityState).toMatchObject({ selected: true });
+        const menu = screen.root.findByType(DropdownMenu);
+        expect(menu.props.items.map((item: { id: string }) => item.id)).toContain('context');
+        expect(menu.props.items.find((item: { id: string }) => item.id === 'context')?.checked).toBe(true);
+        act(() => { menu.props.onSelect('services'); });
+        expect(onSelectTab).toHaveBeenCalledWith('services');
     });
 });

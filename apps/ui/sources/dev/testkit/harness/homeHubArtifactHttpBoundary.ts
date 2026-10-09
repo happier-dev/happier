@@ -1,4 +1,4 @@
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, type ArtifactCallerAccessV1, type ArtifactAccessGrantRowV1 } from '@happier-dev/protocol';
 import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, HOME_HUB_DEFAULT_LAYOUT, HomeHubLayoutV1Schema } from '@happier-dev/protocol/home';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -11,10 +11,12 @@ export function createHomeHubArtifactHttpBoundary(accountId: string) {
 
 /** The same HTTP/codec/CAS boundary serves personal Home and declared-area layouts. */
 export function createLayoutArtifactHttpBoundary<T>(accountId: string, definition: Readonly<{
-    artifactId: string; kind: string; defaultLayout: T; parseLayout(value: unknown): T;
+    artifactId: string; kind: string; defaultLayout: T; parseLayout(value: unknown): T; buildHeader?(value: T): Readonly<Record<string, unknown>>;
 }>) {
     const { artifactId } = definition;
     let artifact: Artifact | null = null;
+    let callerAccess: ArtifactCallerAccessV1 | null = 'owner';
+    let grants: readonly ArtifactAccessGrantRowV1[] = [];
     const writes: T[] = [];
     const layout = () => {
         if (!artifact?.body) return definition.defaultLayout;
@@ -24,8 +26,8 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
     };
     const seed = (value: T) => {
         artifact = {
-            id: artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
-            header: encodePlainArtifactStoredContent({ kind: definition.kind, v: 1, title: 'Personal layout' }),
+            id: artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+            header: encodePlainArtifactStoredContent(definition.buildHeader?.(value) ?? { kind: definition.kind, v: 1, title: 'Personal layout' }),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(definition.parseLayout(value)) }),
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
             seq: 1, createdAt: 1, updatedAt: 1,
@@ -40,8 +42,13 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
         if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
         if (path === AUTHORING_MEMORY_ROUTE_V1 && (!init?.method || init.method === 'GET')) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
         if (path === '/v1/artifacts' && init?.method !== 'POST') return Response.json(artifact ? [artifact] : []);
+        if (path === `/v1/artifacts/${artifactId}/access/grants`) return artifact && (callerAccess === 'owner' || callerAccess === 'admin')
+            ? Response.json({ artifactId, ownerAccountId: artifact.ownerAccountId, access: callerAccess, grants })
+            : Response.json({ error: 'artifact_access_forbidden' }, { status: 403 });
         if (path !== '/v1/artifacts' && path !== `/v1/artifacts/${artifactId}`) return Response.json({ error: 'not_found' }, { status: 404 });
-        if (init?.method !== 'POST') return artifact ? Response.json(artifact) : Response.json({ error: 'not_found' }, { status: 404 });
+        if (callerAccess === null) return Response.json({ error: 'artifact_access_forbidden' }, { status: 403 });
+        if (init?.method !== 'POST') return artifact ? Response.json({ ...artifact, access: callerAccess }) : Response.json({ error: 'not_found' }, { status: 404 });
+        if (callerAccess === 'view') return Response.json({ error: 'artifact_access_forbidden' }, { status: 403 });
         const body: unknown = typeof init.body === 'string' ? JSON.parse(init.body) : null;
         if (!body || typeof body !== 'object' || typeof Reflect.get(body, 'header') !== 'string' || typeof Reflect.get(body, 'body') !== 'string') throw new Error('Expected encoded Artifact write');
         const header = String(Reflect.get(body, 'header'));
@@ -49,7 +56,7 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
         if (path === '/v1/artifacts') {
             if (artifact) return Response.json({ error: 'conflict' }, { status: 409 });
             if (Reflect.get(body, 'id') !== artifactId || Reflect.get(body, 'dataEncryptionKey') !== ARTIFACT_PLAIN_DATA_KEY_MARKER) throw new Error('Unexpected Home Artifact identity or mode');
-            artifact = { id: artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', header, body: encodedBody,
+            artifact = { id: artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', publicAudience: 'none', header, body: encodedBody,
                 dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
             writes.push(layout());
             return Response.json(artifact);
@@ -60,5 +67,8 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
         writes.push(layout());
         return Response.json({ success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion });
     };
-    return { artifactId, request, seed, layout, writes };
+    return { artifactId, request, seed, layout, writes,
+        setCallerAccess: (access: ArtifactCallerAccessV1 | null) => { callerAccess = access; },
+        setGrants: (next: readonly ArtifactAccessGrantRowV1[]) => { grants = next; },
+    };
 }

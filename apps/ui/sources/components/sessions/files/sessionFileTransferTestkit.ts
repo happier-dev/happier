@@ -1,4 +1,5 @@
 import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
+import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { createMachineFixture, createSessionFixture } from '@/dev/testkit';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -23,14 +24,14 @@ export function transferMachine(overrides: Partial<Machine> = {}): Machine {
         kind: 'persistent', revokedAt: null,
         operationProtocolCapabilities: { finiteTransferRpc: { protocolVersions: [1] }, irohMachineEndpoint: { protocolVersions: [1], ...TRANSFER_ENDPOINT } },
         operationProtocolCapabilitiesRevision: 1,
-        daemonState: { transfer: {
+        daemonState: MachinePublishedDaemonStateV1Schema.parse({ status: 'running', transfer: {
             supported: { import: true, export: true },
             listenerClasses: {
                 loopback_http: { enabled: false, configured: false, active: false },
                 tailscale_serve_https: { enabled: false, configured: false, active: false },
             },
             lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
-        } },
+        } }),
         ...overrides,
     });
 }

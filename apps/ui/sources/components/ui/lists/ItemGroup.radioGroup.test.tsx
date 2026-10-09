@@ -72,6 +72,17 @@ function keyEvent(key: string) {
 }
 
 describe('ItemGroup radio selection', () => {
+    it.each([undefined, 'Explicit name'])('names a titled radio group with its title unless explicitly labeled (%s)', async (accessibilityLabel) => {
+        const screen = await renderScreen(
+            <ItemGroupComponent title="Use" accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel}>
+                <ItemComponent title="A fresh clone" accessibilityRole="radio" onPress={() => {}} />
+            </ItemGroupComponent>,
+        );
+        const group = screen.findAllByType('View' as never).find((node) => node.props.role === 'radiogroup');
+        expect(group?.props.accessibilityLabel).toBe(accessibilityLabel ?? 'Use');
+        expect(group?.props['aria-label']).toBe(accessibilityLabel ?? 'Use');
+    });
+
     it('exposes one named radio group with checked, disabled, and roving-tab-stop semantics', async () => {
         const screen = await renderScreen(
             <RadioGroupHarness initialSelected="openai" />,
@@ -112,9 +123,27 @@ describe('ItemGroup radio selection', () => {
         }
     });
 
-    it('requires a non-empty accessible name when opting into radiogroup semantics', async () => {
+    it('uses a string title as the native radio-group name', async () => {
+        const { Platform } = await import('react-native');
+        const previousPlatform = Platform.OS;
+        (Platform as { OS: string }).OS = 'ios';
+        try {
+            const screen = await renderScreen(
+                <ItemGroupComponent title="Use" accessibilityRole="radiogroup">
+                    <ItemComponent title="A fresh clone" accessibilityRole="radio" onPress={() => {}} />
+                </ItemGroupComponent>,
+            );
+            const group = screen.findAllByType('View' as never)
+                .find((node) => node.props.accessibilityRole === 'radiogroup');
+            expect(group?.props.accessibilityLabel).toBe('Use');
+        } finally {
+            (Platform as { OS: string }).OS = previousPlatform;
+        }
+    });
+
+    it.each([undefined, '   '])('requires a non-empty accessible name for an untitled radiogroup (%s)', async (accessibilityLabel) => {
         await expect(renderScreen(
-            <ItemGroupComponent accessibilityRole="radiogroup" accessibilityLabel="   ">
+            <ItemGroupComponent accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel}>
                 <ItemComponent
                     testID="unnamed-radio"
                     title="Unlabeled group option"
