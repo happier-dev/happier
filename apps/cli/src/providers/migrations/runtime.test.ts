@@ -13,8 +13,8 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { PROFILE_PROVIDER_CONVERSION_ROUTE_V1, ProfileProviderConversionMutationV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
-import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsCatalogV1Schema, ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema,
-  composeProviderSettingsV1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsCatalogV1Schema,
+  splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -28,7 +28,7 @@ import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema } f
 import { buildLegacyProfileMigrationContext } from './buildContext';
 import { authorizeLegacyProfileMigrationContext } from './authorizeContext';
 import { createProviderOperationLifetime } from '../operationLifetime';
-import { confirmLegacyProfileMigrationConflict } from './runtime';
+import { confirmLegacyProfileMigrationConflict, triggerLegacyProfileMigration } from './runtime';
 
 const dnsLookup = vi.hoisted(() => vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]));
 
@@ -218,29 +218,27 @@ describe('public legacy Profile conflict confirmation', () => {
       expect(providerRevision).toBe(initialProviderRevision);
       if (staleReview) return;
 
-      const currentSettings = composeProviderSettingsV1(catalog,
-        ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema.parse(raw.providerDefaultModelSelectionsByAgentTargetKeyV1 ?? {}));
-      const refreshedContext = buildLegacyProfileMigrationContext({ rawSettings: raw, providerSettings: currentSettings,
-        authoringMemory: { lastUsedProfile: null }, providersByContributionKey,
-        allocatedConnectionIdsBySourceProfileId: { deepseek: 'pc-review-candidate' }, migratedAt: 20, processEnv: process.env });
-      const refreshedConflict = (await authorizeLegacyProfileMigrationContext({ rawSettings: raw, providerSettings: currentSettings,
-        context: refreshedContext, providersByContributionKey, machineId: 'machine-review',
-        lifetime: createProviderOperationLifetime({ wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs }),
-      })).pendingConflicts?.find(entry => entry.sourceProfileId === 'deepseek');
+      // Reopening the ordinary migration producer must publish the review that
+      // a caller can actually select; deriving a test-only fresh hash is insufficient.
+      expect(await triggerLegacyProfileMigration({ credentials, providersEnabled: true, machineId: 'machine-review' }))
+        .toMatchObject({ status: 'complete', version: 8 });
+      const refreshedConflict = catalog.migration?.pendingConflicts.find(entry => entry.sourceProfileId === 'deepseek');
       if (!refreshedConflict) throw new Error('Expected a freshly authorized destination review');
       expect(refreshedConflict.kinds).toEqual(expect.arrayContaining(['credential_binding', 'edited_default_connection']));
       expect(refreshedConflict.candidateFingerprint).not.toBe(currentConflict.candidateFingerprint);
+      expect(catalog.connections).toEqual(untouchedCatalog.connections);
+      expect(catalog.accountGrants).toEqual([]);
       confirmation = confirmReview(refreshedConflict.candidateFingerprint);
     }
     const result = await confirmation;
     expect(result.outcomes).toContainEqual(expect.objectContaining({ sourceProfileId: 'deepseek', kind: 'connection', connectionId: winnerId,
       modelSelection: { ...candidate.selectedModel, providerConnectionId: winnerId } }));
-    expect(commits).toHaveLength(1);
+    expect(commits).toHaveLength(changedWinnerEndpoint ? 2 : 1);
     expect(catalog.connections.map(connection => connection.id)).toEqual([winnerId]);
     if (changedWinnerEndpoint) {
       expect(catalog.connections[0]).toMatchObject({ endpointOverrides: untouchedCatalog.connections[0]!.endpointOverrides });
-      expect(version).toBe(8);
-      expect(providerRevision).toBe(5);
+      expect(version).toBe(9);
+      expect(providerRevision).toBe(6);
     }
     expect(catalog.secretBindingsByConnectionId).toEqual({ [winnerId]: { account: { [descriptor.credentialBinding.credentialSlotId]: winnerReference } } });
     expect(catalog.manualModelsByConnectionId[winnerId]).toContainEqual(expect.objectContaining({ id: candidate.selectedModel.modelId }));
