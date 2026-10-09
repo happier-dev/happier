@@ -5,7 +5,7 @@ import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../actions/v2.js';
 import { expandDeclaredInputAlternatives, resolveDeclaredInputLeaves } from '../actions/inputSchemaTraversal.js';
-import { InputPathSchema } from '../../inputs/inputPredicates.js';
+import { InputPathSchema, InputPredicateSchema, evaluateInputPredicate, readInputPath, readInputPredicatePaths } from '../../inputs/inputPredicates.js';
 import { PluginDeclaredExecutableRefSchema } from './agentAcpTransport.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema, type PluginJsonSchemaV2 } from './publicTypes.js';
 import { PluginJsonValueV2Schema } from './jsonSchema.js';
@@ -20,7 +20,12 @@ import { createProtocolComposableSchema, ProtocolValidationError, defineProtocol
 
 export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild'] as const;
 export type MachineProvisionerEffectRoleV1 = typeof MACHINE_PROVISIONER_EFFECT_ROLES_V1[number];
-export type MachineProvisionerRoleV1 = 'check' | 'options' | 'inspect' | 'reconcile' | MachineProvisionerEffectRoleV1;
+export type MachineProvisionerRoleV1 = 'check' | 'options' | 'inspect' | 'reconcile' | 'cleanup' | MachineProvisionerEffectRoleV1;
+export const MACHINE_PROVISIONER_BOOTSTRAP_CREDENTIAL_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'inspect', 'reconcile', 'destroy'] as const;
+export type MachineProvisionerBootstrapCredentialRoleV1 = typeof MACHINE_PROVISIONER_BOOTSTRAP_CREDENTIAL_ROLES_V1[number];
+export function isMachineProvisionerBootstrapCredentialRoleV1(role: MachineProvisionerRoleV1): role is MachineProvisionerBootstrapCredentialRoleV1 {
+  return MACHINE_PROVISIONER_BOOTSTRAP_CREDENTIAL_ROLES_V1.some(candidate => candidate === role);
+}
 
 function isClosedSchema(schema: PluginJsonSchemaV2): boolean {
   if ((schema.type === 'object' || schema.properties) && schema.additionalProperties !== false) return false;
@@ -60,8 +65,20 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.obje
   nativeDurationInput: z.object({ path: InputPathSchema, unit: z.enum(['milliseconds', 'seconds']) }).strict().optional(),
   bootstrapTransport: z.object({ kind: z.literal('native'), exec: local(), putFile: local() }).strict().optional(),
   bootstrapCredential: z.object({ kind: z.enum(['ssh', 'native-token']) }).strict().optional(),
-  reconciliation: z.object({ nativeOperationSchema: strictPortableSchema, action: local() }).strict().optional(),
+  // Waive only a positively qualified native launch variant. Omission keeps
+  // the Action's declared purpose required; this never grants HostAccess.
+  credentialPurposeRequirements: z.array(z.object({ purpose: local(), optionalWhen: InputPredicateSchema }).strict()).optional(),
+  reconciliation: z.object({ nativeOperationSchema: strictPortableSchema, action: local(), cleanup: local().optional(),
+    continueAcquire: z.literal(true).optional() }).strict().optional(),
 }).strict().superRefine((descriptor, context) => {
+  const purposes = new Set<string>();
+  descriptor.credentialPurposeRequirements?.forEach((requirement, index) => {
+    const paths = readInputPredicatePaths(requirement.optionalWhen);
+    if (purposes.has(requirement.purpose) || !paths.length || paths.some(path => !resolveDeclaredInputLeaves(descriptor.launchSchema, path)?.length)) {
+      context.addIssue({ code: 'custom', path: ['credentialPurposeRequirements', index], message: 'Credential requirements need a unique purpose and declared launch selector paths.' });
+    }
+    purposes.add(requirement.purpose);
+  });
   if (descriptor.bootstrapCredential?.kind === 'native-token' && !descriptor.bootstrapTransport) {
     context.addIssue({ code: 'custom', path: ['bootstrapTransport'], message: 'Native bootstrap tokens require native exec and file transport.' });
   }
@@ -74,6 +91,17 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.obje
 }));
 export type MachineProvisionerContributionV1 = z.infer<typeof MachineProvisionerContributionV1Schema>;
 
+/** One purpose requirement owner shared by acquisition, retained roles and configuration. */
+export function isMachineProvisionerCredentialPurposeRequiredV1(
+  descriptor: Pick<MachineProvisionerContributionV1, 'credentialPurposeRequirements'>, purpose: string, launch: unknown,
+): boolean {
+  const requirement = descriptor.credentialPurposeRequirements?.find(entry => entry.purpose === purpose);
+  if (!requirement) return true;
+  const paths = readInputPredicatePaths(requirement.optionalWhen);
+  return !paths.length || paths.some(path => readInputPath(launch, path) === undefined)
+    || !evaluateInputPredicate(requirement.optionalWhen, launch);
+}
+
 export function readMachineProvisionerActionRolesV1(descriptor: MachineProvisionerContributionV1): readonly Readonly<{ role: MachineProvisionerRoleV1; action: string }>[] {
   return Object.freeze([
     ...Object.entries(descriptor.actions).map(([role, action]) => Object.freeze({ role: role as MachineProvisionerRoleV1, action })),
@@ -82,6 +110,7 @@ export function readMachineProvisionerActionRolesV1(descriptor: MachineProvision
       { role: 'putFile' as const, action: descriptor.bootstrapTransport.putFile },
     ] : []),
     ...(descriptor.reconciliation ? [{ role: 'reconcile' as const, action: descriptor.reconciliation.action }] : []),
+    ...(descriptor.reconciliation?.cleanup ? [{ role: 'cleanup' as const, action: descriptor.reconciliation.cleanup }] : []),
   ]);
 }
 
@@ -90,9 +119,15 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
   value.machineProvisioners.forEach((descriptor, index) => {
     if (seen.has(descriptor.id)) context.addIssue({ code: 'custom', path: ['machineProvisioners', index, 'id'], message: 'Duplicate machine provisioner id.' });
     seen.add(descriptor.id);
+    const acquire = value.actions.find(action => action.id === descriptor.actions.acquire);
+    descriptor.credentialPurposeRequirements?.forEach((requirement, requirementIndex) => {
+      if (!acquire?.hostAccess?.includes(requirement.purpose)) context.addIssue({ code: 'custom',
+        path: ['machineProvisioners', index, 'credentialPurposeRequirements', requirementIndex, 'purpose'],
+        message: 'A conditional credential purpose must be declared by its acquisition Action.' });
+    });
     for (const binding of readMachineProvisionerActionRolesV1(descriptor)) {
       const action = value.actions.find(candidate => candidate.id === binding.action);
-      const path = ['machineProvisioners', index, ...(binding.role === 'reconcile' ? ['reconciliation', 'action']
+      const path = ['machineProvisioners', index, ...(binding.role === 'reconcile' || binding.role === 'cleanup' ? ['reconciliation', binding.role === 'cleanup' ? 'cleanup' : 'action']
         : [descriptor.actions[binding.role as keyof typeof descriptor.actions] ? 'actions' : 'bootstrapTransport', binding.role])];
       if (!action || action.execution.target !== 'daemon') {
         context.addIssue({ code: 'custom', path, message: 'Machine provisioner roles require a declared same-plugin daemon Action.' });
@@ -111,7 +146,7 @@ export function validateMachineProvisionerContributionsV1(value: Readonly<{ mach
         context.addIssue({ code: 'custom', path, message: 'Provisioner role results must use their canonical declared contract.' });
       }
       if (!isClosedSchema(action.inputSchema)) context.addIssue({ code: 'custom', path, message: 'Provisioner role input schemas must be closed.' });
-      if (['check', 'options', 'inspect', 'reconcile'].includes(binding.role) && action.dangerLevel !== 'safe') context.addIssue({ code: 'custom', path, message: 'Read-only provisioner roles must be safe.' });
+      if (['check', 'options', 'inspect', 'reconcile', 'cleanup'].includes(binding.role) && action.dangerLevel !== 'safe') context.addIssue({ code: 'custom', path, message: 'Read-only provisioner roles must be safe.' });
     }
     if (descriptor.nativeDurationInput) {
       const binding = descriptor.nativeDurationInput;
@@ -220,6 +255,7 @@ function machineProvisionerRoleResultProjection(descriptor: MachineProvisionerCo
     case 'acquire': case 'reconcile': return acquireResultProjection(descriptor.resourceSchema, descriptor.reconciliation?.nativeOperationSchema);
     case 'bootstrap': return MachineProvisionerBootstrapCarrierV1Schema.jsonSchema;
     case 'inspect': return MachineProvisionerObservationV1Schema.jsonSchema;
+    case 'cleanup': return MachineProvisionerCleanupObservationV1Schema.jsonSchema;
     case 'exec': return MachineProvisionerNativeExecResultV1Schema.jsonSchema;
     case 'putFile': return MachineProvisionerPutFileResultV1Schema.jsonSchema;
     case 'power': case 'destroy': return MachineProvisionerPowerResultV1Schema.jsonSchema;
@@ -229,6 +265,13 @@ function machineProvisionerRoleResultProjection(descriptor: MachineProvisionerCo
 function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerContributionV1, role: MachineProvisionerRoleV1): PluginJsonSchemaV2 | undefined {
   // Options deliberately owns its provider-declared query, not a universal wrapper.
   if (role === 'options') return undefined;
+  if (role === 'cleanup') {
+    if (!descriptor.reconciliation) return undefined;
+    const { cleanupInput } = defineMachineProvisionerReconciliationSchemas({ launch: MachineProvisionerCheckInputV1Schema,
+      resource: MachineProvisionerCheckInputV1Schema, nativeOperation: MachineProvisionerCheckInputV1Schema });
+    return normalizePluginJsonSchema({ ...cleanupInput.jsonSchema,
+      properties: { nativeOperation: nestedProjection(descriptor.reconciliation.nativeOperationSchema) } });
+  }
   if (role === 'reconcile' || role === 'destroy' && descriptor.reconciliation) {
     if (!descriptor.reconciliation) return undefined;
     const schemas = defineMachineProvisionerReconciliationSchemas({ launch: MachineProvisionerCheckInputV1Schema,
@@ -243,7 +286,8 @@ function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerCon
         properties: { ...correlation.properties, launch: nestedProjection(descriptor.launchSchema) } } } } : variant;
     }) });
   }
-  const roles = defineMachineProvisionerSchemas({ launch: MachineProvisionerCheckInputV1Schema, resource: MachineProvisionerCheckInputV1Schema });
+  const roles = defineMachineProvisionerSchemas({ launch: MachineProvisionerCheckInputV1Schema, resource: MachineProvisionerCheckInputV1Schema,
+    ...(descriptor.reconciliation?.continueAcquire ? { continueAcquire: true } : {}) });
   const schema = role === 'check' ? roles.checkInput : role === 'acquire' ? roles.acquireInput
     : role === 'bootstrap' ? roles.bootstrapInput : role === 'power' ? roles.powerInput : role === 'rebuild' ? roles.rebuildInput
       : role === 'exec' ? roles.execInput : role === 'putFile' ? roles.putFileInput : roles.resourceInput;
@@ -252,6 +296,7 @@ function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerCon
   const native = role === 'acquire' ? descriptor.launchSchema : descriptor.resourceSchema;
   return normalizePluginJsonSchema({ ...schema.jsonSchema, properties: {
     ...schema.jsonSchema.properties, [key]: nestedProjection(native),
+    ...(role === 'acquire' && descriptor.reconciliation?.continueAcquire ? { resource: nestedProjection(descriptor.resourceSchema) } : {}),
   } });
 }
 function defineAcquireResult<TInput, TOutput, NInput, NOutput>(resource: ProtocolComposableSchema<TInput, TOutput>, nativeOperation?: ProtocolComposableSchema<NInput, NOutput>) {
@@ -297,6 +342,8 @@ export function defineMachineProvisionerReconciliationSchemas<LI, LO, RI, RO, NI
       managedId: defineProtocolString({ minLength: 1 }), requestId: defineProtocolString({ minLength: 1 }), launch: schemas.launch,
     }, closed) }, closed)]),
     destroyInput: defineProtocolUnion([defineProtocolObject({ resource: schemas.resource }, closed), pending]),
+    cleanupInput: pending,
+    cleanupResult: MachineProvisionerCleanupObservationV1Schema,
     result: defineAcquireResult(schemas.resource, schemas.nativeOperation),
   });
 }
@@ -305,6 +352,13 @@ const roleString = defineProtocolString({ minLength: 1 });
 const roleBoolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
 const roleBase64 = defineProtocolString({ pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$' });
 const roleRef = PluginContributionIdentityV1Schema;
+/** Read-only exact cleanup evidence; retryable is native idempotency evidence,
+ * never independent admission to replay an effect. */
+export const MachineProvisionerCleanupObservationV1Schema = defineProtocolUnion([
+  defineProtocolObject({ kind: defineProtocolLiteral('confirmed') }, closedRole),
+  defineProtocolObject({ kind: defineProtocolLiteral('retryable') }, closedRole),
+  defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: roleString.optional() }, closedRole),
+]);
 const nativeDiagnostic = defineProtocolObject({
   code: roleString,
   severity: defineProtocolUnion([defineProtocolLiteral('info'), defineProtocolLiteral('warning'), defineProtocolLiteral('error')]),
@@ -338,11 +392,13 @@ export const MachineProvisionerNativeExecResultV1Schema = defineProtocolUnion([d
 }, closedRole), defineProtocolObject({ kind: defineProtocolLiteral('process-configured') }, closedRole)]);
 export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResourceInput, TResource>(schemas: Readonly<{
   launch: ProtocolComposableSchema<TLaunchInput, TLaunch>; resource: ProtocolComposableSchema<TResourceInput, TResource>;
+  continueAcquire?: true;
 }>) {
   const closed = { policy: 'closed' } as const;
   return Object.freeze({
     checkInput: MachineProvisionerCheckInputV1Schema,
-    acquireInput: defineProtocolObject({ launch: schemas.launch, managedId: defineProtocolString({ minLength: 1 }).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional() }, closed),
+    acquireInput: defineProtocolObject({ launch: schemas.launch, managedId: defineProtocolString({ minLength: 1 }).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(),
+      ...(schemas.continueAcquire ? { resource: schemas.resource.optional() } : {}) }, closed),
     acquireResult: defineAcquireResult(schemas.resource),
     rebuildInput: defineProtocolObject({ resource: schemas.resource, reviewedEffectDigest: defineProtocolString({ minLength: 1 }) }, closed),
     rebuildResult: defineRebuildResult(schemas.resource),

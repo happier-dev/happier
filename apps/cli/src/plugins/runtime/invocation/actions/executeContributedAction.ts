@@ -1,7 +1,7 @@
 import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { MACHINE_PROVISIONER_EFFECT_ROLES_V1, readMachineProvisionerActionRolesV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MACHINE_PROVISIONER_EFFECT_ROLES_V1, readMachineProvisionerActionRolesV1, isMachineProvisionerBootstrapCredentialRoleV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ActionId, QualifiedPluginActionId } from '@happier-dev/protocol/actions';
 import { projectPluginActionUnavailableOutcomeCode, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { ActionsSettingsV1, JsonValue, MessageActionAvailableSnapshotV1, PluginMachineExecutionOriginV1, RehydratedPluginContributionPointOperationV1, TargetActionApprovalReplayPlacementV1, UiContributedActionExecuteRequestV1 } from '@happier-dev/protocol';
@@ -129,7 +129,7 @@ async function checkManagedProviderOperationCustody(params: Readonly<{
   const effectRole = matches.some((binding) => (
     MACHINE_PROVISIONER_EFFECT_ROLES_V1.some((role) => role === binding.role)
   ));
-  const requiresManagedCustody = effectRole || matches.some(({ role }) => role === 'reconcile');
+  const requiresManagedCustody = effectRole || matches.some(({ role }) => role === 'reconcile' || role === 'cleanup');
   if (params.operation === undefined && params.probeBinding === undefined && !requiresManagedCustody) return null;
   const invalid = () => actionHandlerNotStartedFailure(
     'plugin_managed_provider_operation_custody_invalid',
@@ -914,10 +914,7 @@ export async function executeContributedAction(params: Readonly<{
         ? {}
         : { execInvocationTimeoutMs: params.admittedManagedProviderOperation.execTimeoutMs }),
       ...(params.admittedManagedProviderOperation?.readBootstrapCredential
-        && (params.admittedManagedProviderOperation.role === 'acquire'
-          || params.admittedManagedProviderOperation.role === 'bootstrap'
-          || params.admittedManagedProviderOperation.role === 'exec'
-          || params.admittedManagedProviderOperation.role === 'putFile')
+        && isMachineProvisionerBootstrapCredentialRoleV1(params.admittedManagedProviderOperation.role)
         ? { managedBootstrapCredential: {
             role: params.admittedManagedProviderOperation.role,
             readBootstrapCredential: params.admittedManagedProviderOperation.readBootstrapCredential,

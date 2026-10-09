@@ -39,6 +39,42 @@ function nativeDurationManifest() {
 }
 
 describe('public machine provisioner role schemas', () => {
+  it('admits an exact pending-cleanup observation role and rejects effectful or mismatched cleanup declarations', () => {
+    const manifest = nativeDurationManifest();
+    const descriptor = manifest.contributes.machineProvisioners[0];
+    const nativeOperation = defineProtocolObject({ claimId: defineProtocolString() }, { policy: 'closed' });
+    const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
+    const reconciliation = provisioners.defineMachineProvisionerReconciliationSchemas({ launch: native, resource: native, nativeOperation });
+    const cleanupResult = defineProtocolUnion([
+      defineProtocolObject({ kind: defineProtocolLiteral('confirmed') }, { policy: 'closed' }),
+      defineProtocolObject({ kind: defineProtocolLiteral('retryable') }, { policy: 'closed' }),
+      defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }).optional() }, { policy: 'closed' }),
+    ]);
+    const cleanup = { ...manifest.contributes.actions[0], id: 'observe-cleanup',
+      inputSchema: defineProtocolObject({ nativeOperation }, { policy: 'closed' }).jsonSchema, resultSchema: cleanupResult.jsonSchema };
+    const actions = manifest.contributes.actions.map(action => action.id === 'acquire' ? { ...action, resultSchema: reconciliation.result.jsonSchema }
+      : action.id === 'destroy' ? { ...action, inputSchema: reconciliation.destroyInput.jsonSchema } : action);
+    const pending = { ...manifest, contributes: { ...manifest.contributes,
+      machineProvisioners: [{ ...descriptor, launchSchema: native.jsonSchema, reconciliation: {
+        nativeOperationSchema: nativeOperation.jsonSchema, action: 'reconcile', cleanup: 'observe-cleanup',
+      } }], actions: [...actions.map(action => action.id === 'acquire' ? { ...action,
+        inputSchema: defineMachineProvisionerSchemas({ launch: native, resource: native }).acquireInput.jsonSchema } : action),
+      { ...cleanup, id: 'reconcile', inputSchema: reconciliation.input.jsonSchema, resultSchema: reconciliation.result.jsonSchema }, cleanup],
+    } };
+    const { cleanup: _cleanup, ...lookup } = pending.contributes.machineProvisioners[0].reconciliation;
+    expect(PluginManifestV2Schema.safeParse({ ...pending, contributes: { ...pending.contributes,
+      machineProvisioners: [{ ...pending.contributes.machineProvisioners[0], reconciliation: lookup }],
+      actions: pending.contributes.actions.filter(action => action.id !== cleanup.id),
+    } }).success).toBe(true);
+    expect(PluginManifestV2Schema.safeParse(pending).success).toBe(true);
+    for (const invalid of [{ ...cleanup, dangerLevel: 'writesRemote', confirmation: { title: 'Cleanup', body: 'Delete' } },
+      { ...cleanup, inputSchema: defineProtocolObject({ resource: native }, { policy: 'closed' }).jsonSchema },
+      { ...cleanup, resultSchema: reconciliation.result.jsonSchema }]) {
+      expect(PluginManifestV2Schema.safeParse({ ...pending, contributes: { ...pending.contributes,
+        actions: pending.contributes.actions.map(action => action.id === cleanup.id ? invalid : action),
+      } }).success).toBe(false);
+    }
+  });
   it('admits a native duration binding to the real numeric options field in a complete cold manifest', () => {
     const manifest = nativeDurationManifest();
     const { nativeDurationInput: _binding, ...unbound } = manifest.contributes.machineProvisioners[0];

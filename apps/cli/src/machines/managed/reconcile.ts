@@ -14,10 +14,12 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import type { DevcontainerRebuildIntentV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { AdmittedManagedProviderOperationExecutionRequest } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import type { PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
 import { createPrivateBearerCredential } from '@/daemon/privateBearerFile';
-import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema, isMachineProvisionerCredentialPurposeRequiredV1,
+    isMachineProvisionerBootstrapCredentialRoleV1, type MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedBootstrapCarrierV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -34,7 +36,8 @@ export type ManagedMachineReconciliationInput = Readonly<{
     rebuild?: DevcontainerRebuildIntentV1;
 }>;
 
-export async function resolveManagedRoleCredentialAuthorizations(input: ManagedMachineAcquisitionDriverInput, providerPluginId: string, localId: string, credentials: ManagedMachineV1['launch']['credentials']) {
+export async function resolveManagedRoleCredentialAuthorizations(input: ManagedMachineAcquisitionDriverInput, providerPluginId: string, localId: string,
+    credentials: ManagedMachineV1['launch']['credentials'], qualification?: Readonly<{ descriptor: MachineProvisionerContributionV1; launch: unknown }>) {
     const { resolveRegistryConnectedAccountActionPurposeAuthorizations } = await import('@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations');
     const declarations = resolveRegistryConnectedAccountActionPurposeAuthorizations({
         registry: input.runtimeRegistry.contributes,
@@ -42,7 +45,8 @@ export async function resolveManagedRoleCredentialAuthorizations(input: ManagedM
         resolveOptionalAccess: input.runtimeRegistry.resolveOptionalAccess,
     });
     if (!declarations) throw new ManagedMachineControllerError('provider_unavailable');
-    return declarations.map(authorization => {
+    return declarations.filter(authorization => !qualification || isMachineProvisionerCredentialPurposeRequiredV1(
+        qualification.descriptor, authorization.purpose.purpose, qualification.launch)).map(authorization => {
         const matches = credentials?.filter(credential => credential.purpose.consumer.pluginId === providerPluginId
             && credential.purpose.purpose === authorization.purpose.purpose) ?? [];
         const credential = matches[0];
@@ -232,20 +236,24 @@ export function createManagedNativeInvocation(params: ManagedMachineReconciliati
         throw new ManagedMachineControllerError('admission_unavailable');
     }
     async function roleCredentialAuthorization(localId: string) {
-        return resolveManagedRoleCredentialAuthorizations(params.input, contribution.pluginId, localId, readMachine().launch.credentials);
+        const launch = readMachine().launch;
+        return resolveManagedRoleCredentialAuthorizations(params.input, contribution.pluginId, localId, launch.credentials,
+            { descriptor: contribution.definition, launch: launch.choices });
     }
-    async function invoke(role: keyof typeof contribution.definition.actions | 'exec' | 'putFile' | 'reconcile', body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; beforeNativeEffect?: () => Promise<void> }>): Promise<JsonValue | null> {
+    async function invoke(role: keyof typeof contribution.definition.actions | 'exec' | 'putFile' | 'reconcile' | 'cleanup', body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; beforeNativeEffect?: () => Promise<void> }>): Promise<JsonValue | null> {
         const machine = readMachine();
         const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
         const localId = role === 'reconcile' ? contribution.definition.reconciliation?.action
+            : role === 'cleanup' ? contribution.definition.reconciliation?.cleanup
             : role === 'exec' || role === 'putFile' ? contribution.definition.bootstrapTransport?.[role] : contribution.definition.actions[role];
         if (!localId) throw new ManagedMachineControllerError('provider_unavailable');
         const actionId = buildQualifiedPluginContributionKey({ pluginId: contribution.pluginId, localId });
         const invocationSignal = io?.signal ?? params.options.signal;
         const stdoutDecoder = new TextDecoder();
-        let rowCurrent = await params.client.isCurrent(machine, role === 'inspect' ? 'inspect' : undefined);
+        let rowCurrent = await params.client.isCurrent(machine, role === 'inspect' || role === 'cleanup' ? 'inspect' : undefined);
         if (!rowCurrent) throw new ManagedMachineControllerError('intent_changed');
-        const credentials = machine.launch.credentials ?? [];
+        const credentials = (machine.launch.credentials ?? []).filter(credential => isMachineProvisionerCredentialPurposeRequiredV1(
+            contribution.definition, credential.purpose.purpose, machine.launch.choices));
         const configurationCurrent = async () => {
             if (!credentials.length) return true;
             const read = params.input.managedProviderOperationAuthority.readCredentialConfigurationRevision;
@@ -276,7 +284,7 @@ export function createManagedNativeInvocation(params: ManagedMachineReconciliati
                 controller: machine.controller,
                 contribution: { ...contribution.identity, occurrenceId },
                 role,
-                ...(bootstrapCredentialKind && ['acquire', 'bootstrap', 'exec', 'putFile'].includes(role)
+                ...(bootstrapCredentialKind && isMachineProvisionerBootstrapCredentialRoleV1(role)
                     ? { readBootstrapCredential: async () => {
                         if (!await params.client.isCurrent(machine)) throw new ManagedMachineControllerError('intent_changed');
                         const retained = await readBootstrapCredentialValue(params, machine,
@@ -291,7 +299,7 @@ export function createManagedNativeInvocation(params: ManagedMachineReconciliati
                 } } : {}),
                 ...(activation.exactPurposeBindingSubjectId ? { exactPurposeBindingSubjectId: activation.exactPurposeBindingSubjectId } : {}),
                 isCurrent: async () => {
-                    rowCurrent = await params.client.isCurrent(machine, role === 'inspect' ? 'inspect' : undefined);
+                    rowCurrent = await params.client.isCurrent(machine, role === 'inspect' || role === 'cleanup' ? 'inspect' : undefined);
                     if (!rowCurrent || !activation.isCurrent()) {
                         // Only this host-owned pre-handler check proves that
                         // an admitted FIN native effect has not been issued.
@@ -382,6 +390,8 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
     if (!machine.resource && machine.allocation !== 'unsubmitted' && !machine.nativeOperationRef && !retainedProvisioner?.definition.reconciliation) return null;
     const { contribution, occurrenceId, target, bootstrapCredentialKind, roleCredentialAuthorization, invoke }
         = createManagedNativeInvocation(params, () => machine, () => bootstrapCredentialRevision);
+    const continueRetainedAcquisition = !machine.enrolledMachineId && machine.allocation !== 'unsubmitted'
+        && contribution.definition.reconciliation?.continueAcquire === true;
     if (!machine.resource && machine.allocation === 'may-exist') {
         const retained = machine.nativeOperationRef;
         if (retained && (retained.contributionRef.pluginId !== machine.launch.provider.pluginId
@@ -445,6 +455,16 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
         if (result.kind !== 'bound') throw new ManagedMachineControllerError(result.kind === 'rejected' ? result.code : 'native_acquisition_unconfirmed');
     }
     if (!machine.resource || (machine.enrolledMachineId && params.action !== 'machines.managed.bootstrap.retry')) return null;
+    if (continueRetainedAcquisition) {
+        // Recovery records paid identity before fresh effects. Inspect remains
+        // observational; only this admitted retry completes the original recipe.
+        const continued = AcquireResultV1Schema.parse(await invoke('acquire', {
+            managedId: machine.id, launch: machine.launch.choices, resource: machine.resource.value,
+        }));
+        if (continued.kind !== 'bound') throw new ManagedMachineControllerError(
+            continued.kind === 'rejected' ? continued.code : 'native_acquisition_unconfirmed');
+        if (!pluginJsonValuesEqual(continued.resource, machine.resource)) throw new ManagedMachineControllerError('resource_mismatch');
+    }
     // Installation/enrollment consumes this already persisted identity.
     const bootstrapCredential = machine.bootstrapCredentialRef
         ? await readBootstrapCredentialValue(params, machine, bootstrapCredentialRevision) : null;

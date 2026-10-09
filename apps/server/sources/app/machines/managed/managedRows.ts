@@ -32,7 +32,7 @@ import { buildUpdateMachineUpdate, eventRouter } from '@/app/events/eventRouter'
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 
 export type StoredManagedMachine = Prisma.ManagedMachineGetPayload<Record<string, never>>;
-export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation"> & Readonly<{
+export type ManagedDeclaration = Pick<MachineProvisionerContributionV1, "schemaVersion" | "launchSchema" | "resourceSchema" | "billing" | "retention" | "reconciliation" | "credentialPurposeRequirements"> & Readonly<{
     acquireCredentialRequests: readonly PluginActionConnectedAccountUseRequestV2[];
 }>;
 export function createManagedMachineDeclaredSchema(launch: PluginJsonSchemaV2, native: PluginJsonSchemaV2, nativeOperation?: PluginJsonSchemaV2) {

@@ -47,9 +47,11 @@ function signedIdle(machine: ReturnType<typeof ManagedMachineV1Schema.parse>, si
 function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unknown'; reasons: ['finite'] } = { kind: 'idle', since: 0 },
     nativeResult: { kind: 'confirmed' | 'unknown' } | { kind: 'refused'; code: string } = { kind: 'confirmed' }, intent: 'start' | 'delete' | 'rebuild' = 'delete',
     inspectObservation?: ProviderObservationV1, onNativeEffect?: () => void,
-    rebuildResult?: ReturnType<typeof MachineProvisionerRebuildResultV1Schema.parse>, recoverRebuild = false) {
+    rebuildResult?: ReturnType<typeof MachineProvisionerRebuildResultV1Schema.parse>, recoverRebuild = false,
+    cleanupObservation?: { kind: 'confirmed' | 'retryable' } | { kind: 'unknown'; code?: string }) {
     const effects: string[] = [];
     const native = fixture({ privateNative: true, supportedIntents: [intent], ...(recoverRebuild ? { reconciliation: true, reconciliationResource: true } : {}),
+        ...(cleanupObservation ? { cleanupObservation } : {}),
         nativeRoleResults: { destroy: nativeResult, power: nativeResult,
         ...(recoverRebuild && rebuildResult ? { reconcile: rebuildResult } : {}),
         ...(intent === 'rebuild' ? { rebuild: rebuildResult ?? { kind: 'unknown', recovery: { reference: 'old-native', reason: 'native_rebuild_unknown' } } } : {}),
@@ -100,6 +102,7 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
             }
             if (body && typeof body === 'object' && 'observation' in body) {
                 machine = { ...machine, observation: ProviderObservationV1Schema.parse(body.observation) };
+                if (machine.observation?.availability === 'absent') machine = { ...machine, allocation: 'confirmed-absent', submittedNativeEffect: undefined };
             }
         }
         return { status: 200, data: { machine } };
@@ -166,6 +169,40 @@ async function finScopeAuthorization(test: ReturnType<typeof setup>, isSourceCur
 }
 
 describe('managed native intent through the accepted Action', () => {
+    it.each(['inspect', 'delete'] as const)('settles lost pending cleanup through %s without binding compute or replaying Delete', async action => {
+        const test = setup(undefined, { kind: 'unknown' }, 'delete', { observedAt: 123, availability: 'absent' }, undefined,
+            { kind: 'unknown', recovery: { reference: 'owned-volume', reason: 'native_cleanup_unknown' } }, true, { kind: 'confirmed' });
+        test.setMachine({ allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,
+            nativeOperationRef: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} } });
+        await expect(test.run()).rejects.toMatchObject({ code: 'native_intent_unconfirmed' });
+        const retained = test.readMachine().nativeOperationRef;
+        if (action === 'inspect') await test.driver.execute('machines.managed.inspect', {
+            homeId: test.readMachine().homeId, managedId: test.readMachine().id,
+        }, test.options);
+        else await test.run();
+        expect(test.readMachine()).toMatchObject({ id: 'managed', allocation: 'confirmed-absent', nativeOperationRef: retained });
+        expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+        expect(test.readMachine().resource).toBeUndefined();
+        expect(test.effects.filter(role => role === 'destroy')).toEqual(['destroy']);
+        expect(test.reports.at(-1)).toMatchObject({ result: { kind: 'confirmed' }, observation: { availability: 'absent' } });
+    });
+    it('only resumes pending Delete after fresh exact native retry qualification, while inspect remains observational', async () => {
+        const nativeResult: { kind: 'confirmed' | 'unknown' } = { kind: 'unknown' };
+        const test = setup(undefined, nativeResult, 'delete', undefined, undefined,
+            { kind: 'unknown', recovery: { reference: 'owned-volume', reason: 'native_cleanup_unknown' } }, true, { kind: 'retryable' });
+        test.setMachine({ allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,
+            nativeOperationRef: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} } });
+        await expect(test.run()).rejects.toMatchObject({ code: 'native_intent_unconfirmed' });
+        await test.driver.execute('machines.managed.inspect', { homeId: test.readMachine().homeId, managedId: 'managed' }, test.options);
+        expect(test.effects.filter(role => role === 'destroy')).toEqual(['destroy']);
+        expect(test.readMachine().submittedNativeEffect).toMatchObject({ requestId: 'control', intentRevision: 1 });
+        nativeResult.kind = 'confirmed';
+        await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+        expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent' });
+        expect(test.effects.filter(role => role === 'destroy')).toEqual(['destroy', 'destroy']);
+        expect(test.reports.at(-1)).toMatchObject({ requestId: 'control', expectedIntentRevision: 1,
+            result: { kind: 'confirmed' }, observation: { availability: 'absent' } });
+    });
     it.each(['active', 'canceled'] as const)('deletes proven-owned pending native attachments from an %s row without a Machine id', async creationState => {
         const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true);
         test.setMachine({ creationState, allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,

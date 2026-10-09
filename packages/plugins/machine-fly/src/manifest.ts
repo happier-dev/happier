@@ -62,7 +62,7 @@ export const MACHINE_PROVISIONER = {
   billing, retention: { supportedIntents: ['start', 'stop', 'resume', 'suspend', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
-  reconciliation: { nativeOperationSchema: FlyPendingAcquireV1Schema.jsonSchema, action: 'reconcile' },
+  reconciliation: { nativeOperationSchema: FlyPendingAcquireV1Schema.jsonSchema, action: 'reconcile', cleanup: 'observe-cleanup' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -203,6 +203,14 @@ export const PLUGIN = definePlugin({
         const result = 'resource' in input ? await runtime(context).destroy(input.resource)
           : await runtime(context).destroyPending(input.nativeOperation.operation);
         return result.complete ? { kind: 'confirmed' } : { kind: 'unknown', code: result.reason ?? 'native_cleanup_incomplete' }; },
+    },
+    'observe-cleanup': { ...defaults, title: 'Observe exact pending Fly cleanup', dangerLevel: 'safe',
+      inputSchema: reconciliation.cleanupInput, resultSchema: reconciliation.cleanupResult,
+      async run(input, context) {
+        const result = await runtime(context).inspectPendingCleanup(input.nativeOperation.operation);
+        return result.complete ? { kind: 'confirmed' } : result.retryable ? { kind: 'retryable' }
+          : { kind: 'unknown', code: result.reason ?? 'native_cleanup_unconfirmed' };
+      },
     },
     exec: { ...defaults, title: 'Execute private Fly bootstrap IO', dangerLevel: 'writesLocal',
       confirmation: { title: 'Run Happier setup in this Fly Machine?', body: 'This runs the admitted setup command inside the exact managed Machine.' },

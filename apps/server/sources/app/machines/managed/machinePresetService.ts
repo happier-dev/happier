@@ -13,6 +13,7 @@ import {
 } from "@happier-dev/protocol";
 import { qualifyPluginContributionReferenceV1 } from "@happier-dev/protocol/plugins/contribution-identity";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
+import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 import { inTx, type Tx } from "@/storage/inTx";
 import { db, isPrismaUniqueConstraintError, getActivePrismaRuntime } from "@/storage/db";
@@ -95,7 +96,8 @@ export async function validateManagedRecipeInTx(tx: Tx, context: PresetContext, 
     const validated = createManagedMachinePresetV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema)).safeParse({ ...preset, id: "validation", name: "validation", revision: 0, owner: { kind: "account", accountId: custodianAccountId } });
     if (!validated.success) throw new ManagedMachineError("invalid_request");
     const credentials = preset.recipe.credentials ?? [];
-    const requests = declaration.acquireCredentialRequests;
+    const requests = declaration.acquireCredentialRequests.filter(binding => isMachineProvisionerCredentialPurposeRequiredV1(
+        declaration, binding.request.id, validated.data.recipe.choices));
     if (requests.length !== credentials.length) throw new ManagedMachineError("credential_unavailable");
     // Save and acquire validate every distinct native purpose against the
     // same declared Connected-account owner; no material or default is copied.

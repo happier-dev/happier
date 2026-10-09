@@ -20,6 +20,7 @@ import type {
 } from '@happier-dev/protocol';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginSourceCustody } from '@/plugins/runtime/sourceAuthority';
+import type { MachineProvisionerBootstrapCredentialRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { PluginServiceUnavailableDiagnostic } from './unavailable';
 import type {
     HostCurrentSessionUiServices,
@@ -100,7 +101,7 @@ export type PluginInvocationServicesSeed = Readonly<{
 }>;
 
 export type ManagedBootstrapCredentialInvocationBinding = Readonly<{
-    role: 'acquire' | 'bootstrap' | 'exec' | 'putFile';
+    role: MachineProvisionerBootstrapCredentialRoleV1;
     /** Returns owned bytes from this admitted row's retained SavedSecret only. */
     readBootstrapCredential(): Promise<Uint8Array>;
     isCurrent(): boolean | Promise<boolean>;

@@ -15,10 +15,14 @@ import { createManagedProviderOperationAuthority } from '@/daemon/connectedServi
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { addConnectedAccountsAvailablePluginInvocationServiceBinding, createLoggerEventsAndExecServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { withPluginInvocationServiceBindingAvailability } from '@/plugins/runtime/invocation/services/unavailable';
+import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invocation/services/connectedAccounts';
+import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { PluginConnectedAccountAuthenticationV2Schema, type JsonValue } from '@happier-dev/protocol';
-import type { PluginServices } from '@happier-dev/plugin-sdk';
+import type { PluginServices, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { ManagedBootstrapCredentialCreateV1Schema, ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { logger } from '@/ui/logger';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -29,6 +33,10 @@ import { sealAccountScopedBlobCiphertext, openAccountScopedBlobCiphertext } from
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { AccountSettingsPersistedObjectSchema } from '@happier-dev/protocol/account/settings/accountSettingsPersistedObject';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -47,6 +55,7 @@ import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { CRABBOX_PLUGIN } from '../../../../../packages/plugins/machine-crabbox/src/manifest';
 
 // Only the filesystem removal boundary is mutable; every protection, codec,
 // SavedSecret and invocation owner still runs against the actual implementation.
@@ -115,6 +124,84 @@ afterEach(async () => {
     resetActiveAccountSettingsSnapshotForTests();
 });
 describe('managed acquisition durable custody', () => {
+    it.each(['acquire', 'inspect', 'reconcile', 'destroy'] as const)('admits direct Crabbox %s without a coordinator and delivers only its retained SSH key', async role => {
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const homeId = 'srv_crabbox_direct_custody';
+        const launch = { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux',
+            nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
+        const provider = { pluginId: 'happier.machine.crabbox', localId: 'crabbox' };
+        const value = { backendId: 'local-container', transport: 'direct', namespace: 'local', leaseId: 'cbx_0123456789ab', nativeInstanceId: 'a'.repeat(64) };
+        const resource = { contributionRef: provider, schemaVersion: 1, value };
+        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', resource,
+            launch: { provider, schemaVersion: 1, name: 'Local container', choices: launch },
+            bootstrapCredentialRef: { kind: 'shared_resource', resourceId: 'crabbox-retained-key' } });
+        const key = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+        const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId: 'crabbox-retained-key', mode: 'plain',
+            content: { v: 1, name: 'Crabbox key', kind: 'other', value: key.privateKey } });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ features: { teams: { enabled: true } }, capabilities: {} }), { status: 200 })));
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = String(url);
+            if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+            if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+            if (path.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 1 } };
+            if (path.endsWith('/resources/materials')) return { status: 200, data: { resources: [{ resourceId: 'crabbox-retained-key', encryptionMode: 'plain', storedContent, recipientEnvelope: null,
+                entry: { ref: formatSharedSavedSecretRefV1('crabbox-retained-key'), source: 'shared_resource', relationship: 'owner', name: 'Crabbox key', kind: 'other', ownerAccountId: 'owner', revision: 1,
+                    materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] } };
+            throw new Error(`Unexpected direct custody GET ${new URL(path).pathname}`);
+        });
+        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machine: retained } });
+        const expected = role === 'inspect' ? { observedAt: 0, availability: 'present' }
+            : role === 'destroy' ? { kind: 'confirmed' } : { kind: 'bound', resource };
+        let deliveredPath = '';
+        let nativeReaderFailure: unknown;
+        const consumeCredential = async (context: PluginInvocationContext) => {
+            try {
+                await context.services.machineProvisioners.withBootstrapCredentialFile({ relativePath: `native/crabbox/testboxes/${value.leaseId}/id_ed25519` }, async lease => {
+                    deliveredPath = lease.path;
+                    expect(await readFile(lease.path, 'utf8')).toBe(key.privateKey);
+                    expect(await readFile(lease.path + '.pub', 'utf8')).toMatch(/^ssh-rsa /);
+                });
+            } catch (error) { nativeReaderFailure = error; throw error; }
+        };
+        const native = nativeFixture({ fixtureManifest: normalizePluginManifestV2(CRABBOX_PLUGIN.manifest),
+            reconciliation: true, nativeCredentialService: true, nativeRoleResults: { [role]: expected },
+            // The real daemon has these declared host capacities even when
+            // no coordinator Account is selected. Any unexpected service IO
+            // still fails because only the native module reader is substituted.
+            createHostServiceBinding: (occurrence, id, requests) => addConnectedAccountsAvailablePluginInvocationServiceBinding(
+                withPluginInvocationServiceBindingAvailability(createLoggerEventsAndExecServiceBinding(occurrence, id, requests),
+                    { serviceId: 'events', availability: 'unavailable' })),
+            hostServiceAdapters: {
+                exec: { resolveExecutable: unavailableTransport, resolvePath: unavailableTransport },
+                http: createStablePluginHttpHost({ adapter: { request: unavailableTransport, openWebSocket: unavailableTransport } }),
+                connectedAccounts: createStablePluginConnectedAccountsHost(createConnectedAccountPurposeBindingOwner({
+                    store: { read: async () => ({ v: 1, bindings: [] }), update: unavailableTransport, subscribe: () => ({ dispose() {} }) },
+                    selectTarget: unavailableTransport, resolveTarget: unavailableTransport, materializeAccount: unavailableTransport,
+                    projectTargetAccounts: unavailableTransport, assertTargetAccountMaterializable: unavailableTransport,
+                })),
+            },
+            onInspect: async (body, context) => { expect(JSON.stringify(body)).not.toContain(key.privateKey); await consumeCredential(context); },
+            onNativeRole: async (currentRole, body, context) => {
+                if (currentRole !== role) return;
+                expect(JSON.stringify(body)).not.toContain(key.privateKey);
+                await consumeCredential(context);
+            } });
+        const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://home.example', revision: 1,
+            endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' });
+        const driverInput = { token, serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            ...accountInputs, credentials: { token, encryption: null }, homeTarget };
+        const options = { requestId: `direct-${role}`, context: { operationOwnerUpdate: { update() {} } } };
+        const action = role === 'inspect' ? 'machines.managed.inspect' as const : role === 'destroy' ? 'machines.managed.delete' as const : 'machines.managed.acquire' as const;
+        const client = createManagedMachineControllerClient(driverInput, options, action);
+        const invocation = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained, action }, () => retained);
+        const body = role === 'acquire' ? { launch, managedId: retained.id, bootstrapPublicKey: 'ssh-rsa host-public' }
+            : role === 'reconcile' ? { nativeOperation: value } : { resource: value };
+        const result = invocation.invoke(role, body).catch(error => { throw nativeReaderFailure ?? error; });
+        await expect(result).resolves.toEqual(expected);
+        expect(deliveredPath).not.toBe('');
+        await expect(stat(deliveredPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(stat(deliveredPath + '.pub')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
     it.each(['available', 'retired', 'unavailable'] as const)('projects each declared native purpose once with authorized labelled accounts and refuses retired occurrence (%s)', async availability => {
         const services = [{ pluginId: 'acme.accounts', localId: 'cloud' }, { pluginId: 'acme.accounts', localId: 'cua' }, { pluginId: 'acme.accounts', localId: 'maintenance' }];
         const purposes = services.map(service => ({ purpose: service.localId, service }));
@@ -907,6 +994,75 @@ describe('managed acquisition durable custody', () => {
             domainRef: { kind: 'managedMachine', id: retained.id },
         } });
     });
+    it.each(['pending', 'bound', 'inspect', 'unknown', 'mismatch', 'withdrawn', 'fresh'] as const)(
+        'completes declared same-resource acquisition continuation before bootstrap with %s custody', async scenario => {
+        const homeId = 'srv_managed_acquisition_continuation';
+        const resource = { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} };
+        const nativeOperationRef = { ...resource, value: { requestId: 'request-1' } };
+        let retained = ManagedMachineV1Schema.parse({ ...machine, homeId,
+            ...(scenario === 'bound' ? { allocation: 'bound', resource }
+                : scenario === 'fresh' ? { allocation: 'unsubmitted' } : { nativeOperationRef }),
+        });
+        const events: string[] = [];
+        const native = nativeFixture({ privateNative: true, reconciliation: true, continueAcquire: true,
+            nativeRoleResults: { reconcile: { kind: 'bound', resource },
+                acquire: scenario === 'unknown' ? { kind: 'pending', nativeOperationRef }
+                    : scenario === 'mismatch' ? { kind: 'bound', resource: { ...resource,
+                        contributionRef: { ...resource.contributionRef, localId: 'neighbor' } } } : { kind: 'bound', resource } },
+            onNativeRole(role, body) {
+                events.push(role);
+                if (role === 'acquire') expect(body).toEqual({ launch: retained.launch.choices, managedId: retained.id,
+                    ...(scenario === 'fresh' ? {} : { resource: resource.value }) });
+                // The actual native guest/setup boundary is deliberately
+                // unavailable; ordering and custody must be decided before it.
+                if (role === 'bootstrap') throw new Error('Guest setup unavailable');
+            },
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = String(url);
+            if (path.endsWith('/actions/get')) return { status: 200, data: retained };
+            if (path.endsWith('/submit')) retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
+            if (path.endsWith('/report')) {
+                events.push('report');
+                expect(body).toMatchObject({ result: { kind: 'bound', resource } });
+                retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'bound', resource,
+                    ...(scenario === 'withdrawn' ? { creationState: 'canceled', desired: 'delete', intentRevision: 1 } : {}),
+                });
+            }
+            return { status: 200, data: path.endsWith('/context') ? { machine: retained, requestId: 'creation' }
+                : path.endsWith('/submit') ? { machine: retained, submitted: true } : { machine: retained } };
+        });
+        const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+            canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' });
+        const recovery = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId,
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, homeTarget });
+        const action = scenario === 'inspect' ? 'machines.managed.inspect' as const : 'machines.managed.bootstrap.retry' as const;
+        const retry = { homeId, managedId: retained.id, ...(scenario === 'inspect' ? {} : { expectedIntentRevision: 0 }) };
+        let work: Promise<JsonValue | null> | undefined;
+        if (scenario === 'inspect') {
+            work = recovery.execute(action, retry, { requestId: 'retry' });
+            await expect(work).resolves.toMatchObject({ machine: { id: retained.id, resource } });
+        } else {
+            const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
+                resolveAccountId: async () => 'owner', generateOperationId: () => 'acquisition-continuation' });
+            await operations.observeExecution({ actionId: action, input: retry, actionRequestId: 'retry', execute: async context => {
+                work = recovery.execute(action, retry, { requestId: 'retry', signal: context.signal, context });
+                return { ok: true, result: await work };
+            } });
+            if (scenario === 'unknown') await expect(work).rejects.toMatchObject({ code: 'native_acquisition_unconfirmed' });
+            else if (scenario === 'mismatch') await expect(work).rejects.toMatchObject({ code: 'resource_mismatch' });
+            else if (scenario === 'withdrawn') await expect(work).rejects.toMatchObject({ code: 'intent_changed' });
+            else await expect(work).rejects.toBeInstanceOf(Error);
+            await operations.handlers.getV2({ operationId: 'acquisition-continuation', waitForTerminal: true });
+        }
+        expect(events).toEqual(scenario === 'inspect' ? ['reconcile', 'report', 'report']
+            : scenario === 'withdrawn' ? ['reconcile', 'report']
+            : scenario === 'fresh' ? ['acquire', 'report', 'bootstrap']
+            : scenario === 'bound' ? ['acquire', 'bootstrap']
+            : scenario === 'unknown' || scenario === 'mismatch' ? ['reconcile', 'report', 'acquire'] : ['reconcile', 'report', 'acquire', 'bootstrap']);
+        // Unknown continuation or cancellation cannot discard paid identity.
+        expect(retained).toMatchObject({ allocation: 'bound', resource });
+    });
     it('keeps a pending native handle truthful when the installed provisioner has no recovery hook', async () => {
         const nativeHomeId = 'srv_managed_pending_unavailable';
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId: nativeHomeId,
@@ -1471,6 +1627,14 @@ describe('managed acquisition durable custody', () => {
                 complete: true, diagnostics: [], referenceGuardRevision: 1, transferControl: { status: 'absent' } } };
             if (new URL(path).pathname === PROFILE_REFERENCE_GUARD_ROUTE_V1) return { status: 200, data: { status: 'ready', revision: 1 } };
             if (new URL(path).pathname === PROFILE_TRANSFER_ROUTE_V1) return { status: 200, data: { status: 'absent' } };
+            // SavedSecret promotion captures every canonical reference domain
+            // before source CAS; these HTTP rows are authoritatively absent.
+            if (new URL(path).pathname === MCP_SERVER_CATALOG_ROWS_ROUTE_V1) return { status: 200, data: McpServerCatalogRowReadResponseV1Schema.parse({ status: 'absent' }) };
+            if (new URL(path).pathname === ACP_CATALOG_ROWS_ROUTE_V1) return { status: 200, data: AcpCatalogRowReadResponseV1Schema.parse({ status: 'absent' }) };
+            if (new URL(path).pathname === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) return { status: 200, data: ProviderConnectionsRowReadResponseV1Schema.parse({ status: 'absent' }) };
+            if ([`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`, `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`].includes(new URL(path).pathname)) {
+                return { status: 200, data: ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'absent' }) };
+            }
             if (path.endsWith('/v1/artifacts')) return { status: 200, data: [] };
             if (path.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
             if (path.endsWith('/resources/materials')) {

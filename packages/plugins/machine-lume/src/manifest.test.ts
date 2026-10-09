@@ -176,6 +176,59 @@ describe('activated Lume provisioner Actions', () => {
     expect(first.requests.filter(input => new URL(input.url).pathname === '/lume/pull')).toHaveLength(1);
   });
 
+  it.each(['pull', 'configure', 'run'] as const)('completes reviewed sizing and admitted startup on the retained stopped VM after a lost %s reply', async lostPhase => {
+    let lost = false;
+    let pulls = 0;
+    let vm = { ...native, status: 'stopped', cpuCount: 1, memorySize: 2 * 1024 ** 3,
+      diskSize: { ...native.diskSize, total: 64 * 1024 ** 3 } };
+    const respond: NonNullable<Parameters<typeof activated>[1]> = async input => {
+      const url = new URL(input.url);
+      const phase = url.pathname === '/lume/pull' ? 'pull' : input.method === 'PATCH' ? 'configure'
+        : url.pathname.endsWith('/run') ? 'run' : undefined;
+      if (phase === 'pull') {
+        pulls++;
+        if (pulls > 1) throw new Error('The retained VM must not be pulled again');
+      }
+      if (phase === 'configure') {
+        const body: unknown = JSON.parse(new TextDecoder().decode(input.body));
+        expect(body).toEqual({ storage: resource.storage, cpu: launch.cpu,
+          memory: `${launch.memoryBytes}B`, diskSize: `${launch.diskBytes}B` });
+        vm = { ...vm, cpuCount: launch.cpu, memorySize: launch.memoryBytes,
+          diskSize: { ...vm.diskSize, total: launch.diskBytes } };
+      }
+      // The missing run response can precede detached native startup. Recovery
+      // must still finish the same admitted acquisition, never a new pull.
+      if (phase === lostPhase && !lost) { lost = true; throw new Error('Native reply lost'); }
+      if (phase === 'run') vm = { ...vm, status: 'running' };
+      const value = url.pathname === '/lume/host/status' ? { version: '0.6.1' }
+        : url.pathname === '/lume/config/locations' ? [{ name: resource.storage }]
+        : phase === 'pull' ? { name: resource.vmName, image: 'macos:26' } : vm;
+      return { status: phase === 'run' ? 202 : 200, finalUrl: input.url,
+        headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
+    };
+    const first = await activated(true, respond);
+    const pending = await first.action('acquire')({ launch, managedId }, first.context);
+    expect(pending).toMatchObject({ kind: 'pending', nativeOperationRef: { value: resource } });
+    const restarted = await activated(true, respond);
+    const recovered = await restarted.action('reconcile')({ nativeOperation: resource }, restarted.context);
+    expect(recovered).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(restarted.requests.map(input => input.method)).toEqual(['GET']);
+    expect(vm.status).toBe('stopped');
+    const continued = await restarted.action('acquire')({ launch, managedId, resource }, restarted.context);
+    expect(pulls).toBe(1);
+    expect(continued).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(vm).toMatchObject({ status: 'running', cpuCount: launch.cpu,
+      memorySize: launch.memoryBytes, diskSize: { total: launch.diskBytes } });
+    expect(LUME_ROLE_SCHEMAS.acquireInput.parse({ launch, managedId, resource })).toEqual({ launch, managedId, resource });
+    expect(await restarted.action('bootstrap')({ resource, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
+      credentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap-key' } }, restarted.context))
+      .toMatchObject({ kind: 'ssh', address: native.ipAddress, user: 'lume' });
+    expect(restarted.requests.filter(input => input.method === 'PATCH' || new URL(input.url).pathname.endsWith('/run'))
+      .map(input => [input.method, new URL(input.url).pathname])).toEqual([
+        ['PATCH', `/lume/vms/${resource.vmName}`], ['POST', `/lume/vms/${resource.vmName}/run`],
+      ]);
+  });
+
   it.each([400, 404])('keeps recovery HTTP %s uncertain and rejects a native name not derived from the managed row', async status => {
     const current = await activated(true, async input => ({ status, finalUrl: input.url, headers: {}, body: new Uint8Array() }));
     expect(await current.action('reconcile')({ nativeOperation: resource }, current.context))
@@ -185,6 +238,27 @@ describe('activated Lume provisioner Actions', () => {
       .toEqual({ kind: 'rejected', code: 'invalid_request' });
     expect(current.requests).toHaveLength(0);
   });
+
+  it.each(['reviewed', 'different', 'missing'] as const)('verifies %s sizing on an already running recovered VM without reconfiguring or restarting it', async sizing => {
+    const observed = sizing === 'missing' ? { ...native, memorySize: undefined }
+      : sizing === 'different' ? { ...native, cpuCount: launch.cpu + 1 } : native;
+    const current = await activated(true, async input => ({ status: 200, finalUrl: input.url,
+      headers: {}, body: new TextEncoder().encode(JSON.stringify(observed)) }));
+    const result = await current.action('acquire')({ launch, managedId, resource }, current.context);
+    expect(result).toMatchObject(sizing === 'reviewed'
+      ? { kind: 'bound', resource: { value: resource } }
+      : { kind: 'pending', nativeOperationRef: { value: resource } });
+    expect(current.requests.map(input => [input.method, new URL(input.url).pathname, new URL(input.url).searchParams.get('storage')]))
+      .toEqual([['GET', `/lume/vms/${resource.vmName}`, resource.storage]]);
+  });
+
+  it.each([{ ...resource, storage: 'neighbor-storage' }, { ...resource, vmName: `happier-${'b'.repeat(8)}-2a41-4af1-88ac-d64eeb18bdc7` }])(
+    'refuses continuation on an identity that differs from the reviewed row and storage before native effects', async otherResource => {
+      const current = await activated();
+      expect(await current.action('acquire')({ launch, managedId, resource: otherResource }, current.context))
+        .toEqual({ kind: 'rejected', code: 'resource_mismatch' });
+      expect(current.requests).toHaveLength(0);
+    });
 
   it('recovers process loss before any reply from canonical retained correlation without allocating again', async () => {
     const current = await activated();

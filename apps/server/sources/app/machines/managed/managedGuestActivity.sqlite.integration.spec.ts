@@ -37,7 +37,7 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    async function setup(kind: 'account' | 'pat', actionId: 'machines.managed.power.set' | 'machines.managed.delete', mode: 'plain' | 'e2ee' = 'plain') {
+    async function setup(kind: 'account' | 'pat', actionId: 'machines.managed.power.set' | 'machines.managed.delete', mode: 'plain' | 'e2ee' = 'plain', grantGuest = true) {
         const ownerContent = tweetnacl.box.keyPair();
         const requesterContent = tweetnacl.box.keyPair();
         const owner = await db.account.create({ data: { encryptionMode: mode,
@@ -57,7 +57,7 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         } });
         const controller = await createMachine(keys.publicKey);
         const guest = await createMachine(guestKeys.publicKey);
-        for (const machine of [controller, guest]) {
+        for (const machine of grantGuest ? [controller, guest] : [controller]) {
             await inTx(tx => setMachineAccessGrantInTx(tx, {
                 actorAccountId: owner.id, machineId: machine.id, principal: { kind: 'account', accountId: requester.id }, level: 'admin' }));
             if (mode === 'e2ee') {
@@ -107,6 +107,46 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
             ownerContent, requesterContent, dataKey };
     }
 
+    it.each(['plain', 'e2ee'] as const)('observes and drains a retained %s guest with controller Manage alone', async mode => {
+        const test = await setup('account', 'machines.managed.power.set', mode, false);
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as ServerFastify;
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app); machinesRoutes(app); await app.ready();
+        try {
+            const path = `/v1/machines/${test.guest.id}`;
+            const headers = {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: test.authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: test.actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(test.authorization.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: test.authorization.token, effectActionId: test.actionId, target: test.authorization.binding.target,
+                    installationId: test.controller.installationId!, requestId: test.authorization.binding.requestId,
+                    method: 'GET', path, privateKey: test.keys.secretKey }),
+            };
+            const response = await app.inject({ method: 'GET', url: path, headers });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().machine).toMatchObject({ id: test.guest.id, installationId: test.guest.installationId });
+            for (const method of [MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD]) {
+                const request = test.rpc(method, { ...test.managedTarget, ...(method === MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD ? { action: 'begin' } : {}) });
+                expect(await verifyExternalActionMachineRpcExecution(request.execution, request)).toMatchObject({
+                    principal: { accountId: test.requester.id },
+                    managedGuestActivity: { machineId: test.guest.id, installationId: test.guest.installationId },
+                });
+            }
+            // The bridge is scoped to the retained control, not ordinary guest access.
+            const requesterToken = await auth.createToken(test.requester.id, undefined, { kind: 'account', authority: 'present_user' });
+            expect((await app.inject({ method: 'GET', url: path, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${requesterToken}`,
+            } })).statusCode).not.toBe(200);
+            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.owner.id, machineId: test.controller.id,
+                principal: { kind: 'account', accountId: test.requester.id }, level: 'view' }));
+            expect((await app.inject({ method: 'GET', url: path, headers })).statusCode).not.toBe(200);
+            const request = test.rpc(MANAGED_ACTIVITY_READ_RPC_METHOD);
+            expect(await verifyExternalActionMachineRpcExecution(request.execution, request)).toBeNull();
+        } finally { await app.close(); }
+    });
+
     it('publishes the custodian encrypted guest envelope only to the proved controller, retaining requester admission', async () => {
         const test = await setup('account', 'machines.managed.power.set', 'e2ee');
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as ServerFastify;
@@ -147,13 +187,16 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
             expect(forged.statusCode).not.toBe(200);
             await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.owner.id, machineId: test.guest.id,
                 principal: { kind: 'account', accountId: test.requester.id }, level: 'view' }));
+            expect((await app.inject({ method: 'GET', url: path, headers })).statusCode).toBe(200);
+            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.owner.id, machineId: test.controller.id,
+                principal: { kind: 'account', accountId: test.requester.id }, level: 'view' }));
             expect((await app.inject({ method: 'GET', url: path, headers })).statusCode).not.toBe(200);
             expect(await verifyExternalActionMachineRpcExecution(encryptedRead.execution, encryptedRead)).toBeNull();
         } finally { await app.close(); }
     });
 
     it.each(['account', 'pat'] as const)('uses only the original %s control for signed retained guest metadata/read/drain', async kind => {
-        const test = await setup(kind, kind === 'pat' ? 'machines.managed.delete' : 'machines.managed.power.set');
+        const test = await setup(kind, kind === 'pat' ? 'machines.managed.delete' : 'machines.managed.power.set', 'plain', false);
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as ServerFastify;
         app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
         enableAuthentication(app); machinesRoutes(app); await app.ready();

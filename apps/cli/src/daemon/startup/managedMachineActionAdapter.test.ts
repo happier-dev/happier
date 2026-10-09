@@ -47,6 +47,8 @@ import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/cre
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { loadPromptLibraryCatalogV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
 import { AutomationDefinitionDetailSchema, AutomationDefinitionReconcileRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createPluginContributionIdentity } from '@happier-dev/protocol';
@@ -746,6 +748,7 @@ describe('daemon managed Machine Action factory', () => {
             const pendingObservation = new Promise<void>(resolve => { approvalPending = resolve; });
             const paths: string[] = [];
             let childExecution: ActionExecuteResult | undefined;
+            let childTransportError: string | undefined;
             const sourceExecutor = createCliActionExecutorFromCredentials({ credentials: sourceCredentials,
                 serverId: configuration.activeServerId, serverApiUrl: serverUrl, serverIdentityId: 'srv_home', pluginActionExecutionOwner: 'current_process' });
             const guestCurrentness = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account', machineId: 'actual-guest',
@@ -789,6 +792,9 @@ describe('daemon managed Machine Action factory', () => {
                     data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
                 if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+                if (path === '/v1/account/entity-rows/acp') return { status: 200,
+                    data: AcpCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
+                        content: { t: 'plain', v: { v: 1, definitions: [] } } }) };
                 if (path === '/v1/artifacts') return { status: 200, data: [] };
                 if (path.startsWith('/v1/artifacts/')) {
                     expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
@@ -814,26 +820,31 @@ describe('daemon managed Machine Action factory', () => {
                 if (path.endsWith('/admit')) return { status: 200, data: { machine: enrolled, replayed: true } };
                 if (path === '/v1/machines/managed/controller/current') return { status: 200, data: { machine: enrolled } };
                 if (path === '/v1/actions/session.spawn_new') {
-                    const request = ChildRequestSchema.parse(body);
-                    if (request.envelope.v !== 1 || !request.managedContinuation) throw new Error('Expected a Plain managed child wrapper');
-                    const root = original!.binding;
-                    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'child-proof', binding: {
-                        ...root, machineId: 'actual-guest', installationId: 'guest-installation', actionId: 'session.spawn_new', target: request.envelope.target,
-                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
-                        managedContinuation: { ...request.managedContinuation, controller: selection.controller, acquireRequestEnvelopeDigest: root.requestEnvelopeDigest },
-                    } });
-                    const childInput = SessionSpawnNewInputV2Schema.parse(request.envelope.input);
-                    const childContext: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
-                        actionCaller: caller, defaultSessionId: caller.sessionId, runtimeAccountId: 'account', actionRequestId: request.envelope.requestId,
-                        externalActionTarget: request.envelope.target, externalActionExecutionAuthorization: authorization,
-                        sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: sessionActionOrigin.sourceTurnId, via: 'action' },
-                        callerPermissionMode: 'yolo', causalPermissionAuthority: cause, sessionAgentSpawnPolicyV1: settings.sessionAgentSpawnPolicyV1,
-                        signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
-                            ...args, privateKey: guestKeys.secretKey }), signal: lifetime.signal };
-                    expect(await guest.deps.resolveAgentStartContext?.(childContext), 'The credentialed guest must observe the real source context before approval').not.toBeNull();
-                    const execution = childExecution = await guest.executor.execute('session.spawn_new', childInput, childContext);
-                    expect(execution).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'session.spawn_new' } });
-                    return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId, execution } };
+                    try {
+                        const request = ChildRequestSchema.parse(body);
+                        if (request.envelope.v !== 1 || !request.managedContinuation) throw new Error('Expected a Plain managed child wrapper');
+                        const root = original!.binding;
+                        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'child-proof', binding: {
+                            ...root, machineId: 'actual-guest', installationId: 'guest-installation', actionId: 'session.spawn_new', target: request.envelope.target,
+                            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                            managedContinuation: { ...request.managedContinuation, controller: selection.controller, acquireRequestEnvelopeDigest: root.requestEnvelopeDigest },
+                        } });
+                        const childInput = SessionSpawnNewInputV2Schema.parse(request.envelope.input);
+                        const childContext: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
+                            actionCaller: caller, defaultSessionId: caller.sessionId, runtimeAccountId: 'account', actionRequestId: request.envelope.requestId,
+                            externalActionTarget: request.envelope.target, externalActionExecutionAuthorization: authorization,
+                            sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: sessionActionOrigin.sourceTurnId, via: 'action' },
+                            callerPermissionMode: 'yolo', causalPermissionAuthority: cause, sessionAgentSpawnPolicyV1: settings.sessionAgentSpawnPolicyV1,
+                            signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
+                                ...args, privateKey: guestKeys.secretKey }), signal: lifetime.signal };
+                        expect(await guest.deps.resolveAgentStartContext?.(childContext), 'The credentialed guest must observe the real source context before approval').not.toBeNull();
+                        const execution = childExecution = await guest.executor.execute('session.spawn_new', childInput, childContext);
+                        expect(execution).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'session.spawn_new' } });
+                        return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId, execution } };
+                    } catch (error) {
+                        childTransportError = error instanceof Error ? error.stack ?? error.message : String(error);
+                        throw error;
+                    }
                 }
                 if (path === '/v1/artifacts' || path.startsWith('/v1/artifacts/')) {
                     expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
@@ -856,6 +867,9 @@ describe('daemon managed Machine Action factory', () => {
                 }
                 throw new Error(`Unexpected requester-private POST ${path}`);
             });
+            // Agent inventory requires observed configured-catalog authority,
+            // including an empty catalog. Hydrate through its real HTTP owner.
+            expect(await refreshActiveAcpCatalog({ credentials: sourceCredentials })).toMatchObject({ status: 'ready' });
             const preparedOriginal = await prepareExternalActionRequesterAccountAuthorization({ actionId: 'machines.managed.acquire', input,
                 requestId: sessionActionOrigin.requestId, target: { kind: 'machine', machineId: 'controller' }, machineId: 'controller', accountId: 'account',
                 accountEncryptionMode: 'plain', tokenEpochHint: 0, token, serverId: configuration.activeServerId, serverIdentityId: 'srv_home',
@@ -884,7 +898,7 @@ describe('daemon managed Machine Action factory', () => {
                         externalActionExecutionAuthorization: original! } }) }) });
             expect(accepted).toMatchObject({ ok: true, result: { managedId: 'managed', operation: { operationId: 'original-parent' } } });
             await Promise.race([pendingObservation, parent.handlers.getV2({ operationId: 'original-parent', waitForTerminal: true })
-                .then(result => { throw new Error(`Parent settled before observing guest approval: ${JSON.stringify({ result, childExecution })}`); })]);
+                .then(result => { throw new Error(`Parent settled before observing guest approval: ${JSON.stringify({ result, childExecution, childTransportError })}`); })]);
             const approval = storedApproval();
             expect(approval).toMatchObject({ status: 'open', approval: { flow: 'deferred' }, actionId: 'session.spawn_new',
                 sessionCreationDirectoryApproval: { executionTarget: { serverId: 'srv_home', machineId: 'actual-guest' },

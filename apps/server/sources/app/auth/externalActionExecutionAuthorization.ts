@@ -441,7 +441,10 @@ export async function readCurrentManagedGuestActivityInTx(reader: Tx,
             || admission.request.input.when !== 'after-idle'
             || row.desired !== (binding.actionId === 'machines.managed.delete' ? 'delete' : 'stop')
             || admission.request.input.intent !== row.desired) return null;
-        const guest = await resolveMachineAdmissionInTx(reader, { actorAccountId: binding.accountId,
+        // The proved controller uses its custodian's transport for this exact
+        // retained guest. Requester Manage is rechecked on the controller above;
+        // no independent guest grant or requester key disclosure is needed.
+        const guest = await resolveMachineAdmissionInTx(reader, { actorAccountId: binding.custodianAccountId,
             machineId, rpcMethod: MANAGED_ACTIVITY_READ_RPC_METHOD });
         return guest.kind === 'admitted' && guest.custodianAccountId === binding.custodianAccountId && guest.installationId
             ? { machineId, installationId: guest.installationId, encryptionMode: guest.encryptionMode } : null;
@@ -730,10 +733,11 @@ export async function verifyWorkspaceSyncHandoffSourceAuthorization(
         || !await hasCurrentExecutionMachineAdmission(binding)
         || !resolveCredentialActionAdmissionV1({ spec: getActionSpec('session.handoff'), authority: context.callerAuthority,
             ...('grant' in binding ? { grant: binding.grant } : {}) }).ok) return null;
-    if ((context.callerPermissionMode !== undefined && context.callerPermissionMode !== binding.sessionActionOrigin?.callerPermissionMode)
-        || (context.causalPermissionAuthority !== undefined
-            && !sameManagedInput(context.causalPermissionAuthority, binding.sessionActionOrigin?.causalPermissionAuthority))
-        || (context.workspaceWrites !== undefined && context.workspaceWrites !== binding.sessionActionOrigin?.workspaceWrites)) return null;
+    if (binding.sessionActionOrigin && ((context.callerPermissionMode != null
+        && context.callerPermissionMode !== binding.sessionActionOrigin.callerPermissionMode)
+        || (context.causalPermissionAuthority != null
+            && !sameManagedInput(context.causalPermissionAuthority, binding.sessionActionOrigin.causalPermissionAuthority))
+        || (context.workspaceWrites !== undefined && context.workspaceWrites !== binding.sessionActionOrigin.workspaceWrites))) return null;
     const source = await resolveMachineAdmission({ actorAccountId: binding.accountId, machineId: binding.machineId, requiredRole: claimed.role });
     if (source.kind !== 'admitted' || source.custodianAccountId !== claimed.custodianAccountId
         || source.installationId !== claimed.installationId || source.encryptionMode !== claimed.encryptionMode) return null;

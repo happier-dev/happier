@@ -1,6 +1,6 @@
 import { AcquireResultV1Schema, ProviderObservationV1Schema, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ManagedControllerSubmitOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerCleanupObservationV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedActivityBridgeResultV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -158,6 +158,26 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
         const reconcileOutstanding = async (outstanding: NonNullable<ManagedMachineV1['submittedNativeEffect']>) => {
             const correlation = { homeId: machine.homeId, managedId: machine.id,
                 expectedIntentRevision: outstanding.intentRevision, requestId: outstanding.requestId, controller: outstanding.controller };
+            if (outstanding.intent === 'delete' && !machine.resource && machine.nativeOperationRef
+                && native.contribution.definition.reconciliation?.cleanup) {
+                const observed = MachineProvisionerCleanupObservationV1Schema.parse(await native.invoke('cleanup', {
+                    nativeOperation: machine.nativeOperationRef.value,
+                }));
+                let result: ReturnType<typeof MachineProvisionerPowerResultV1Schema.parse> = observed.kind === 'confirmed'
+                    ? { kind: 'confirmed' } : { kind: 'unknown', code: observed.kind === 'unknown' ? observed.code : 'native_cleanup_unconfirmed' };
+                if (observed.kind === 'retryable' && params.action === 'machines.managed.delete'
+                    && outstanding.intentRevision === machine.intentRevision && machine.desired === 'delete') {
+                    // The leaf qualified an exact idempotent continuation from
+                    // fresh native facts. Reuse the original current submission;
+                    // ordinary inspect and unqualified uncertainty never replay.
+                    result = MachineProvisionerPowerResultV1Schema.parse(await native.invoke('destroy', {
+                        nativeOperation: machine.nativeOperationRef.value,
+                    }));
+                }
+                if (observed.kind !== 'unknown') return await client.row('report-intent', { ...correlation, result,
+                    ...(result.kind === 'confirmed' ? { observation: { observedAt: Date.now(), availability: 'absent' } } : {}),
+                }, null);
+            }
             if (!machine.resource && machine.nativeOperationRef && native.contribution.definition.reconciliation) {
                 const recovered = AcquireResultV1Schema.parse(await native.invoke('reconcile', { nativeOperation: machine.nativeOperationRef.value }));
                 if (recovered.kind === 'bound' || recovered.kind === 'pending') {

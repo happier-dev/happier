@@ -10,6 +10,7 @@ import { inTx } from "@/storage/inTx";
 import { resolveMachinePresetForAcquireInTx } from "./machinePresetService";
 import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 import { admitManagedAcquire } from "./managedAcquire";
+import { CRABBOX_PLUGIN } from '../../../../../../packages/plugins/machine-crabbox/src/manifest';
 import { mutateQualifiedConnectedServiceCredential, deleteQualifiedConnectedServiceCredential, listQualifiedConnectedAccounts } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
 import { defineProtocolObject, defineProtocolString } from "@happier-dev/protocol/plugins/actions/protocol-composable-schema";
 import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema,
@@ -68,6 +69,32 @@ describe("Machine preset relational owner", () => {
     }, 120_000);
 
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it('saves and admits direct Crabbox without a coordinator but refuses an unbound coordinator recipe', async () => {
+        const accountId = 'preset-crabbox-direct-owner';
+        const homeId = await getOrCreateServerIdentityId();
+        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
+        const controller = { machineId: `${accountId}-controller`, installationId: `${accountId}-installation` };
+        await db.machine.create({ data: { id: controller.machineId, accountId, metadata: '{}', installationId: controller.installationId, pluginMaterializationRevision: BigInt(1) } });
+        const manifest = PluginManifestV2Schema.parse(CRABBOX_PLUGIN.manifest);
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.accountPluginIntent.create({ data: { accountId, pluginId: manifest.id, enabled: true, writableCollections: [], releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.create({ data: { accountId, serverIdentityId: homeId, machineId: controller.machineId, materializationId: controller.installationId,
+            pluginId: manifest.id, version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256,
+            uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+        const localRecipe = { provider: { pluginId: manifest.id, localId: 'crabbox' }, schemaVersion: 1, name: 'Local container',
+            choices: { backendId: 'local-container', transport: 'direct', namespace: 'local', target: 'linux', nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } };
+        const input = { id: 'preset-crabbox-direct', homeId, owner: { kind: 'account', accountId }, name: 'Local container', recipe: localRecipe, controller };
+        expect((await requestPreset(accountId, 'create', input)).json()).toMatchObject({ kind: 'saved', preset: { recipe: localRecipe } });
+        const acquired = await admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: 'crabbox-direct-reviewed',
+            input: { requestId: 'crabbox-direct-create', continuationPresent: false, input: { selection: { kind: 'one-off', homeId, controller,
+                launch: localRecipe, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } } } });
+        expect(acquired).toMatchObject({ machine: { launch: localRecipe } });
+        const coordinatorRecipe = { ...localRecipe, choices: { backendId: 'aws', transport: 'coordinator', namespace: 'remote', target: 'linux',
+            nativeImageId: 'ami-selected', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 } };
+        expect((await requestPreset(accountId, 'create', { ...input, id: 'preset-crabbox-coordinator', recipe: coordinatorRecipe })).json())
+            .toEqual({ kind: 'refused', code: 'credential_unavailable' });
+    });
 
     it("lists accessible future recipes through the authenticated Machine route owner", async () => {
         await db.account.create({ data: { id: "preset-http-owner", publicKey: null, encryptionMode: "plain" } });

@@ -40,6 +40,9 @@ export const CRABBOX_MACHINE_PROVISIONER = {
   launchSchema: CrabboxLaunchV1Schema.jsonSchema, resourceSchema: CrabboxResourceV1Schema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
   billing: { location: 'cloud', stoppedBilling: 'unknown' }, retention: { supportedIntents: ['delete'] },
+  credentialPurposeRequirements: [{ purpose: CRABBOX_CONNECTION_PURPOSE, optionalWhen: { op: 'and', all: [
+    { op: 'eq', path: 'transport', value: 'direct' }, { op: 'eq', path: 'backendId', value: 'local-container' },
+  ] } }],
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
   reconciliation: { action: 'reconcile', nativeOperationSchema: CrabboxResourceV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
@@ -68,8 +71,8 @@ export const CRABBOX_PLUGIN = definePlugin({
         defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual',
           directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 }, outcomeReconciliation: 'none',
           configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
-            { id: 'endpoint', title: 'Coordinator URL', semantic: 'connectedAccountBase', required: true, schema: { type: 'string', minLength: 1 } },
-            { id: 'namespace', title: 'Namespace', required: true, schema: { type: 'string', minLength: 1 } },
+            { id: 'endpoint', title: 'Coordinator URL', semantic: 'connectedAccountBase', required: true, secret: false, schema: { type: 'string', minLength: 1 } },
+            { id: 'namespace', title: 'Namespace', required: true, secret: false, schema: { type: 'string', minLength: 1 } },
           ] },
           fields: [{ id: 'token', title: 'Coordinator token', schema: { type: 'string', minLength: 1 }, secret: true }],
         }],
@@ -98,7 +101,7 @@ export const CRABBOX_PLUGIN = definePlugin({
         catch { return { kind: 'pending' as const, nativeOperationRef: { contributionRef: { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_PROVISIONER_ID },
           schemaVersion: 1, value: input.nativeOperation } }; }
       } },
-    check: { ...defaults, title: 'Check Crabbox availability', dangerLevel: 'safe',
+    check: { ...defaults, hostAccess: [processAccess], title: 'Check Crabbox availability', dangerLevel: 'safe',
       inputSchema: CRABBOX_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { await inspectedProvider(context); return { available: true }; }

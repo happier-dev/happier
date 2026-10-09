@@ -3,7 +3,7 @@ import type { JsonValue } from '@happier-dev/protocol';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import {
     defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerCheckResultProtocolV1Schema,
-    MachineProvisionerOptionsResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema,
+    MachineProvisionerOptionsResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCleanupObservationV1Schema,
     MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
     MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
     type MachineProvisionerContributionV1,
@@ -24,6 +24,8 @@ import { createStablePluginConnectedAccountsHost, type StablePluginConnectedAcco
 import { createManagedServiceCredentialFileOwner } from '../services/managedServiceCredentialFileOwner';
 import { createPluginInvocationSecretRedactor, type PluginInvocationLogSink } from '../services/logger';
 import { createTargetActionInvocationRegistry, type TargetActionInvocationRegistration } from '../targetActionRegistry';
+import type { CreatePluginInvocationServiceBinding } from '../services/types';
+import type { PluginInvocationServicesFactoryParams } from '../services/unavailable';
 
 export const pluginId = 'acme.compute';
 const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
@@ -48,7 +50,7 @@ const roleSchemas = {
 function schemasFor(localId: string) { return Object.entries(roleSchemas).find(([id]) => id === localId)?.[1]; }
 export function roleInput(localId: string): JsonValue {
     if (localId === 'acquire') return { launch: {} };
-    if (localId === 'reconcile') return { nativeOperation: nativeOperationValue };
+    if (localId === 'reconcile' || localId === 'cleanup') return { nativeOperation: nativeOperationValue };
     if (localId === 'exec') return { resource: {}, argv: ['fixture'] };
     if (localId === 'put-file') return { resource: {}, guestPath: '/fixture', bytesBase64: '' };
     if (localId === 'power') return { resource: {}, intent: 'delete' };
@@ -74,12 +76,17 @@ export function fixture(options: Readonly<{
     nativeTransport?: boolean;
     bootstrapCredential?: 'ssh' | 'native-token';
     nativeCredentialService?: boolean;
+    createHostServiceBinding?: CreatePluginInvocationServiceBinding;
+    hostServiceAdapters?: Pick<PluginInvocationServicesFactoryParams, 'exec' | 'http' | 'connectedAccounts'>;
     invocationLogSink?: PluginInvocationLogSink;
     reconciliation?: boolean;
     reconciliationResource?: boolean;
+    continueAcquire?: boolean;
+    cleanupObservation?: { kind: 'confirmed' | 'retryable' } | { kind: 'unknown'; code?: string };
     repairAction?: boolean;
     nativeRoleResults?: Partial<Record<typeof roles[number] | 'check' | 'inspect' | 'reconcile', JsonValue>>;
     supportedIntents?: MachineProvisionerContributionV1['retention']['supportedIntents'];
+    onInspect?: (input: JsonValue | undefined, context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     onNativeRole?: (role: typeof roles[number] | 'reconcile', input: JsonValue | undefined,
         context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
     onOrdinary?: (context: Parameters<TargetActionInvocationRegistration['handler']>[1]) => void | Promise<void>;
@@ -87,6 +94,8 @@ export function fixture(options: Readonly<{
     credentialPurposes?: readonly Readonly<{ purpose: string; service: Readonly<{ pluginId: string; localId: string }> }>[];
     afterActivation?: () => void; credentialOwner?: StablePluginConnectedAccountsOwner;
 }> = {}) {
+    const pluginId = options.fixtureManifest?.id ?? 'acme.compute';
+    const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
     let currentOccurrenceId = occurrenceId;
     const fixtureRoot = join(tmpdir(), 'managed-custody-fixture');
     let effects = 0;
@@ -95,17 +104,21 @@ export function fixture(options: Readonly<{
     const credentialPurposes = options.credentialPurposes ?? [{ purpose: 'upstream', service: { pluginId: 'acme.accounts', localId: 'cloud' } }];
     const reconciliationSchemas = options.reconciliation ? defineMachineProvisionerReconciliationSchemas({ launch: native, resource: native,
         nativeOperation: options.reconciliationResource ? native : nativeOperation }) : null;
+    const acquisitionSchemas = options.continueAcquire
+        ? defineMachineProvisionerSchemas({ launch: native, resource: native, continueAcquire: true }) : nativeSchemas;
     const repairSchemas = options.repairAction ? {
         input: defineProtocolObject({ machineName: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
         result: defineProtocolObject({ completed: defineProtocolString() }, { policy: 'closed' }),
     } : null;
     const fixtureSchemasFor = (localId: string) => localId === 'reconcile' ? reconciliationSchemas
+        : localId === 'cleanup' && reconciliationSchemas ? { input: reconciliationSchemas.cleanupInput, result: MachineProvisionerCleanupObservationV1Schema }
         : localId === 'destroy' && reconciliationSchemas ? { input: reconciliationSchemas.destroyInput, result: MachineProvisionerPowerResultV1Schema }
-        : localId === 'acquire' && reconciliationSchemas ? { input: nativeSchemas.acquireInput, result: reconciliationSchemas.result }
+        : localId === 'acquire' && reconciliationSchemas ? { input: acquisitionSchemas.acquireInput, result: reconciliationSchemas.result }
         : localId === 'ordinary' && repairSchemas ? repairSchemas
         : schemasFor(localId);
-    const localIds = [...roles.map(roleActionId), 'check', 'options', 'inspect', 'ordinary', ...(options.reconciliation ? ['reconcile'] : [])];
-    const dangerLevel = (localId: string) => options.dangerous && !['check', 'options', 'inspect', 'reconcile'].includes(localId) ? 'writesRemote' as const : 'safe' as const;
+    const localIds = options.fixtureManifest?.contributes.actions.map(action => action.id)
+        ?? [...roles.map(roleActionId), 'check', 'options', 'inspect', 'ordinary', ...(options.reconciliation ? ['reconcile'] : []), ...(options.cleanupObservation ? ['cleanup'] : [])];
+    const dangerLevel = (localId: string) => options.dangerous && !['check', 'options', 'inspect', 'reconcile', 'cleanup'].includes(localId) ? 'writesRemote' as const : 'safe' as const;
     const actions = localIds.map((localId): ResolvedActionContribution => ({
         pluginId, provenance: 'external', source: { kind: 'path' },
         definition: {
@@ -138,8 +151,12 @@ export function fixture(options: Readonly<{
         handler: async (_input, context) => {
             effects += 1;
             if (localId === 'ordinary') await options.onOrdinary?.(context);
+            if (localId === 'cleanup' && options.cleanupObservation) return options.cleanupObservation;
             if (localId === 'check' && options.nativeRoleResults?.check) return options.nativeRoleResults.check;
-            if (localId === 'inspect' && options.nativeRoleResults?.inspect) return options.nativeRoleResults.inspect;
+            if (localId === 'inspect') {
+                await options.onInspect?.(_input, context);
+                if (options.nativeRoleResults?.inspect) return options.nativeRoleResults.inspect;
+            }
             const role = [...roles, ...(options.reconciliation ? ['reconcile' as const] : [])].find((candidate) => roleActionId(candidate) === localId);
             if (role) {
                 await options.onNativeRole?.(role, _input, context);
@@ -168,7 +185,7 @@ export function fixture(options: Readonly<{
         contributes: {
             actions: registrations.map(({ localId, definition }) => ({
                 id: localId, title: localId, scopes: definition.scopes, surfaces: definition.surfaces,
-                dangerLevel: ['check', 'options', 'inspect', 'reconcile'].includes(localId) ? 'safe' : definition.dangerLevel,
+                dangerLevel: ['check', 'options', 'inspect', 'reconcile', 'cleanup'].includes(localId) ? 'safe' : definition.dangerLevel,
                 ...(definition.dangerLevel === 'safe' ? {} : { confirmation: { title: 'Run native role', body: 'Apply the admitted managed-resource operation' } }),
                 execution: { target: 'daemon' }, inputSchema: fixtureSchemasFor(localId)?.input.jsonSchema ?? {}, resultSchema: fixtureSchemasFor(localId)?.result.jsonSchema ?? {},
                 ...(definition.hostAccessRequests?.length ? { hostAccess: definition.hostAccessRequests.map(({ request }) => request.id) } : {}),
@@ -180,7 +197,9 @@ export function fixture(options: Readonly<{
                 actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild' },
                 ...(options.nativeTransport === false ? {} : { bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' } }),
                 ...(options.bootstrapCredential ? { bootstrapCredential: { kind: options.bootstrapCredential } } : {}),
-                ...(options.reconciliation ? { reconciliation: { nativeOperationSchema: (options.reconciliationResource ? native : nativeOperation).jsonSchema, action: 'reconcile' } } : {}),
+                ...(options.reconciliation ? { reconciliation: { nativeOperationSchema: (options.reconciliationResource ? native : nativeOperation).jsonSchema, action: 'reconcile',
+                    ...(options.continueAcquire ? { continueAcquire: true as const } : {}),
+                    ...(options.cleanupObservation ? { cleanup: 'cleanup' } : {}) } } : {}),
             }],
         },
     }));
@@ -208,6 +227,7 @@ export function fixture(options: Readonly<{
             resolveExecutable: async () => ({ command: process.execPath, args: [], env: {} }),
             resolvePath: async () => { throw new Error('No native transport cwd'); },
         } } : {}),
+        ...options.hostServiceAdapters,
     }) : createUnavailablePluginServicesFactory();
     const targetActionInvocations = createTargetActionInvocationRegistry({
         actions: loadedRegistrations, expectedActions: actualRegistrations,
@@ -218,11 +238,11 @@ export function fixture(options: Readonly<{
             resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [],
         }),
         resolveHostBinding: createTargetActionHostBindingResolver(options.credentialOwner || options.nativeCommandArgs || options.nativeCredentialService ? {
-            createServiceBinding: (occurrence, id, requests) => {
+            createServiceBinding: options.createHostServiceBinding ?? ((occurrence, id, requests) => {
                 const binding = createLoggerAvailablePluginInvocationServiceBinding(occurrence, id);
                 const execBinding = options.nativeCommandArgs ? addExecServiceBinding(binding, requests ?? []) : binding;
                 return options.credentialOwner ? addConnectedAccountsAvailablePluginInvocationServiceBinding(execBinding) : execBinding;
-            },
+            }),
         } : undefined),
         createServices(seed, binding) {
             // The real production factory begins this qualified diagnostic
@@ -266,7 +286,7 @@ export function fixture(options: Readonly<{
     const custody = {
         managedId: 'managed-1', homeId: 'home-1', intentRevision: 3,
         controller: { machineId: 'controller-1', installationId: 'installation-1' },
-        contribution: { pluginId, localId: 'vm', occurrenceId },
+        contribution: { pluginId, localId: manifest.contributes.machineProvisioners[0]!.id, occurrenceId },
         role: 'acquire' as const, isCurrent: () => true,
     };
     return {

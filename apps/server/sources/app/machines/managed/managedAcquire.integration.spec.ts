@@ -402,7 +402,7 @@ describe("managed acquisition durable authority", () => {
         await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId: homeId, machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id, version: manifest.version, sourceClass: "bundledFirstParty", portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256, uiArtifacts: [], enabled: true, trustState: "trusted", observedAt: new Date() } });
         const input = { selection: { kind: "one-off" as const, homeId, controller, launch: { provider: { pluginId: manifest.id, localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: { image: "linux" } }, retention: { kind: "until-delete" as const }, wakeOnAcceptedMessage: false } };
         const request = { requesterAccountId: account.id, custodianAccountId: account.id, requestEnvelopeDigest: "verified-original-private-continuation", input: { input, requestId: `managed-${suffix}-request`, continuationPresent: true } };
-        return { homeId, account, controller, controllerKeys, manifest, declaration, input, request };
+        return { homeId, account, controller, controllerKeys, manifest, declaration, input, request, launch, native };
     }
 
     it('admits an offline-controller Move through the destination route while preserving exact resource and pending native effect custody', async () => {
@@ -485,7 +485,7 @@ describe("managed acquisition durable authority", () => {
     });
 
     it("creates one durable reviewed allocation through the real current provisioner declaration", async () => {
-        const { homeId, account, controller, controllerKeys, manifest, declaration, input, request } = await createManagedComputeFixture('first');
+        const { homeId, account, controller, controllerKeys, manifest, declaration, input, request, launch, native } = await createManagedComputeFixture('first');
         const created = await admitManagedAcquire(request);
         expect(created).toMatchObject({ replayed: false, machine: { allocation: "unsubmitted", custodianAccountId: account.id } });
         expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true, machine: { id: created.machine.id } });

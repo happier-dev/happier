@@ -41,6 +41,14 @@ Private native exec carries the containing task's `timeoutMs` unchanged; `null` 
 
 Each declared credential purpose uses the existing qualified Connected Account owner. The launch's `credentials` array selects one Account per distinct purpose; BYOC can therefore select its cloud and Cua Accounts without a composite connection. Before durable acquisition submission, the controller captures each selection's configuration revision. The managed row retains those individual bases with the first submitted allocation; replay cannot replace them. Subsequent native admission checks each configuration rather than a rotating bearer-token revision, so changing a selected coordinator cannot redirect an old resource. An already-issued acquisition can still report its validated paid identity for cleanup after configuration withdrawal, without authorizing another native effect. Configuration bases are retained-row state, not public launch choices or receipt fields.
 
+A contribution can qualify a purpose with `credentialPurposeRequirements` and
+the existing launch-input predicate grammar. Only a positively observed
+`optionalWhen` selector waives that purpose; missing selectors keep it required.
+The shared requirement owner serves configuration, preset/acquire admission and
+retained native roles. Crabbox's direct local-container launch therefore needs
+its retained SSH key, while coordinator transport requires the captured
+coordinator Account. This qualification does not grant additional HostAccess.
+
 The development `machines.provisioners.list` Action publishes its exact controller and each current provisioner's `credentialPurposes`, qualified by the contribution and occurrence. These come from the acquire Action's declared Connected Account purposes, matching the existing save/acquire admission owner. Each purpose carries labelled exact Account choices from the qualified Connected Account form-choice owner. Listing neither opens credentials nor activates native leaves; occurrence retirement during choice loading refuses the result. Missing selection facts are unavailable, never inferred from saved credentials or general Account inventory. Later native roles revalidate their captured selections against their own declarations without disclosing private authorization scopes in this catalog. This is a source contract; mounted selection and loaded-runtime verification remain separate.
 
 Development managed Move is admitted through the reviewed destination installation, not a network round trip through an offline retained controller. The destination still belongs to the resource custodian and must admit the current recipe and credential selections; the server preserves revision checks, retained resource identity and outstanding native-effect custody. The UI can discover the current policy parent through an available qualified controller and offers Move from admitted cloud billing while destination checks decide reachability. Other retained native operations continue through the current controller.
@@ -51,11 +59,30 @@ Managed bootstrap requires a fresh minimum-version Settings read. The canonical 
 
 Native tools requiring a fixed SSH-key path can use the same implicit credential through `withBootstrapCredentialFile({ relativePath }, callback)`. The protected, plugin-scoped file owner delivers the private key and derived `.pub` file under its existing generic file lock, awaits the callback's native reader, and removes only those files, preserving native claim and recovery state. A queued invocation reopens the retained credential after acquiring custody; cleanup retries use that same lock. Invocation completion joins unawaited callbacks, and only the existing validated paid-result completion path can preserve an acquisition result despite reported cleanup failure. This is temporary delivery, not another secret store. If a dead host's lock is reclaimed while an orphan native reader survives, its operation may fail; uncertainty proceeds through ordinary reconciliation/recovery rather than a new native-reader custody protocol.
 
+The same admitted credential-role contract covers retained inspect, reconcile
+and destroy consumers. Every invocation reopens the exact retained key under
+current row custody and releases its temporary delivery; no native key is kept
+between invocations.
+
 Safe checks may return an optional prerequisite `repairAction` containing a qualified Action reference and JSON invocation input. The host validates that reference and input against the current Action catalog without activating or running the repair. The fact is descriptive, not installation authority: an explicit repair uses the ordinary Action front door and its current approval and execution policy. A missing system tool does not imply a managed installer exists.
 
 Native options may disclose optional `nativeFacts` with labelled size, image and location identities. A size can include observed CPU cores, memory bytes and disk bytes; omitted dimensions and measurements remain unknown. An explicit `monthlyCapStatus: 'none'` reports a native absence of a monthly cap; `unknown` or omission never becomes a cap inferred from a monthly rate. These facts do not replace the strict raw launch selectors or become acquisition authority. The shared reviewed-configuration builder snapshots supplied native facts for later receipt presentation. Retention declarations separately expose optional `finiteOnly`: omission is unknown, and neither native expiry nor the absence of power operations supplies that fact. Policy qualification remains at the sole retention resolver.
 
 Provisioners that return pending acquisition handles declare an optional `reconciliation` hook with a closed native-operation schema and a safe same-plugin daemon Action. The public `defineMachineProvisionerReconciliationSchemas` constructor consumes the launch schema and supplies a strict input union: the retained native handle, or the original managed-row/request correlation with its declared launch. The shared acquire/reconcile result validates pending handles and eventual bound resources. The same constructor supplies the destroy input for either a bound resource or proven-owned partial attachments identified by the retained native handle. Ordinary resource inspection remains unchanged. Reconciliation requires private retained-row custody and performs read-only lookup; it cannot repeat acquisition. Without the hook, strict acquire writes cannot emit pending, while retained generic row data remains readable for unavailable/manual recovery.
+
+`reconciliation.continueAcquire` can opt the incumbent acquire role into an
+exact retained-resource input. After recovering and recording that identity,
+an admitted installation retry completes the reviewed acquisition recipe on
+the same resource before bootstrap. Inspect performs only observations. Lume
+uses this to finish sizing and startup after a lost reply without another pull;
+a running VM must already prove the reviewed sizes.
+
+An optional safe `reconciliation.cleanup` role observes exact pending attachment
+cleanup without first binding a Machine. Its closed result distinguishes
+confirmed cleanup, native-qualified idempotent retry, and uncertainty. The
+retained-operation owner can settle a lost Delete reply from confirmed absence;
+only an explicit current Delete can consume retry qualification through the
+existing destroy role. Observation does not itself authorize another effect.
 
 Cancellation still revokes process IO and current effect authority. Once an admitted native acquire has actually entered its handler, the host privately retains its validated settlement so the original creation can record paid identity for cleanup. This grants no bootstrap or stale start authority; ordinary Actions and read-only reconciliation keep their existing cancellation behavior.
 
@@ -135,6 +162,20 @@ Retained Machine state without the optional revision uses the existing broader
 daemon-state-version signal until the current daemon publishes its revision.
 The projection build cache remains generation- and client-context-owned;
 `web:domIframe` is a browser capability, not evidence of a mounted plugin iframe.
+
+In 0.3 development source, the active Account Availability reader first reads
+machine materializations, then requests `account.plugins.availability.intents.list`
+with those plugin ids and previously observed ids as `knownPluginIds`. The list
+returns the persisted intent census plus complete canonical `intent.read`
+projections (intent, release, UI Artifact links, package assets and hosting
+capability), including explicit null intents for removed or machine-only ids.
+The server delegates each projection to the same exact-read owner; bootstrap
+does not issue one HTTP request per plugin or maintain another freshness cache.
+Individual unreadable projections appear in `failedPluginIds`, retaining the
+reader's existing per-plugin failure/currentness behavior. Account lifetime,
+server generation and superseded-request fences still apply before adoption.
+Interactive managed-resource review retains the exact `intent.read` action.
+This is an undeployed 0.3 source contract, not a released wire transition.
 
 Catalog-scale Action, contribution-projection and Account-settings schemas in
 development source use Protocol's internal
@@ -986,6 +1027,24 @@ it retains id-based selection. Pre-turn pool probes use the same credential
 eligibility predicate as candidate selection. Known-unusable members need no
 quota probe and count as resolved; missing targets and failed probes still make
 the group observation incomplete.
+
+Quota limits also retain parsed labels, units, window durations, model ids,
+scope and confidence through the SDK result and canonical usage projection.
+Window presentation consumes those facts rather than interpreting provider ids
+through another name classifier. Claude and Codex unsuccessful HTTP reads use
+the SDK `QuotaFetchError`; the shared timing parsers preserve Retry-After and
+provider reset evidence for the daemon's existing backoff.
+
+Before admitted qualified quota work enters the plugin, the daemon creates an
+absent PAU source as `not_loaded`, with no fetched observation. Polls, group
+probes and post-recovery refreshes share this admission/failure owner. A failed
+read writes `error_last_known_good`, keeping prior meters and their observation
+times; safe provider status/code and the existing retry time travel in optional
+diagnostics. Failure rows cannot hydrate as fresh successful observations.
+The UI distinguishes an absent observation from unsupported quota admission,
+allows Refresh while capability is unknown, and shows localized failure/status/
+retry information without displaying provider messages or headers. These are
+0.3 development-source contracts, not proof of an already-loaded runtime.
 
 The daemon quota coordinator has no implicit operation deadline.
 `HAPPIER_CONNECTED_SERVICES_QUOTAS_FETCH_TIMEOUT_MS` opts into an explicit deadline;

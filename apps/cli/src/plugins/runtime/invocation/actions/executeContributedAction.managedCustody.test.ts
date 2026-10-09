@@ -55,27 +55,28 @@ describe('managed native-role custody at contributed dispatch', () => {
         expect(ordinaryAbort.signal.aborted).toBe(true);
         expect(canceledOrdinary).toMatchObject({ result: { ok: false, errorCode: 'plugin_action_outcome_unknown' } });
     });
-    it('requires retained operation custody before reconciling a pending native handle and after awaits', async () => {
-        const f = fixture({ reconciliation: true });
-        const request = { runtimeRegistry: f.runtimeRegistry, actionId: `${pluginId}/reconcile`, context: { surface: 'plugin' as const } };
-        expect(await executeContributedAction({ ...request, admittedManagedProviderOperation: { ...f.custody, role: 'reconcile' } }))
-            .toMatchObject({ result: { ok: true, result: roleResult('reconcile') } });
-        const cold = fixture({ reconciliation: true, cold: true });
+    it.each(['reconcile', 'cleanup'] as const)('requires retained operation custody for pending %s and after awaits', async role => {
+        const config = { reconciliation: true, ...(role === 'cleanup' ? { cleanupObservation: { kind: 'confirmed' as const } } : {}) };
+        const f = fixture(config);
+        const request = { runtimeRegistry: f.runtimeRegistry, actionId: `${pluginId}/${role}`, context: { surface: 'plugin' as const } };
+        expect(await executeContributedAction({ ...request, admittedManagedProviderOperation: { ...f.custody, role } }))
+            .toMatchObject({ result: { ok: true, result: role === 'cleanup' ? { kind: 'confirmed' } : roleResult('reconcile') } });
+        const cold = fixture({ ...config, cold: true });
         expect(await executeContributedAction({ ...request, runtimeRegistry: cold.runtimeRegistry }))
             .toMatchObject({ result: { ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid', actionHandlerInvocation: 'notStarted' } });
         expect(cold.activations()).toBe(0);
         expect(cold.effects()).toBe(0);
-        const staleNativeReference = { ...f.custody, role: 'reconcile' as const, isCurrent: () => false };
+        const staleNativeReference = { ...f.custody, role, isCurrent: () => false };
         expect(await executeContributedAction({ ...request, admittedManagedProviderOperation: staleNativeReference }))
             .toMatchObject({ result: { ok: false, actionHandlerInvocation: 'notStarted' } });
         let current = true;
         expect(await executeContributedAction({ ...request,
-            admittedManagedProviderOperation: { ...f.custody, role: 'reconcile', isCurrent: async () => current },
+            admittedManagedProviderOperation: { ...f.custody, role, isCurrent: async () => current },
             context: { surface: 'plugin', beforeHandlerInvocation: async () => { current = false; } },
         })).toMatchObject({ result: { ok: false, actionHandlerInvocation: 'notStarted' } });
         expect(current).toBe(false);
         f.retire();
-        expect(await executeContributedAction({ ...request, admittedManagedProviderOperation: { ...f.custody, role: 'reconcile' } }))
+        expect(await executeContributedAction({ ...request, admittedManagedProviderOperation: { ...f.custody, role } }))
             .toMatchObject({ result: { ok: false, actionHandlerInvocation: 'notStarted' } });
         expect(f.effects()).toBe(1);
     });

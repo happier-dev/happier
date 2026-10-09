@@ -12,7 +12,7 @@ import { lumeConfigurationLabel as label, LUME_UI_TRANSLATION_BUNDLES } from './
 import { LUME_PLUGIN_ID, LUME_PROVISIONER_ID, LUME_DEPENDENCY_ID, LUME_BILLING } from './machine/definition.js';
 import { LumeLaunchV1Schema, LumeResourceV1Schema, LumeNativeOperationV1Schema, LumeOptionsInputV1Schema } from './machine/schemas.js';
 
-export const LUME_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: LumeLaunchV1Schema, resource: LumeResourceV1Schema });
+export const LUME_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: LumeLaunchV1Schema, resource: LumeResourceV1Schema, continueAcquire: true });
 export const LUME_RECONCILIATION_SCHEMAS = defineMachineProvisionerReconciliationSchemas({ launch: LumeLaunchV1Schema,
   resource: LumeResourceV1Schema, nativeOperation: LumeNativeOperationV1Schema });
 export const prepareLumeStoredSchemas = () => prepareMachineProvisionerStoredSchemas({ launch: LumeLaunchV1Schema, resource: LumeResourceV1Schema, nativeOperation: LumeNativeOperationV1Schema });
@@ -63,7 +63,7 @@ export const LUME_MACHINE_PROVISIONER = {
   platforms: ['darwin'], prerequisites: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }],
   billing: LUME_BILLING, retention: { supportedIntents: ['start', 'stop', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
-  reconciliation: { nativeOperationSchema: LumeNativeOperationV1Schema.jsonSchema, action: 'reconcile' },
+  reconciliation: { nativeOperationSchema: LumeNativeOperationV1Schema.jsonSchema, action: 'reconcile', continueAcquire: true },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const LUME_PLUGIN = definePlugin({
@@ -146,7 +146,7 @@ export const LUME_PLUGIN = definePlugin({
         let current: Awaited<ReturnType<typeof runtime>>;
         try { current = await runtime(context); }
         catch { return { kind: 'rejected' as const, code: 'provider_unavailable' as const }; }
-        try { return await current.provider.acquire(input.launch, input.managedId); }
+        try { return await current.provider.acquire(input.launch, input.managedId, input.resource); }
         catch { const { lumeOperationForLaunch } = await import('./machine/provider.js');
           const operation = lumeOperationForLaunch(input.launch, input.managedId);
           return operation.success ? { kind: 'pending' as const, nativeOperationRef: {

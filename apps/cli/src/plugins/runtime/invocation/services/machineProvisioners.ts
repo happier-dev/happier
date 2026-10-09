@@ -3,6 +3,7 @@ import type { MachineProvisionersService, MachineProvisionerBootstrapCredentialL
 import type { PluginInvocationServicesSeed } from './types';
 import type { ManagedServiceCredentialFileOwner, ManagedServiceCredentialFileCleanup } from './managedServicesAdapter';
 import { sshPublicKey } from '@/machines/managed/bootstrapSshPublicKey';
+import { isMachineProvisionerBootstrapCredentialRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 /** Binds only the original admitted operation's implicit retained credential. */
 export function createMachineProvisionersInvocationService(params: Readonly<{
@@ -13,7 +14,7 @@ export function createMachineProvisionersInvocationService(params: Readonly<{
     const { seed } = params;
     const binding = seed.managedBootstrapCredential;
     if (!binding || !seed.retainCleanup || seed.signal.aborted || !seed.isOccurrenceCurrent()
-        || !['acquire', 'bootstrap', 'exec', 'putFile'].includes(binding.role)) return null;
+        || !isMachineProvisionerBootstrapCredentialRoleV1(binding.role)) return null;
     const unavailable = () => new PluginError({ code: 'plugin_service_unavailable', message: 'The admitted bootstrap credential is unavailable' });
     const assertCurrent = async () => {
         if (seed.signal.aborted || !seed.isOccurrenceCurrent() || !await binding.isCurrent()

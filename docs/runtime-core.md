@@ -34,6 +34,9 @@ derives the private activity/drain destination from that same current control
 request and exact retained guest, while rechecking the original requester's
 Manage admission. Only this proved controller receives its custodian guest key
 envelope for the transport codec; requester Account key material is not borrowed.
+The requester needs Manage on the controller, without a separate guest grant.
+This narrow retained-control bridge does not grant ordinary guest access; loss of
+controller Manage or retirement of the retained control closes it.
 Reopening releases only an actually retained drain target and does not authorize
 fresh activity reads or drain admission after retirement.
 

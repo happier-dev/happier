@@ -46,6 +46,82 @@ async function activated(response: unknown | ((request: { url: string; body?: Ui
   return { handlers, context, requests, materializations };
 }
 describe('public fly machine provisioner', () => {
+  it.each(['created', 'attached'] as const)('observes completed pending %s-volume cleanup without mutating pre-existing attachments', async ownership => {
+    const runtime = await activated(request => request.url.endsWith('/volumes/vol-owned')
+      ? { id: 'vol-owned', state: 'destroyed', attached_machine_id: null }
+      : { id: 'existing-app', name: 'managed' });
+    const cleanup = runtime.handlers.get('observe-cleanup');
+    expect(cleanup).toBeDefined();
+    expect(await cleanup!({ nativeOperation: { launch,
+      operation: { app: launch.app, volume: { id: 'vol-owned', ownership }, requestId: 'managed-1', phase: 'volume' },
+    } }, runtime.context)).toEqual({ kind: 'confirmed' });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+    expect(runtime.requests.some(request => request.url.endsWith('/apps/managed'))).toBe(false);
+    if (ownership === 'attached') expect(runtime.requests).toEqual([]);
+  });
+  it('qualifies still-present exact owned volume cleanup for retry without issuing deletion during observation', async () => {
+    const runtime = await activated({ id: 'vol-owned', state: 'created', attached_machine_id: null });
+    const cleanup = runtime.handlers.get('observe-cleanup');
+    expect(cleanup).toBeDefined();
+    expect(await cleanup!({ nativeOperation: { launch,
+      operation: { app: launch.app, volume: { id: 'vol-owned', ownership: 'created' }, requestId: 'managed-1', phase: 'volume' },
+    } }, runtime.context)).toEqual({ kind: 'retryable' });
+    expect(runtime.requests.map(request => request.method)).toEqual(['GET']);
+  });
+  it('does not qualify uncertain Machine-phase delivery for attachment deletion replay', async () => {
+    const runtime = await activated(request => request.url.includes('/machines?') ? []
+      : { id: 'vol-owned', state: 'created', attached_machine_id: null });
+    expect(await runtime.handlers.get('observe-cleanup')!({ nativeOperation: { launch,
+      operation: { app: launch.app, volume: { id: 'vol-owned', ownership: 'created' }, requestId: 'managed-1', phase: 'machine' },
+    } }, runtime.context)).toMatchObject({ kind: 'unknown' });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+  it('confirms vanished exact owned app and volume without requiring acquisition binding', async () => {
+    const runtime = await activated(null, 404);
+    const cleanup = runtime.handlers.get('observe-cleanup');
+    expect(cleanup).toBeDefined();
+    expect(await cleanup!({ nativeOperation: { launch: { ...launch,
+      app: { name: 'managed', ownership: 'created', organizationSlug: 'selected-org' }, volume: { kind: 'create', sizeGb: 1 } },
+      operation: { app: { name: 'managed', ownership: 'created', id: 'owned-app' },
+        volume: { id: 'vol-owned', ownership: 'created' }, requestId: 'managed-1', phase: 'volume' },
+    } }, runtime.context)).toEqual({ kind: 'confirmed' });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+    expect(runtime.requests.map(request => request.url)).toContain('https://api.machines.dev/v1/apps/managed');
+  });
+  it.each(['app-only', 'owned-volume', 'foreign-attachment'] as const)('observes exact created app cleanup with %s before qualifying retry', async scenario => {
+    const ownedVolume = { id: 'vol-owned', state: 'created', attached_machine_id: null };
+    const runtime = await activated(request => {
+      if (request.url.endsWith('/machines')) return [];
+      if (request.url.endsWith('/volumes')) return scenario === 'app-only' ? [] : [ownedVolume];
+      if (request.url.endsWith('/volumes/vol-owned')) return ownedVolume;
+      if (request.url.endsWith('/graphql')) return { data: { app: {
+        name: 'managed', certificates: { totalCount: scenario === 'foreign-attachment' ? 1 : 0 },
+        ipAddresses: { totalCount: 0 }, egressIpAddresses: { totalCount: 0 }, addOns: { totalCount: 0 },
+        secrets: [], services: [], allocations: [], hasDeploymentSource: false,
+      } } };
+      return { id: 'owned-app', name: 'managed' };
+    });
+    const cleanup = runtime.handlers.get('observe-cleanup');
+    expect(cleanup).toBeDefined();
+    const result = await cleanup!({ nativeOperation: { launch: { ...launch,
+      app: { name: 'managed', ownership: 'created', organizationSlug: 'selected-org' }, volume: { kind: 'create', sizeGb: 1 } },
+      operation: { app: { name: 'managed', ownership: 'created', id: 'owned-app' },
+        ...(scenario === 'app-only' ? {} : { volume: { id: 'vol-owned', ownership: 'created' } }),
+        requestId: 'managed-1', phase: 'volume' },
+    } }, runtime.context);
+    expect(result).toMatchObject({ kind: scenario === 'foreign-attachment' ? 'unknown' : 'retryable' });
+    expect(runtime.requests.every(request => request.method !== 'DELETE')).toBe(true);
+    expect(runtime.requests.filter(request => request.method === 'POST').every(request => request.url.endsWith('/graphql'))).toBe(true);
+  });
+  it.each([403, 500])('retains pending cleanup on native observation failure %i without replay qualification', async status => {
+    const runtime = await activated({}, status);
+    const cleanup = runtime.handlers.get('observe-cleanup');
+    expect(cleanup).toBeDefined();
+    expect(await cleanup!({ nativeOperation: { launch,
+      operation: { app: launch.app, volume: { id: 'vol-owned', ownership: 'created' }, requestId: 'managed-1', phase: 'volume' },
+    } }, runtime.context)).toMatchObject({ kind: 'unknown' });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+  });
   it('admits the full cold manifest with host confirmation and canonical native role ids', () => {
     const parsed = parsePluginManifest(exports.PLUGIN_MANIFEST);
     expect(parsed, parsed.ok ? undefined : JSON.stringify(parsed.diagnostics)).toMatchObject({ ok: true });

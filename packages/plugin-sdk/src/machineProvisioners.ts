@@ -6,6 +6,7 @@ import type { ProtocolSchemaSafeParseResult } from './protocol/protocolFacade.js
 import { projectProtocolValue } from './protocol/projectProtocolValue.js';
 import type { PluginProcessResult } from './services/io.js';
 import type { PluginLocalizedStringV2 } from './manifest.js';
+import type { InputPredicate } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import type { PluginContributionRef } from './identity.js';
 
 export type MachineProvisionerContributionV1 = Readonly<{
@@ -25,7 +26,9 @@ export type MachineProvisionerContributionV1 = Readonly<{
   nativeDurationInput?: Readonly<{ path: string; unit: 'milliseconds' | 'seconds' }>;
   bootstrapTransport?: Readonly<{ kind: 'native'; exec: string; putFile: string }>;
   bootstrapCredential?: Readonly<{ kind: 'ssh' | 'native-token' }>;
-  reconciliation?: Readonly<{ nativeOperationSchema: PluginJsonSchema; action: string }>;
+  /** Qualified native launch variants that do not require a declared purpose. */
+  credentialPurposeRequirements?: readonly Readonly<{ purpose: string; optionalWhen: InputPredicate }>[];
+  reconciliation?: Readonly<{ nativeOperationSchema: PluginJsonSchema; action: string; cleanup?: string; continueAcquire?: true }>;
 }>;
 export type MachineProvisionerNativeIntentV1 = 'start' | 'stop' | 'suspend' | 'resume' | 'delete' | 'rebuild';
 export type MachineProvisionerPriceV1 = Readonly<{ label?: PluginLocalizedStringV2; amount: string; currency: string; unit: string; source: string; observedAt: number }>;
@@ -72,9 +75,10 @@ export const MachineProvisionerPutFileResultV1Schema: ProtocolComposableSchema<M
 export type MachineProvisionerNativeExecResultV1 = (Omit<PluginProcessResult, 'stdout' | 'stderr'> & Readonly<{ stdoutBase64: string; stderrBase64: string }>)
   | Readonly<{ kind: 'process-configured' }>;
 export const MachineProvisionerNativeExecResultV1Schema: ProtocolComposableSchema<MachineProvisionerNativeExecResultV1> = projectProtocolValue(canonical.MachineProvisionerNativeExecResultV1Schema);
-export const defineMachineProvisionerSchemas: <LI, LO, RI, RO>(schemas: Readonly<{ launch: ProtocolComposableSchema<LI, LO>; resource: ProtocolComposableSchema<RI, RO> }>) => Readonly<{
+export const defineMachineProvisionerSchemas: <LI, LO, RI, RO, C extends true | undefined = undefined>(schemas: Readonly<{ launch: ProtocolComposableSchema<LI, LO>; resource: ProtocolComposableSchema<RI, RO>; continueAcquire?: C }>) => Readonly<{
   checkInput: typeof MachineProvisionerCheckInputV1Schema;
-  acquireInput: ProtocolComposableSchema<Readonly<{ launch: LI; managedId?: string; bootstrapPublicKey?: string }>, Readonly<{ launch: LO; managedId?: string; bootstrapPublicKey?: string }>>;
+  acquireInput: ProtocolComposableSchema<Readonly<{ launch: LI; managedId?: string; bootstrapPublicKey?: string }> & (C extends true ? Readonly<{ resource?: RI }> : {}),
+    Readonly<{ launch: LO; managedId?: string; bootstrapPublicKey?: string }> & (C extends true ? Readonly<{ resource?: RO }> : {})>;
   acquireResult: ProtocolComposableSchema<Exclude<MachineProvisionerAcquireResultV1<RI>, { kind: 'pending' }>, Exclude<MachineProvisionerAcquireResultV1<RO>, { kind: 'pending' }>>;
   rebuildInput: ProtocolComposableSchema<Readonly<{ resource: RI; reviewedEffectDigest: string }>, Readonly<{ resource: RO; reviewedEffectDigest: string }>>;
   rebuildResult: ProtocolComposableSchema<MachineProvisionerRebuildResultV1<RI>, MachineProvisionerRebuildResultV1<RO>>;
@@ -94,6 +98,8 @@ export const defineMachineProvisionerReconciliationSchemas: <LI, LO, RI, RO, NI,
     Readonly<{ nativeOperation: NO }> | Readonly<{ correlation: Readonly<{ managedId: string; requestId: string; launch: LO }> }>>;
   destroyInput: ProtocolComposableSchema<Readonly<{ resource: RI }> | Readonly<{ nativeOperation: NI }>,
     Readonly<{ resource: RO }> | Readonly<{ nativeOperation: NO }>>;
+  cleanupInput: ProtocolComposableSchema<Readonly<{ nativeOperation: NI }>, Readonly<{ nativeOperation: NO }>>;
+  cleanupResult: ProtocolComposableSchema<Readonly<{ kind: 'confirmed' | 'retryable' }> | Readonly<{ kind: 'unknown'; code?: string }>>;
   result: ProtocolComposableSchema<MachineProvisionerAcquireResultV1<RI, NI>, MachineProvisionerAcquireResultV1<RO, NO>>;
 }> = projectProtocolValue(canonical.defineMachineProvisionerReconciliationSchemas);
 

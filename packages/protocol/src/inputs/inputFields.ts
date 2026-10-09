@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
@@ -12,13 +13,14 @@ import {
 import {
   InputPathSchema,
   InputPredicateSchema,
+  readInputPredicatePaths,
   type InputPath,
   type InputPredicate,
 } from './inputPredicates.js';
 
 export { InputPathSchema, type InputPath };
 
-export const InputWidgetSchema = z.enum([
+export const InputWidgetSchema = lazyZodSchema(() => z.enum([
   'text',
   'url',
   'secret',
@@ -30,7 +32,7 @@ export const InputWidgetSchema = z.enum([
   'multiselect',
   'boolean',
   'json',
-]);
+]));
 export type InputWidget = z.infer<typeof InputWidgetSchema>;
 
 /**
@@ -40,14 +42,14 @@ export type InputWidget = z.infer<typeof InputWidgetSchema>;
  */
 export type InputOptionValue = JsonValue;
 
-export const InputOptionValueSchema: z.ZodType<InputOptionValue> = StrictJsonValueSchema.superRefine((value, context) => {
+export const InputOptionValueSchema: z.ZodType<InputOptionValue> = lazyZodSchema(() => StrictJsonValueSchema.superRefine((value, context) => {
   // The incumbent credential ref remains a closed shape, not a generic JSON fallback.
   if (value && typeof value === 'object' && !Array.isArray(value)
     && ('service' in value || 'accountId' in value)
     && !QualifiedConnectedAccountRefSchema.safeParse(value).success) {
     context.addIssue({ code: 'custom', message: 'Invalid qualified Connected Account ref' });
   }
-});
+}));
 
 /** Reads an untrusted draft/control value without admitting a second ref parser. */
 export function readInputOptionValue(value: unknown): InputOptionValue | undefined {
@@ -74,7 +76,7 @@ export function inputOptionValueSearchText(value: InputOptionValue): string {
   return typeof value === 'string' ? value : '';
 }
 
-const InputHintCoreFieldSchema = z.object({
+const InputHintCoreFieldSchema = lazyZodSchema(() => z.object({
   path: InputPathSchema,
   widget: InputWidgetSchema,
   inputType: asProtocolZod(PluginContributionIdentityV1Schema).optional(),
@@ -85,7 +87,7 @@ const InputHintCoreFieldSchema = z.object({
   visibleWhen: InputPredicateSchema.optional(),
   requiredWhen: InputPredicateSchema.optional(),
   disabledWhen: InputPredicateSchema.optional(),
-}).strict();
+}).strict());
 
 const InputHintCanonicalSourceShape = {
   optionsSourceId: z.string().trim().min(1).optional(),
@@ -258,35 +260,6 @@ function validateInputHintField(
   }
 }
 
-function readPredicatePaths(predicate: unknown): readonly string[] {
-  if (!predicate || typeof predicate !== 'object') return [];
-  const fields = new Map(Object.entries(predicate));
-  switch (fields.get('op')) {
-    case 'truthy':
-    case 'eq':
-    case 'includes': {
-      const path = fields.get('path');
-      return typeof path === 'string' ? [path] : [];
-    }
-    case 'not':
-      return readPredicatePaths(fields.get('predicate'));
-    case 'and': {
-      const all = fields.get('all');
-      return Array.isArray(all)
-        ? all.flatMap((entry) => readPredicatePaths(entry))
-        : [];
-    }
-    case 'or': {
-      const any = fields.get('any');
-      return Array.isArray(any)
-        ? any.flatMap((entry) => readPredicatePaths(entry))
-        : [];
-    }
-    default:
-      return [];
-  }
-}
-
 function isSameOrDescendantPath(candidate: string, parent: string): boolean {
   return candidate === parent || candidate.startsWith(`${parent}.`);
 }
@@ -365,9 +338,9 @@ function validateInputHintsCrossField(
     }
 
     const predicatePaths = [
-      ...readPredicatePaths(field.visibleWhen),
-      ...readPredicatePaths(field.requiredWhen),
-      ...readPredicatePaths(field.disabledWhen),
+      ...readInputPredicatePaths(field.visibleWhen),
+      ...readInputPredicatePaths(field.requiredWhen),
+      ...readInputPredicatePaths(field.disabledWhen),
     ];
     if (predicatePaths.some((path) => [...secretPaths].some((secretPath) => isSameOrDescendantPath(path, secretPath)))) {
       context.addIssue({

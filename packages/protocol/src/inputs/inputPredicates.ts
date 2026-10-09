@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 function utf8ByteLength(value: string): number {
@@ -21,16 +22,16 @@ function isBoundedInputPath(value: string): boolean {
 }
 
 /** Shared field/predicate grammar at Action descriptor admission. */
-export const InputPathSchema = z.string().superRefine((value, context) => {
+export const InputPathSchema = lazyZodSchema(() => z.string().superRefine((value, context) => {
   if (isBoundedInputPath(value)) return;
   context.addIssue({
     code: z.ZodIssueCode.custom,
     message: 'Action input paths must contain 1–16 non-empty dot-separated segments and be at most 256 UTF-8 bytes.',
   });
-});
+}));
 export type InputPath = z.infer<typeof InputPathSchema>;
 
-export const InputPrimitiveSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+export const InputPrimitiveSchema = lazyZodSchema(() => z.union([z.string(), z.number(), z.boolean(), z.null()]));
 export type InputPrimitive = z.infer<typeof InputPrimitiveSchema>;
 
 export type InputPredicate =
@@ -116,6 +117,30 @@ export function readInputPath(input: unknown, path: string): unknown {
     cursor = (cursor as Record<string, unknown>)[segment];
   }
   return cursor;
+}
+
+/** The shared predicate grammar's referenced input paths. */
+export function readInputPredicatePaths(predicate: unknown): readonly string[] {
+  if (!predicate || typeof predicate !== 'object') return [];
+  const fields = new Map(Object.entries(predicate));
+  switch (fields.get('op')) {
+    case 'truthy':
+    case 'eq':
+    case 'includes': {
+      const path = fields.get('path');
+      return typeof path === 'string' ? [path] : [];
+    }
+    case 'not': return readInputPredicatePaths(fields.get('predicate'));
+    case 'and': {
+      const all = fields.get('all');
+      return Array.isArray(all) ? all.flatMap(readInputPredicatePaths) : [];
+    }
+    case 'or': {
+      const any = fields.get('any');
+      return Array.isArray(any) ? any.flatMap(readInputPredicatePaths) : [];
+    }
+    default: return [];
+  }
 }
 
 export function evaluateInputPredicate(predicate: InputPredicate, input: unknown): boolean {

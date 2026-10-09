@@ -39,6 +39,16 @@ export function createLumeProvider({ native, observedAt, signal }: Readonly<{
     return { kind: 'pending', nativeOperationRef: { contributionRef, schemaVersion: 1, value: resource } };
   }
 
+  async function configureAndStart(launch: LumeLaunchV1, resource: LumeNativeOperationV1): Promise<MachineProvisionerAcquireResultV1<LumeResourceV1, LumeNativeOperationV1>> {
+    const configured = await native.configure(nativeIdentity(resource), {
+      cpu: launch.cpu, memory: `${launch.memoryBytes}B`, diskSize: `${launch.diskBytes}B`,
+    }, signal);
+    if (configured.kind === 'unknown') return pending(resource);
+    const started = await native.run(nativeIdentity(resource), signal);
+    return started.kind === 'unknown' ? pending(resource)
+      : { kind: 'bound', resource: { contributionRef, schemaVersion: 1, value: resource } };
+  }
+
   return {
     async check(): Promise<MachineProvisionerCheckResultV1> {
       const runtime = await native.check(signal);
@@ -74,7 +84,7 @@ export function createLumeProvider({ native, observedAt, signal }: Readonly<{
           nativeFacts: { location: { id: location.name, title: location.name } } })),
       ] };
     },
-    async acquire(rawLaunch: unknown, managedId: string | undefined): Promise<MachineProvisionerAcquireResultV1<LumeResourceV1, LumeNativeOperationV1>> {
+    async acquire(rawLaunch: unknown, managedId: string | undefined, rawResource?: unknown): Promise<MachineProvisionerAcquireResultV1<LumeResourceV1, LumeNativeOperationV1>> {
       const parsed = LumeLaunchV1Schema.safeParse(rawLaunch);
       // UUID is the canonical current managed-row producer. Do not generate a
       // second leaf identity or admit a caller-provided native VM name.
@@ -87,6 +97,25 @@ export function createLumeProvider({ native, observedAt, signal }: Readonly<{
       const reference = launch.image.kind === 'catalog' ? launch.image.id : launch.image.reference;
       if (!qualifiedImage(launch.image)) return { kind: 'rejected', code: 'provider_unavailable' };
       const resource = identity.data;
+      if (rawResource !== undefined) {
+        const retained = LumeResourceV1Schema.safeParse(rawResource);
+        if (!retained.success) return { kind: 'rejected', code: 'invalid_request' };
+        if (retained.data.storage !== resource.storage || retained.data.vmName !== resource.vmName
+          || retained.data.privateCarrier?.kind !== resource.privateCarrier?.kind
+          || retained.data.privateCarrier?.guestOs !== resource.privateCarrier?.guestOs
+          || retained.data.privateCarrier?.user !== resource.privateCarrier?.user) {
+          return { kind: 'rejected', code: 'resource_mismatch' };
+        }
+        const observed = await native.inspect(nativeIdentity(resource), signal);
+        if (observed.kind !== 'present') return pending(resource);
+        // A lost run response can leave the exact VM running. Configuration
+        // must be verified from native facts; do not stop it to change sizing.
+        if (observed.vendorStatus === 'running') {
+          return observed.cpu === launch.cpu && observed.memoryBytes === launch.memoryBytes && observed.diskBytes === launch.diskBytes
+            ? { kind: 'bound', resource: { contributionRef, schemaVersion: 1, value: resource } } : pending(resource);
+        }
+        return observed.vendorStatus === 'stopped' ? configureAndStart(launch, resource) : pending(resource);
+      }
       const runtime = await native.check(signal);
       const locations = await native.locations(signal);
       if (runtime.kind !== 'runtime' || locations.kind !== 'locations') return { kind: 'rejected', code: 'provider_unavailable' };
@@ -99,13 +128,7 @@ export function createLumeProvider({ native, observedAt, signal }: Readonly<{
       const [registry, organization, ...imagePath] = reference.split('/');
       const pulled = await native.pull({ ...nativeIdentity(resource), registry, organization, image: imagePath.join('/') }, signal);
       if (pulled.kind === 'unknown') return pending(resource);
-      const configured = await native.configure(nativeIdentity(resource), {
-        cpu: launch.cpu, memory: `${launch.memoryBytes}B`, diskSize: `${launch.diskBytes}B`,
-      }, signal);
-      if (configured.kind === 'unknown') return pending(resource);
-      const started = await native.run(nativeIdentity(resource), signal);
-      if (started.kind === 'unknown') return pending(resource);
-      return { kind: 'bound', resource: { contributionRef, schemaVersion: 1, value: resource } };
+      return configureAndStart(launch, resource);
     },
     async reconcile(rawOperation: unknown): Promise<MachineProvisionerAcquireResultV1<LumeResourceV1, LumeNativeOperationV1>> {
       const parsed = LumeNativeOperationV1Schema.safeParse(rawOperation);
