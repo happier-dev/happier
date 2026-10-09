@@ -420,6 +420,11 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
         async logList({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.read?.logList, { context, request });
         },
+        ...(input.registration.handlers.read?.historyEntries ? {
+            async historyEntries({ context, request }: Parameters<NonNullable<ScmBackend['historyEntries']>>[0]) {
+                return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.read?.historyEntries, { context, request });
+            },
+        } : {}),
         async branchList({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.branch?.list, { context, request });
         },

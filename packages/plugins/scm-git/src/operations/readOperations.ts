@@ -6,13 +6,140 @@ import type {
   ScmLogEntry,
   ScmLogListRequest,
   ScmLogListResponse,
+  ScmEntryHistoryV1,
+  ScmHistoryEntriesRequest,
+  ScmHistoryEntriesResponse,
 } from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES, ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '@happier-dev/plugin-sdk/scm';
+import { lstat, readFile, realpath } from 'node:fs/promises';
+import { relative, resolve, sep } from 'node:path';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { parseGitComparisonOutput } from '@happier-dev/cli-common/scm/gitComparisonOutput';
 import type { ScmBackendContext } from '../types.js';
 import { normalizeCommitRef, normalizeRepoRootRelativePath, runScmCommand } from '../runtime.js';
+import { toRepoRootLiteralPathspec } from '../literalPathspec.js';
 
 const GIT_LOG_FIELDS_PER_ENTRY = 7;
+
+/** --raw -z frames a diff metadata token followed by one literal filename.
+ * --no-renames keeps this pair grammar and explicitly does not follow old names.
+ * Commit headers are separate NUL fields; filenames never pass through trim/line parsing.
+ */
+function parseEntryHistory(raw: string, demanded: readonly { path: string; historyPath: string; directory: boolean }[], shallow: ReadonlySet<string>): ScmEntryHistoryV1[] {
+    if (raw !== '' && !raw.endsWith('\0')) throw new Error('Unterminated history frame');
+    const tokens = raw.split('\0');
+    const settled = new Map<string, ScmEntryHistoryV1>();
+    let commit: Extract<ScmEntryHistoryV1, { kind: 'commit' }>['commit'] | undefined;
+    for (let index = 0; index < tokens.length;) {
+        const token = tokens[index++]!;
+        if (token === '' || token === '\n') continue;
+        const metadata = token.startsWith('\n') ? token.slice(1) : token;
+        if (metadata.startsWith(':')) {
+            if (!commit || !/^:[0-7]{6} [0-7]{6} [a-f0-9]+ [a-f0-9]+ [A-Z]$/.test(metadata)) throw new Error('Invalid history diff frame');
+            const changedPath = tokens[index++];
+            if (changedPath === undefined || changedPath === '') throw new Error('Missing history path frame');
+            // Git treats a shallow boundary as a root diff containing every file. Those
+            // inventory rows cannot establish that this commit actually touched a path.
+            if (shallow.has(commit.oid)) continue;
+            for (const entry of demanded) {
+                const matches = entry.directory
+                    ? entry.historyPath === '' || changedPath.startsWith(`${entry.historyPath}/`)
+                    : changedPath === entry.historyPath;
+                if (matches && !settled.has(entry.path)) settled.set(entry.path, { path: entry.path, kind: 'commit', commit });
+            }
+            continue;
+        }
+        if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(token) || index + 2 >= tokens.length) throw new Error('Invalid history commit frame');
+        const authorName = tokens[index++]!;
+        const timestamp = tokens[index++]!;
+        const subject = tokens[index++]!;
+        if (!/^-?\d+$/.test(timestamp)) throw new Error('Invalid history timestamp frame');
+        commit = { oid: token, authorName, committedAt: Number(timestamp) * 1000, subject };
+    }
+    return demanded.map(({ path }) => settled.get(path) ?? (shallow.size > 0
+        ? { path, kind: 'unavailable', reason: 'shallow_history' }
+        : { path, kind: 'none' }));
+}
+
+export async function gitHistoryEntries(input: {
+    context: ScmBackendContext;
+    request: ScmHistoryEntriesRequest;
+    signal?: AbortSignal;
+}): Promise<ScmHistoryEntriesResponse> {
+    const parsed = ScmHistoryEntriesInputV1Schema.safeParse(input.request);
+    if (!parsed.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'Invalid entry-history request' };
+    const { context } = input;
+    const request = parsed.data;
+    if (!context.detection.isRepo) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY };
+    const cwd = context.detection.rootPath ?? context.cwd;
+    const signal = input.signal ?? context.signal;
+    const command = (args: string[]) => runScmCommand({ bin: 'git', cwd, args, signal });
+    const head = await command(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+    const headOid = head.success ? head.stdout.trim() : null;
+    if (!head.success) {
+        // A missing symbolic branch is unborn. A missing/damaged detached object,
+        // a failed probe or cancellation is not evidence of an empty history.
+        if (signal?.aborted) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_CANCELLED };
+        if (head.exitCode !== 1 || head.timedOut || head.outputLimitExceeded) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: head.stderr };
+        const symbolic = await command(['symbolic-ref', '--quiet', 'HEAD']);
+        if (!symbolic.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: symbolic.stderr };
+        const branch = await command(['show-ref', '--verify', '--quiet', symbolic.stdout.trim()]);
+        if (branch.success || branch.exitCode !== 1 || branch.timedOut || branch.outputLimitExceeded) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: branch.stderr };
+        if (request.headOid !== undefined) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.SCM_SOURCE_CHANGED, headOid: null };
+        return { success: true, headOid: null, entries: request.paths.map(path => ({ path, kind: 'none' })) };
+    }
+    if (request.headOid !== undefined && request.headOid !== headOid) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.SCM_SOURCE_CHANGED, headOid };
+    const unavailable = (reason: string): ScmHistoryEntriesResponse => ({ success: true, headOid, entries: request.paths.map(path => ({ path, kind: 'unavailable', reason })) });
+    if (request.paths.length === 0) return { success: true, headOid, entries: [] };
+    let historyFolder = request.folder;
+    if (process.platform === 'win32' && request.folder !== '') {
+        // Qualified Windows workspace identities may lose directory casing. Recover
+        // this batch's folder spelling at the OS boundary, not by folding Git names.
+        // Native realpath must not turn a symlink/alias into a different Git identity.
+        const folderPath = resolve(cwd, request.folder);
+        context.assertFilesystemPathAuthorized?.(folderPath);
+        try {
+            if (!(await lstat(folderPath)).isDirectory()) return unavailable('history_folder_unavailable');
+            const physicalRoot = await realpath(cwd);
+            const expectedFolder = resolve(physicalRoot, request.folder);
+            const physicalFolder = await realpath(expectedFolder);
+            if (!isCanonicalAbsolutePathInsideRoot(physicalRoot, physicalFolder)
+                || !isCanonicalAbsolutePathInsideRoot(expectedFolder, physicalFolder)
+                || !isCanonicalAbsolutePathInsideRoot(physicalFolder, expectedFolder)) {
+                return unavailable('history_folder_unavailable');
+            }
+            historyFolder = relative(physicalRoot, physicalFolder).split(sep).join('/');
+        } catch { return unavailable('history_folder_unavailable'); }
+    }
+    const demanded = await Promise.all(request.paths.map(async path => {
+        const historyPath = historyFolder === request.folder ? path : `${historyFolder}${path.slice(request.folder.length)}`;
+        const absolutePath = resolve(cwd, historyPath);
+        context.assertFilesystemPathAuthorized?.(absolutePath);
+        try { return { path, historyPath, directory: (await lstat(absolutePath)).isDirectory() }; }
+        catch (error) {
+            if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return { path, historyPath, directory: false };
+            throw error;
+        }
+    }));
+    const shallowPath = await command(['rev-parse', '--git-path', 'shallow']);
+    if (!shallowPath.success) return unavailable('history_probe_failed');
+    let shallow: Set<string>;
+    try { shallow = new Set((await readFile(resolve(cwd, shallowPath.stdout.trim()), 'utf8')).split('\n').filter(Boolean)); }
+    catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') shallow = new Set();
+        else return unavailable('history_probe_failed');
+    }
+    const history = await command([
+        'log', '--full-history', '--date-order', '--raw', '-z', '--no-renames', '--root', '-m',
+        '--format=%x00%H%x00%an%x00%ct%x00%s%x00',
+        headOid!, '--', ...demanded.map(({ historyPath }) => toRepoRootLiteralPathspec(historyPath || '.')),
+    ]);
+    if (!history.success || signal?.aborted) return unavailable(signal?.aborted ? 'cancelled'
+        : history.outputLimitExceeded ? 'command_output_limit_exceeded' : history.timedOut ? 'command_timeout' : 'history_command_failed');
+    try {
+        return ScmHistoryEntriesResponseSchema.parse({ success: true, headOid, entries: parseEntryHistory(history.stdout, demanded, shallow) });
+    } catch { return unavailable('invalid_history_output'); }
+}
 
 /** Git's --author matcher is a basic regular expression, unlike --grep -F. Escape
  * the basic-regex metacharacters so user input is interpreted literally. */

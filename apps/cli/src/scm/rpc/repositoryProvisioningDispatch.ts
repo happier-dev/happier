@@ -10,6 +10,7 @@ import { resolveTildePath } from '@/scm/runtime';
 import type { ScmBackend, ScmBackendContext } from '@/scm/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { normalizeScmOperationOutcome } from '@happier-dev/protocol/scm/operationOutcome';
 
 function hasUnsafeCloneParentPath(value: string): boolean {
     return value.includes('\0') || value.startsWith('~') || value.split(/[\\/]+/).includes('..');
@@ -65,6 +66,7 @@ function repositoryCloneUnsupportedResponse(message: string): ScmRepositoryClone
         success: false,
         errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
         error: message,
+        outcome: normalizeScmOperationOutcome({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: message }),
         remediation: {
             kind: 'unsupported_provider',
         },
@@ -205,6 +207,7 @@ export async function runScmRepositoryCloneRoute(input: {
                 success: false,
                 errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
                 error: 'Repository clone destination parent must be an absolute path without home expansion or traversal segments.',
+                outcome: normalizeScmOperationOutcome({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH }),
             };
         }
         const destinationParent = validatePath(
@@ -218,6 +221,7 @@ export async function runScmRepositoryCloneRoute(input: {
                 success: false,
                 errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
                 error: destinationParent.error ?? 'Repository clone destination parent is not allowed.',
+                outcome: normalizeScmOperationOutcome({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH }),
             };
         }
 

@@ -57,6 +57,10 @@ const EXECUTABLE_SUPPORTED_LEAVES: readonly SupportedLeaf[] = [
         hasHandler: (registration) => typeof registration.handlers.read?.logList === 'function',
     },
     {
+        key: 'read.historyEntries',
+        hasHandler: (registration) => typeof registration.handlers.read?.historyEntries === 'function',
+    },
+    {
         key: 'read.branches',
         hasHandler: (registration) => typeof registration.handlers.branch?.list === 'function',
     },

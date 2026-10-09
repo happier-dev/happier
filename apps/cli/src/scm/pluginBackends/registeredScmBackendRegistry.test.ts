@@ -164,6 +164,28 @@ function createDefinition(input?: Readonly<{
 }
 
 describe('registered SCM backend registry', () => {
+    it('rejects advertised entry history when its typed batch producer is missing', () => {
+        const capabilities = createCapabilities();
+        capabilities.read.historyEntries = { support: 'supported' };
+        const registration: ScmBackendRuntimeRegistration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: { detectRepo: async () => ({ isRepo: true, rootPath: '/repo', mode: '.git' }) },
+                read: {
+                    statusSnapshot: async () => ({ success: true }),
+                    diffFile: async () => ({ success: true, diff: '' }),
+                },
+            },
+        };
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{ pluginId: 'acme.scm.backend', contributionId: 'acme-vcs', definition: createDefinition({ capabilities }) }],
+            registrations: [{ pluginId: 'acme.scm.backend', registration }],
+        });
+        expect(resolved.backends).toEqual([]);
+        expect(resolved.diagnostics).toEqual([expect.objectContaining({ code: 'plugin_scm_backend_activation_drift' })]);
+        expect(resolved.diagnostics[0]?.message).toContain('read.historyEntries');
+    });
+
     it.each(['amend', 'signOff'] as const)('rejects advertised commit %s without its handler producer', (leaf) => {
         const capabilities = createCapabilities();
         capabilities.commit[leaf] = { support: 'supported' };

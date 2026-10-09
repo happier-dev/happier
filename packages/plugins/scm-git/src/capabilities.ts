@@ -19,6 +19,7 @@ export const GIT_SCM_BACKEND_CAPABILITIES = {
         diffFile: supportedCapability(),
         diffCommit: supportedCapability(),
         log: supportedCapability(),
+        historyEntries: supportedCapability(),
         branches: supportedCapability(),
         stash: supportedCapability(),
         defaultBranch: supportedCapability(),

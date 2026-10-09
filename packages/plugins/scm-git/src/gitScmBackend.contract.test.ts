@@ -22,6 +22,7 @@ describe('git SCM backend runtime registration', () => {
                 diffFile: expect.any(Function),
                 diffCommit: expect.any(Function),
                 logList: expect.any(Function),
+                historyEntries: expect.any(Function),
             }),
             branch: expect.objectContaining({
                 list: expect.any(Function),

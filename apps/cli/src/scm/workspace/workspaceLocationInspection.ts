@@ -1,4 +1,6 @@
 import type { ScmBackendId, ScmCapabilities, ScmRepoMode } from '@happier-dev/protocol';
+import { readScmHostingRepositoryIdentity, type ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 
 import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
@@ -14,6 +16,7 @@ export type ScmWorkspaceIntegrationWorkspaceLocationResult = Readonly<{
     mode: ScmRepoMode;
     capabilities: ScmCapabilities;
     inspection: ScmWorkspaceIntegrationWorkspaceLocationInspection;
+    repositoryIdentity?: ScmHostingRepositoryIdentityV1;
     workspaceLocationScm?: Readonly<{
         provider: NonNullable<ScmWorkspaceIntegrationWorkspaceInspection['scmProvider']>;
         rootPath: string;
@@ -35,6 +38,9 @@ function normalizeCheckoutDiscovery(
 export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
     candidatePath: string;
     registry?: ScmBackendRegistry;
+    /** Accepted checkout registration requests hosting facts; ordinary location probes stay cheap. */
+    includeRepositoryIdentity?: boolean;
+    signal?: AbortSignal;
 }>): Promise<ScmWorkspaceIntegrationWorkspaceLocationResult | null> {
     return runWithScmBackendRegistryLease(input.registry, async (registry) => {
         const resolved = await resolveScmSelection({
@@ -52,13 +58,25 @@ export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
         }
 
         const inspection = await workspaceIntegration.inspectWorkspaceLocation({
-            context: resolved.context,
+            context: { ...resolved.context, ...(input.signal ? { signal: input.signal } : {}) },
         });
         if (!inspection) {
             return null;
         }
 
         const checkoutDiscovery = normalizeCheckoutDiscovery(inspection);
+        let repositoryIdentity: ScmHostingRepositoryIdentityV1 | null = null;
+        if (input.includeRepositoryIdentity) {
+            const status = await resolved.selection.backend.statusSnapshot({
+                context: { ...resolved.context, ...(input.signal ? { signal: input.signal } : {}) },
+                request: { cwd: input.candidatePath, includeWorktreeStatus: false },
+            });
+            const snapshot = status.success ? status.snapshot : undefined;
+            if (snapshot?.repo.isRepo && snapshot.repo.rootPath
+                && getPathRemainderWithinBase(snapshot.repo.rootPath, inspection.rootPath) === '') {
+                repositoryIdentity = readScmHostingRepositoryIdentity(snapshot.hostingProvider);
+            }
+        }
 
         return {
             backendId: resolved.selection.backend.id,
@@ -67,6 +85,7 @@ export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
                 mode: resolved.selection.mode,
             }),
             inspection,
+            ...(repositoryIdentity ? { repositoryIdentity } : {}),
             workspaceLocationScm: inspection.scmProvider ? {
                 provider: inspection.scmProvider,
                 rootPath: inspection.rootPath,

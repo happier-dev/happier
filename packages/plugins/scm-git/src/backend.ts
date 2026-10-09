@@ -41,7 +41,7 @@ import { gitCommitBackout, gitCommitCreate, gitCommitUndoLast } from './operatio
 import { gitCommitResolveOutcome } from './operations/commitOutcome.js';
 import { captureGitCommitTarget } from './operations/commitPublication.js';
 import { gitRemotePublish } from './operations/publishOperations.js';
-import { gitDiffCommit, gitDiffFile, gitLogList } from './operations/readOperations.js';
+import { gitDiffCommit, gitDiffFile, gitLogList, gitHistoryEntries } from './operations/readOperations.js';
 import { gitRemoteAdd, gitRemoteRemove, gitRemoteSetUrl } from './operations/remoteManagementOperations.js';
 import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './operations/remoteOperations.js';
 import { gitRemoveIndexLock } from './operations/removeIndexLockOperation.js';
@@ -126,6 +126,7 @@ export function createGitBackend(): ScmBackend {
         commitBackout: gitCommitBackout,
         commitUndoLast: gitCommitUndoLast,
         logList: gitLogList,
+        historyEntries: gitHistoryEntries,
         branchList: gitBranchList,
         branchCreate: gitBranchCreate,
         branchCheckout: gitBranchCheckout,
@@ -214,6 +215,7 @@ export function createGitScmBackendRuntimeRegistration(): ScmBackendRuntimeRegis
                 diffFile: backend.diffFile,
                 diffCommit: backend.diffCommit,
                 logList: backend.logList,
+                historyEntries: backend.historyEntries,
                 stashList: backend.stashList,
             },
             changeSet: {

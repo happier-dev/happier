@@ -29,6 +29,8 @@ import type {
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmHistoryEntriesRequest,
+    ScmHistoryEntriesResponse,
     ScmPullRequestGetRequest,
     ScmPullRequestGetResponse,
     ScmPullRequestListRequest,
@@ -301,6 +303,10 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmLogListRequest;
     }): Promise<ScmLogListResponse>;
+    historyEntries?(input: {
+        context: ScmBackendContext;
+        request: ScmHistoryEntriesRequest;
+    }): Promise<ScmHistoryEntriesResponse>;
     branchList(input: {
         context: ScmBackendContext;
         request: ScmBranchListRequest;
