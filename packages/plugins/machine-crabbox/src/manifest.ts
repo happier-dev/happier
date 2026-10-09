@@ -103,7 +103,7 @@ export const CRABBOX_PLUGIN = definePlugin({
         catch { return { kind: 'pending' as const, nativeOperationRef: { contributionRef: { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_PROVISIONER_ID },
           schemaVersion: 1, value: input.nativeOperation } }; }
       } },
-    check: { ...defaults, hostAccess: [processAccess], title: 'Check Crabbox availability', dangerLevel: 'safe',
+    check: { ...defaults, hostAccess: [processAccess, CRABBOX_CONNECTION_PURPOSE], title: 'Check Crabbox availability', dangerLevel: 'safe',
       inputSchema: CRABBOX_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { await inspectedProvider(context); return machineCheckPresentation({ available: true }); }

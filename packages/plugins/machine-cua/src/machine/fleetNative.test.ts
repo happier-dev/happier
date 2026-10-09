@@ -45,7 +45,8 @@ describe('Fleet native exact claim operations', () => {
             id: launch.namespace, title: { key: 'machineCua.fleet.nativeChoice', fallback: 'reviewed-pool · kubevirt · 4 CPU · 8Gi' },
             launch, available: true, nativeFacts: {
                 size: { id: launch.namespace, title: 'reviewed-pool · kubevirt · 4 CPU · 8Gi', cpuCores: 4 },
-                image: { id: launch.imageId, title: launch.imageId }, location: { id: launch.namespace, title: launch.namespace } },
+                image: { id: launch.imageId, title: launch.imageId }, location: { id: launch.namespace, title: launch.namespace },
+                duration: { id: String(launch.nativeLease.durationSeconds), title: '7200 s', afterMs: 7_200_000 } },
         }] });
         expect(h.requests.map(request => request.method)).toEqual(['GET', 'GET']);
         expect(h.run).not.toHaveBeenCalled();

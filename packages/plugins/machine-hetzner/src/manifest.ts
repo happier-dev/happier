@@ -63,12 +63,12 @@ export const PLUGIN = definePlugin({
     reconcile: { ...defaults, title: 'Recover exact Hetzner resource', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {
-        if (!('nativeOperation' in input)) return { kind: 'rejected' as const, code: 'provider_unavailable' as const };
+        const correlation = 'nativeOperation' in input ? input.nativeOperation.correlation : input.correlation.managedId;
         try {
-          const result = await (await runtime(context)).recover(input.nativeOperation.correlation);
+          const result = await (await runtime(context)).recover(correlation);
           if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
         } catch { /* An unavailable read neither proves absence nor authorizes another purchase. */ }
-        return pending(input.nativeOperation.correlation);
+        return pending(correlation);
       },
     },
     check: { ...defaults, title: 'Check Hetzner API access', dangerLevel: 'safe',

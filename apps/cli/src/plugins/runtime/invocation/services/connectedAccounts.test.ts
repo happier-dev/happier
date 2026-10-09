@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { resolveManifestHostAccessRequests } from '@/plugins/runtime/hostAccess/manifestRequests';
+import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
     ConnectedAccountMaterializationRequest,
     ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
@@ -117,6 +123,38 @@ function createOwner(overrides: Partial<StablePluginConnectedAccountsOwner> = {}
         ...overrides,
     };
 }
+
+describe('Crabbox coordinator check through declared host capabilities', () => {
+    it('admits a selected coordinator without a local executable or native network effects', async () => {
+        const manifest = normalizePluginManifestV2(CRABBOX_PLUGIN.manifest);
+        const check = manifest.contributes.actions.find(action => action.id === 'check')!;
+        const requests = resolveManifestHostAccessRequests({ manifest, pluginId: manifest.id,
+            contribution: { family: 'actions', localId: check.id }, requestIds: check.hostAccess });
+        const scopes: PluginConnectedAccountBindingScope[] = requests.flatMap(({ request }) => request.capability === 'connectedAccounts'
+            ? [{ purpose: request.id, serviceRefs: request.scope.serviceRefs.map(reference => qualifyPluginContributionReferenceV1(reference, manifest.id)), operations: request.scope.operations,
+                materializationKinds: request.scope.materializationKinds }] : []);
+        const { seed } = createSeed();
+        const account = { service: { pluginId: manifest.id, localId: 'coordinator' }, accountId: 'selected' };
+        const connectedAccounts = createStablePluginConnectedAccountsHost(createOwner({
+            getBinding: async ({ purpose }) => ({ purpose: purpose.purpose, service: account.service, account, target: { kind: 'group', displayName: 'Coordinator' } }),
+            materialize: async () => ({ kind: 'environment', env: { CRABBOX_COORDINATOR_URL: 'https://coordinator.example.test/native',
+                CRABBOX_COORDINATOR_TOKEN: 'selected-private-token', CRABBOX_ORG: 'test-org' } }),
+        })).bind({ ...seed, plugin: { id: manifest.id, version: manifest.version }, contribution: { id: 'check', qualifiedId: `${manifest.id}/actions/check` } }, scopes);
+        const handlers = new Map<string, ActionHandler>();
+        await CRABBOX_PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) {
+            handlers.set(id, handler); return { dispose() {} };
+        } }, connectedAccounts: { register() { return { dispose() {} }; } } } as unknown as PluginApi);
+        const network = vi.fn(async () => { throw new Error('Check must not contact the coordinator'); });
+        const context = { invokedAtMs: 123, signal: seed.signal, services: { connectedAccounts,
+            http: { request: network }, managedServices: { dependencies: { status: async () => ({ state: 'missing' }) } },
+        } } as unknown as PluginInvocationContext;
+        expect(await handlers.get('check')!({}, context)).toMatchObject({ available: true });
+        expect(network).not.toHaveBeenCalled();
+        expect(await handlers.get('options')!({ backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
+            nativeImageId: 'ami-reviewed', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 }, context))
+            .toMatchObject({ choices: [{ available: true, launch: { backendId: 'aws', transport: 'coordinator' } }] });
+    });
+});
 
 describe('stable plugin Connected Accounts host', () => {
     it('rejects undeclared native services before disclosing credential material', async () => {

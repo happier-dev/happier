@@ -8,7 +8,7 @@ import { ByocLaunchV1Schema, ByocResourceV1Schema, ByocNativeOperationV1Schema, 
 import { ByocProvisionerSchemas, ByocReconciliationSchemas, FleetProvisionerSchemas, FleetReconciliationSchemas,
     byocReconciliationOperation, fleetReconciliationOperation } from './remoteProvisionerSchemas.js';
 import type { CuaRemoteRole } from './remoteProvisioner.js';
-import { machinePresentationLabel, machineCheckPresentation } from '../ui/translations.js';
+import { machinePresentationLabel, machineCheckPresentation, configurationLabel } from '../ui/translations.js';
 
 const cloudPurpose = 'cloud-account', cuaPurpose = 'cua-account';
 export function remoteRoles(id: 'byoc' | 'fleet') {
@@ -24,6 +24,12 @@ export function remoteRoles(id: 'byoc' | 'fleet') {
                 catch { return machineCheckPresentation({ available: false, code: 'cua_connection_unavailable' }); } } },
         options: { ...defaults, title: `Read Cua ${id} native choices`, dangerLevel: 'safe' as const,
             inputSchema: id === 'byoc' ? ByocOptionsQueryV1Schema : FleetOptionsQueryV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
+            inputHints: { fields: id === 'byoc' ? [
+                { path: 'cloud', title: configurationLabel('cloud'), widget: 'text' as const, required: true },
+            ] : [
+                { path: 'namespace', title: configurationLabel('namespace'), widget: 'text' as const, required: true },
+                { path: 'nativeLease.durationSeconds', title: configurationLabel('durationSeconds'), widget: 'integer' as const, required: true },
+            ] },
             async run(input: unknown, context: PluginInvocationContext) { return MachineProvisionerOptionsResultV1Schema.parse(await run('options', input, context)); } },
         acquire: { ...defaults, title: `Acquire Cua ${id} compute`, dangerLevel: 'destructive' as const,
             confirmation: { title: `Create this Cua ${id} resource?`, body: 'Creates the reviewed paid native resource. Fleet claims retain their native finite lease.' },
@@ -71,6 +77,7 @@ export function remoteProvisioner(id: 'byoc' | 'fleet'): MachineProvisionerAutho
         platforms: ['darwin', 'linux', 'win32'], prerequisites: fleet ? [] : [{ kind: 'managedDependency', id: 'cua-cli' }],
         billing: { location: 'cloud', stoppedBilling: 'unknown' },
         retention: { supportedIntents: fleet ? ['delete'] : ['start', 'stop', 'delete'], ...(fleet ? { finiteOnly: true } : {}) },
+        ...(fleet ? { nativeDurationInput: { path: 'nativeLease.durationSeconds', unit: 'seconds' } as const } : {}),
         actions: { check: `${id}-check`, options: `${id}-options`, acquire: `${id}-acquire`, bootstrap: `${id}-bootstrap`, inspect: `${id}-inspect`,
             ...(!fleet ? { power: `${id}-power` } : {}), destroy: `${id}-destroy` },
         reconciliation: { action: `${id}-reconcile`, nativeOperationSchema: (fleet ? FleetResourceV1Schema : ByocNativeOperationV1Schema).jsonSchema },

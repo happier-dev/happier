@@ -21,6 +21,25 @@ export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_L
   return { key: 'machineCua.presentation.' + id, fallback: MACHINE_PRESENTATION_LABELS.en[id] };
 }
 
+const CONFIGURATION_LABELS = {
+  en: ['Runtime', 'Image', 'CPU cores', 'Memory (bytes)', 'Disk (bytes)', 'Cloud', 'Fleet namespace', 'Lease duration (seconds)'],
+  de: ['Laufzeit', 'Image', 'CPU-Kerne', 'Arbeitsspeicher (Bytes)', 'Festplatte (Bytes)', 'Cloud', 'Fleet-Namensraum', 'Leasedauer (Sekunden)'],
+  ru: ['Среда', 'Образ', 'Ядра CPU', 'Память (байты)', 'Диск (байты)', 'Облако', 'Пространство имён Fleet', 'Срок аренды (секунды)'],
+  pl: ['Środowisko', 'Obraz', 'Rdzenie CPU', 'Pamięć (bajty)', 'Dysk (bajty)', 'Chmura', 'Przestrzeń nazw Fleet', 'Czas dzierżawy (sekundy)'],
+  es: ['Entorno', 'Imagen', 'Núcleos de CPU', 'Memoria (bytes)', 'Disco (bytes)', 'Nube', 'Espacio de nombres de Fleet', 'Duración del arrendamiento (segundos)'],
+  fr: ['Environnement', 'Image', 'Cœurs CPU', 'Mémoire (octets)', 'Disque (octets)', 'Cloud', 'Espace de noms Fleet', 'Durée du bail (secondes)'],
+  it: ['Ambiente', 'Immagine', 'Core CPU', 'Memoria (byte)', 'Disco (byte)', 'Cloud', 'Namespace Fleet', 'Durata del lease (secondi)'],
+  pt: ['Ambiente', 'Imagem', 'Núcleos de CPU', 'Memória (bytes)', 'Disco (bytes)', 'Nuvem', 'Espaço de nomes do Fleet', 'Duração da concessão (segundos)'],
+  ca: ['Entorn', 'Imatge', 'Nuclis de CPU', 'Memòria (bytes)', 'Disc (bytes)', 'Núvol', 'Espai de noms de Fleet', 'Durada de l’arrendament (segons)'],
+  'zh-Hans': ['运行环境', '镜像', 'CPU 核心', '内存（字节）', '磁盘（字节）', '云平台', 'Fleet 命名空间', '租期（秒）'],
+  'zh-Hant': ['執行環境', '映像', 'CPU 核心', '記憶體（位元組）', '磁碟（位元組）', '雲端平台', 'Fleet 命名空間', '租期（秒）'],
+  ja: ['ランタイム', 'イメージ', 'CPU コア', 'メモリ（バイト）', 'ディスク（バイト）', 'クラウド', 'Fleet 名前空間', 'リース期間（秒）'],
+} satisfies Record<keyof typeof MACHINE_PRESENTATION_LABELS, readonly string[]>;
+const configurationIds = ['runtimeId', 'imageId', 'cpu', 'memoryBytes', 'diskBytes', 'cloud', 'namespace', 'durationSeconds'] as const;
+export function configurationLabel(id: typeof configurationIds[number]): PresentationLocalizedString {
+  return { key: 'machineCua.configure.' + id, fallback: CONFIGURATION_LABELS.en[configurationIds.indexOf(id)] };
+}
+
 /** Native check codes and their human vocabulary stay owned by this leaf. */
 export function machineCheckPresentation(result: MachineProvisionerCheckResultV1): MachineProvisionerCheckResultV1 {
   const code = result.code;
@@ -30,5 +49,8 @@ export function machineCheckPresentation(result: MachineProvisionerCheckResultV1
 }
 
 export const CUA_UI_TRANSLATION_BUNDLES: readonly UiTranslationBundle[] = Object.entries(MACHINE_PRESENTATION_LABELS).map(([locale, labels]) => ({
-  locale, messages: Object.fromEntries(Object.entries(labels).map(([id, value]) => ['machineCua.presentation.' + id, value])),
+  locale, messages: Object.fromEntries([
+    ...Object.entries(labels).map(([id, value]) => ['machineCua.presentation.' + id, value]),
+    ...configurationIds.map((id, index) => ['machineCua.configure.' + id, CONFIGURATION_LABELS[locale as keyof typeof CONFIGURATION_LABELS][index]]),
+  ]),
 }));

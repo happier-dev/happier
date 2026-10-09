@@ -9,6 +9,7 @@ import type { ExecService, PluginExecSpawnRequest, PluginProcessResult } from '@
 import { createCuaNativeClient } from './nativeClient.js';
 import { createCuaLocalProvisioner } from './localProvisioner.js';
 import { CUA_PLUGIN } from '../manifest.js';
+import { CuaLocalLaunchV1Schema } from './schemas.js';
 
 const size = { cpu: 4, memoryBytes: 4096 * 1024 ** 2, diskBytes: 20 * 1024 ** 3 };
 const launch = { on: 'local', runtimeId: 'qemu', imageId: 'ghcr.io/trycua/linux:24.04-disk', size };
@@ -76,6 +77,17 @@ async function activated(dependencyReady = true, nativeRun?: ExecService['run'],
 }
 
 describe('consumed Cua local provisioner roles', () => {
+    it.each(['sandbox', 'space'])('declares the reviewed selectors needed to obtain a complete fresh %s launch', async prefix => {
+        const h = await activated();
+        const options = CUA_PLUGIN.manifest.contributes.actions?.find(action => action.id === `${prefix}-options`);
+        const paths = options?.inputHints?.fields.map(field => field.path) ?? [];
+        expect(paths).toEqual(expect.arrayContaining(['runtimeId', 'imageId', 'size.cpu', 'size.memoryBytes', 'size.diskBytes']));
+        const choices = await h.action(`${prefix}-options`)({ runtimeId: launch.runtimeId, imageId: launch.imageId, size }, h.context);
+        expect(choices).toMatchObject({ choices: [{ available: true, launch }] });
+        const parsed = choices as { choices: { launch: unknown }[] };
+        expect(CuaLocalLaunchV1Schema.parse(parsed.choices[0].launch)).toEqual(launch);
+        expect(h.requests.every(request => !(request.args ?? []).includes('create'))).toBe(true);
+    });
     it('recovers original host correlation by lookup after the process lost its first operation report', async () => {
         const h = await activated(true, async request => {
             const args = request.args ?? [];

@@ -4,6 +4,18 @@ import { ByocProvisionerSchemas, FleetProvisionerSchemas, FleetReconciliationSch
 import * as stored from './remoteProvisionerSchemas.js';
 
 describe('Cua remote provisioner public author contract', () => {
+    it.each([
+        { id: 'byoc', paths: ['cloud'] },
+        { id: 'fleet', paths: ['namespace', 'nativeLease.durationSeconds'] },
+    ])('declares the native query fields for a fresh $id configuration', ({ id, paths }) => {
+        const options = CUA_PLUGIN.manifest.contributes.actions?.find(action => action.id === `${id}-options`);
+        expect(options?.inputHints?.fields.filter(field => field.required).map(field => field.path))
+            .toEqual(expect.arrayContaining(paths));
+    });
+    it('binds Fleet Ends to the reviewed native lease input', () => {
+        const descriptor = CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(provisioner => provisioner.id === 'fleet');
+        expect(descriptor?.nativeDurationInput).toEqual({ path: 'nativeLease.durationSeconds', unit: 'seconds' });
+    });
     it('keeps native resource ingress strict and preserves the admitted resource in canonical acquire output', () => {
         const byoc = { cloud: 'aws', nativeResourceId: 'i-owned', sandboxId: 'aws:owned', ownedAttachmentIds: [] };
         const fleet = { namespace: 'pool', claimId: 'happier-owned' };

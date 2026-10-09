@@ -4,7 +4,12 @@ import { FleetLaunchV1Schema, FleetOptionsQueryV1Schema, FleetNativeIdSchema, Fl
     NativeFleetClaimSchema, NativeFleetSandboxSchema, NativeFleetPoolSchema, NativeFleetTemplateSchema,
     type FleetResourceV1 } from './remoteSchemas.js';
 
-export function decodeFleetClaim(record: unknown, expected: unknown, observedAt: number) {
+type FleetClaimObservation =
+    | { kind: 'unknown'; resource: FleetResourceV1 }
+    | { kind: 'ended' | 'bound' | 'pending'; resource: FleetResourceV1;
+        nativeExpiryAt?: number; expirySource?: 'native-creation-ttl' | 'native-shutdown'; resume: 'unsupported' };
+
+export function decodeFleetClaim(record: unknown, expected: unknown, observedAt: number): FleetClaimObservation {
     const ref = FleetResourceV1Schema.parse(expected);
     const unknown = { kind: 'unknown' as const, resource: ref };
     const parsed = NativeFleetClaimRecordSchema.safeParse(record);
@@ -117,7 +122,9 @@ export function createCuaFleet(native: CuaNativeClient) {
                 nativeFacts: { size: { id: current.pool.metadata.name, title,
                     ...(spec.cpuCores === undefined ? {} : { cpuCores: spec.cpuCores }) },
                     image: { id: spec.containerDiskImage, title: spec.containerDiskImage },
-                    location: { id: query.namespace, title: query.namespace } } }] });
+                    location: { id: query.namespace, title: query.namespace },
+                    duration: { id: String(query.nativeLease.durationSeconds), title: `${query.nativeLease.durationSeconds} s`,
+                        afterMs: query.nativeLease.durationSeconds * 1000 } } }] });
         },
         async create(input: unknown, nameInput: string, observedAt: number, signal?: AbortSignal, guestToken?: string) {
             const launch = FleetLaunchV1Schema.parse(input);

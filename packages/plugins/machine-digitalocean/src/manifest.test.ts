@@ -59,17 +59,29 @@ describe('public digitalocean machine provisioner', () => {
     expect(JSON.stringify(result)).not.toContain('countryCode');
     expect(JSON.stringify(result)).not.toContain('preview');
   });
-  it('reconciles a retained pending native correlation without purchasing again', async () => {
+  it.each([
+    { nativeOperation: { recoveryTag: 'happier-pending-1' } },
+    { correlation: { managedId: 'pending-1', requestId: 'original-request', launch } },
+  ])('reconciles a retained pending native correlation without purchasing again: %j', async input => {
     const runtime = await activated({ droplets: [{ id: 42, name: 'managed', status: 'off', tags: ['happier-pending-1'], volume_ids: [] }], links: {} });
     const reconcile = runtime.handlers.get('reconcile');
     expect(typeof reconcile).toBe('function');
-    expect(await reconcile!({ nativeOperation: { recoveryTag: 'happier-pending-1' } }, runtime.context)).toMatchObject({
+    expect(await reconcile!(input, runtime.context)).toMatchObject({
       kind: 'bound', resource: { contributionRef: { pluginId: 'happier.machine.digitalocean', localId: 'digitalocean' },
         value: { dropletId: 42, ownedVolumeIds: [] } },
     });
     expect(runtime.requests.every(request => !('method' in request) || request.method === 'GET')).toBe(true);
     const readers = await exports.prepareStoredSchemas();
     expect('nativeOperationStored' in readers && readers.nativeOperationStored.parse({ recoveryTag: 'happier-pending-1', future: true })).toEqual({ recoveryTag: 'happier-pending-1' });
+  });
+  it.each([
+    { droplets: [{ id: 42, tags: ['happier-pending-1'] }, { id: 43, tags: ['happier-pending-1'] }] },
+    { droplets: [{ id: 42, tags: ['happier-another-row'] }] },
+  ])('retains row-only uncertainty for ambiguous or mismatched native tags: %j', async ({ droplets }) => {
+    const runtime = await activated({ droplets: droplets.map(droplet => ({ name: 'managed', status: 'off', volume_ids: [], ...droplet })), links: {} });
+    expect(await runtime.handlers.get('reconcile')!({ correlation: { managedId: 'pending-1', requestId: 'original-request', launch } }, runtime.context))
+      .toMatchObject({ kind: 'pending', nativeOperationRef: { value: { recoveryTag: 'happier-pending-1' } } });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
   });
   it('keeps the exact pending handle on unavailable recovery reads', async () => {
     const runtime = await activated({}, 403);

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { isDeepStrictEqual } from 'node:util';
-import { ManagedPendingActivationFailureRequestV1Schema, type ActionExecutorContext, type JsonValue, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, JsonValue, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
+import { ManagedPendingActivationFailureRequestV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema, type ManagedControllerV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, type ManagedAcceptedV1, type ManagedControllerCurrentnessV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';

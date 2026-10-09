@@ -60,12 +60,12 @@ export const PLUGIN = definePlugin({
     reconcile: { ...defaults, title: 'Recover exact DigitalOcean resource', dangerLevel: 'safe',
       inputSchema: reconciliation.input, resultSchema: reconciliation.result,
       async run(input, context) {
-        if (!('nativeOperation' in input)) return { kind: 'rejected' as const, code: 'provider_unavailable' as const };
+        const recoveryTag = 'nativeOperation' in input ? input.nativeOperation.recoveryTag : `happier-${input.correlation.managedId}`;
         try {
-          const result = await (await runtime(context)).recover(input.nativeOperation.recoveryTag);
+          const result = await (await runtime(context)).recover(recoveryTag);
           if (result.kind === 'bound') return { kind: 'bound' as const, resource: resourceRef(result.resource) };
         } catch { /* An unavailable read neither proves absence nor authorizes another purchase. */ }
-        return pending(input.nativeOperation.recoveryTag);
+        return pending(recoveryTag);
       },
     },
     check: { ...defaults, title: 'Check DigitalOcean API access', dangerLevel: 'safe',

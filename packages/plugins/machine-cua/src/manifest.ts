@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { machinePresentationLabel, machineCheckPresentation, CUA_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { machinePresentationLabel, machineCheckPresentation, configurationLabel, CUA_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
     MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
@@ -49,6 +49,13 @@ function roles(id: CuaLocalProvisionerId) {
             } },
         options: { ...defaults, title: 'Read Cua local image and runtime choices', dangerLevel: 'safe' as const,
             inputSchema: CuaLocalOptionsQueryV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
+            inputHints: { fields: [
+                { path: 'runtimeId', title: configurationLabel('runtimeId'), widget: 'text' as const },
+                { path: 'imageId', title: configurationLabel('imageId'), widget: 'text' as const },
+                { path: 'size.cpu', title: configurationLabel('cpu'), widget: 'integer' as const, required: true },
+                { path: 'size.memoryBytes', title: configurationLabel('memoryBytes'), widget: 'integer' as const, required: true },
+                { path: 'size.diskBytes', title: configurationLabel('diskBytes'), widget: 'integer' as const, required: true },
+            ] },
             async run(input: CuaLocalOptionsQueryV1, context: PluginInvocationContext) {
                 return (await provider(id, context)).options(input);
             } },

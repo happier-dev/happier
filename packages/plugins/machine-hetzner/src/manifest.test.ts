@@ -60,17 +60,30 @@ describe('public hetzner machine provisioner', () => {
     const result = parsePluginManifest(exports.PLUGIN_MANIFEST);
     expect(result, result.ok ? undefined : JSON.stringify(result.diagnostics)).toMatchObject({ ok: true });
   });
-  it('reconciles a retained pending native correlation without purchasing again', async () => {
+  it.each([
+    { nativeOperation: { correlation: 'pending-1' } },
+    { correlation: { managedId: 'pending-1', requestId: 'original-request', launch } },
+  ])('reconciles a retained pending native correlation without purchasing again: %j', async input => {
     const runtime = await activated({ servers: [{ id: 41, status: 'off', labels: { 'happier-managed': 'pending-1' }, public_net: { ipv4: null, ipv6: null }, volumes: [] }], meta: { pagination: { next_page: null } } });
     const reconcile = runtime.handlers.get('reconcile');
     expect(typeof reconcile).toBe('function');
-    expect(await reconcile!({ nativeOperation: { correlation: 'pending-1' } }, runtime.context)).toMatchObject({
+    expect(await reconcile!(input, runtime.context)).toMatchObject({
       kind: 'bound', resource: { contributionRef: { pluginId: 'happier.machine.hetzner', localId: 'hetzner' },
         value: { serverId: 41, owned: { volumeIds: [], primaryIpIds: [] } } },
     });
     expect(runtime.requests.every(request => !('method' in request) || request.method === 'GET')).toBe(true);
     const readers = await exports.prepareStoredSchemas();
     expect('nativeOperationStored' in readers && readers.nativeOperationStored.parse({ correlation: 'pending-1', future: true })).toEqual({ correlation: 'pending-1' });
+  });
+  it.each([
+    { servers: [{ id: 41, labels: { 'happier-managed': 'pending-1' } }, { id: 42, labels: { 'happier-managed': 'pending-1' } }] },
+    { servers: [{ id: 41, labels: { 'happier-managed': 'another-row' } }] },
+  ])('retains row-only uncertainty for ambiguous or mismatched native labels: %j', async ({ servers }) => {
+    const runtime = await activated({ servers: servers.map(server => ({ status: 'off', public_net: { ipv4: null, ipv6: null }, volumes: [], ...server })),
+      meta: { pagination: { next_page: null } } });
+    expect(await runtime.handlers.get('reconcile')!({ correlation: { managedId: 'pending-1', requestId: 'original-request', launch } }, runtime.context))
+      .toMatchObject({ kind: 'pending', nativeOperationRef: { value: { correlation: 'pending-1' } } });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
   });
   it('keeps the exact pending handle on unavailable recovery reads', async () => {
     const runtime = await activated({}, 403);
