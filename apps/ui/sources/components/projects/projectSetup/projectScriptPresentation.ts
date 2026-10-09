@@ -136,6 +136,10 @@ export type ProjectRunPresentation = Readonly<{
   /** Run becomes Stop in the same slot while the process can still be stopped. */
   live: boolean;
   startedAt: number | null;
+  /** Strict producer progress, not a phase inferred from accepted/running. */
+  phase: string | null;
+  /** Absent is unknown; zero is a real queue position. Only meaningful while queued. */
+  queueAhead: number | null;
   /** The producer's latest output line while it runs (operation progress label), shown in mono. */
   tail: string | null;
 }>;
@@ -173,12 +177,18 @@ export function presentProjectRun(
       text: idleText,
       live: false,
       startedAt: null,
+      phase: null,
+      queueAhead: null,
       tail: null,
     };
   const { snapshot } = operation;
   const attachment = snapshot.domainRef?.kind === 'projectCommand' ? snapshot.domainRef : null;
   // The strict snapshot's required timestamp alone does not establish that a process launched.
   const startedAt = attachment?.terminalId ? snapshot.startedAt ?? null : null;
+  const phaseProgress = snapshot.progress?.kind === 'phase' ? snapshot.progress : null;
+  const phase = phaseProgress?.phase ?? null;
+  const queueAhead = phase === 'queued' && !isActionOperationTerminal(snapshot.state)
+    ? phaseProgress?.queueAhead ?? null : null;
   const machine = machineName ?? attachment?.machineId ?? snapshot.scope.machineId;
   const live = (
     glyph: ProjectRunGlyph,
@@ -190,6 +200,8 @@ export function presentProjectRun(
     text,
     live: true,
     startedAt,
+    phase,
+    queueAhead,
     tail: snapshot.progress?.label ?? null,
   });
   if (!isActionOperationTerminal(snapshot.state)) {
@@ -213,6 +225,9 @@ export function presentProjectRun(
     ) {
       return live('attention', 'quiet', t('projects.scripts.run.offline'));
     }
+    if (phase === 'queued') return live('queued', 'quiet', snapshot.progress?.label ?? t('projects.scripts.run.accepted'));
+    if (phase === 'preparing' || phase === 'copying' || phase === 'setup')
+      return live('queued', 'quiet', snapshot.progress?.label ?? t('projects.scripts.run.accepted'));
     return snapshot.state === 'accepted'
       ? live('queued', 'quiet', t('projects.scripts.run.accepted'))
       : live(
@@ -235,6 +250,8 @@ export function presentProjectRun(
     text,
     live: false,
     startedAt,
+    phase,
+    queueAhead,
     tail: null,
   });
   if (snapshot.state === 'succeeded')

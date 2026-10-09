@@ -19,6 +19,19 @@ function run(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOperatio
 }
 
 describe('finite Script row facts', () => {
+    it('projects queue position and preparation phase without inventing a launched process', () => {
+        const command = { kind: 'projectCommand', purpose: 'script', serverId: 'target-home', machineId: 'target-machine', workspaceRefId: 'target-workspace', cwd: '/target' } as const;
+        const queued = presentProjectRun(run({ state: 'accepted', domainRef: command, progress: { kind: 'phase', phase: 'queued', queueAhead: 2, label: 'Queued' } }), 'Builder', 'idle');
+        expect(queued).toMatchObject({ phase: 'queued', queueAhead: 2, startedAt: null, glyph: 'queued' });
+        for (const phase of ['preparing', 'copying', 'setup'] as const) {
+            const preparing = presentProjectRun(run({ domainRef: command, progress: { kind: 'phase', phase, label: phase } }), 'Builder', 'idle');
+            expect(preparing).toMatchObject({ phase, queueAhead: null, startedAt: null });
+            expect(preparing.text).not.toContain('projects.scripts.run.running');
+        }
+        const uncertain = presentProjectRun(run({ state: 'accepted', domainRef: command, progress: { kind: 'phase', phase: 'queued', queueAhead: 0, label: 'Queued' }, observation: { kind: 'outcome_uncertain' } }), 'Builder', 'idle');
+        expect(uncertain.text).toContain('projects.scripts.run.unknown');
+    });
+
     it('uses the canonical native invocation preview without guessing the package manager or changing source identity', () => {
         const source = { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } as const;
         const invocation = { tool: 'yarn', args: ['test'], cwd: '/repo' };
