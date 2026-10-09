@@ -162,26 +162,23 @@ function createProcessTreeOwner({ psList, execFileWithDeadline, isPidPresent, pr
         const shouldSignalProcessGroup = process.platform !== 'win32'
             && (!rootIsTerminal || opts?.ownedProcessGroup === true)
             && probeProcessGroupLiveness(pid) !== 'absent';
-        // A detached POSIX child is its own process-group leader. Signal that group first so
-        // late-forked descendants in the same group cannot escape the initial psList snapshot.
-        // Keep the platform subtree fallbacks for Windows and non-detached roots, where no
-        // group with this PID exists.
+        let censusVerified = true;
+        let directChildrenVerified = process.platform !== 'win32';
+        // Capture escaped descendants BEFORE any signal can kill their parent
+        // and reparent them. The owned group still covers same-group late forks;
+        // group absence alone cannot prove that an escaped child was stopped.
+        const [descendants, directChildren] = await Promise.all([
+            resolveDescendantPids(pid, () => { censusVerified = false; }).catch(() => {
+                censusVerified = false;
+                return [];
+            }),
+            process.platform === 'win32' ? Promise.resolve([])
+                : bestEffortReadDirectChildPids(pid, () => { directChildrenVerified = false; }),
+        ]);
         if (shouldSignalProcessGroup)
             bestEffortKillProcessGroup(pid, 'SIGTERM');
-        let censusVerified = true;
-        const descendants = await resolveDescendantPids(pid, () => { censusVerified = false; }).catch(() => {
-            censusVerified = false;
-            return [];
-        });
-        let directChildrenVerified = process.platform !== 'win32';
-        let directChildren = [];
         if (process.platform !== 'win32') {
-            // Retain direct-child identities before the root can exit and reparent them. Run the
-            // capture alongside the existing initial pkill slot rather than adding another wait phase.
-            [directChildren] = await Promise.all([
-                bestEffortReadDirectChildPids(pid, () => { directChildrenVerified = false; }),
-                bestEffortSignalDirectChildren(pid, 'SIGTERM'),
-            ]);
+            await bestEffortSignalDirectChildren(pid, 'SIGTERM');
         }
         const all = Array.from(new Set([...descendants, ...directChildren, pid]));
         if (process.platform === 'win32') {
