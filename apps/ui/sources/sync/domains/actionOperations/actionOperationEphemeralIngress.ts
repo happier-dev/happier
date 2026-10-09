@@ -1,7 +1,7 @@
 import {
     ActionOperationRevisionEphemeralV1Schema,
     ActionOperationSnapshotEphemeralV1Schema,
-    type ActionOperationSnapshotEphemeralV1,
+    type ActionOperationRevisionEphemeralV1,
 } from '@happier-dev/protocol/actions/operations/v1';
 
 /**
@@ -10,16 +10,13 @@ import {
  */
 export function normalizeActionOperationEphemeralIngress(
     raw: unknown,
-): ActionOperationSnapshotEphemeralV1 | null {
+): ActionOperationRevisionEphemeralV1 | null {
     const released = ActionOperationRevisionEphemeralV1Schema.safeParse(raw);
     if (released.success) {
-        return {
-            type: 'action-operation-snapshot',
-            machineId: released.data.machineId,
-            ciphertext: released.data.content.c,
-        };
+        return released.data;
     }
 
     const drainOnly = ActionOperationSnapshotEphemeralV1Schema.safeParse(raw);
-    return drainOnly.success ? drainOnly.data : null;
+    return drainOnly.success ? { type: 'action-operation-updated', machineId: drainOnly.data.machineId,
+        content: { t: 'encrypted', c: drainOnly.data.ciphertext } } : null;
 }
