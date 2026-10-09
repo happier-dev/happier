@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { ManagedServiceLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ManagedServiceLocalIdSchema, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
 import type {
     ManagedServiceHealthCheck,
@@ -226,6 +226,19 @@ export function normalizeManagedServiceSpec(
     if (!ManagedServiceLocalIdSchema.safeParse(spec.id).success) {
         return specInvalid('Managed-service id is invalid');
     }
+    if (spec.mode.kind === 'native') {
+        if (!spec.mode.instance || !PluginContributionIdentityV1Schema.safeParse(spec.mode.instance.adapter).success
+            || typeof spec.mode.instance.nativeResourceId !== 'string'
+            || !spec.mode.instance.nativeResourceId.trim()) {
+            return specInvalid('Native service instance identity is invalid');
+        }
+        if (spec.credentialBindings?.length || (spec.healthCheck && spec.healthCheck.kind !== 'none')) {
+            return specInvalid('Native service readiness and credentials belong to its declared lifecycle');
+        }
+    }
+    if (spec.mode.kind === 'spawn' && spec.mode.endpoint.kind === 'none' && spec.healthCheck?.kind === 'http') {
+        throw new PluginError({ code: 'plugin_managed_service_unavailable', message: 'URL-less service has no HTTP health capability' });
+    }
     if (spec.mode.kind === 'attach' && spec.durableLog !== undefined) {
         return specInvalid(
             'Managed-service attach mode cannot configure durable logging',
@@ -286,6 +299,21 @@ export function normalizeManagedServiceSpec(
             healthPolicy,
             ...(healthCheck ? { healthCheck } : {}),
         }) as NormalizedManagedServiceSpec;
+    }
+    if (spec.mode.kind === 'native') {
+        return Object.freeze({
+            ...spec,
+            mode: Object.freeze({
+                ...spec.mode,
+                instance: Object.freeze({
+                    adapter: Object.freeze(PluginContributionIdentityV1Schema.parse(spec.mode.instance.adapter)),
+                    nativeResourceId: spec.mode.instance.nativeResourceId,
+                }),
+            }),
+            startupTimeoutMs,
+            healthPolicy,
+            ...(healthCheck ? { healthCheck } : {}),
+        });
     }
     const durableLog = spec.durableLog
         ? Object.freeze({
