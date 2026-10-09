@@ -10,6 +10,7 @@ import { normalizeOptionalParam } from '@/profileRouteParams';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveDefaultDirectoryForMachine } from '@/utils/sessions/machineDefaultDirectory';
+import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { useStableRecentPathsResolver } from '@/utils/sessions/useStableRecentPathsForMachine';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { resolveManagedMachineArchiveChoiceAvailability, type ManagedMachineArchiveChoiceAvailability } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
@@ -43,6 +44,7 @@ export type NewSessionInitialPlacement = Readonly<{
  * the requested folder, else the draft's folder on that machine, else the machine's default one.
  */
 export function resolveNewSessionInitialPlacement(input: Readonly<{
+    isBot?: boolean;
     serverId: string | null;
     machines: ReadonlyArray<Machine>;
     recentMachinePaths: ReadonlyArray<Readonly<{ machineId: string; path: string }>>;
@@ -79,13 +81,15 @@ export function resolveNewSessionInitialPlacement(input: Readonly<{
             || resolveDefaultDirectoryForMachine({
                 machineId,
                 machines: input.machines,
-                recentPaths: input.resolveRecentPathsForMachine(machineId),
+                recentPaths: input.isBot ? [] : input.resolveRecentPathsForMachine(machineId),
             });
     }
     return { keepsPersistedTarget, machineId, path };
 }
 
 export function useNewSessionMachinePathState(params: Readonly<{
+    /** Creation kind from the ordinary seeded draft; Bots start at home rather than a recent folder. */
+    isBot?: boolean;
     serverId: string | null;
     persistedManagedMachineSelection?: ManagedMachineSelectionDraft | null;
     /** Reviewed intent from a fresh picker return, distinct from retained paid recovery. */
@@ -182,9 +186,9 @@ export function useNewSessionMachinePathState(params: Readonly<{
         resolveDefaultDirectoryForMachine({
             machineId,
             machines: params.machines,
-            recentPaths: resolveRecentPathsForMachine(machineId),
+            recentPaths: params.isBot ? [] : resolveRecentPathsForMachine(machineId),
         })
-    ), [params.machines, resolveRecentPathsForMachine]);
+    ), [params.isBot, params.machines, resolveRecentPathsForMachine]);
 
     const getPersistedPathForMachine = React.useCallback((machineId: string | null): string => {
         if (!machineId) return '';
@@ -234,6 +238,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     // A route/seeded machine is an exact target. Do not pair its directory
     // with a persisted or preferred machine while that target hydrates.
     const [initialPlacement] = React.useState(() => resolveNewSessionInitialPlacement({
+        isBot: params.isBot,
         serverId: params.serverId,
         machines: params.machines,
         recentMachinePaths,
@@ -318,12 +323,15 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const directoryKindRef = React.useRef(directoryKind);
     directoryKindRef.current = directoryKind;
     const [selectedPath, setSelectedPathState] = React.useState<string>(() => (
-        params.requestedManagedMachineSelection && !normalizeMachineIdParam(params.machineIdParam)
+        (params.requestedManagedMachineSelection || params.persistedManagedMachineSelection) && !normalizeMachineIdParam(params.machineIdParam)
             ? normalizePathParam(params.pathParam) || normalizePathParam(params.persistedPath) || initialPlacement.path
             : initialPlacement.path
     ));
     const selectedPathDraftRef = React.useRef<string>(selectedPath);
-    const hasUserEditedPathRef = React.useRef(false);
+    const hasUserEditedPathRef = React.useRef(Boolean(params.isBot && normalizePathParam(params.persistedPath)
+        && formatPathRelativeToHome(normalizePathParam(params.persistedPath),
+            params.machines.find(machine => machine.id === (initialPlacement.machineId
+                ?? managedMachineSelection?.receipt.controller.machineId))?.metadata?.homeDir) !== '~'));
     const lastAppliedMachineParamRef = React.useRef<Readonly<{ machineId: string; scopeKey: string | null }> | null>(null);
     const lastAppliedPathParamRef = React.useRef<string>('');
     const applyCommittedSelectedPath = React.useCallback((nextPath: string) => {
@@ -407,8 +415,14 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const adoptManagedMachineTarget = React.useCallback((machineId: string) => {
         hasUserSelectedMachineRef.current = true;
         hasCommittedExactTargetRef.current = true;
+        // An untouched Bot default belongs to its enrolled machine, never the controller.
+        // An authored or restored folder remains the user's choice.
+        if (params.isBot && !hasUserEditedPathRef.current
+            && !normalizePathParam(params.pathParam)) {
+            applyCommittedSelectedPath(getBestPathForMachine(machineId));
+        }
         setExecutionTarget(machineTarget(machineId));
-    }, [machineTarget]);
+    }, [applyCommittedSelectedPath, getBestPathForMachine, machineTarget, params.isBot, params.pathParam]);
     const setManagedMachineArchiveEffect = React.useCallback((archiveEffect: ManagedMachineSelectionDraft['archiveEffect']) => {
         setManagedMachineSelection(current => {
             if (!current || current.archiveEffect === archiveEffect) return current;

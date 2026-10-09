@@ -11,7 +11,7 @@ import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awar
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SessionListHomeObservation } from '@/sync/domains/session/listing/sessionListHomeObservation';
-import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
@@ -234,7 +234,7 @@ export function buildSessionContextFacts(params: Readonly<{
     const workspacePath = normalizeLabel(params.awareness?.workspace?.path);
     const workspaceLabel = normalizeLabel(params.workspaceLabel)
         ?? (workspacePath
-            ? normalizeLabel(formatPathRelativeToHome(workspacePath, normalizeLabel(params.homeDir) ?? undefined))
+            ? normalizeLabel(formatSessionPath(workspacePath, normalizeLabel(params.homeDir) ?? undefined))
             : null);
     const observed = resolveFreshness(params.homeObservation);
     const freshness: SessionHomeFreshnessPresentation = {

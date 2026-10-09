@@ -3,7 +3,8 @@ import React from 'react';
 import { View } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { Session } from '@/sync/domains/state/storageTypes';
-import { useSessionStatus, formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
+import { useSessionStatus } from '@/utils/sessions/sessionUtils';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
@@ -112,7 +113,7 @@ export function EmptyMessages({ session }: EmptyMessagesProps) {
             
             {metadata?.path && readSessionDirectoryKind(metadata) !== 'managed' ? (
                 <Text style={styles.pathText}>
-                    {formatPathRelativeToHome(metadata.path, metadata.homeDir)}
+                    {formatSessionPath(metadata.path, metadata.homeDir)}
                 </Text>
             ) : null}
             

@@ -3,6 +3,26 @@ import { describe, expect, it } from 'vitest';
 import { resolveSessionWorkspaceDisplayPresentation } from './sessionWorkspaceDisplayPresentation';
 
 describe('resolveSessionWorkspaceDisplayPresentation', () => {
+    it.each([
+        ['/home/alice', '/home/alice'],
+        ['~/', '/home/alice///'],
+        ['~\\', 'C:\\Users\\alice\\\\'],
+        ['C:/Users\\alice//', 'C:\\Users\\alice\\'],
+    ])('presents the machine home as No folder: %s', (path, homeDir) => {
+        const presentation = resolveSessionWorkspaceDisplayPresentation({ serverId: 'server-1',
+            metadata: { machineId: 'machine-1', path, homeDir }, workspaceRefs: [] });
+        expect(presentation.displayTitle).toBe('No folder');
+        expect(presentation.directoryKind).toBe('path');
+    });
+
+    it('keeps neighboring folder and sibling-prefix labels unchanged', () => {
+        for (const [path, expected] of [['/home/alice/repo', '~/repo'], ['/home/alice2', '/home/alice2']]) {
+            expect(resolveSessionWorkspaceDisplayPresentation({ serverId: 'server-1',
+                metadata: { machineId: 'machine-1', path, homeDir: '/home/alice' }, workspaceRefs: [],
+                workspacePathDisplayModeV1: 'path' }).displayTitle).toBe(expected);
+        }
+    });
+
     it('matches workspace refs using the canonical expanded root path while displaying a home-relative fallback', () => {
         const presentation = resolveSessionWorkspaceDisplayPresentation({
             serverId: 'server-1',

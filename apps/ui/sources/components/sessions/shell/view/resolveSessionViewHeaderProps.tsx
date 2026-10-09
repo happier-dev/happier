@@ -27,7 +27,8 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, getSessionStatus, getSessionSubtitle, resolveLockedSessionTitle } from '@/utils/sessions/sessionUtils';
+import { getSessionAvatarId, getSessionName, getSessionStatus, getSessionSubtitle, resolveLockedSessionTitle } from '@/utils/sessions/sessionUtils';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { LruMap } from '@/utils/cache/lruMap';
 
@@ -340,7 +341,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const badgeLabel = input.sessionAutomationsEnabledCount > 99 ? '99+' : String(input.sessionAutomationsEnabledCount);
     const title = getSessionName(session);
     const fallbackSubtitle = ownerMetadata?.path
-        ? formatPathRelativeToHome(ownerMetadata.path, ownerMetadata.homeDir)
+        ? formatSessionPath(ownerMetadata.path, ownerMetadata.homeDir)
         : undefined;
     const workspaceSubtitle = typeof input.workspaceSubtitle === 'string' && input.workspaceSubtitle.length > 0
         ? input.workspaceSubtitle

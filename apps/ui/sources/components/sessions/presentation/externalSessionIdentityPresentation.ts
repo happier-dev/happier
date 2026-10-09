@@ -3,7 +3,7 @@ import type { ExternalSessionCandidateThreadV1 } from '@happier-dev/protocol';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { t } from '@/text';
-import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 
 type ExternalSessionIdentityTranslationKey =
     | 'sessionsList.storageExternalFilter'
@@ -90,7 +90,7 @@ export function resolveExternalSessionBrowseCandidateIdentityPresentation(
     const meaningfulTitle = readMeaningfulTitle(input.title, input.remoteSessionId);
     const threadLabel = resolveThreadLabel(input.thread);
     const pathLabel = input.path
-        ? formatPathRelativeToHome(input.path, input.homeDir ?? undefined).trim() || null
+        ? formatSessionPath(input.path, input.homeDir ?? undefined).trim() || null
         : null;
     const identityLabel = joinDistinctIdentityLabels([input.agentLabel, input.machineLabel]);
     return {

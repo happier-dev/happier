@@ -1,4 +1,5 @@
 import type { AgentInputFolderChipState } from '@/components/sessions/agentInput/definitions/AgentInputFolderChip';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 
 /**
  * The new-session composer's folder chip, from the directory-intent owner and the machine's
@@ -9,10 +10,11 @@ export function resolveNewSessionFolderChipState(params: Readonly<{
     directoryKind: 'path' | 'managed';
     /** The effective folder (`''` while none is resolved, or with no folder). */
     selectedPath: string;
+    machineHomeDir?: string | null;
     /** The machine's own reason when it cannot start a session now, else null. */
     machineUnavailableReason: string | null;
 }>): AgentInputFolderChipState {
-    const path = params.selectedPath.trim();
+    const path = formatSessionPath(params.selectedPath.trim(), params.machineHomeDir ?? undefined);
     if (params.machineUnavailableReason !== null) {
         return {
             kind: 'machine_unavailable',

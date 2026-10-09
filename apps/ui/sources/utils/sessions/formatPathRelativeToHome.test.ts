@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatPathRelativeToHome } from './formatPathRelativeToHome';
+import { formatPathRelativeToHome, formatSessionPath } from './formatPathRelativeToHome';
 
 describe('formatPathRelativeToHome', () => {
+    it('normalizes home-relative separator aliases through the canonical expansion owner', () => {
+        expect(formatPathRelativeToHome('~\\repo/mixed\\path', 'C:\\Users\\alice\\\\')).toBe('~/repo/mixed/path');
+        expect(formatPathRelativeToHome('~/', '/home/alice///')).toBe('~');
+    });
     it('formats a POSIX path below home and preserves a sibling-prefix path', () => {
         expect(formatPathRelativeToHome('/Users/alice/projects/demo', '/Users/alice')).toBe('~/projects/demo');
         expect(formatPathRelativeToHome('/Users/alice2/projects/demo', '/Users/alice')).toBe('/Users/alice2/projects/demo');
@@ -23,5 +27,16 @@ describe('formatPathRelativeToHome', () => {
     it('preserves a Windows sibling-prefix path while normalizing mixed separators below home', () => {
         expect(formatPathRelativeToHome('C:\\Users\\alice2\\projects\\demo', 'C:\\Users\\alice')).toBe('C:\\Users\\alice2\\projects\\demo');
         expect(formatPathRelativeToHome('C:\\Users/alice\\projects/demo', 'C:/Users\\alice')).toBe('~/projects/demo');
+    });
+});
+
+describe('formatSessionPath', () => {
+    it('labels only the known machine home as No folder, leaving generic filesystem labels intact', () => {
+        expect(formatSessionPath('~\\', 'C:\\Users\\alice\\\\')).toBe('No folder');
+        expect(formatSessionPath('/home/alice/', '/home/alice')).toBe('No folder');
+        expect(formatSessionPath('/home/alice/repo', '/home/alice')).toBe('~/repo');
+        expect(formatSessionPath('C:\\Users\\alice2', 'C:\\Users\\alice')).toBe('C:\\Users\\alice2');
+        expect(formatSessionPath('~', undefined)).toBe('~');
+        expect(formatPathRelativeToHome('/home/alice', '/home/alice')).toBe('~');
     });
 });

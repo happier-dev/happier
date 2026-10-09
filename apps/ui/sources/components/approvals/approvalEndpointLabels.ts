@@ -3,6 +3,7 @@ import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
@@ -29,7 +30,7 @@ export function readApprovalSessionEndpointLabels(input: Readonly<{
 
     return {
         machineLabel: getMachineDisplayName(input.machine) ?? input.machineId ?? null,
-        pathLabel: displayPath ? formatPathRelativeToHome(displayPath, ownerMetadata?.homeDir) : null,
+        pathLabel: displayPath ? formatSessionPath(displayPath, ownerMetadata?.homeDir) : null,
     };
 }
 

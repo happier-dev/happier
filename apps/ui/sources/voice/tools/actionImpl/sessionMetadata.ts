@@ -1,5 +1,5 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
-import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 
 import { normalizeNonEmptyString } from './shared';
 import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListLookupState';
@@ -38,7 +38,7 @@ export function resolveVoiceSessionLocationLabelFromMetadata(metadata: SessionMe
   const homeDir = metadata && typeof metadata === 'object'
     ? normalizeNonEmptyString(metadata.homeDir) ?? undefined
     : undefined;
-  const displayPath = formatPathRelativeToHome(path, homeDir).trim();
+  const displayPath = formatSessionPath(path, homeDir).trim();
   if (displayPath === '~') return '~';
 
   const withoutTrailingSlash = displayPath.replace(/\/+$/, '');

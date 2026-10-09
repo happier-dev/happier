@@ -3,7 +3,7 @@ import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacing
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveServerIdForSessionIdFromLocalState } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
-import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 /**
@@ -92,7 +92,7 @@ function projectSession(
     return {
         id: session.id,
         title: getSessionName(session, serverId),
-        workspaceLabel: path ? formatPathRelativeToHome(path, metadata?.homeDir ?? undefined) : null,
+        workspaceLabel: path ? formatSessionPath(path, metadata?.homeDir ?? undefined) : null,
         agentLabel: flavor,
         // Layout-specific identity interpretation belongs to the shared Session
         // presentation reader. In particular, layout-v1 reads only the strict

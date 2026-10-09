@@ -89,6 +89,78 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it('defaults Bot drafts to the selected machine home while ordinary drafts keep their recent folder', async () => {
+        const initial = { machines: toMachines({ id: 'machine-a', metadata: { homeDir: '/home/alice' } },
+            { id: 'machine-b', metadata: { homeDir: 'C:\\Users\\bob\\' } }),
+            recentMachinePaths: [{ machineId: 'machine-a', path: '/home/alice/repo' },
+                { machineId: 'machine-b', path: 'C:\\Users\\bob\\repo' }],
+            machineIdParam: 'machine-a', pathParam: null };
+        const ordinary = await renderMachinePathState(initial);
+        expect(ordinary.getCurrent().selectedPath).toBe('/home/alice/repo');
+        await ordinary.unmount();
+        const bot = await renderMachinePathState({ ...initial, isBot: true });
+        expect(bot.getCurrent().directoryIntent).toEqual({ kind: 'path', path: '/home/alice' });
+        await act(async () => bot.getCurrent().setSelectedMachineId('machine-b'));
+        expect(bot.getCurrent().selectedPath).toBe('C:\\Users\\bob\\');
+        await act(async () => bot.getCurrent().setSelectedPath('C:\\work\\chosen'));
+        await bot.rerender({ ...initial, isBot: true });
+        expect(bot.getCurrent().getRequestedPath()).toBe('C:\\work\\chosen');
+        await bot.unmount();
+    });
+
+    it('resolves a Bot default after machine hydration and keeps explicit draft folders', async () => {
+        const initial = { machines: toMachines({ id: 'machine-a', metadata: null }),
+            recentMachinePaths: [{ machineId: 'machine-a', path: '/home/alice/repo' }],
+            machineIdParam: 'machine-a', pathParam: null, isBot: true };
+        const bot = await renderMachinePathState(initial);
+        expect(bot.getCurrent().selectedPath).toBe('');
+        await bot.rerender({ ...initial, machines: toMachines({ id: 'machine-a', metadata: { homeDir: '/home/alice' } }) });
+        expect(bot.getCurrent().getRequestedPath()).toBe('/home/alice');
+        await bot.unmount();
+        const restored = await renderMachinePathState({ ...initial, persistedMachineId: 'machine-a', persistedPath: '/chosen' });
+        expect(restored.getCurrent().selectedPath).toBe('/chosen');
+        await restored.unmount();
+    });
+
+    it('adopts the enrolled dedicated Bot machine home without replacing an explicitly chosen folder', async () => {
+        const initial = { machines: toMachines({ id: 'host', metadata: { homeDir: '/home/host' } }),
+            recentMachinePaths: [], machineIdParam: null, pathParam: null, isBot: true };
+        const bot = await renderMachinePathState(initial);
+        // Ordinary auto-persistence echoes the default; it is not a folder choice.
+        await bot.rerender({ ...initial, persistedPath: '/home/host' });
+        await act(async () => bot.getCurrent().adoptManagedMachineTarget('enrolled'));
+        await bot.rerender({ ...initial, machines: toMachines({ id: 'host', metadata: { homeDir: '/home/host' } },
+            { id: 'enrolled', metadata: { homeDir: '/home/guest' } }) });
+        expect(bot.getCurrent().directoryIntent).toEqual({ kind: 'path', path: '/home/guest' });
+        await act(async () => bot.getCurrent().setSelectedPath('/explicit'));
+        await act(async () => bot.getCurrent().adoptManagedMachineTarget('second'));
+        await bot.rerender({ ...initial, machines: toMachines({ id: 'second', metadata: { homeDir: '/home/second' } }) });
+        expect(bot.getCurrent().getRequestedPath()).toBe('/explicit');
+        await bot.unmount();
+    });
+
+    it('reopens an unallocated dedicated Bot without mistaking its persisted home default for an authored folder', async () => {
+        const draft = createManagedMachineSelectionDraft({
+            selection: { kind: 'preset', homeId: 'server-a', id: 'guest', revision: 1 },
+            receipt: { launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                controller: { machineId: 'host', installationId: 'installation' }, optionStatus: 'current', prerequisites: [],
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+        });
+        const initial = { machines: toMachines({ id: 'host', metadata: { homeDir: '/home/host' } },
+            { id: 'guest', metadata: { homeDir: '/home/guest' } }), recentMachinePaths: [],
+            machineIdParam: null, pathParam: null, isBot: true, persistedExecutionTarget: null,
+            persistedManagedMachineSelection: draft, persistedPath: '/home/host' };
+        const bot = await renderMachinePathState(initial);
+        await act(async () => bot.getCurrent().adoptManagedMachineTarget('guest'));
+        expect(bot.getCurrent().getRequestedPath()).toBe('/home/guest');
+        await bot.unmount();
+        const explicit = await renderMachinePathState({ ...initial, persistedPath: '/chosen' });
+        await act(async () => explicit.getCurrent().adoptManagedMachineTarget('guest'));
+        expect(explicit.getCurrent().getRequestedPath()).toBe('/chosen');
+        await explicit.unmount();
+    });
+
     it('defaults a foreign controller to Keep and exposes the owner-only reason while refusing Stop/Delete selection', async () => {
         const draft = createManagedMachineSelectionDraft({
             selection: { kind: 'preset', homeId: 'srv-home-a', id: 'preset-a', revision: 3 },
