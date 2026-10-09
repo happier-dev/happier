@@ -113,6 +113,16 @@ export function ProjectScriptsBody({
   // Workers settings open in place, like the editor: Scripts › Workers and Run on › Worker settings….
   const [workersKey, setWorkersKey] = React.useState<string | null>(null);
   const page = presentation === 'page';
+  const inspectionFailure = read && 'error' in read && read.error ? (
+    <SurfaceStateCard
+      kind="unavailable"
+      size={'value' in read ? 'line' : undefined}
+      title={t('projects.widgets.scriptsUnavailable')}
+      diagnosticCode={read.error}
+      action={{ label: t('common.retry'), onPress: retry, busy: 'value' in read && read.refreshing === true }}
+      testID={`${testID}.inspection`}
+    />
+  ) : null;
 
   let content: React.ReactNode;
   if (!read || read.key !== key) {
@@ -123,16 +133,8 @@ export function ProjectScriptsBody({
         testID={`${testID}.inspection`}
       />
     );
-  } else if ('error' in read) {
-    content = (
-      <SurfaceStateCard
-        kind="unavailable"
-        title={t('projects.widgets.scriptsUnavailable')}
-        diagnosticCode={read.error}
-        action={{ label: t('common.retry'), onPress: retry }}
-        testID={`${testID}.inspection`}
-      />
-    );
+  } else if (!('value' in read)) {
+    content = inspectionFailure;
   } else if (page && workersKey === key) {
     const document = read.value.definition.document;
     const manifestScripts = document?.status === 'valid' ? Object.entries(document.manifest.scripts ?? {}) : [];
@@ -193,6 +195,7 @@ export function ProjectScriptsBody({
       <ProjectCommandOutputHost scopeId={outputScopeId}>
         <View testID={testID} style={styles.body}>
           {approval}
+          {read && 'value' in read ? inspectionFailure : null}
           {content}
         </View>
       </ProjectCommandOutputHost>
@@ -201,6 +204,7 @@ export function ProjectScriptsBody({
     <ProjectCommandOutputHost scopeId={outputScopeId}>
       <ItemList testID={testID}>
         {approval}
+        {read && 'value' in read ? inspectionFailure : null}
         {content}
       </ItemList>
     </ProjectCommandOutputHost>
@@ -335,7 +339,10 @@ function DeclaredScripts(
     (props.manifest.environment !== undefined &&
       props.manifest.environment.kind !== 'host');
   const setupRun = useProjectSetupRun(props.workspace, props.controller.accountId);
-  const setupReady = !hasSetup || setupRun?.snapshot.state === 'succeeded';
+  const setupPresentation = presentProjectRun(setupRun, machineName, '');
+  const setupReadiness = setupPresentation.live || props.controller.consent || props.controller.pendingKey === 'setup'
+    ? undefined : props.inspection.setupReadiness;
+  const setupReady = !hasSetup || setupReadiness?.kind === 'current' || setupReadiness?.kind === 'notRequired';
   const project =
     props.workspace.rootPath.split(/[\\/]/).filter(Boolean).pop() ??
     props.workspace.rootPath;
@@ -389,6 +396,7 @@ function DeclaredScripts(
           }
           controller={props.controller}
           operation={setupRun}
+          readiness={setupReadiness}
           compact={!props.page}
           testID={`${props.testID}.setup`}
           onViewFile={props.onEdit ? () => props.onEdit?.(false, 'raw') : null}
@@ -561,6 +569,7 @@ function SetupRow(
     sharedRunAs: string | null;
     controller: ScriptsController;
     operation: ReturnType<typeof useProjectSetupRun>;
+    readiness: ProjectDefinitionInspection['setupReadiness'];
     compact: boolean;
     onViewFile: (() => void) | null;
   }>,
@@ -586,8 +595,8 @@ function SetupRow(
       ? t('projects.scripts.run.stopping')
       : failed
         ? t('projects.scripts.setup.failed')
-        : props.operation?.snapshot.state === 'succeeded'
-          ? `${t('projects.scripts.setup.readySince', { time: formatAsOfTime(props.operation.snapshot.settledAt ?? props.operation.snapshot.createdAt) })} · ${stepCount}`
+        : props.readiness?.kind === 'current'
+          ? `${t('projects.scripts.setup.readySince', { time: formatAsOfTime(props.readiness.completedAtMs) })} · ${stepCount}`
           : presentation.text;
   const pending = props.controller.pendingKey === 'setup';
   const attachment = props.operation?.snapshot.domainRef?.kind === 'projectCommand' ? props.operation.snapshot.domainRef : null;

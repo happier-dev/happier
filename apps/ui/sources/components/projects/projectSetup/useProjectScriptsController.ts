@@ -26,10 +26,12 @@ import type { ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projec
 import { rememberProjectSetupConsent } from './projectSetupConsentDecision';
 import { useProjectSetupRun } from './projectScriptRuns';
 import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import type { ActionOperationAddress, QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 
 /** The setup review a preparation or run asked for: its digest, the safe resolved effect and any requested scope. */
 export type ProjectSetupConsent = Pick<ProjectSetupConsentRequiredV1, 'code' | 'reviewedEffectDigest'>
-  & Readonly<{ reviewedEffect?: unknown; consentScope?: ProjectSetupConsentFailureDetailsV1['consentScope'] }>;
+  & Readonly<{ reviewedEffect?: unknown; consentScope?: ProjectSetupConsentFailureDetailsV1['consentScope']; operation?: QualifiedActionOperation }>;
 
 function readConsentDetails(error: unknown): ProjectSetupConsentFailureDetailsV1 | null {
   return error && typeof error === 'object' && 'consent' in error ? (error.consent as ProjectSetupConsentFailureDetailsV1) : null;
@@ -73,6 +75,13 @@ export function useProjectScriptsController(
     workspace.workspaceId,
     workspace.rootPath,
   ]);
+  // Keep the returned invocation address, not a second run history or a local status owner.
+  const [retained, setRetained] = React.useState<Readonly<{ scopeKey: string; address: ActionOperationAddress }> | null>(null);
+  const retainedOperation = useActionOperation(retained?.scopeKey === scopeKey
+    ? retained.address : { serverId: workspace.serverId, operationId: '' });
+  const heldOperation = retainedOperation?.snapshot.setupReview ? retainedOperation
+    : setupOperation?.snapshot.setupReview ? setupOperation : null;
+  const heldReview = heldOperation?.snapshot.setupReview;
   const approval = useActionApprovalContinuation({
     scopeKey,
     serverId: workspace.serverId,
@@ -89,13 +98,16 @@ export function useProjectScriptsController(
     (ProjectSetupConsent & Readonly<{ scopeKey: string }>) | null
   >(null);
   const [reviewOpenScope, setReviewOpenScope] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (heldReview) setReviewOpenScope(scopeKey);
+  }, [heldOperation?.snapshot.operationId, heldReview?.reviewedEffectDigest, scopeKey]);
   const openSetupReview = React.useCallback(() => setReviewOpenScope(scopeKey), [scopeKey]);
   const dismissConsent = React.useCallback(() => { setConsent(null); setReviewOpenScope(null); }, []);
   const lifetime = React.useMemo(() => new AbortController(), [binding, scopeKey]);
 
   React.useEffect(() => {
     const retirement = binding?.onRetire(() => {
-      lifetime.abort(); setPending(null); setFailure(null); setConsent(null); setReviewOpenScope(null); setChoiceRequest(null);
+      lifetime.abort(); setPending(null); setFailure(null); setConsent(null); setReviewOpenScope(null); setChoiceRequest(null); setRetained(null);
     });
     return () => { retirement?.dispose(); lifetime.abort(); };
   }, [binding, lifetime]);
@@ -155,6 +167,7 @@ export function useProjectScriptsController(
       if (!result) return;
       if ('operation' in result) {
         publishAcceptedOperation(binding, result.operation);
+        setRetained({ scopeKey, address: { serverId: workspace.serverId, operationId: result.operation.operationId } });
       } else
         setConsent({
           scopeKey,
@@ -163,7 +176,7 @@ export function useProjectScriptsController(
           ...(result.consentScope ? { consentScope: result.consentScope } : {}),
         });
     },
-    [binding, client, dispatch, scopeKey],
+    [binding, client, dispatch, scopeKey, workspace.serverId],
   );
 
   const choiceRequired = choiceRequest?.scopeKey === scopeKey ? choiceRequest : null;
@@ -178,16 +191,18 @@ export function useProjectScriptsController(
     async (expectedEffectDigest?: string, consentScope?: ProjectSetupConsentFailureDetailsV1['consentScope']) => {
       if (!client) return;
       const result = await dispatch('setup', async () => {
-        // "Until it changes" is the person's own Project Trust grant for this exact reviewed effect
-        // (D18); it is written first through the one decision owner, then setup runs under it.
+        // Remember remeasures and resumes the exact held invocation through its existing owner.
+        // It must not launch a separate preparation after deciding the Script's setup review.
         if (expectedEffectDigest && consentScope === 'untilChanged' && binding?.isCurrent()) {
           const remembered = await rememberProjectSetupConsent({
             scope: { serverId: binding.serverId, accountId: binding.accountId },
-            workspace, reviewedEffectDigest: expectedEffectDigest,
+            workspace, reviewedEffectDigest: expectedEffectDigest, operation: heldOperation ?? undefined,
+            signal: lifetime.signal,
           });
           if (remembered.kind !== 'remembered') throw Object.assign(new Error(remembered.kind === 'changed'
             ? 'project_setup_effect_changed' : remembered.code), { code: remembered.kind === 'changed'
             ? 'project_setup_effect_changed' : remembered.code });
+          return remembered;
         }
         return client.prepare({
           phase: 'setup',
@@ -206,10 +221,14 @@ export function useProjectScriptsController(
         return;
       }
       setConsent(null);
-      if ('operation' in result) publishAcceptedOperation(binding, result.operation);
+      setReviewOpenScope(null);
+      if ('operation' in result) {
+        publishAcceptedOperation(binding, result.operation);
+        setRetained({ scopeKey, address: { serverId: workspace.serverId, operationId: result.operation.operationId } });
+      }
       onChanged();
     },
-    [binding, client, dispatch, onChanged, scopeKey, workspace],
+    [binding, client, dispatch, heldOperation, lifetime, onChanged, scopeKey, workspace],
   );
 
   // Add to project file: one structured edit of the canonical document, one guarded write.
@@ -242,7 +261,8 @@ export function useProjectScriptsController(
     prepare,
     pendingKey: pending?.key ?? null,
     failure,
-    consent: consent?.scopeKey === scopeKey ? consent : null,
+    consent: heldReview && heldOperation ? { ...heldReview, operation: heldOperation }
+      : consent?.scopeKey === scopeKey ? consent : null,
     dismissConsent,
     approvalId: approval.approvalId,
   };
