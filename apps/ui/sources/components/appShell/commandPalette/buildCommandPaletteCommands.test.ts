@@ -4,6 +4,7 @@ import {
   PluginProjectedActionV2Schema,
   type PluginProjectedActionV2,
 } from '@happier-dev/protocol';
+import { VoiceConversationActionResultSchema } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 import type { Command } from './types';
 import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
@@ -51,6 +52,68 @@ const SUGGESTED_BUILTIN_DESTINATIONS = [
 function commandTitles(cmds: readonly Command[]): string[] {
   return cmds.map((c) => c.title);
 }
+
+it('does not advertise unavailable host destinations as invokable UI commands while retaining plugin tombstones', () => {
+    const destinations = [
+        ...SUGGESTED_BUILTIN_DESTINATIONS,
+        { ...SUGGESTED_BUILTIN_DESTINATIONS[0], id: 'unavailableHostDestination', availability: 'unavailable' as const },
+        {
+            kind: 'plugin' as const, container: 'appPage' as const, id: 'plugin:unavailable',
+            destination: { pluginId: 'acme.example', localId: 'unavailable' },
+            title: 'Unavailable destination', icon: 'chats-circle' as const, order: 2,
+            placement: { kind: 'rail' as const, region: 'plugins' as const }, activation: 'navigate' as const,
+            routePath: '/plugins/acme.example/unavailable', availability: 'unavailable' as const,
+            unavailableReason: 'notInstalled',
+        },
+        {
+            kind: 'plugin' as const, container: 'rightSidebarTab' as const, id: 'rightSidebarTab:unavailable',
+            destination: { pluginId: 'acme.example', localId: 'unavailablePanel' },
+            title: 'Unavailable panel', icon: 'chats-circle' as const, order: 3,
+            placement: { kind: 'rail' as const, region: 'plugins' as const }, activation: 'rightSidebarTab' as const,
+            routePath: '/settings/plugins/panels', availability: 'unavailable' as const,
+            unavailableReason: 'notInstalled',
+        },
+    ];
+    const commands = buildCommandPaletteCommands({
+        sessionsById: {}, isDev: false, activeSessionId: null,
+        features: { executionRunsEnabled: false, voiceEnabled: false },
+        nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+        compactAppDestinations: destinations, onActivateCompactAppDestination: () => {},
+        actions: { execute: async () => ({ ok: true, result: {} }) }, alert: () => {},
+    });
+    expect(commands.map((command) => command.id)).toContain('app-destination:sessions');
+    expect(commands.map((command) => command.id)).not.toContain('app-destination:unavailableHostDestination');
+    expect(commands.map((command) => command.id)).not.toContain('app-destination:rightSidebarTab:unavailable');
+    expect(commands.map((command) => command.id)).toContain('app-destination:plugin:unavailable');
+});
+
+it('keeps Ask Happier manual commands and captures the selected release without starting a session', async () => {
+    const openAskHappier = vi.fn();
+    const openNewSession = vi.fn();
+    const release = { id: 'release-a', versionLabel: '0.3.2', date: '2026-10-06', markdown: 'Selected release notes' };
+    const commands = buildCommandPaletteCommands({
+        sessionsById: {}, isDev: false, activeSessionId: null,
+        features: { executionRunsEnabled: false, voiceEnabled: false },
+        nav: { push: () => {}, openNewSession, navigateToSession: () => {}, openAskHappier },
+        askHappierRelease: release,
+        actions: { execute: async () => ({ ok: true, result: {} }) }, alert: () => {},
+    });
+    expect(openAskHappier).not.toHaveBeenCalled();
+    expect(openNewSession).not.toHaveBeenCalled();
+    const manual = commands.find((command) => command.id === 'askHappier');
+    const aboutUpdate = commands.find((command) => command.id === 'askHappier.aboutUpdate');
+    expect(manual).toBeDefined();
+    expect(aboutUpdate).toBeDefined();
+    // A refreshed changelog must not silently replace the release selected by this command.
+    release.markdown = 'Later refresh';
+    await aboutUpdate!.action();
+    expect(openAskHappier).toHaveBeenLastCalledWith({
+        kind: 'release', release: { id: 'release-a', versionLabel: '0.3.2', date: '2026-10-06', markdown: 'Selected release notes' },
+    });
+    await manual!.action();
+    expect(openAskHappier).toHaveBeenLastCalledWith();
+    expect(openNewSession).not.toHaveBeenCalled();
+});
 
 it('exposes the text-in-files entry through the command catalog used by UI Actions', async () => {
     const openTextInFiles = vi.fn();
@@ -687,14 +750,15 @@ describe('buildCommandPaletteCommands', () => {
       nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
       actions: { execute: async (actionId, input) => {
         calls.push({ actionId, input });
-        return { ok: true, result: { status: 'completed', voice: {
+        return { ok: true, result: VoiceConversationActionResultSchema.parse({ status: 'completed', voice: {
           attemptId, adapterId: 'local_conversation', sessionId: 'voice-control', status: 'connected', mode: 'listening',
           target: { kind: 'session', sessionAddress: { serverId: 'home-a', sessionId: 'captured-session' } },
           conversationSessionAddress: { serverId: 'home-a', sessionId: 'voice-control' },
           targetSessionAddress: { serverId: 'home-a', sessionId: 'captured-session' },
           canStart: false, canStop: true, canMute: true, canCommitInput: true, canHoldToTalk: true,
           muted: true, canDismissFailedAttempt: false, canDismissEnded: false, recoveryAction: null, availability: 'ready',
-        } } };
+          inUseVoice: null,
+        } }) };
       } }, alert: () => {},
     });
     const end = commands.find((command) => command.actionSpecId === 'ui.voice_global.end');

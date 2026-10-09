@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { BotsRosterRuntimeProvider, useOptionalBotsRosterRuntime } from '@/components/sessions/bots/BotsRosterRuntime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -108,6 +109,15 @@ describe('workspace route identity round trips', () => {
             expect(target && hrefForDestinationRef(catalog, target), href).toBe(href);
         }
         expect(resolveDestinationRefFromHref(catalog, '/settings/account/api-tokens/token-a')?.params.tokenId).toBe('token-a');
+    });
+    it('keeps a managed Machine deep link distinct and scoped to its saved Home', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const href = '/settings/machines/managed/pending-a?serverId=home-b';
+        const destination = resolveDestinationRefFromHref(catalog, href);
+        expect(destination).toMatchObject({ kind: 'settings', params: { id: 'pending-a', serverId: 'home-b', pageId: 'machines/managed/pending-a' } });
+        expect(destination && hrefForDestinationRef(catalog, destination)).toBe(href);
     });
     it('admits the real group-qualified account href and preserves its qualified identity', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
@@ -268,6 +278,8 @@ describe('resolveCompactAppDestinations', () => {
             ['boards', { kind: 'rail', region: 'app' }],
             // Artifacts (RU2 §9.6): a full page over the Account Artifact store, after Boards.
             ['artifacts', { kind: 'rail', region: 'app' }],
+            // Bots last of the app's own entries, standing apart with its rail pins (lab `b-rail A`).
+            ['bots', { kind: 'rail', region: 'app' }],
             ['browseExistingSessions', { kind: 'column', column: 'sessions' }],
             ['plugins', { kind: 'rail', region: 'plugins' }],
             ['settings', { kind: 'rail', region: 'account' }],
@@ -279,9 +291,9 @@ describe('resolveCompactAppDestinations', () => {
         expect(destinations.find((destination) => destination.id === 'boards')).toMatchObject({ column: 'boards', routePath: '/boards' });
         expect(destinations.find((destination) => destination.id === 'artifacts')).toMatchObject({ routePath: '/artifacts', activation: 'navigate' });
         expect(destinations.find((destination) => destination.id === 'artifacts')).not.toHaveProperty('column');
-        // Built-ins the viewer cannot open are not listed at all.
+        // Gated built-ins are omitted; the local Bots overlay remains honestly unavailable until its leaf mounts.
         expect(ids(resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [] })))
-            .toEqual(['sessions', 'search', 'projects', 'boards', 'artifacts', 'plugins', 'settings', 'personalize']);
+            .toEqual(['sessions', 'search', 'projects', 'boards', 'artifacts', 'bots', 'plugins', 'settings', 'personalize']);
     });
 
     it('places a plugin page on the rail or in a named column, and falls back to the rail for a column this host lacks', () => {
@@ -479,11 +491,11 @@ describe('catalog destination instances', () => {
     });
 
     it('keeps project subpages and workflow definitions distinct from their parent collections', () => {
-        const projectFiles = '/projects/workspace-1/files?worktreeId=tree-2';
+        const projectFiles = '/projects/workspace-1/code?worktreeId=tree-2';
         const workflow = '/workflows/workflow-1';
         expect(resolveDestinationRefFromHref(catalog, projectFiles)).toEqual({
             kind: 'project',
-            params: { workspaceRefId: 'workspace-1', pageId: 'files', worktreeId: 'tree-2' },
+            params: { workspaceRefId: 'workspace-1', pageId: 'code', worktreeId: 'tree-2' },
         });
         expect(hrefForDestinationRef(catalog, resolveDestinationRefFromHref(catalog, projectFiles)!)).toBe(projectFiles);
         expect(resolveDestinationRefFromHref(catalog, workflow)).toEqual({
@@ -495,6 +507,16 @@ describe('catalog destination instances', () => {
         expect(hrefForDestinationRef(catalog, resolveDestinationRefFromHref(catalog, workflow)!)).toBe(workflow);
     });
 
+    it('preserves the Project file anchor query and refuses unpublished aliases', () => {
+        const href = '/projects/workspace-1/code?serverId=home-b&worktreeId=checkout-a&initialFile=src%2Fa.ts&anchor=range&startLine=9&endLine=12';
+        const ref = resolveDestinationRefFromHref(catalog, href);
+        expect(ref).not.toBeNull();
+        expect(hrefForDestinationRef(catalog, ref!)).toBe(href);
+        for (const alias of ['files', 'git', 'details']) {
+            expect(resolveDestinationRefFromHref(catalog, `/projects/workspace-1/${alias}`)).toBeNull();
+            expect(hrefForDestinationRef(catalog, { kind: 'project', params: { workspaceRefId: 'workspace-1', pageId: alias } })).toBeNull();
+        }
+    });
     it('preserves an addressed setting when a page is opened from search', () => {
         const href = '/settings/appearance?setting=theme#theme';
         const ref = resolveDestinationRefFromHref(catalog, href);
@@ -527,7 +549,7 @@ describe('resolveCurrentAppDestination', () => {
         expect(at('/artifacts/artifact-1')).toBe('artifacts');
         expect(at('/artifacts/edit/artifact-1')).toBe('artifacts');
         expect(at('/projects')).toBe('projects');
-        expect(at('/projects/ws-1/files')).toBe('projects');
+        expect(at('/projects/ws-1/code')).toBe('projects');
         expect(at('/inbox/approvals')).toBe('inbox');
         // The Automation pages that remain open inside the one Workflows destination.
         expect(at('/automations/a-1')).toBe('workflows');
@@ -547,6 +569,37 @@ describe('resolveCurrentAppDestination', () => {
 });
 
 describe('useActivateAppDestination', () => {
+    it('keeps the Bots roster distinct from Search and does not navigate without its mounted roster owner', async () => {
+        const catalog = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [] });
+        const bots = catalog.find(destination => destination.id === 'bots');
+        expect(bots).toMatchObject({ activation: 'botsRoster', availability: 'unavailable', placement: { kind: 'rail', region: 'app' } });
+        const before = { pushed: [...activationBoundary.pushed], searchOpens: activationBoundary.searchOpens };
+        let activate: ReturnType<typeof useActivateAppDestination> | null = null;
+        function Probe() { activate = useActivateAppDestination(); return null; }
+        await renderScreen(React.createElement(UniversalSearchRuntimeProvider,
+            { value: { open: () => { activationBoundary.searchOpens += 1; }, buildCommands: () => [] } },
+            React.createElement(Probe)));
+        activate!(bots!);
+        expect(activationBoundary.pushed).toEqual(before.pushed);
+        expect(activationBoundary.searchOpens).toBe(before.searchOpens);
+    });
+
+    it('opens Bots only through its supplied mounted roster owner', async () => {
+        let rosterOpens = 0;
+        const owner = { openBotsRoster: () => { rosterOpens += 1; } };
+        const catalog = resolveCompactAppDestinations({ builtins: { ...ALL_BUILTINS, botsRoster: true }, pages: [] });
+        const bots = catalog.find(destination => destination.id === 'bots');
+        expect(bots).toMatchObject({ activation: 'botsRoster', availability: 'available' });
+        const before = { pushed: [...activationBoundary.pushed], searchOpens: activationBoundary.searchOpens };
+        let activate: ReturnType<typeof useActivateAppDestination> | null = null;
+        function Probe() { activate = useActivateAppDestination(owner); return null; }
+        await renderScreen(React.createElement(Probe));
+        activate!(bots!);
+        expect(rosterOpens).toBe(1);
+        expect(activationBoundary.pushed).toEqual(before.pushed);
+        expect(activationBoundary.searchOpens).toBe(before.searchOpens);
+    });
+
     it('navigates, opens Search over the page, and activates plugin pages through one hook', async () => {
         const catalog = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [page] });
         const byId = (id: string) => catalog.find((destination) => destination.id === id)!;
@@ -565,14 +618,42 @@ describe('useActivateAppDestination', () => {
         activate!(byId('workflows'));
         activate!(byId('search'), { searchScope: undefined });
         activate!(byId('plugin:acme.notes:notes'));
+        const unavailablePage = resolveCompactAppDestinations({
+            builtins: CORE_BUILTINS, pages: [{ ...page, disabledReason: 'plugin_disabled' }],
+        }).find(destination => destination.kind === 'plugin');
+        activate!(unavailablePage!);
 
-        // A plugin page goes through its launch owner, which ends at the same router.
-        expect(activationBoundary.pushed).toEqual(['/workflows', '/plugins/acme.notes/notes']);
+        // Available pages use their launch owner; unavailable pages retain their
+        // exact route-owned recovery rather than silently dropping activation.
+        expect(activationBoundary.pushed).toEqual(['/workflows', '/plugins/acme.notes/notes', '/plugins/acme.notes/notes']);
         expect(activationBoundary.searchOpens).toBe(1);
     });
 });
 
 describe('useCompactAppDestinations', () => {
+    it('makes Bots available to every list once the app-wide roster runtime is mounted, and opens it there', async () => {
+        const outside = await renderScreen(React.createElement(CompactCatalogProbe));
+        expect(outside.tree.findByType('CompactCatalogProbe' as never).props.destinations
+            .find((destination: { id: string }) => destination.id === 'bots')?.availability).toBe('unavailable');
+
+        let rosterOpens = 0;
+        let activate: ReturnType<typeof useActivateAppDestination> | null = null;
+        function ActivationProbe() { activate = useActivateAppDestination(); return null; }
+        const screen = await renderScreen(React.createElement(BotsRosterRuntimeProvider, null,
+            React.createElement(CompactCatalogProbe), React.createElement(ActivationProbe),
+            React.createElement(function AnchorProbe() {
+                const runtime = useOptionalBotsRosterRuntime();
+                React.useEffect(() => runtime?.registerAnchoredOpener(() => { rosterOpens += 1; }), [runtime]);
+                return null;
+            })));
+        const bots = screen.tree.findByType('CompactCatalogProbe' as never).props.destinations
+            .find((destination: { id: string }) => destination.id === 'bots');
+        expect(bots?.availability).toBe('available');
+        const before = [...activationBoundary.pushed];
+        activate!(bots);
+        expect(rosterOpens).toBe(1);
+        expect(activationBoundary.pushed).toEqual(before);
+    });
     it('keeps rail-only placement preferences out of shared destination discovery', async () => {
         const screen = await renderScreen(React.createElement(CompactCatalogProbe));
         const destinations = screen.tree.findByType('CompactCatalogProbe' as never).props.destinations;

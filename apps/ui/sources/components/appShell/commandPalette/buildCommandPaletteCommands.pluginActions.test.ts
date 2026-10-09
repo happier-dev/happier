@@ -1,10 +1,13 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol';
+import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/serverScopedRpc';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage } from '@/sync/domains/state/storage';
 import { createPluginContributedActionController } from '@/components/plugins/actions/pluginContributedActionController';
@@ -12,6 +15,9 @@ import type { PluginProjectionAction, PluginProjectionEntry } from '@/agents/bac
 import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
 
 installDisconnectedServerSocketBoundary();
+const machineRpc = vi.hoisted(() => vi.fn<Parameters<typeof createServerScopedMachineRpcBoundaryMock>[0]>());
+// The daemon RPC is the system boundary; controller, dispatch policy and DTO projection stay real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => createServerScopedMachineRpcBoundaryMock(machineRpc));
 vi.mock('@more-tech/react-native-libsodium', () => import('libsodium-wrappers'));
 vi.mock('@/platform/cryptoRandom', () => import('@/platform/cryptoRandom.node'));
 vi.mock('@/platform/digest', () => import('@/platform/digest.node'));
@@ -33,6 +39,7 @@ beforeAll(async () => {
     await loadSyncSingletonForTests();
 });
 afterEach(async () => {
+    machineRpc.mockReset();
     await connection?.dispose();
     connection = undefined;
     storage.setState(initialStorageState, true);
@@ -74,7 +81,7 @@ describe('command-palette contributed Actions', () => {
             description: null, version: '1.0.0', enabled: true, generation: 7, generationLabel: '7',
             status: null, provenance: null, diagnostics: [], actions: [action], resources: [], editableSettingsGroups: [],
         };
-        const dispatch = vi.fn(async () => ({ ok: true as const, result: { applied: true } }));
+        machineRpc.mockResolvedValue(DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true, result: { applied: true } }));
         // The controller's public projection port consumes the producer's parsed descriptor;
         // Account currentness still comes from the real restored Home lifetime.
         const controller = createPluginContributedActionController({
@@ -84,7 +91,6 @@ describe('command-palette contributed Actions', () => {
                 host: { machineId: 'machine-command-palette', serverId: lifetime.scope.serverId,
                     sessionId: 'session-command-palette', accountLifetime: lifetime, isCurrent: lifetime.isCurrent },
             }),
-            dispatch,
         });
         const command = buildCommandPaletteCommands({
             sessionsById: {}, isDev: false, activeSessionId: 'session-command-palette',
@@ -95,17 +101,20 @@ describe('command-palette contributed Actions', () => {
         }).find((candidate) => candidate.id === 'plugin-action:acme.commands/sync-notes');
         expect(command).toMatchObject({ title: 'Sync notes', subtitle: 'Synchronize the current notes', icon: 'magic-wand', category: 'acme.commands' });
         await command?.action();
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
-            action: { pluginId: 'acme.commands', localId: 'sync-notes' },
-            contributedAction: { machineId: 'machine-command-palette', serverId: lifetime.scope.serverId,
-                expectedContributorOccurrenceId: 'commands-occurrence-a', sessionId: 'session-command-palette' },
+        expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-command-palette', serverId: lifetime.scope.serverId,
+            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+            payload: expect.objectContaining({
+                qualifiedActionId: 'acme.commands/sync-notes', expectedContributorOccurrenceId: 'commands-occurrence-a',
+                sessionId: 'session-command-palette', executionSurface: 'ui', input: {},
+            }),
         }));
 
-        dispatch.mockClear();
+        machineRpc.mockClear();
         await connection.dispose();
         connection = undefined;
         expect(lifetime.isCurrent()).toBe(false);
         await command?.action();
-        expect(dispatch).not.toHaveBeenCalled();
+        expect(machineRpc).not.toHaveBeenCalled();
     });
 });

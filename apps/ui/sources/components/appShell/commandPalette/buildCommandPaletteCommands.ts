@@ -4,9 +4,11 @@ import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 import type { Command } from './types';
+import type { ChangelogEntry } from '@/changelog';
 import type { KeyboardCommandId } from '@/keyboard';
 import {
   isCompactAppDestinationVisible,
+  isCompactAppDestinationInvokable,
   type CompactAppDestination,
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
@@ -93,6 +95,7 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
   }>;
   shortcutLabels?: Partial<Record<KeyboardCommandId, string>>;
   petControls?: PetCommandControls;
+  askHappierRelease?: Readonly<ChangelogEntry>;
   nav: Readonly<{
     push: (path: string) => void;
     openNewSession: () => void;
@@ -102,6 +105,8 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
     openTextInFiles?: () => void;
     /** Opens the shared device-pairing panel while retaining the current page. */
     openHomePairingModal?: () => void | Promise<void>;
+    /** Supplied only when the ordinary guide draft owner can open the requested context. */
+    openAskHappier?: (context?: Readonly<{ kind: 'release'; release: Readonly<ChangelogEntry> }>) => void | Promise<void>;
     /** Matches `useNavigateToSession`: the Home is passed when the producer holds it. */
     navigateToSession: (sessionId: string, opts?: Readonly<{ serverId?: string }>) => void;
   }>;
@@ -199,6 +204,31 @@ export function buildCommandPaletteCommands(
     },
   ];
 
+  if (nav.openAskHappier) {
+    const openAskHappier = nav.openAskHappier;
+    cmds.push({
+      id: 'askHappier',
+      title: t('bots.guide.offer'),
+      subtitle: t('bots.guide.menuSubtitle'),
+      icon: 'sparkle',
+      mark: 'askHappier',
+      category: t('commandPalette.commands.actionsCategory'),
+      action: () => openAskHappier(),
+    });
+    if (params.askHappierRelease) {
+      const release = Object.freeze({ ...params.askHappierRelease });
+      cmds.push({
+        id: 'askHappier.aboutUpdate',
+        title: t('bots.guide.aboutUpdate'),
+        subtitle: release.versionLabel,
+        icon: 'sparkle',
+        mark: 'askHappier',
+        category: t('commandPalette.commands.actionsCategory'),
+        action: () => openAskHappier({ kind: 'release', release }),
+      });
+    }
+  }
+
   if (nav.openTextInFiles) {
     cmds.push({
       id: 'search.textInFiles',
@@ -222,7 +252,7 @@ export function buildCommandPaletteCommands(
 
   if (params.compactAppDestinations !== undefined) {
     for (const destination of params.compactAppDestinations) {
-      if (!isCompactAppDestinationVisible(destination)) {
+      if (!isCompactAppDestinationVisible(destination) || !isCompactAppDestinationInvokable(destination)) {
         continue;
       }
       const builtin = destination.kind === 'builtin' ? destination : null;

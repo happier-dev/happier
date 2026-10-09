@@ -2,6 +2,7 @@ import * as React from 'react';
 import { stripGroupSegmentsFromPath } from 'expo-router/build/matchers';
 import { parseQueryParams } from 'expo-router/build/fork/getStateFromPath-forks';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
 import type {
     PluginUiDestinationPlacementV1,
     PluginUiDestinationReferenceV1,
@@ -21,6 +22,8 @@ import {
     useOptionalUniversalSearchRuntime,
     type UniversalSearchScopeSeed,
 } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { useOptionalBotsRosterRuntime } from '@/components/sessions/bots/BotsRosterRuntime';
+import { BOTS_GLYPH } from '@/components/sessions/bots/botsGlyph';
 import type { IconName } from '@/components/ui/icons/Icon';
 import {
     resolveRightSidebarTabs,
@@ -100,7 +103,7 @@ export type AppDestinationPlacement =
     | Readonly<{ kind: 'column'; column: PlaceableAppShellColumnId }>;
 
 /** What activating a destination does. The one activation owner is {@link useActivateAppDestination}. */
-export type AppDestinationActivation = 'navigate' | 'overlay' | 'rightSidebarTab';
+export type AppDestinationActivation = 'navigate' | 'overlay' | 'rightSidebarTab' | 'botsRoster';
 
 export type CompactAppDestinationVisibility = 'visible' | 'hidden';
 
@@ -132,7 +135,7 @@ export type CompactAppBuiltinDestination = CompactAppDestinationCommon & Readonl
     signal?: 'inboxCount';
     /** Offered by the command palette before anything is typed. */
     suggested?: true;
-    availability: 'available';
+    availability: 'available' | 'unavailable';
 }>;
 
 export type CompactAppPluginDestination = CompactAppDestinationCommon & Readonly<{
@@ -152,6 +155,14 @@ export type CompactAppPluginDestination = CompactAppDestinationCommon & Readonly
 
 export type CompactAppDestination = CompactAppBuiltinDestination | CompactAppPluginDestination;
 
+/** Available launch owners, plus the existing route-owned unavailable plugin App-page tombstone. */
+export function isCompactAppDestinationInvokable(destination: CompactAppDestination): boolean {
+    return destination.availability === 'available'
+        || (destination.kind === 'plugin' && destination.container === 'appPage' && destination.activation === 'navigate');
+}
+
+export type AppDestinationActivationOwners = Readonly<{ openBotsRoster?: () => void }>;
+
 /** The address of one page instance. Tab identity is separate: two tabs may hold the same ref. */
 export type DestinationRef = Readonly<{
     kind: string;
@@ -165,6 +176,7 @@ export type AppBuiltinDestinationAvailability = Readonly<{
     /** The Workflows destination is discoverable (`useWorkflowsDestinationAccess`). */
     workflows: boolean;
     friends: boolean;
+    botsRoster?: boolean;
 }>;
 
 /** A placement as requested: by an author, or by a built-in row. */
@@ -178,13 +190,14 @@ type BuiltinDestinationRow = Readonly<{
     icon: IconName;
     placement: RequestedAppDestinationPlacement;
     column?: BuiltinAppShellColumnId;
-    activation: 'navigate' | 'overlay';
+    activation: 'navigate' | 'overlay' | 'botsRoster';
     routePath: string;
     currentRoutePatterns?: readonly string[];
     shortcut?: KeyboardCommandId;
     signal?: 'inboxCount';
     suggested?: true;
     available?: (availability: AppBuiltinDestinationAvailability) => boolean;
+    activationAvailable?: (availability: AppBuiltinDestinationAvailability) => boolean;
     visibility?: CompactAppDestinationVisibility;
 }>;
 
@@ -192,7 +205,10 @@ type BuiltinDestinationRow = Readonly<{
  * The host's own destinations, in their default order within each placement group. Workflows is the
  * one destination for workflows and their triggers; the retired Automations routes redirect into it.
  */
-const BUILTIN_DESTINATION_ROWS: readonly BuiltinDestinationRow[] = [
+function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
+    // Route adapters can load this catalog through DestinationInstanceHost. Read their bindings
+    // at projection time rather than capturing an unfinished circular module initialization.
+    return [
     {
         id: SESSIONS_DESTINATION_ID, titleKey: 'tabs.sessions', icon: 'chats-circle',
         placement: { kind: 'rail', region: 'app' }, column: 'sessions', activation: 'navigate', routePath: '/',
@@ -238,6 +254,12 @@ const BUILTIN_DESTINATION_ROWS: readonly BuiltinDestinationRow[] = [
         activation: 'navigate', routePath: '/friends', currentRoutePatterns: ['/friends/[...rest]'],
         available: (availability) => availability.friends,
     },
+    // Last of the app's own entries, on its own beside its rail-pinned Bots (lab `b-rail A`).
+    {
+        id: 'bots', titleKey: 'bots.title', icon: BOTS_GLYPH,
+        placement: { kind: 'rail', region: 'app' }, activation: 'botsRoster', routePath: '/',
+        activationAvailable: availability => availability.botsRoster === true,
+    },
     {
         id: BROWSE_EXISTING_SESSIONS_DESTINATION_ID, titleKey: 'externalSessions.browseOpenExisting', icon: 'folder-open',
         placement: { kind: 'column', column: 'sessions' }, activation: 'navigate', routePath: '/external/browse',
@@ -261,7 +283,8 @@ const BUILTIN_DESTINATION_ROWS: readonly BuiltinDestinationRow[] = [
             placement: { kind: 'rail', region: 'account' }, activation: 'navigate', routePath: `/${routeKey}`,
         } satisfies BuiltinDestinationRow] : []
     )),
-];
+    ];
+}
 
 /** Ordinary discovery honors contribution visibility; surface preferences remain surface-local. */
 export function isCompactAppDestinationVisible(destination: CompactAppDestination): boolean {
@@ -317,7 +340,7 @@ export function resolveCompactAppDestinations(input: Readonly<{
 }>): readonly CompactAppDestination[] {
     const destinations: CompactAppDestination[] = [];
 
-    BUILTIN_DESTINATION_ROWS.forEach((row, order) => {
+    readBuiltinDestinationRows().forEach((row, order) => {
         if (row.available && !row.available(input.builtins)) return;
         destinations.push(Object.freeze({
             kind: 'builtin',
@@ -334,7 +357,7 @@ export function resolveCompactAppDestinations(input: Readonly<{
             ...(row.signal === undefined ? {} : { signal: row.signal }),
             ...(row.suggested === undefined ? {} : { suggested: row.suggested }),
             ...(row.visibility === undefined ? {} : { visibility: row.visibility }),
-            availability: 'available',
+            availability: row.activationAvailable && !row.activationAvailable(input.builtins) ? 'unavailable' : 'available',
         }));
     });
 
@@ -451,7 +474,7 @@ function matchRoutePattern(pattern: string, actual: readonly string[]): number |
  */
 function scoreDestinationRoute(destination: CompactAppDestination, actual: readonly string[]): number | null {
     // A panel opens in the right sidebar of the page it is activated from: it is never the open page.
-    if (destination.activation === 'rightSidebarTab') return null;
+    if (destination.activation === 'rightSidebarTab' || destination.activation === 'botsRoster') return null;
     const routeSegments = splitPath(normalizePathname(destination.routePath.split('?')[0]!));
     let best: number | null = null;
     const exact = routeSegments.length === actual.length
@@ -506,13 +529,13 @@ function encodedSegment(segment: string): string {
     return encodeURIComponent(segment);
 }
 
-function appendQuery(path: string, params: Readonly<Record<string, string>>, excluded: readonly string[]): string {
+function appendQuery(path: string, params: Readonly<Record<string, string>>, excluded: readonly string[], anchorIsQuery = false): string {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) {
-        if (key !== 'anchor' && !excluded.includes(key)) query.set(key, value);
+        if ((key !== 'anchor' || anchorIsQuery) && !excluded.includes(key)) query.set(key, value);
     }
     const search = query.toString();
-    const anchor = params.anchor ? `#${encodedSegment(params.anchor)}` : '';
+    const anchor = params.anchor && !anchorIsQuery ? `#${encodedSegment(params.anchor)}` : '';
     return `${search ? `${path}?${search}` : path}${anchor}`;
 }
 
@@ -564,10 +587,14 @@ export function resolveDestinationRefFromHref(
         if (third === undefined && (!route || route.routeKey === 'session/[id]')) return { kind: 'session', params: { ...query, id: second } };
     }
     if (first === 'projects' && second) {
-        return {
-            kind: 'project',
-            params: { ...query, ...route?.params, ...(third ? { pageId: [third, ...rest].join('/') } : {}), workspaceRefId: second },
-        };
+        if (!route) return null;
+        if (route.routeKey.startsWith('projects/[workspaceRefId]')) {
+            if (!resolveProjectCockpitRouteFromPathname(path)) return null;
+            return {
+                kind: 'project',
+                params: { ...query, ...route.params, ...(third ? { pageId: [third, ...rest].join('/') } : {}), workspaceRefId: second },
+            };
+        }
     }
     if (first === 'workflows' && second === 'runs' && third && rest.length === 0) {
         return { kind: 'workflowRun', params: { ...query, runId: third } };
@@ -638,7 +665,8 @@ export function hrefForDestinationRef(
     if (ref.kind === 'project' && params.workspaceRefId) {
         const page = params.pageId ? `/${params.pageId.split('/').map(encodedSegment).join('/')}` : '';
         const path = `/projects/${encodedSegment(params.workspaceRefId)}${page}`;
-        return appendQuery(path, params, ['workspaceRefId', 'pageId', ...Object.keys(matchWorkspaceDestinationRoute(path)?.params ?? {})]);
+        if (!resolveProjectCockpitRouteFromPathname(path)) return null;
+        return appendQuery(path, params, ['workspaceRefId', 'pageId', ...Object.keys(matchWorkspaceDestinationRoute(path)?.params ?? {})], Boolean(params.initialFile));
     }
     if (ref.kind === 'workflowRun' && params.runId) {
         return appendQuery(`/workflows/runs/${encodedSegment(params.runId)}`, params, ['runId']);
@@ -669,16 +697,19 @@ export function hrefForDestinationRef(
     return appendQuery(destination.routePath, params, []);
 }
 
-function useAppBuiltinDestinationAvailability(): AppBuiltinDestinationAvailability {
+function useAppBuiltinDestinationAvailability(owners: AppDestinationActivationOwners): AppBuiltinDestinationAvailability {
     // The same decision the Sessions list reads for its external sessions (`useSessionListStorageKind`).
     const externalSessions = useFeatureDecision('sessions.direct')?.state === 'enabled';
     const inbox = useInboxAvailable();
     // Listed while discoverable, including a local-policy disablement whose repair it leads to.
     const workflows = useWorkflowsDestinationAccess().discoverable;
     const friends = useFriendsEnabled();
+    // The roster opens from the app-wide runtime (rail anchor or sheet); an explicit owner overrides it.
+    const botsRosterRuntime = useOptionalBotsRosterRuntime();
+    const botsRoster = (owners.openBotsRoster ?? botsRosterRuntime?.open) !== undefined;
     return React.useMemo(
-        () => ({ externalSessions, inbox, workflows, friends }),
-        [externalSessions, friends, inbox, workflows],
+        () => ({ externalSessions, inbox, workflows, friends, botsRoster }),
+        [externalSessions, friends, inbox, workflows, botsRoster],
     );
 }
 
@@ -687,10 +718,10 @@ function useAppBuiltinDestinationAvailability(): AppBuiltinDestinationAvailabili
  * interaction: pages can be host-local or Account-artifact-backed and must remain
  * navigable/offline-tombstonable while executable bridge methods are separately unavailable.
  */
-export function useCompactAppDestinations(): readonly CompactAppDestination[] {
+export function useCompactAppDestinations(owners: AppDestinationActivationOwners = {}): readonly CompactAppDestination[] {
     const projection = useAppShellPluginUiProjection();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
-    const builtins = useAppBuiltinDestinationAvailability();
+    const builtins = useAppBuiltinDestinationAvailability(owners);
     const pages = React.useMemo(() => (
         projection.pluginUiProjection
             ? resolvePluginAppPages({
@@ -730,17 +761,23 @@ export type ActivateAppDestination = (
  * screen, a plugin page goes through its launch owner, everything else navigates to its route. An unavailable plugin page still navigates, to its route-owned
  * tombstone; lists that show it disabled simply do not call this.
  */
-export function useActivateAppDestination(): ActivateAppDestination {
+export function useActivateAppDestination(activationOwners: AppDestinationActivationOwners = {}): ActivateAppDestination {
     const router = useRouter();
     const activatePluginAppPage = usePluginAppPageCatalogActivationHandler();
     const universalSearch = useOptionalUniversalSearchRuntime();
     const openAppRightSidebarTab = useOpenAppRightSidebarTab();
+    const botsRosterRuntime = useOptionalBotsRosterRuntime();
     // The owners above change with the route; the returned callback does not, so every memoized row
     // and rail icon that holds it keeps its identity across navigation.
-    const latest = React.useRef({ router, activatePluginAppPage, universalSearch, openAppRightSidebarTab });
-    latest.current = { router, activatePluginAppPage, universalSearch, openAppRightSidebarTab };
+    const latest = React.useRef({ router, activatePluginAppPage, universalSearch, openAppRightSidebarTab, botsRosterRuntime, ...activationOwners });
+    latest.current = { router, activatePluginAppPage, universalSearch, openAppRightSidebarTab, botsRosterRuntime, ...activationOwners };
     return React.useCallback((destination, options) => {
         const owners = latest.current;
+        if (!isCompactAppDestinationInvokable(destination)) return;
+        if (destination.activation === 'botsRoster') {
+            (owners.openBotsRoster ?? owners.botsRosterRuntime?.open)?.();
+            return;
+        }
         if (destination.activation === 'overlay') {
             owners.universalSearch?.open(undefined, options?.searchScope);
             return;
