@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { WorkspaceSyncConflictPageRequestV1Schema, WorkspaceSyncConflictV1Schema, WorkspaceSyncCopyOnceV1Schema, WorkspaceSyncPathSelectionV1Schema, WorkspaceSyncSelectionDiagnoseV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { areWorkspaceSyncRelationshipDefinitionsEqual, WorkspaceSyncConflictPageRequestV1Schema, WorkspaceSyncConflictV1Schema, WorkspaceSyncCopyOnceV1Schema, WorkspaceSyncPathSelectionV1Schema, WorkspaceSyncSelectionDiagnoseV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceSyncPathSelectionV1, WorkspaceSyncSelectionDiagnoseV1 } from '@happier-dev/protocol';
 
 import type { WorkspaceSyncMutagenAdapter, WorkspaceSyncResolvedRef } from './workspaceSyncController';
@@ -17,6 +17,7 @@ import type {
   WorkspaceSyncStatusV1,
 } from './workspaceSyncTypes';
 import { computeWorkspaceSyncPolicyDigest } from './workspaceSyncTypes';
+import { isWorkspaceSyncStatusClean } from './workspaceSyncPreparation';
 
 export type WorkspaceSyncMutagenCommandTransport = (command: MutagenControlCommandV1, signal?: AbortSignal) => Promise<unknown>;
 export type WorkspaceSyncMutagenAdapterOptions = Readonly<{
@@ -257,6 +258,8 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
   private readonly sessionIdentifiers = new Map<string, string>();
   private readonly successfulCycles = new Map<string, number>();
   private readonly lastCycleObservedAtMs = new Map<string, number>();
+  /** Actual clean flush completion in this adapter lifetime, never recovered from cycle observations. */
+  private readonly lastCleanSyncAtMs = new Map<string, number>();
   private readonly createRequestId: () => string;
   private readonly nowMs: () => number;
 
@@ -265,8 +268,13 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     this.nowMs = options.nowMs ?? Date.now;
   }
   private replaceDefinitions(definitions: readonly WorkspaceSyncRelationshipV1[]): void {
+    const replacements = new Map(definitions.map((definition) => [definition.relationshipId, definition]));
     for (const [id, definition] of this.definitions) {
       if ('relationshipId' in definition) {
+        const replacement = replacements.get(id);
+        if (!replacement || !areWorkspaceSyncRelationshipDefinitionsEqual(definition, replacement)) {
+          this.lastCleanSyncAtMs.delete(id);
+        }
         this.definitions.delete(id);
         this.sessionIdentifiers.delete(id);
       }
@@ -362,12 +370,14 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     this.sessionIdentifiers.set(operationId, generic.identifier);
     return generic;
   }
-  private async project(value: unknown, definition: WorkspaceSyncRelationshipV1 | WorkspaceSyncCopyOnceV1, successObservation: 'none' | 'first_cycle' | 'operation'): Promise<WorkspaceSyncStatusV1> {
+  private async project(value: unknown, definition: WorkspaceSyncRelationshipV1 | WorkspaceSyncCopyOnceV1, successObservation: 'none' | 'first_cycle' | 'operation', signal?: AbortSignal, completedFlush = false): Promise<WorkspaceSyncStatusV1> {
+    if (completedFlush) signal?.throwIfAborted();
     const generic = this.acceptSession(value, definition);
     const operationId = 'relationshipId' in definition ? definition.relationshipId : definition.operationId;
     const [alpha, beta] = await Promise.all([
       this.options.resolveWorkspaceRef(definition.alphaWorkspaceRefId), this.options.resolveWorkspaceRef(definition.betaWorkspaceRefId),
     ]);
+    if (completedFlush) signal?.throwIfAborted();
     if (!alpha || !beta) throw Object.assign(new Error('Workspace sync endpoint is unavailable'), { code: 'peer_unavailable' });
     const previousCycles = this.successfulCycles.get(operationId);
     if (successObservation === 'operation'
@@ -389,15 +399,23 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
           : generic.status === 'disconnected' || endpointUnavailable ? 'disconnected'
             : generic.status === 'watching' ? 'watching'
               : active && successObservation === 'operation' ? 'flushing' : 'starting';
-    return {
+    const status: WorkspaceSyncStatusV1 = {
       relationshipId: operationId, controllerMachineId: definition.controllerMachineId, state,
       alphaPath: alpha.rootPath, betaPath: beta.rootPath, mode: 'mode' in definition ? definition.mode : 'copy_once',
       endpointStates, conflictCount, lastCycleObservedAtMs: this.lastCycleObservedAtMs.get(operationId) ?? null,
+      lastCleanSyncAtMs: this.lastCleanSyncAtMs.get(operationId) ?? null,
       ...(generic.lastErrorCode === 'git_selection_unavailable'
         ? { errorCode: 'git_selection_unavailable' as const }
         : generic.lastError ? { errorCode: 'engine_error' as const }
           : hasEndpointProblems ? { errorCode: 'engine_problems' as const } : {}),
     };
+    if (completedFlush && status.state === 'watching'
+      && isWorkspaceSyncStatusClean(status) && this.definitions.get(operationId) === definition) {
+      const completedAtMs = this.nowMs();
+      this.lastCleanSyncAtMs.set(operationId, completedAtMs);
+      return { ...status, lastCleanSyncAtMs: completedAtMs };
+    }
+    return status;
   }
   private async reconcileRelationshipState(
     value: unknown,
@@ -431,6 +449,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
       endpointStates: { alpha: null, beta: null },
       conflictCount: 0,
       lastCycleObservedAtMs: null,
+      lastCleanSyncAtMs: this.lastCleanSyncAtMs.get(relationship.relationshipId) ?? null,
     };
   }
   async discoverCopyOnceRecoveries(signal?: AbortSignal): Promise<readonly WorkspaceSyncCopyOnceV1[]> {
@@ -466,6 +485,11 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     return [...validById.values()].map(({ definition }) => definition);
   }
   async ensure(relationship: WorkspaceSyncRelationshipV1, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> {
+    const previous = this.definitions.get(relationship.relationshipId);
+    if (previous && (!('relationshipId' in previous)
+      || !areWorkspaceSyncRelationshipDefinitionsEqual(previous, relationship))) {
+      this.lastCleanSyncAtMs.delete(relationship.relationshipId);
+    }
     this.definitions.set(relationship.relationshipId, relationship);
     try {
       const existing = await this.findClaimedSession(relationship.relationshipId, signal);
@@ -567,7 +591,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
         if (!existing.generic.paused) {
           return await this.project(await this.options.send({
             t: 'flush', requestId: this.requestId(), sessionIdentifier: existing.generic.identifier,
-          }, signal), operation, 'operation');
+          }, signal), operation, 'operation', signal, true);
         }
       } else {
         cleanupRequired = true;
@@ -581,7 +605,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
       }, signal), operation, 'none');
       return await this.project(await this.options.send({
         t: 'flush', requestId: this.requestId(), sessionIdentifier,
-      }, signal), operation, 'operation');
+      }, signal), operation, 'operation', signal, true);
     } catch (error) {
       operationError = error;
       retainForRecovery = isIndeterminate(error);
@@ -621,6 +645,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
         this.sessionIdentifiers.delete(operation.operationId);
         this.successfulCycles.delete(operation.operationId);
         this.lastCycleObservedAtMs.delete(operation.operationId);
+        this.lastCleanSyncAtMs.delete(operation.operationId);
       }
     }
   }
@@ -672,7 +697,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     if (!definition || !('relationshipId' in definition)) throw Object.assign(new Error('Workspace sync relationship is not ready'), { code: 'relationship_not_ready' });
     return await this.project(await this.options.send({
       t: command, requestId: this.requestId(), sessionIdentifier: this.requireSessionIdentifier(relationshipId),
-    }, signal), definition, command === 'flush' ? 'operation' : 'none');
+    }, signal), definition, command === 'flush' ? 'operation' : 'none', signal, command === 'flush');
   }
   async flush(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> { return await this.selected(id, 'flush', signal); }
   async pause(id: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> { return await this.selected(id, 'pause', signal); }
@@ -682,6 +707,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     this.sessionIdentifiers.delete(relationshipId);
     this.successfulCycles.delete(relationshipId);
     this.lastCycleObservedAtMs.delete(relationshipId);
+    this.lastCleanSyncAtMs.delete(relationshipId);
   }
   async terminate(relationshipId: string, signal?: AbortSignal): Promise<void> {
     const definition = this.definitions.get(relationshipId);
@@ -695,6 +721,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     }
     if (sessionIdentifier) await this.terminateRuntimeSession(relationshipId, sessionIdentifier, signal);
     this.definitions.delete(relationshipId);
+    this.lastCleanSyncAtMs.delete(relationshipId);
   }
   async listConflicts(request: WorkspaceSyncConflictPageRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncConflictPageV1> {
     const valid = WorkspaceSyncConflictPageRequestV1Schema.parse(request);

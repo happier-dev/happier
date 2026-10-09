@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { BrokerProtocolError, deriveWorkspaceSyncEndpointId } from './transport/workspaceSyncBrokerProtocol';
 import { createWorkspaceSyncMutagenAdapter } from './workspaceSyncMutagenAdapter';
@@ -270,7 +271,7 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
       mode: 'keep_synced', endpointStates: {
         alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
         beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
-      }, conflictCount: 0, lastCycleObservedAtMs: 1234,
+      }, conflictCount: 0, lastCycleObservedAtMs: 1234, lastCleanSyncAtMs: null,
     });
     expect(commands).toEqual([
       { t: 'list', requestId: 'request-1', limit: 100 },
@@ -314,6 +315,76 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
 
     await expect(adapter.ensure(relationship)).resolves.toMatchObject({ relationshipId: 'r1', state: 'watching' });
     expect(commands).toEqual([{ t: 'list', requestId: 'request-1', limit: 100 }]);
+  });
+
+  it('advances last clean sync only after completed clean flush, preserving history across checks and failed attempts', async () => {
+    let nowMs = 1000;
+    let installed = true;
+    let observed = genericSession();
+    let flushFailure: Error | null = null;
+    let abortAfterTransport: AbortController | null = null;
+    let abortDuringRefResolution: AbortController | null = null;
+    // The sidecar command transport and clock are system boundaries; projection and lifecycle remain real.
+    const send = async (command: Readonly<{ t: string }>, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      if (command.t === 'list') return listPage(installed ? [observed] : []);
+      if (command.t === 'terminate') { installed = false; return null; }
+      if (command.t === 'create') {
+        installed = true;
+        return genericSession({ paused: true, successfulCycles: 0 });
+      }
+      if (command.t === 'flush' && flushFailure) throw flushFailure;
+      if (command.t === 'flush') abortAfterTransport?.abort();
+      return observed;
+    };
+    const options = { send, nowMs: () => nowMs,
+      resolveWorkspaceRef: async (id: string) => {
+        abortDuringRefResolution?.abort();
+        return { machineId: id === 'a' ? 'm1' : 'm2', rootPath: `/${id}` };
+      } };
+    const adapter = createWorkspaceSyncMutagenAdapter(options);
+    await adapter.ensure(relationship);
+
+    expect(WorkspaceSyncStatusV1Schema.parse(await adapter.flush('r1'))).toMatchObject({ lastCleanSyncAtMs: 1000 });
+    nowMs = 2000;
+    observed = genericSession({ successfulCycles: 5 });
+    await expect(adapter.get('r1')).resolves.toMatchObject({ lastCleanSyncAtMs: 1000 });
+    await expect(adapter.list()).resolves.toEqual([expect.objectContaining({ lastCleanSyncAtMs: 1000 })]);
+
+    nowMs = 3000;
+    observed = genericSession({ successfulCycles: 6, conflictCount: 1 });
+    await expect(adapter.flush('r1')).resolves.toMatchObject({ state: 'conflicted', lastCleanSyncAtMs: 1000 });
+    observed = genericSession({ successfulCycles: 7, status: 'scanning' });
+    await expect(adapter.flush('r1')).resolves.toMatchObject({ state: 'flushing', lastCleanSyncAtMs: 1000 });
+    observed = genericSession({ successfulCycles: 8, status: 'disconnected', beta: {
+      protocol: 'external', host: deriveWorkspaceSyncEndpointId('r1', 'beta'), path: '', state: null,
+    } });
+    await expect(adapter.flush('r1')).resolves.toMatchObject({ state: 'disconnected', lastCleanSyncAtMs: 1000 });
+
+    observed = genericSession({ successfulCycles: 8 });
+    flushFailure = Object.assign(new Error('sidecar unavailable'), { code: 'agent_unavailable' });
+    await expect(adapter.flush('r1')).rejects.toMatchObject({ code: 'agent_unavailable' });
+    flushFailure = null;
+    const cancellation = new AbortController();
+    cancellation.abort();
+    await expect(adapter.flush('r1', cancellation.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    abortAfterTransport = new AbortController();
+    await expect(adapter.flush('r1', abortAfterTransport.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    abortAfterTransport = null;
+    abortDuringRefResolution = new AbortController();
+    await expect(adapter.flush('r1', abortDuringRefResolution.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    abortDuringRefResolution = null;
+    await expect(adapter.get('r1')).resolves.toMatchObject({ lastCleanSyncAtMs: 1000 });
+
+    nowMs = 5000;
+    observed = genericSession({ successfulCycles: 9 });
+    await expect(adapter.flush('r1')).resolves.toMatchObject({ lastCleanSyncAtMs: 5000 });
+    await adapter.terminate('r1');
+    await expect(adapter.ensure(relationship)).resolves.toMatchObject({ lastCleanSyncAtMs: null });
+    const restarted = createWorkspaceSyncMutagenAdapter(options);
+    await expect(restarted.rehydrate([relationship])).resolves.toEqual([
+      expect.objectContaining({ state: 'watching', lastCleanSyncAtMs: null }),
+    ]);
   });
 
   it('refuses restart adoption when persisted labels do not prove current policy and endpoint identity', async () => {
@@ -363,10 +434,10 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
       });
     });
     const adapter = createWorkspaceSyncMutagenAdapter({
-      send, createRequestId: () => 'request-1',
+      send, createRequestId: () => 'request-1', nowMs: () => 1234,
       resolveWorkspaceRef: async (id) => ({ machineId: 'm1', rootPath: `/${id}` }),
     });
-    await expect(adapter.copyOnce(copyOnceOperation)).resolves.toMatchObject({ relationshipId: 'copy-1', mode: 'copy_once' });
+    await expect(adapter.copyOnce(copyOnceOperation)).resolves.toMatchObject({ relationshipId: 'copy-1', mode: 'copy_once', lastCleanSyncAtMs: 1234 });
     expect(commands.map((command) => (command as { t: string }).t)).toEqual(['list', 'create', 'resume', 'flush', 'terminate']);
     expect(commands.slice(2)).toEqual([
       { t: 'resume', requestId: 'request-1', sessionIdentifier: 'mutagen-copy-session' },
@@ -395,6 +466,7 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
     await expect(adapter.copyOnce(copyOnceOperation)).resolves.toMatchObject({
       relationshipId: 'copy-1',
       lastCycleObservedAtMs: 1234,
+      lastCleanSyncAtMs: null,
     });
     expect(commands.map(({ t, sessionIdentifier }) => [t, sessionIdentifier])).toEqual([
       ['list', undefined],
