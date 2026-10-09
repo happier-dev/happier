@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 
 // Native UI and cryptography adapters do not exist in this Node host.
@@ -24,6 +26,12 @@ vi.mock('expo-image', () => ({ Image: 'Image' }));
 vi.mock('expo-updates', async () => (await import('@/dev/testkit/mocks/expoUpdates')).createExpoUpdatesMock());
 vi.mock('react-native-typography', async () => (await import('@/dev/testkit/mocks/reactNativeTypography')).createReactNativeTypographyMock());
 vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock());
+
+// Compile the real app graph before case-local credentials, clocks and held IO.
+// Each case still restores its own canonical Sync namespace after resetModules.
+installDisconnectedServerSocketBoundary();
+const initialSync = await loadSyncSingletonForTests();
+initialSync.dispose();
 
 let cleanup: (() => Promise<void>) | null = null;
 
@@ -45,7 +53,7 @@ afterEach(async () => {
 });
 
 describe('concurrent session cache teardown ordering', () => {
-    it('transfers the former focused Home after singleton withdrawal and tears it down intentionally', async () => {
+    it.each(['retain', 'replace', 'remove'] as const)('preserves same-Account transfer data and withdraws retired credentials (%s)', async (credentialMutation) => {
         const network = await installSessionOpsNetworkBoundary();
         const homeA = await network.addHome('https://teardown-a.example.test', 'account-a');
         const homeB = await network.addHome('https://teardown-b.example.test', 'account-b');
@@ -88,12 +96,26 @@ describe('concurrent session cache teardown ordering', () => {
                 throw new Error(`Unexpected native command: ${command}`);
             },
         });
-        network.setHttpResponder(async (input) => {
-            const path = new URL(String(input)).pathname;
+        // Exercise the real credential parser/mutation owner through the native
+        // store, not the network harness's fixed saved-Home credential shortcut.
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockRestore();
+        for (const home of [homeA, homeB]) {
+            await expect(TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
+                token: home.token,
+            })).resolves.toBe(true);
+        }
+        const machineRow = createPlainMachineRowFixture({ id: 'machine-b', accountId: homeB.accountId });
+        network.setHttpResponder(async (input, init) => {
+            const url = new URL(String(input));
+            const path = url.pathname;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v2/sessions') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
-            if (path === '/v1/machines') return Response.json([]);
+            if (path === '/v1/machines') return Response.json(
+                url.origin === homeB.serverUrl && new Headers(init?.headers).get('authorization') === `Bearer ${homeB.token}`
+                    ? [machineRow] : [],
+            );
             if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
             if (path === '/v2/changes') return Response.json({ changes: [], cursor: 0, hasMore: false });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
@@ -129,7 +151,6 @@ describe('concurrent session cache teardown ordering', () => {
         storage.getState().applyServerScopedSessionListRows(homeB.id, [row], { source: 'ordinary', mode: 'replace' });
         const machine = createMachineFixture({ id: 'machine-b' });
         storage.setState((state) => ({ machineListByServerId: { ...state.machineListByServerId, [homeB.id]: [machine] } }));
-
         // Queue a genuine profile notification, then switch through the real
         // focused owner. Hold only the incoming device-store read, after Sync
         // has withdrawn its outgoing singleton and emitted "applying B".
@@ -152,6 +173,32 @@ describe('concurrent session cache teardown ordering', () => {
         expect(pool.peekServerReachabilityState(homeB.serverUrl, homeB.token)?.phase).toBe('online');
         secondaryB!.trigger('disconnect', 'late transport close');
         expect(pool.peekServerReachabilityState(homeB.serverUrl, homeB.token)?.phase).toBe('online');
+
+        if (credentialMutation !== 'retain') {
+            if (credentialMutation === 'replace') {
+                await expect(TokenStorage.setCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id }, {
+                    token: createAccountTokenForTests('replacement-account'),
+                })).resolves.toBe(true);
+            } else {
+                await expect(TokenStorage.removeCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id })).resolves.toBe(true);
+            }
+            // Transfer retention is not authority to disclose the old Account
+            // after its credential changes, even while the singleton is held.
+            expect(storage.getState().ordinarySessionListMembershipByServerId[homeB.id] ?? []).toEqual([]);
+            expect(storage.getState().sessionListRowsByServerId[homeB.id]?.['session-b']).toBeUndefined();
+            expect(storage.getState().machineListByServerId[homeB.id] ?? []).toEqual([]);
+            holdIncomingSecrets = false;
+            heldSecrets.finish!();
+            // This case owns synchronous withdrawal, not a retired bootstrap's
+            // later recovery outcome. Cleanup still joins its real promise.
+            await switching.catch(() => undefined);
+            return;
+        }
+        await expect(TokenStorage.setCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id }, {
+            token: homeB.token,
+        })).resolves.toBe(true);
+        expect(storage.getState().ordinarySessionListMembershipByServerId[homeB.id]).toEqual(['session-b']);
+        expect(storage.getState().machineListByServerId[homeB.id]?.map((m) => m.id)).toEqual(['machine-b']);
 
         holdIncomingSecrets = false;
         heldSecrets.finish!();
