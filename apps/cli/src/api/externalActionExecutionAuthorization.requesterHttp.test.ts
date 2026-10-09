@@ -17,6 +17,11 @@ import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from
 import { SessionActionRpcOriginV1Schema, SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
+// Only the Home HTTP boundary is mocked; exercise the real local provenance reader.
+const encodeTokenPart = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+const accountToken = `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({
+  sub: 'bob', tokenEpoch: 7, provenance: { v: 1, kind: 'account', authority: 'present_user' },
+})}.signature`;
 const target = { kind: 'machine' as const, machineId: 'alice-machine' };
 const envelope = { v: 1 as const, requestId: 'bob-open', target, input: { message: 'Opened' } };
 const principal = { accountId: 'bob', principalId: 'bob', credentialId: 'bob-service',
@@ -82,7 +87,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     const args = { actionId: 'projects.open', input: { workspace: { serverId: 'bob-profile',
       workspaceId: 'workspace', machineId: target.machineId, rootPath: '/destination' } }, requestId: 'move',
       sessionActionOrigin: origin, sourceMachineId: 'source-machine', target, machineId: target.machineId,
-      accountId: 'bob', accountEncryptionMode: 'plain' as const, tokenEpochHint: 7, token: 'bob',
+      accountId: 'bob', accountEncryptionMode: 'plain' as const, tokenEpochHint: 7, token: accountToken,
       serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://bob-home.test',
       installationId: 'source-installation', privateKey: keys.secretKey };
     vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
@@ -125,13 +130,13 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } },
       requestId: sessionActionOrigin.requestId, sessionActionOrigin, sourceMachineId: target.machineId, target, machineId: target.machineId,
-      accountId: 'bob', accountEncryptionMode: 'plain' as const, tokenEpochHint: 7, token: 'bob-session-account-token',
+      accountId: 'bob', accountEncryptionMode: 'plain' as const, tokenEpochHint: 7, token: accountToken,
       serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://bob-home.test',
       installationId: 'alice-installation', privateKey: keys.secretKey };
     let authenticatedOrigin = false;
     vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
       if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
-      expect(config?.headers).toMatchObject({ Authorization: 'Bearer bob-session-account-token' });
+      expect(config?.headers).toMatchObject({ Authorization: `Bearer ${args.token}` });
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       expect(body).toMatchObject({ sessionActionOrigin, sessionActionSource: { machineId: args.sourceMachineId, installationId: args.installationId } });
       // The intercepted HTTP body is unknown transport data; parse the real
@@ -242,13 +247,13 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       ? deriveAccountMachineKeyFromRecoverySecret(recoverySecret) : recoverySecret };
     const args = { actionId: 'notifications.notify_me', input: envelope.input, requestId: envelope.requestId,
       target, machineId: target.machineId, accountId: 'bob', accountEncryptionMode, tokenEpochHint: 7,
-      token: 'bob-account-token', ...(accountEncryptionMode === 'e2ee' ? { material } : {}),
+      token: accountToken, ...(accountEncryptionMode === 'e2ee' ? { material } : {}),
       serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://bob-home.test',
       installationId: 'alice-installation', privateKey: keys.secretKey };
     vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
       if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-      expect(config?.headers).toMatchObject({ Authorization: 'Bearer bob-account-token' });
+      expect(config?.headers).toMatchObject({ Authorization: `Bearer ${args.token}` });
       expect(request.envelope.v).toBe(accountEncryptionMode === 'e2ee' ? 2 : 1);
       if (request.envelope.v === 2) {
         if (credentialKind === 'legacy') {
@@ -287,7 +292,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
   it.each(['profile', 'epoch', 'proof'] as const)('refuses original Account %s mismatch without producing HTTP authority', async (mismatch) => {
     const args = { actionId: 'notifications.notify_me', input: envelope.input, requestId: envelope.requestId,
       target, machineId: target.machineId, accountId: 'bob', accountEncryptionMode: 'e2ee' as const,
-      tokenEpochHint: 7, token: 'bob-account-token',
+      tokenEpochHint: 7, token: accountToken,
       material: { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(21) },
       serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://bob-home.test',
       installationId: 'alice-installation', privateKey: keys.secretKey };
@@ -310,7 +315,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     let current = true;
     const args = { actionId: 'notifications.notify_me', input: envelope.input, requestId: envelope.requestId,
       target, machineId: target.machineId, accountId: 'bob', accountEncryptionMode: 'e2ee' as const,
-      tokenEpochHint: 7, token: 'bob-account-token', serverId: 'bob-profile', serverIdentityId: 'srv_bob_home',
+      tokenEpochHint: 7, token: accountToken, serverId: 'bob-profile', serverIdentityId: 'srv_bob_home',
       serverHttpBaseUrl: 'https://bob-home.test', installationId: 'alice-installation', privateKey: keys.secretKey,
       isCurrent: async () => current };
     const network = vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
