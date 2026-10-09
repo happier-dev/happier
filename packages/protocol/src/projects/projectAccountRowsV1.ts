@@ -42,10 +42,13 @@ export const ProjectAccountRowPayloadV1Schema = lazyDefinition(() => z.union([
 ]));
 export type ProjectAccountRowPayloadV1 = z.infer<typeof ProjectAccountRowPayloadV1Schema>;
 export const StoredProjectAccountRowPayloadV1Schema = createStoredReadSchema(ProjectAccountRowPayloadV1Schema);
-export const ProjectAccountRowContentV1Schema = lazyDefinition(() => z.discriminatedUnion('t', [
-    z.strictObject({ t: z.literal('plain'), v: ProjectAccountRowPayloadV1Schema }),
-    z.strictObject({ t: z.literal('encrypted'), c: z.string().check(z.minLength(1)) }),
-]));
+function createProjectAccountRowContentSchema<Payload extends z.core.$ZodType>(payload: Payload) {
+    return z.discriminatedUnion('t', [
+        z.strictObject({ t: z.literal('plain'), v: payload }),
+        z.strictObject({ t: z.literal('encrypted'), c: z.string().check(z.minLength(1)) }),
+    ]);
+}
+export const ProjectAccountRowContentV1Schema = lazyDefinition(() => createProjectAccountRowContentSchema(ProjectAccountRowPayloadV1Schema));
 export type ProjectAccountRowContentV1 = z.infer<typeof ProjectAccountRowContentV1Schema>;
 export const StoredProjectAccountRowContentV1Schema = createStoredReadSchema(ProjectAccountRowContentV1Schema);
 
@@ -86,6 +89,11 @@ export function parseProjectAccountRowPhysicalKeyV1(physicalKey: string): Projec
 }
 export const ProjectAccountRowV1Schema = lazyDefinition(() => z.strictObject({ key: ProjectAccountRowKeyV1Schema, revision: RevisionSchema, content: z.nullable(ProjectAccountRowContentV1Schema) }));
 export type ProjectAccountRowV1 = z.infer<typeof ProjectAccountRowV1Schema>;
+/** Retained payloads project through their stored owner; transport identity and envelopes stay closed. */
+const ProjectAccountRowStoredReadV1Schema = lazyDefinition(() => z.strictObject({
+    ...ProjectAccountRowV1Schema.shape,
+    content: z.nullable(createProjectAccountRowContentSchema(StoredProjectAccountRowPayloadV1Schema)),
+}));
 export const ProjectAccountRowReadRequestV1Schema = lazyDefinition(() => z.strictObject({ key: ProjectAccountRowKeyV1Schema }));
 export const ProjectAccountRowListRequestV1Schema = lazyDefinition(() => z.strictObject({
     kinds: z.optional(z.array(z.enum(['workspace-ref', 'relationship-graph', 'project-organization']))), serverId: z.optional(IdSchema),
@@ -104,13 +112,13 @@ export const ProjectAccountRowFailureV1Schema = lazyDefinition(() => z.union([
 ]));
 export type ProjectAccountRowFailureV1 = z.infer<typeof ProjectAccountRowFailureV1Schema>;
 export const ProjectAccountRowReadResponseV1Schema = lazyDefinition(() => z.union([
-    z.strictObject({ status: z.literal('present'), row: ProjectAccountRowV1Schema }),
+    z.strictObject({ status: z.literal('present'), row: ProjectAccountRowStoredReadV1Schema }),
     z.strictObject({ status: z.literal('absent') }),
     z.strictObject({ status: z.literal('deleted'), revision: RevisionSchema }), ProjectAccountRowFailureV1Schema,
 ]));
 export type ProjectAccountRowReadResponseV1 = z.infer<typeof ProjectAccountRowReadResponseV1Schema>;
 export const ProjectAccountRowListResponseV1Schema = lazyDefinition(() => z.union([
-    z.strictObject({ status: z.literal('listed'), rows: z.array(ProjectAccountRowV1Schema), coverage: z.literal('complete') }), ProjectAccountRowFailureV1Schema,
+    z.strictObject({ status: z.literal('listed'), rows: z.array(ProjectAccountRowStoredReadV1Schema), coverage: z.literal('complete') }), ProjectAccountRowFailureV1Schema,
 ]));
 export type ProjectAccountRowListResponseV1 = z.infer<typeof ProjectAccountRowListResponseV1Schema>;
 export const ProjectAccountRowMutationResponseV1Schema = lazyDefinition(() => z.union([
