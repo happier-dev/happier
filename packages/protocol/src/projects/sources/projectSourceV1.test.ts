@@ -7,6 +7,14 @@ const repository = {
   protocol: 'https',
 };
 describe('Source metadata admission', () => {
+  it.each(['.', './', '.\\', '', '   '])('reads and writes whole-repository selection canonically (%j)', subdir => {
+    const input = { serverId: 'home', requestKey: 'save-intent', name: 'Repo', repository, subdir };
+    expect(ProjectSourcesCreateInputV1Schema.parse(input).subdir).toBeUndefined();
+    expect(ProjectSourcesUpdateInputV1Schema.parse({ serverId: 'home', sourceId: 'source', expectedRevision: 1,
+      patch: { subdir } }).patch).toEqual({ subdir: null });
+    expect(ProjectSourceV1StoredSchema.parse({ id: 'source', revision: 1, name: 'Repo', repository,
+      subdir, audience: [], createdByAccountId: 'owner' }).subdir).toBeUndefined();
+  });
   it('normalizes execution identity while metadata and overridden defaults change', async () => {
     const captured = ProjectSourceV1Schema.parse({ id: 'source', revision: 1, name: 'Repo', repository, audience: [], createdByAccountId: 'owner', defaultRef: 'main', subdir: 'packages/app' });
     const current: ProjectSourceV1 = { ...captured, revision: 5, name: 'New name', defaultRef: 'changed', subdir: 'changed',

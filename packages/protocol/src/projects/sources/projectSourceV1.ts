@@ -18,10 +18,17 @@ export const SourceAttachmentV1Schema = lazyZodSchema(() => z.discriminatedUnion
   z.object({ purpose: z.literal('dashboard'), ref: PromptArtifactRefV1Schema.strict() }).strict(),
 ]));
 export type SourceAttachmentV1 = z.infer<typeof SourceAttachmentV1Schema>;
+// Source folders use clone's containment admission, with one canonical root representation.
+const ProjectSourceSubdirV1Schema = lazyZodSchema(() => z.union([
+  z.string().trim().length(0), ScmRepositoryContainedSubdirV1Schema,
+]).transform(value => value.replaceAll('\\', '/').split('/').filter(part => part && part !== '.').join('/') || undefined));
+export function normalizeProjectSourceSubdirV1(value: string | null | undefined): string | undefined {
+  return value == null ? undefined : ProjectSourceSubdirV1Schema.parse(value);
+}
 export const ProjectSourceV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1), revision: z.number().int().positive(), name: z.string().trim().min(1),
   repository: ProjectSourceRepositorySelectorV1Schema,
-  defaultRef: z.string().trim().min(1).optional(), subdir: ScmRepositoryContainedSubdirV1Schema.optional(),
+  defaultRef: z.string().trim().min(1).optional(), subdir: ProjectSourceSubdirV1Schema.optional(),
   audience: z.array(ProjectSourceGrantV1Schema), createdByAccountId: z.string().min(1),
   attachments: z.array(SourceAttachmentV1Schema).optional(),
 }).strict());
@@ -42,7 +49,8 @@ export const ProjectSourceAttachmentIntentV1Schema = lazyZodSchema(() => z.union
 export type ProjectSourceAttachmentIntentV1 = z.infer<typeof ProjectSourceAttachmentIntentV1Schema>;
 export const ProjectSourcePatchV1Schema = lazyZodSchema(() => z.object({
   name: ProjectSourceV1Schema.shape.name.optional(), repository: ProjectSourceRepositorySelectorV1Schema.optional(),
-  defaultRef: ProjectSourceV1Schema.shape.defaultRef.unwrap().nullable().optional(), subdir: ProjectSourceV1Schema.shape.subdir.unwrap().nullable().optional(),
+  defaultRef: ProjectSourceV1Schema.shape.defaultRef.unwrap().nullable().optional(),
+  subdir: ProjectSourceV1Schema.shape.subdir.unwrap().nullable().transform(value => value ?? null).optional(),
   audience: z.array(ProjectSourceGrantV1Schema).optional(), attachment: ProjectSourceAttachmentIntentV1Schema.optional(),
 }).strict());
 export const ProjectSourcesUpdateInputV1Schema = lazyZodSchema(() => z.object({ serverId: id, sourceId: id, expectedRevision: revision, patch: ProjectSourcePatchV1Schema }).strict());
@@ -82,8 +90,7 @@ function effectiveSourceSelection(selection: ProjectSourceSelectionV1, overrides
     : value.includes('://') ? new URL(value.trim()).href : value.trim();
   const ref = overrides.ref ?? selection.defaultRef;
   const selectedSubdir = overrides.subdir ?? selection.subdir;
-  const subdir = selectedSubdir === undefined ? undefined : ScmRepositoryContainedSubdirV1Schema.parse(selectedSubdir)
-    .replaceAll('\\', '/').split('/').filter(part => part && part !== '.').join('/') || undefined;
+  const subdir = normalizeProjectSourceSubdirV1(selectedSubdir);
   return { selector: { ...selector, provider: { ...selector.provider, baseUrl: identity.deployment },
       repository: { ...selector.repository, nameWithOwner: identity.repository } }, ref: ref?.trim(), subdir,
     // Display names, visibility, web links and discovered defaultBranch are metadata.
