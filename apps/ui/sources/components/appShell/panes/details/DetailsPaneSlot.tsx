@@ -19,9 +19,15 @@ type DetailsPaneSlotFrame = Readonly<{
     testID?: string;
 }>;
 
-/** The pane's body: changes whenever the detail re-renders, read only by the pane's own leaf. */
+/**
+ * The pane's body: changes whenever the detail re-renders, read only by the pane's own leaf. The header's marks
+ * (identity beside the title, the mark leading the line) are elements a detail re-creates per render, so they
+ * travel here rather than in the frame the page subscribes to.
+ */
 type DetailsPaneSlotBody = Readonly<{
     headingRef?: PluginUiDetailsPanePresentation['headingRef'];
+    leading?: React.ReactNode;
+    subtitleLeading?: React.ReactNode;
     actions?: React.ReactNode;
     children?: React.ReactNode;
 }>;
@@ -60,7 +66,8 @@ function createDetailsPaneSlotStore(): DetailsPaneSlotStore {
     };
     const setBody = (next: DetailsPaneSlotBody | null) => {
         if (body === next || (body !== null && next !== null && body.children === next.children
-            && body.actions === next.actions && body.headingRef === next.headingRef)) return;
+            && body.actions === next.actions && body.headingRef === next.headingRef
+            && body.leading === next.leading && body.subtitleLeading === next.subtitleLeading)) return;
         body = next;
         bodyListeners.forEach((listener) => listener());
     };
@@ -77,7 +84,13 @@ function createDetailsPaneSlotStore(): DetailsPaneSlotStore {
                 ...(input.subtitle === undefined ? {} : { subtitle: input.subtitle }),
                 ...(input.testID === undefined ? {} : { testID: input.testID }),
             });
-            setBody({ actions: input.actions, children: input.children, headingRef: input.headingRef });
+            setBody({
+                actions: input.actions,
+                children: input.children,
+                headingRef: input.headingRef,
+                leading: input.leading,
+                subtitleLeading: input.subtitleLeading,
+            });
         },
         retract(retiring) {
             if (owner !== retiring) return;
@@ -128,7 +141,10 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
                 <PaneHeader
                     testID={`${testID}.header`}
                     title={props.frame.title}
-                    subtitle={props.frame.subtitle}
+                    {...(body?.subtitleLeading === undefined
+                        ? { subtitle: props.frame.subtitle }
+                        : { line: { leading: body.subtitleLeading, segments: props.frame.subtitle ? [props.frame.subtitle] : [] } })}
+                    leading={body?.leading}
                     actions={body?.actions}
                     headingRef={body?.headingRef}
                     onClose={props.store.close}

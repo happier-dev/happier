@@ -16,13 +16,15 @@ import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/
 import { createScopedSocketConnectParams } from '@/sync/runtime/orchestration/serverScopedRpc/createScopedSocketConnectParams';
 import { resolveServerScopedContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedContext';
 import { resolveScopedMachineTransport } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { createServerRequestForExplicitServerScope } from './createServerRequestWithServerScope';
 import { delay } from '@/utils/timing/time';
 import {
     MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS,
     measureMachineEncryptRawAttribution,
     type MachineEncryptRawAttributionEventName,
 } from '@/sync/encryption/machineEncryption';
-import { machineRpcWithPeerMediationRoute } from '@/sync/domains/machines/peer/mediation/rpc/client';
+import { machineRpcWithPeerMediationRoute, createPrivateContinuationTransportError } from '@/sync/domains/machines/peer/mediation/rpc/client';
 import {
     postProductionMachineRpcDirect,
     resolveProductionMachineRpcDirectRoute,
@@ -38,7 +40,7 @@ import {
 } from './machineRpcTimeoutError';
 import { resolveMachineRpcTargetServerId } from './resolveMachineRpcTargetServerId';
 import { resolveRunnerMachineContentKeyTrustV1 } from '@/sync/domains/machines/runnerMachineContentKeyTrust';
-import { isTokenOnlyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
 
 const SCOPED_MACHINE_RPC_SESSION_WRITE_METHODS = new Set<string>([
     RPC_METHODS.SPAWN_HAPPY_SESSION,
@@ -120,7 +122,10 @@ async function withMachineRpcAbort<T>(
         run().then(
             (value) => {
                 signal.removeEventListener('abort', onAbort);
-                if (signal.aborted) reject(createMachineRpcAbortError(method));
+                // Issued Socket RPCs already settle cancellation at the shared,
+                // request-correlated owner. A consumed ACK must not become an
+                // unknown outcome merely because its caller retires afterward.
+                if (signal.aborted && !socketRpcAbortScope?.issued) reject(createMachineRpcAbortError(method));
                 else resolve(value);
             },
             (error) => {
@@ -220,7 +225,7 @@ async function machineRpcWithServerTransport<R, A>(
         ? await resolveTransferPolicyAllowsMachineRpcDirect({ serverId: params.serverId ?? undefined })
         : true;
     const policyPreferScoped = guarded && !allowDirect;
-    const initialPreferScoped = params.preferScoped === true || policyPreferScoped;
+    const initialPreferScoped = params.preferScoped === true || params.requireEncryptedPayload === true || policyPreferScoped;
     const requestedServerId = normalizeId(params.serverId);
     const requestedAccountId = normalizeId(params.accountId);
     const activeServerId = normalizeId(getActiveServerSnapshot().serverId);
@@ -282,6 +287,7 @@ async function machineRpcWithServerTransport<R, A>(
                         params.payload,
                         {
                             timeoutMs,
+                            ...(params.requestId ? { requestId: params.requestId } : {}),
                             ...(params.authorization ? { authorization: params.authorization } : {}),
                             onIssued: activeOnIssued,
                             ...(params.signal ? { signal: params.signal } : {}),
@@ -290,7 +296,7 @@ async function machineRpcWithServerTransport<R, A>(
                 );
                 return result;
             } catch (error) {
-                if (exactIssuanceAttempted) {
+                if (exactIssuanceAttempted || (params.method === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE && socketRpcAbortScope.issued)) {
                     throw error;
                 }
                 if (!shouldFallbackToScopedMachineRpc(error)) {
@@ -317,9 +323,7 @@ async function machineRpcWithServerTransport<R, A>(
                     machineId: context.machineId,
                 }))
                 : null;
-            const machineTransport = !runnerTrust && context.credentials && !isTokenOnlyAuthCredentials(context.credentials)
-                ? null
-                : await timeoutBudget.runWithinTimeout(
+            const machineTransport = await timeoutBudget.runWithinTimeout(
                 'scoped',
                 async (timeoutMs) =>
                     await resolveScopedMachineTransport({
@@ -330,13 +334,12 @@ async function machineRpcWithServerTransport<R, A>(
                     token: context.token,
                     machineId: context.machineId,
                     accountId: context.targetAccountId,
-                    ...(context.credentials
-                        ? {
-                            expectedAccountMode: isTokenOnlyAuthCredentials(context.credentials)
-                                ? 'plain' as const
-                                : 'e2ee' as const,
-                        }
-                        : {}),
+                    readAccountMode: async () => (await fetchAccountEncryptionMode(credentials ?? { token: context.token }, {
+                        request: createServerRequestForExplicitServerScope({
+                            serverUrl: context.targetServerUrl, token: context.token,
+                            runtimeOrigin: context.runtimeOrigin, homeCarrier: context.homeCarrier, timeoutMs,
+                        }),
+                    })).mode,
                     ...(runnerTrust ? { expectedRunnerBinding: runnerTrust.expectedRunnerBinding } : {}),
                     ...(runnerTrust?.trustedMachineKind
                         ? { trustedMachineKind: runnerTrust.trustedMachineKind }
@@ -346,13 +349,14 @@ async function machineRpcWithServerTransport<R, A>(
                         ? {
                             decryptEncryptionKey: (value: string) =>
                                 context.encryption!.decryptEncryptionKey(value),
+                            encryption: context.encryption,
                         }
                         : {}),
                     }),
             );
         throwIfMachineRpcAborted(params.method, params.signal);
 
-        if (!machineTransport) {
+        if (!machineTransport || (machineTransport.mode === 'e2ee' && !runnerTrust)) {
             await context.encryption?.initializeMachines(new Map(), new Set([context.machineId]));
             throw createRpcCallError({
                 error: `Machine encryption not found for ${context.machineId}`,
@@ -360,6 +364,31 @@ async function machineRpcWithServerTransport<R, A>(
             });
         }
         const usePlaintextTransport = machineTransport.mode === 'plain';
+        let requestPayload: unknown = params.payload;
+        if (params.requireEncryptedPayload && usePlaintextTransport) {
+            const { SessionRequesterBootstrapRpcRequestV1Schema, sealSessionRequesterBootstrapRpcRequestV1 } =
+                await import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1');
+            const request = SessionRequesterBootstrapRpcRequestV1Schema.safeParse(params.payload);
+            const installationId = machineTransport.installationId;
+            const publicKey = readMachineInstallationPublicKey(machineTransport.installationPublicKey);
+            if (params.method !== RPC_METHODS.SESSION_SPAWN_NEW || !request.success || !installationId || !publicKey
+                || request.data.input.executionTarget.machineId !== context.machineId
+                || request.data.input.executionTarget.serverId !== context.targetServerId) {
+                throw createRpcCallError({ error: 'Private Machine payload requires an encrypted transport', errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
+            }
+            if ('kind' in request.data.requesterBootstrap) {
+                if (request.data.requesterBootstrap.installationId !== installationId) {
+                    throw createRpcCallError({ error: 'Private Machine payload has a stale installation', errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
+                }
+                requestPayload = request.data;
+            } else {
+                requestPayload = sealSessionRequesterBootstrapRpcRequestV1({ request: {
+                    kind: request.data.kind, input: request.data.input, requesterBootstrap: request.data.requesterBootstrap,
+                }, installationId, installationPublicKey: publicKey, randomBytes: getRandomBytes });
+            }
+        }
+        const isMachineCurrent = () => machineTransport.context?.isCurrent() !== false;
+        if (usePlaintextTransport) context.encryption?.removeMachineEncryption(context.machineId);
         let machineEncryption = null;
         if (!usePlaintextTransport) {
             if (!context.encryption) {
@@ -373,12 +402,12 @@ async function machineRpcWithServerTransport<R, A>(
                         machineTransport.mode === 'e2ee'
                             ? machineTransport.dataKey
                             : null,
-                    ]]));
+                    ]]), undefined, { isMachineCurrent });
                     return undefined;
                 },
             );
             machineEncryption = context.encryption.getMachineEncryption(context.machineId);
-            if (!machineEncryption) {
+            if (!machineEncryption || !isMachineCurrent()) {
                 throw new Error(`Machine encryption not found for ${context.machineId}`);
             }
         }
@@ -408,7 +437,7 @@ async function machineRpcWithServerTransport<R, A>(
                             socket,
                             target: { kind: 'machine', id: context.machineId },
                             method: params.method,
-                            params: params.payload,
+                            params: requestPayload,
                             content: usePlaintextTransport
                                 ? { mode: 'plain' }
                                 : {
@@ -429,7 +458,11 @@ async function machineRpcWithServerTransport<R, A>(
                                 },
                             timeoutMs,
                             authorization: params.authorization,
+                            requestId: params.requestId,
                             onIssued: () => {
+                                if (!isMachineCurrent() || (!usePlaintextTransport && context.encryption?.getMachineEncryption(context.machineId) !== machineEncryption)) {
+                                    throw createRpcCallError({ error: 'Machine encryption context changed before dispatch', errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
+                                }
                                 onIssued?.();
                                 socketRpcAbortScope.issued = true;
                                 params.onDispatched?.();
@@ -465,6 +498,9 @@ async function machineRpcWithServerTransport<R, A>(
             return await withMachineRpcAbort(params.method, params.signal, () => runOnce(), socketRpcAbortScope);
         } catch (error) {
             lastError = error;
+            if (params.method === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE && socketRpcAbortScope.issued) {
+                throw createPrivateContinuationTransportError(error, true);
+            }
             if (params.signal?.aborted) {
                 throw createMachineRpcAbortError(params.method, error);
             }
@@ -494,7 +530,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
     };
     const socketRpcAbortScope = { issued: false };
 
-    if (effectiveParams.onIssued) {
+    if (effectiveParams.onIssued || effectiveParams.requireEncryptedPayload) {
         return await machineRpcWithServerTransport<R, A>(effectiveParams, socketRpcAbortScope);
     }
     return await withMachineRpcAbort(

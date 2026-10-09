@@ -660,7 +660,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: 'codex',
-                agent: { backendMode: 'acp' },
+                agent: { backendMode: 'appServer' },
             },
             agentModeId: 'plan',
             existingSessionId: 'session-1',
@@ -704,7 +704,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             runtimeDescriptorV1: {
                 v: 1,
                 agentId: 'codex',
-                agent: { backendMode: 'acp' },
+                agent: { backendMode: 'appServer' },
             },
             acpSessionModeId: 'plan',
             sessionConfigOptionOverrides: null,

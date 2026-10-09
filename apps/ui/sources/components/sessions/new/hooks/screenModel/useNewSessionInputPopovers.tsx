@@ -23,6 +23,7 @@ import {
     describeTemporaryComputerUnavailability,
 } from '@/components/sessions/new/hooks/temporaryComputerCopy';
 import { buildTemporaryComputerSelectionRows } from '@/components/sessions/new/components/machineSelection/buildTemporaryComputerSelectionRows';
+import { managedMachineSelectionOptionId, type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 import { SELECTION_LIST_LARGE_POPOVER_SIZE } from '@/components/ui/selectionList';
 
 const LARGE_PICKER_LAYOUT: Pick<
@@ -84,6 +85,9 @@ export function useNewSessionInputPopovers(params: Readonly<{
     machinePoolRequestKey: string;
     selectMachinePoolTarget: (target: Readonly<{ serverId: string; poolId: string; machineId: string }>) => void;
     executionTarget: SessionAuthoringExecutionTargetV2 | null;
+    managedMachines?: readonly ManagedMachineSelectionOffer[];
+    selectedManagedMachine?: ManagedMachineSelectionDraft | null;
+    onSelectManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
     temporaryComputerAvailability: TemporaryComputerAvailability;
     /**
      * Exact launch-readiness block for the current authoring selection, or null.
@@ -118,7 +122,9 @@ export function useNewSessionInputPopovers(params: Readonly<{
     const modalPortalTarget = useModalPortalTarget();
     const accountProfile = useAccountProfile();
     const machinePopoverGroups = params.machineGroups;
-    const executionTargetScopeKey = params.executionTarget?.kind === 'machine'
+    const executionTargetScopeKey = params.selectedManagedMachine
+        ? managedMachineSelectionOptionId(params.selectedManagedMachine.selection)
+        : params.executionTarget?.kind === 'machine'
         ? [
             'machine',
             params.executionTarget.target.serverId,
@@ -153,6 +159,9 @@ export function useNewSessionInputPopovers(params: Readonly<{
         temporaryComputerAvailability: params.temporaryComputerAvailability,
         temporaryComputerLaunchBlock: params.temporaryComputerLaunchBlock,
         selectTemporaryComputer: params.selectTemporaryComputer,
+        managedMachines: params.managedMachines,
+        selectedManagedMachine: params.selectedManagedMachine,
+        onSelectManagedMachine: params.onSelectManagedMachine,
     });
 
     const pathPopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
@@ -225,6 +234,8 @@ export function useNewSessionInputPopovers(params: Readonly<{
         recentMachines: params.recentMachines,
         selectedMachineId: params.selectedMachine?.id ?? null,
         selectedServerId: params.selectedServerId,
+        managedMachines: params.managedMachines,
+        selectedManagedMachine: params.selectedManagedMachine,
         useMachinePickerSearch: params.useMachinePickerSearch,
         temporaryComputerTargets: params.temporaryComputerAvailability.status === 'available'
             ? params.temporaryComputerAvailability.artifacts.map((artifact) => artifact.identity.target)
@@ -239,6 +250,8 @@ export function useNewSessionInputPopovers(params: Readonly<{
         params.recentMachines,
         params.selectedMachine?.id,
         params.selectedServerId,
+        params.managedMachines,
+        params.selectedManagedMachine,
         params.executionTarget,
         params.temporaryComputerAvailability,
         params.useMachinePickerSearch,
@@ -275,6 +288,13 @@ export function useNewSessionInputPopovers(params: Readonly<{
                     selectedMachine={renderParams.selectedMachine}
                     selectedServerId={renderParams.selectedServerId}
                     temporaryComputers={temporaryComputers}
+                    managedMachines={renderParams.managedMachines}
+                    selectedManagedMachine={renderParams.selectedManagedMachine}
+                    onSelectManagedMachine={(draft) => {
+                        renderParams.machinePoolSelection.cancelPendingSelection();
+                        renderParams.onSelectManagedMachine?.(draft);
+                        requestClose();
+                    }}
                     recentMachines={renderParams.recentMachines}
                     favoriteMachines={renderParams.favoriteMachineItems}
                     serverId={renderParams.selectedServerId}

@@ -3,6 +3,30 @@ import { MachineMetadata, MachineMetadataSchema } from '../domains/state/storage
 import { EncryptionCache } from './encryptionCache';
 import { Decryptor, Encryptor } from './encryptor';
 import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
+import { AccessibleMachineAccessStoredReadV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineKeyBasisStoredReadV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import type { MachineEncryptionContextInput } from './encryption';
+import { parseMachinePublishedMetadataV1, parseMachinePublishedDaemonStateV1, StoredMachinePublishedDaemonStateV1Schema, type MachinePublishedDaemonStateV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+
+/** The recipient opening envelope and owner encoded-write identity have distinct jobs. */
+export function readMachineEncryptionContextInput(
+    machine: Readonly<{ dataEncryptionKey?: unknown; keyBasis?: unknown; access?: unknown; isShared?: boolean }>,
+    viewerAccountId: string | null,
+): MachineEncryptionContextInput {
+    const dataEncryptionKey = typeof machine.dataEncryptionKey === 'string' ? machine.dataEncryptionKey : null;
+    const basis = MachineKeyBasisStoredReadV1Schema.safeParse(machine.keyBasis);
+    const access = AccessibleMachineAccessStoredReadV1Schema.safeParse(machine.access);
+    return {
+        dataEncryptionKey,
+        ...(access.success ? { resourceMode: access.data.resourceMode, accessState: access.data.accessState }
+            : machine.access !== undefined || machine.isShared ? { accessState: 'unavailable' as const } : {}),
+        expectedDataEncryptionKey: machine.keyBasis !== undefined
+            ? basis.success ? basis.data.dataEncryptionKey : undefined
+            : machine.isShared || (machine.access !== undefined && (!access.success || access.data.custodian.accountId !== viewerAccountId))
+                ? undefined
+                : dataEncryptionKey,
+    };
+}
 
 export const MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS = {
     metadataWrite: 'sync.encryption.machine.encryptRaw.metadataWrite',
@@ -32,7 +56,8 @@ export class MachineEncryption {
     constructor(
         machineId: string,
         encryptor: Encryptor & Decryptor,
-        cache: EncryptionCache
+        cache: EncryptionCache,
+        private readonly isCurrent: () => boolean = () => true,
     ) {
         this.machineId = machineId;
         this.encryptor = encryptor;
@@ -47,7 +72,7 @@ export class MachineEncryption {
             'sync.encryption.machine.encryptMetadata',
             { items: 1 },
             async () => {
-                const encrypted = await this.encryptor.encrypt([metadata]);
+                const encrypted = await this.encryptor.encrypt([parseMachinePublishedMetadataV1(metadata)]);
                 return encodeBase64(encrypted[0], 'base64');
             },
         );
@@ -57,6 +82,7 @@ export class MachineEncryption {
      * Decrypt machine metadata with caching
      */
     async decryptMetadata(version: number, encrypted: string): Promise<MachineMetadata | null> {
+        if (!this.isCurrent()) return null;
         // Check cache first
         const cached = this.cache.getCachedMachineMetadata(this.machineId, version);
         if (cached) {
@@ -71,6 +97,7 @@ export class MachineEncryption {
                 { items: 1 },
                 async () => this.encryptor.decrypt([encryptedData]),
             );
+            if (!this.isCurrent()) return null;
             if (!decrypted[0]) {
                 return null;
             }
@@ -93,12 +120,12 @@ export class MachineEncryption {
     /**
      * Encrypt daemon state
      */
-    async encryptDaemonState(state: any): Promise<string> {
+    async encryptDaemonState(state: unknown): Promise<string> {
         return syncPerformanceTelemetry.measureAsync(
             'sync.encryption.machine.encryptDaemonState',
             { items: 1 },
             async () => {
-                const encrypted = await this.encryptor.encrypt([state]);
+                const encrypted = await this.encryptor.encrypt([parseMachinePublishedDaemonStateV1(state)]);
                 return encodeBase64(encrypted[0], 'base64');
             },
         );
@@ -107,8 +134,8 @@ export class MachineEncryption {
     /**
      * Decrypt daemon state with caching
      */
-    async decryptDaemonState(version: number, encrypted: string | null | undefined): Promise<any | null> {
-        if (!encrypted) {
+    async decryptDaemonState(version: number, encrypted: string | null | undefined): Promise<MachinePublishedDaemonStateV1 | null> {
+        if (!this.isCurrent() || !encrypted) {
             return null;
         }
 
@@ -126,12 +153,15 @@ export class MachineEncryption {
                 { items: 1 },
                 async () => this.encryptor.decrypt([encryptedData]),
             );
-            const result = decrypted[0] || null;
+            if (!this.isCurrent()) return null;
+            const parsed = StoredMachinePublishedDaemonStateV1Schema.safeParse(decrypted[0]);
+            const result = parsed.success ? parsed.data : null;
             
             // Cache the result (including null values)
             this.cache.setCachedDaemonState(this.machineId, version, result);
             return result;
         } catch (error) {
+            if (!this.isCurrent()) return null;
             console.error('Failed to decrypt daemon state:', error);
             // Cache null result to avoid repeated decryption attempts
             this.cache.setCachedDaemonState(this.machineId, version, null);

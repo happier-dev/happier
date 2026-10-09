@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { MachineDataKeyCacheEntry } from './syncMachines';
 import tweetnacl from 'tweetnacl';
+import { createDeferred, createMachineFixture } from '@/dev/testkit';
+import { Encryption } from '@/sync/encryption/encryption';
 import {
     computeRunnerMachineContentKeyFingerprintV1,
     encodePlainMachineStoredContent,
@@ -59,24 +61,28 @@ function jsonResponse(body: unknown, status = 200): Response {
     });
 }
 
-function createEncryptionHarness(
+async function createEncryptionHarness(
     decrypt: (envelopes: readonly string[]) => Array<Uint8Array | null>,
 ) {
+    const contextOwner = await Encryption.create(new Uint8Array(32).fill(17));
     const decryptEncryptionKeys = vi.fn(async (values: readonly string[]) => decrypt(values));
     const initialized = new Set<string>();
     const initializeMachines = vi.fn(async (machineKeys: Map<string, Uint8Array | null>) => {
         for (const machineId of machineKeys.keys()) initialized.add(machineId);
     });
+    const machineEncryption = {
+        decryptMetadata: async (_version: number, value: string) => ({ decrypted: value }),
+        decryptDaemonState: async (_version: number, value: string | null) =>
+            value ? { decrypted: value } : null,
+    };
     return {
+        captureMachineEncryptionContext: contextOwner.captureMachineEncryptionContext.bind(contextOwner),
+        captureMachineEncryptionContextRead: contextOwner.captureMachineEncryptionContextRead.bind(contextOwner),
         decryptEncryptionKeys,
         initializeMachines,
         getMachineEncryption: (machineId: string) => {
             if (!initialized.has(machineId)) return null;
-            return {
-                decryptMetadata: async (_version: number, value: string) => ({ decrypted: value }),
-                decryptDaemonState: async (_version: number, value: string | null) =>
-                    value ? { decrypted: value } : null,
-            };
+            return machineEncryption;
         },
     };
 }
@@ -86,8 +92,10 @@ afterEach(() => {
     vi.clearAllMocks();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     vi.resetModules();
+    const deviceLocalStorage = await import('@/auth/storage/deviceLocalStorage');
+    vi.spyOn(deviceLocalStorage, 'readDeviceLocalStorageString').mockResolvedValue(null);
 });
 
 async function loadFetchAndApplyMachines() {
@@ -155,7 +163,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
             _unavailable?: ReadonlySet<string>,
         ) => {});
         const encryption = {
-            ...createEncryptionHarness(() => [dataKey]),
+            ...await createEncryptionHarness(() => [dataKey]),
             initializeMachines,
         };
 
@@ -204,7 +212,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
             _unavailable?: ReadonlySet<string>,
         ) => {});
         const encryption = {
-            ...createEncryptionHarness(() => [dataKey]),
+            ...await createEncryptionHarness(() => [dataKey]),
             initializeMachines,
         };
 
@@ -239,7 +247,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
             _unavailable?: ReadonlySet<string>,
         ) => {});
         const encryption = {
-            ...createEncryptionHarness(() => []),
+            ...await createEncryptionHarness(() => []),
             initializeMachines,
         };
         const applied: import('@/sync/domains/state/storageTypes').Machine[][] = [];
@@ -265,6 +273,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
             encryption,
             machineDataKeys: new Map(),
             sourceServerId: 'home-1',
+            expectedAccountMode: 'e2ee',
             request: async () => jsonResponse([substituted]),
             applyMachines: (machines) => { applied.push(machines); },
         });
@@ -286,7 +295,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
             machineRow('m3', null),
             machineRow('m4', 'env-4'),
         ]));
-        const encryption = createEncryptionHarness((values) => values.map((_, index) => new Uint8Array([index + 1])));
+        const encryption = await createEncryptionHarness((values) => values.map((_, index) => new Uint8Array([index + 1])));
         const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
 
         await fetchAndApplyMachines({
@@ -313,7 +322,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
             machineRow('m1', 'env-1'),
             machineRow('m2', 'env-2'),
         ]));
-        const encryption = createEncryptionHarness((values) =>
+        const encryption = await createEncryptionHarness((values) =>
             values.map((value) => new Uint8Array([value === 'env-1' ? 1 : 2])));
         const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
         const initializedKeys: Array<Map<string, Uint8Array | null>> = [];
@@ -353,7 +362,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
             'env-2': new Uint8Array([2]),
             'env-2-rotated': new Uint8Array([22]),
         };
-        const encryption = createEncryptionHarness((values) => values.map((value) => keyByEnvelope[value] ?? null));
+        const encryption = await createEncryptionHarness((values) => values.map((value) => keyByEnvelope[value] ?? null));
         const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
         const initializedKeys: Array<Map<string, Uint8Array | null>> = [];
         encryption.initializeMachines.mockImplementation(async (machineKeys) => {
@@ -385,6 +394,68 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
 
 
 describe('fetchAndApplyMachines real selected-envelope hydration', () => {
+    it('does not let an older snapshot retire an already committed current cipher', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const currentKey = new Uint8Array(32).fill(30);
+        const currentEnvelope = encodeBase64(await encryption.encryptEncryptionKey(currentKey), 'base64');
+        const oldEnvelope = encodeBase64(await encryption.encryptEncryptionKey(new Uint8Array(32).fill(29)), 'base64');
+        encryption.captureMachineEncryptionContext('machine-1', { dataEncryptionKey: currentEnvelope, expectedDataEncryptionKey: currentEnvelope });
+        await encryption.initializeMachines(new Map([['machine-1', currentKey]]));
+        const currentCipher = encryption.getMachineEncryption('machine-1');
+        const current = createMachineFixture({ id: 'machine-1', dataEncryptionKey: currentEnvelope, metadataVersion: 2 });
+        const applied = vi.fn();
+        const { fetchAndApplyMachines } = await import('./syncMachines');
+        await fetchAndApplyMachines({ credentials: legacyCredentials, sourceServerId: 'home-1', encryption,
+            machineDataKeys: new Map(), request: async () => jsonResponse([machineRow('machine-1', oldEnvelope)]),
+            getExistingMachine: () => current, applyMachines: applied, replace: true });
+        expect(encryption.getMachineEncryption('machine-1')).toBe(currentCipher);
+        expect(applied).toHaveBeenCalledWith([], false);
+    });
+    it('does not let delayed hydration overwrite the current Machine context and snapshot', async () => {
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { fetchAndApplyMachines } = await import('./syncMachines');
+        const encryption = await Encryption.create(new Uint8Array(32).fill(11));
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        const metadata = createMachineFixture().metadata!;
+        const rowFor = async (keyByte: number, name: string) => {
+            const key = new Uint8Array(32).fill(keyByte);
+            const cipher = await encryption.openEncryption(key);
+            const envelope = encodeBase64(await encryption.encryptEncryptionKey(key), 'base64');
+            return { ...machineRow('scoped', envelope), metadata: encodeBase64((await cipher.encrypt([{ ...metadata, displayName: name }]))[0]!, 'base64') };
+        };
+        const oldRow = await rowFor(29, 'Old');
+        const newRow = await rowFor(30, 'Current');
+        const started = createDeferred<void>();
+        const release = createDeferred<void>();
+        const platformCrypto = await import('rn-encryption');
+        const originalDecrypt = platformCrypto.decryptAsyncAES;
+        const spy = vi.spyOn(platformCrypto, 'decryptAsyncAES').mockImplementationOnce(async (...args) => {
+            const plaintext = await originalDecrypt(...args);
+            started.resolve();
+            await release.promise;
+            return plaintext;
+        });
+        const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
+        let applied: import('@/sync/domains/state/storageTypes').Machine[] = [];
+        const hydrate = (row: RawMachine) => fetchAndApplyMachines({
+            credentials: legacyCredentials, sourceServerId: 'home-1', encryption, machineDataKeys,
+            request: async () => jsonResponse([row]), applyMachines: (machines) => { if (machines.length) applied = machines; },
+        });
+        const pending = hydrate(oldRow);
+        try {
+            await started.promise;
+            await hydrate(newRow);
+            release.resolve();
+            await pending;
+            expect(applied[0]?.metadata?.displayName).toBe('Current');
+            expect(machineDataKeys.get('scoped')?.envelope).toBe(newRow.dataEncryptionKey);
+            expect(await encryption.getMachineEncryption('scoped')!.decryptMetadata(1, newRow.metadata)).toMatchObject({ displayName: 'Current' });
+        } finally {
+            release.resolve();
+            spy.mockRestore();
+            await pending;
+        }
+    });
     it('opens fresh scoped metadata, then locks and removes its cipher on a failed envelope replacement', async () => {
         const { Encryption } = await import('@/sync/encryption/encryption');
         const { encodeBase64 } = await import('@/encryption/base64');

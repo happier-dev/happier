@@ -349,6 +349,7 @@ const actionFamilyTranslations = { 'zh-Hant': translated({
             computer: '電腦控制',
             artifact_access: '產物分享',
             workflows: '工作流程',
+            workflow_effects: 'Webhook 與命令',
             notifications: '通知',
             machine_agent_install: '代理安裝',
             machine_agent_sign_in: '代理登入',
@@ -834,6 +835,35 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             label: '檢視',
             grid: '網格',
             list: '清單',
+            folders: '資料夾',
+        },
+        folders: {
+            newFolder: '新增資料夾',
+            newFolderInside: '在其中新增資料夾',
+            rename: '重新命名',
+            moveTo: '移至資料夾…',
+            moveVerb: '移至',
+            topLevel: '最上層',
+            moveToTopLevel: '移至最上層',
+            deleteFolder: '刪除資料夾',
+            deleteTitle: ({ name }) => `刪除「${name}」？`,
+            deleteBody: '其中的項目和資料夾會上移一層。不會刪除任何內容。',
+            nameHelp: '資料夾只屬於你。歸檔不會改變共享對象看到的內容。',
+            namePlaceholder: '資料夾名稱',
+            create: '建立',
+            options: ({ name }) => `${name} 選項`,
+            expand: ({ name }) => `展開 ${name}`,
+            collapse: ({ name }) => `收合 ${name}`,
+            columnName: '名稱',
+            columnEdited: '編輯時間',
+            emptyInvite: '還沒有資料夾。把相關內容歸在一起；只有你看得到自己的歸檔方式。',
+            unavailable: '無法從此 Home 載入資料夾。所有內容皆不依資料夾列出。',
+            saveFailed: '變更未儲存。請再試一次。',
+            refusedCycle: '資料夾無法移到自身之內',
+            refusedUnavailable: '資料夾暫時無法使用',
+            refusedOther: '無法移到那裡',
+            showAllKinds: '在成品中顯示所有類型',
+            promptSearch: '搜尋提示詞與技能',
         },
         provenance: {
             savedByYou: '由你儲存',
@@ -1501,6 +1531,7 @@ const computerUseTranslations = { 'zh-Hant': {
             accessValue: '查看並使用',
             accessSee: '僅查看',
             displayUnavailable: '此電腦無法分享整個顯示器。',
+            wholeDisplayBody: ({ display }) => `${display} 上可見的一切都能被看到，包括其他 App 和通知。`,
             policyBoth: ({ agent }) => `${agent} 每次擷取畫面、點按和按鍵前都會詢問。`,
             policyInput: ({ agent }) => `${agent} 每次點按和按鍵前都會詢問。`,
             policyCapture: ({ agent }) => `${agent} 每次擷取畫面前都會詢問。`,
@@ -1540,6 +1571,27 @@ const computerUseTranslations = { 'zh-Hant': {
             notSharedBody: ({ agent }) => `選擇一個視窗讓 ${agent} 使用。`,
             moreA11y: '視窗選項',
             tabFallback: '電腦',
+            sourceComputer: '電腦',
+            sourceBrowser: '瀏覽器',
+            sourceA11y: '來源',
+            watchingA11y: ({ source, machine }) => `正在檢視 ${machine} 上的${source}`,
+            expandView: '展開檢視',
+            restoreView: '還原檢視',
+            dockView: '停駐檢視',
+            closeView: '關閉檢視',
+            moveView: '移動檢視',
+            resizeView: '調整檢視大小',
+            moveTopLeft: '移到左上角',
+            moveTopRight: '移到右上角',
+            moveBottomLeft: '移到左下角',
+            moveBottomRight: '移到右下角',
+            larger: '放大',
+            smaller: '縮小',
+            viewOptions: '檢視選項',
+            presentedElsewhereTitle: '正在浮動檢視中顯示',
+            presentedElsewhereBody: '停駐到這裡，讓它待在你的工作旁邊。',
+            closeHint: '關閉此檢視器。工作階段會繼續執行。',
+            captureOnly: '可以檢視此螢幕，但不允許用滑鼠和鍵盤控制。',
         },
         strip: {
             using: ({ target }) => `正在使用 ${target}`,
@@ -2645,6 +2697,7 @@ const filesPaneTranslations = { 'zh-Hant': {
         noChangedFilesReason: '工作副本與最近一次提交一致。',
         rootErrorTitle: ({ machine }) => `無法列出 ${machine} 上的檔案`,
         rootErrorTitleUnnamed: '無法列出檔案',
+        workspaceUnavailableReason: 'Happier 無法確定此工作階段的機器和資料夾。',
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "zh-Hant">;
 
 return { filesPaneTranslations };
@@ -4932,6 +4985,9 @@ const zhHant: typeof en = {
         settle: '結束',
         snoozedUntil: ({ time }) => `已延後到 ${time}`,
         more: '更多動作',
+        approvalNeeded: '需要你的核准',
+        approvalUntitled: '核准一項操作',
+        approvalAskedBy: ({ session }) => `來自 ${session}`,
     },
     popover: {
         moreInOther: ({ count }) => `其他工作階段中還有 ${count} 項`,
@@ -5516,8 +5572,8 @@ const pluralPl = Shared_personalHomeSettingsTranslations.pluralPl;
 const pluralRu = Shared_personalHomeSettingsTranslations.pluralRu;
 
 const zhHant = {
-    standardOnlyTitle: '僅使用標準連線',
-    standardOnlySubtitle: '此裝置上的新連線使用標準路徑。進行中的傳輸沿目前路徑完成。',
+    standardOnlyTitle: '透過 Home 位址連線',
+    standardOnlySubtitle: '在此裝置上使用各個 Home 的位址，而不是點對點連線。',
     installOrUpdateAction: '安裝或更新個人 Home', startAction: '啟動個人 Home', stopAction: '停止個人 Home',
     defaultHomeLabel: '個人 Home', homeTitle: 'Home', canonicalAddress: 'Home 地址', identityComparison: '目前的 Home', identityComparisonMatch: '一致', identityComparisonMismatch: '不一致', identityComparisonUnknown: '無法確認',
     unknownSize: '大小未知', unknownTimestamp: '時間戳未知', restoreBackupTitle: '備份', identityTitle: 'Home 身分', identityUnavailable: '身分無法使用', restoreBackupDate: '建立時間', restoreCompatibility: '相容性', restoreCompatible: '相容', restoreCompatibilityVerified: '已由此版本驗證', restoreBackupSize: '大小', restoreReplacementNotice: '目前的 Home 資料將被取代。經驗證的復原備份將予以保留。', restoreConfirmTitle: '取代並復原此個人 Home？', restoreConfirmAction: '取代並復原', relocateConfirmTitle: '移動此個人 Home？', relocateConfirmBody: '經驗證的副本在目的地啟用前，目前的 Home 將會停止。', relocateDestination: '目的地', relocateConfirmAction: '移動 Home', recoverRestoreTitle: '要復原中斷的復原嗎？', recoverRestoreBody: '使用保留的復原資料回復中斷的復原。', recoverRestoreAction: '復原操作', eraseDataTitle: '要刪除個人 Home 資料嗎？', eraseHomeTarget: 'Home', eraseDataBody: '這與解除安裝不同，只會永久刪除以下已解析的 Home 路徑：', estimatedSize: '估計大小', summaryTitle: '個人 Home', footer: '你的 Home 會保留在此電腦上。這些操作不會變更其他 Home。', statusTitle: '狀態', notAvailable: '無法使用', storageTitle: '儲存空間', masterSecretTitle: 'Home 存取密鑰', masterSecretPresent: '存在', masterSecretUnavailable: '無法使用', inspectAction: '重新整理 Home 詳細資料', actionsTitle: '備份與還原', protectionTitle: '保護', backupsSectionFooter: '備份包含可讀取的對話、Home 資料、受信任裝置狀態及 Home 存取密鑰。請只將其儲存在你信任的位置。', lastBackupTitle: '上次備份', lastBackupUnknown: '上次備份未知', backupsTitle: '備份封存', backupAction: '立即備份', backupSubtitle: '建立並驗證純文字 Home 封存。', exportBackupAction: '匯出備份…', exportBackupSubtitle: '在你選擇的位置建立經驗證的備份。', verifyAction: '驗證備份…', verifySubtitle: '檢查封存而不復原。', restoreAction: '復原…', restoreSubtitle: '在取代 Home 資料前驗證備份。', relocateAction: '移動 Home…', relocateSubtitle: '將此 Home 移動到受管理的電腦。', relocationFinishAction: '完成移動', relocationReturnAction: '返回原始 Home', relocationFinishSubtitle: '驗證目的地後完成移動此 Home。', relocationReturnSubtitle: '保留原始 Home 作為使用中的位置。', recoverRestoreSubtitle: '可以明確回復中斷的復原。', restoreRecoveryWarningTitle: '復原需要修復', restoreRecoveryWarningBody: '復原狀態不明確。不會執行自動變更。請先查看診斷，再修復此 Home。', restoreCleanupWarningTitle: '復原清理需要注意', restoreCleanupWarningBody: 'Home 已復原，但自動清理尚未完成。請查看診斷資訊並重試 Home 操作。', backupVerified: '備份已驗證', backupNeedsAttention: '備份已驗證；Home 重新啟動需要注意', backupHomeReady: 'Home 已重新啟動', backupRevealAction: '顯示備份', restoreResultTitle: '復原結果', restoreOutcomeRecoveryRequired: '需要復原', restoreOutcomeRolledBack: '復原已回復', restoreOutcomeRestored: 'Home 已復原', advancedTitle: '進階', advancedFooter: '此電腦的執行環境控制與診斷。', restartAction: '重新啟動個人 Home', openDataLocationAction: '開啟 Home 資料位置', openLogsAction: '開啟執行環境記錄', removeProfileAction: '從 Happier 移除 Home', removeProfileSubtitle: '移除此設定檔；執行環境資料會保留在此電腦上。', removeProfileTitle: '要移除個人 Home 設定檔嗎？', removeProfileBody: '這會移除設定檔，但保留執行環境與資料。', uninstallRuntimeAction: '解除安裝執行環境，保留資料', uninstallRuntimeSubtitle: '移除服務與二進位檔；Home 資料會保留。', deleteHomeDataTitle: '刪除 Home 資料', removeSectionFooter: '解除安裝會保留 Home 資料。永久刪除是單獨確認的操作。', eraseDataAction: '永久刪除個人 Home 資料', eraseDataSubtitle: '與解除安裝分開。永久刪除已解析的 Home 資料。', eraseResultTitle: 'Home 資料已刪除', eraseStoppedHome: '執行中的 Home 已停止', eraseHomeAlreadyStopped: 'Home 已經停止', eraseRemainingPaths: '無法移除', progressTitle: '個人 Home 操作', dismissResult: '關閉',
@@ -6222,12 +6278,12 @@ const translated = Shared_profilesPageTranslations.translated;
 
 const profilesPageTranslations = { 'zh-Hant': translated({
         profilesPage: {
-            searchPlaceholder: '搜尋設定檔',
-            emptyTitle: '還沒有設定檔',
-            newProfileTitle: '新設定檔',
+            searchPlaceholder: "搜尋啟動設定檔",
+            emptyTitle: "尚無啟動設定檔",
+            newProfileTitle: "新啟動設定檔",
             notFoundTitle: '此設定檔已不存在',
             notFoundDescription: '它可能已在另一台裝置上被刪除。',
-            backToProfiles: '返回設定檔',
+            backToProfiles: "返回啟動設定檔",
             discardDraft: '捨棄',
             detailDescription: '新工作階段使用此設定檔啟動時生效。',
             builtInDetailDescription: '預設設定檔。儲存變更會建立你自己的副本。',
@@ -6239,6 +6295,7 @@ const profilesPageTranslations = { 'zh-Hant': translated({
             environmentDescription: '使用此設定檔啟動工作階段時設定的環境變數。值可以參照機器上的變數。',
             descriptionTitle: '描述',
             descriptionHint: '選填。選擇此設定檔時顯示。',
+            modelRequiresAgent: '請先選擇偏好的代理，再選擇其模型。',
         },
     }) };
 
@@ -6426,12 +6483,23 @@ const rolesTranslations = { 'zh-Hant': {
             label: '角色',
             title: '角色',
             searchPlaceholder: '搜尋角色…',
-            empty: '沒有相符的角色。',
+            empty: '還沒有角色。',
+            emptyWithManage: '還沒有角色。可在「管理角色」中新增。',
             footer: '角色自帶指令、引擎和執行方式，因此工作流程可以隨處使用。',
             manage: '管理角色',
             engineAppliesOnStart: '啟動此角色時才會使用其引擎',
             defaultEngine: '預設代理',
             activeAccessibilityLabel: '角色，正在使用某個角色',
+        },
+        builtIn: {
+            orchestrator: "主導一項工作，並把部分交給其他代理",
+            planner: "在動手之前先擬定計畫",
+            builder: "完成修改並確認它能正常運作",
+            reviewer: "審查修改並指出需要修正之處",
+            judge: "裁定有爭議的發現，並判斷目標是否達成",
+            second_opinion: "繼續之前的一次獨立檢查",
+            scout: "瀏覽程式碼並回答東西在哪裡",
+            approval_reviewer: "處理低風險的權限請求，其餘交給你決定",
         },
         settings: {
             description: '誰來做每一類工作。工作流程和編排者請求一個角色；角色決定如何執行。',
@@ -6453,7 +6521,7 @@ const rolesTranslations = { 'zh-Hant': {
             instructionsTitle: '指令',
             instructionsDescription: '它做什麼、何時使用以及如何回報。代理分派工作時會讀取這些內容。',
             resetToDefault: '恢復預設',
-            readOnlyNote: '以檢視權限與你共用。你對引擎和設定檔的選擇只屬於你。',
+            readOnlyNote: '原始角色是唯讀的。在此自訂你的指令；重設可還原原始內容。',
             howItRunsTitle: '執行方式',
             engineTitle: '引擎',
             engineDescription: '代理、模型和推理強度。',
@@ -6502,7 +6570,7 @@ const rolesTranslations = { 'zh-Hant': {
             ladderRoot: '你啟動的工作',
             ladderRootDetail: '由你啟動 · 永不受限',
             ladderLevel: ({ level }) => `第 ${level} 層`,
-            ladderLevelDetail: '由代理啟動',
+            ladderLevelDetail: ({ level }) => (level === 1 ? "由你發起的工作中的代理啟動" : `由第 ${level - 1} 層的代理啟動`),
             ladderRefused: '再委派一次',
             ladderRefusedDetail: ({ level }) => `第 ${level} 層 · 遭拒；代理自己完成`,
         },
@@ -6740,7 +6808,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const zhHant: SecretsSettingsCopy = {
-    purpose: '你的代理和 MCP 伺服器使用的 API 金鑰與權杖。儲存後，值不會再次顯示。',
+    purpose: "供代理程式和 MCP 伺服器使用的 API 金鑰與權杖。儲存後不再顯示其值。",
     yoursTitle: '你的密鑰',
     yoursDescription: '你儲存或擁有的密鑰。在 Happier 需要金鑰的地方選擇它們。',
     sharedWithYouTitle: '與你共用',
@@ -6784,6 +6852,7 @@ const sessionAccessTranslations = { "zh-Hant": {
         accessibleSummary: ({ title, label }: { title: string; label: string }) => `${title}: ${label}`,
         accessibleControl: ({ name, control, value }: { name: string; control: string; value: string }) => `${name}, ${control}, ${value}`,
         title: "工作階段存取權限",
+        context: "工作階段情境",
         search: "搜尋人員、群組或團隊",
         hasAccess: "擁有存取權限",
         yourAccess: "你的存取權限",
@@ -7260,6 +7329,7 @@ const sessionCollaborationPaneTranslations: Pick<Record<'en' | 'ca' | 'de' | 'es
         newLinkReplaces: '新連結建立後,目前的連結將失效。',
         linkDenied: '只有管理此工作階段的人才能建立公開連結。',
         linkLoadFailed: '無法檢查公開連結。',
+        linkUnavailable: '此 Home 不支援公開連結。請聯絡管理員設定公開連結託管。',
         justYouTitle: '一起處理這個工作階段',
         justYouBody: ({ home }) => `與 ${home} 上的人分享。他們可以關注進度、在這裡討論,並在你離開時接手。`,
         share: '分享',
@@ -7901,7 +7971,7 @@ const sessionListFilterTranslations = { zhHant: translated({
         filtersShowBothSummary: '工作階段和執行', filtersStartedByNone: '未選擇發起者',
         filtersStartedBy: '發起者', filtersStartedByYou: '你', filtersStartedByTriggers: '觸發器', filtersStartedByAgents: '代理',
         filtersRunsNeedingYouAlwaysShow: '需要你處理的執行一律顯示',
-        filtersMyWork: '我的工作', filtersLegacyOwnerDirect: '我擁有和直接共享的', filtersAssignedToMe: '指派給我', filtersFollowing: '正在關注',
+        filtersMyWork: '我的工作', filtersLegacyOwnerDirect: '我的工作', filtersAssignedToMe: '指派給我', filtersFollowing: '正在關注',
         filtersInvolvingMe: '與我相關', filtersAllAccessible: '所有可存取', filtersAttention: '待處理',
         filtersAttentionAny: '不限', filtersAttentionNeedsMe: '僅顯示需要我處理的工作階段', filtersScopeNeedsMe: '需要我處理',
         filtersInactive: '非活躍工作階段', filtersInactiveShow: '顯示', filtersInactiveHide: '隱藏',
@@ -8087,6 +8157,16 @@ const Domain_sessionWorkTranslations = (() => {
 const en = Shared_sessionWorkTranslations.en;
 
 const zhHant: typeof en = {
+    scheduled: {
+        title: "已排程",
+        writesHere: "寫入此處",
+        empty: "沒有排程寫入此處的工作流程。",
+        step: ({ ordinal, title }) => `步驟 ${ordinal} · ${title}`,
+        provenanceWorkflowStep: ({ source, step }) => `來自 ${source} · 步驟 ${step}`,
+        notifyOnlyReported: "僅在代理程式回報了內容時",
+        notifyOnlyReportedDescription: "代理程式未傳回文字時略過通知。",
+        notifyOnlyReportedNeedsResult: "使用先前代理程式步驟的文字結果作為訊息。",
+    },
     workerUpdate: {
         settled: "已完成",
         stalled: "已停滯",
@@ -8114,6 +8194,7 @@ const zhHant: typeof en = {
         positionUnder: ({ position, total, parent }) => `${parent} 下的第 ${position}/${total} 項`,
     },
     actions: {
+        showInTranscript: '在對話記錄中顯示',
         makeOrchestrator: '設為編排者',
         makeOrchestratorSubtitle: '此工作階段負責規劃、委派並回報',
         makeOrchestratorFailed: "無法將此工作階段設為編排者",
@@ -8160,6 +8241,8 @@ const zhHant: typeof en = {
     list: {
         level: ({ level }) => `第 ${level} 層`,
         subSessions: ({ count }) => `${count} 個子工作階段`,
+        showReports: ({ name, count }) => (count > 0 ? `顯示 ${name} 下的 ${count} 個工作階段` : `顯示 ${name} 下的工作階段`),
+        hideReports: ({ name }) => `隱藏 ${name} 下的工作階段`,
         reportsWorking: ({ count }) => `${count} 個進行中`,
         reportsNeedYou: ({ count }) => `${count} 個子工作階段需要你`,
     },
@@ -8214,6 +8297,11 @@ const Domain_settingsMachinesTranslations = (() => {
 const en = Shared_settingsMachinesTranslations.en;
 
 const zhHant: typeof en = {
+    defaultsTitle: "機器預設設定",
+    localVirtualMachines: "本機虛擬機器",
+    runningOnly: "僅執行時計費的雲端機器",
+    stoppedBilled: "停止時仍計費的雲端機器",
+    billingUnknown: "計費方式未知",
     pageDescription: '執行工作階段的電腦，以及在它們之間進行選擇的機器池。',
     thisComputerTitle: '這台電腦',
     thisComputerRowSubtitle: '背景服務和命令列',
@@ -8721,7 +8809,7 @@ const settingsSessionPagesTranslations: Pick<Record<
                 timingWhenIdle: '全部閒置時',
                 layoutSection: '輸入框版面',
                 actionBarTitle: '動作列',
-                actionBarAutoDescription: '寬螢幕上標籤會換到第二行，手機上可橫向捲動。',
+                actionBarAutoDescription: '控制項依可用空間排列，必要時換行。',
                 actionBarWrapDescription: '放不下時標籤會換到第二行。',
                 actionBarScrollDescription: '標籤維持一行，橫向捲動查看其餘部分。',
                 actionBarCollapsedDescription: '標籤收進選單，留出最多的輸入空間。',
@@ -8755,6 +8843,10 @@ const shareSheetTranslations = { 'zh-Hant': {
         confirmRemove: '確認移除',
         removedAnnouncement: ({ name }) => `${name} 已不再有存取權`,
         browseAll: '瀏覽全部',
+        browsePeople: '瀏覽所有人員',
+        browseTeams: '瀏覽所有團隊',
+        browseGroups: '瀏覽所有團隊群組',
+        membersOnlyLink: '複製連結供已有存取權限的人使用。',
         allLoaded: '已載入全部結果',
         copyLink: '複製連結',
         linkCopied: '已複製連結',
@@ -8771,19 +8863,28 @@ const shareSheetTranslations = { 'zh-Hant': {
             levels: { canUse: '可使用', canRead: '可檢視', canEdit: '可編輯', admin: '管理' },
             help: {
                 workflowUse: '檢視並執行',
-                roleUse: '使用；各自的變更保留在各自的設定中',
+                roleUse: '— 各自的變更保留在各自的設定中',
                 profileUse: '用它啟動工作階段',
                 documentUse: '在其任何裝置上開啟和複製',
                 promptUse: '在其工作階段中使用',
                 boardUse: '檢視看板；每張卡片只開啟其已有權限的內容',
+                dashboardUse: '檢視此儀表板；每個元件只顯示你已有權限開啟的內容。',
                 editForEveryone: '為所有共享對象變更',
-                adminOwnerShares: '變更並管理共享；只有擁有者可以指定管理員',
+                adminOwnerShares: '變更並管理共享',
             },
             notes: {
                 personalRuns: '執行與觸發器歸啟動它們的人所有。',
                 teamRuns: '團隊能看到每次執行。',
                 roleLive: '你的變更會同步給所有共享對象。',
-                profileSecrets: '機密值永不傳輸 · 連結已儲存的機密',
+                profileSecrets: '設定檔參照已儲存的機密；機密值不會傳輸。',
+                dashboardAccess: '你新增的人會以自己的身分開啟它。元件、定義、連線、機器及儲存庫各自需要獨立的存取權限。',
+            },
+            privateChoices: {
+                title: '私人連線選擇',
+                account: ({ widget, service }) => `${widget} 使用你的 ${service} 帳戶`,
+                letViewersPick: '讓檢視者選擇',
+                removeChoice: '移除選擇',
+                authoredInput: ({ widget }) => `編輯 ${widget}，在分享前移除私人輸入。`,
             },
             errors: {
                 unavailable: '此處尚不支援共享。',
@@ -10061,6 +10162,8 @@ type VoicePresenceTranslation = Shared_voicePresenceTranslations.VoicePresenceTr
 
 const voicePresenceTranslations = { 'zh-Hant': {
         welcomeText: "你好，我在聽。你想做什麼？",
+        customVoice: '自訂聲音',
+        boundWelcomeText: ({ name }: Readonly<{ name: string }>) => `你好，你正在與${name}交談。你想做什麼？`,
         greetingLiteralUnavailable: "使用此回覆語言時，服務會等待你先開口。",
         title: '語音',
         howYouTalk: "說話方式",
@@ -10636,7 +10739,7 @@ type SavedCopy = Shared_walkthroughSavedTranslations.SavedCopy;
 
 const en = Shared_walkthroughSavedTranslations.en;
 
-const walkthroughSavedTranslations = { 'zh-Hant': { edit: '編輯導覽', title: '導覽標題', stopTitle: '步驟標題', prose: '說明', refine: '改善', instructions: '需要更改什麼？', moveUp: '上移', moveDown: '下移', mergeNext: '與下一步驟合併', addSummary: '新增摘要', addCommitPlan: '提議提交', updated: '已更新儲存的結果', conflict: '此導覽已在其他地方變更。草稿已保留。請載入最新版本並檢查，然後再次儲存。', reload: '載入最新版本', missingStop: "最新導覽中已沒有此步驟。草稿已保留，請選擇其他步驟以繼續。", applicationLocked: '正在套用提交。編輯已暫停。' } } satisfies Pick<Record<string, SavedCopy>, "zh-Hant">;
+const walkthroughSavedTranslations = { 'zh-Hant': { discuss: '討論', message: '訊息', edit: '編輯導覽', title: '導覽標題', stopTitle: '步驟標題', prose: '說明', refine: '改善', instructions: '需要更改什麼？', moveUp: '上移', moveDown: '下移', mergeNext: '與下一步驟合併', addSummary: '新增摘要', addCommitPlan: '提議提交', updated: '已更新儲存的結果', conflict: '此導覽已在其他地方變更。草稿已保留。請載入最新版本並檢查，然後再次儲存。', reload: '載入最新版本', missingStop: "最新導覽中已沒有此步驟。草稿已保留，請選擇其他步驟以繼續。", applicationLocked: '正在套用提交。編輯已暫停。' } } satisfies Pick<Record<string, SavedCopy>, "zh-Hant">;
 
 return { walkthroughSavedTranslations };
 })();
@@ -11048,6 +11151,8 @@ const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'
         callWebhook: "呼叫 Webhook",
         runCommand: "執行命令",
         commandValuesInEnv: "透過環境變數傳遞工作流程的值。命令文字按原樣執行。",
+        waitForWork: "等待工作",
+        waitForWorkDescription: "等待所選工作達到指定狀態",
         artifactCreate: "建立文件",
         artifactGet: "讀取文件",
         artifactList: "列出文件",
@@ -11123,9 +11228,8 @@ type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBu
 const en = Shared_workflowBuiltinTranslations.en;
 
 const zhHant: WorkflowBuiltinTranslations = {
-    runsInsideSession: '在工作階段中執行',
-    keepGoing: { title: '持續直到完成' },
-    reviewAndConverge: { title: '審查並收斂', apply: '套用', verifyAndFix: '驗證並修復', verifyOnly: '僅驗證', rounds: '停止前的輪數' },
+    keepGoing: { title: '持續直到完成', description: '持續進行，直到達成目標' },
+    reviewAndConverge: { title: '審查並收斂', description: '審查直到審閱者達成共識', apply: '套用', verifyAndFix: '驗證並修復', verifyOnly: '僅驗證', rounds: '停止前的輪數' },
     planWithAPanel: { title: '由小組規劃', description: '多個代理並行規劃，然後計畫等待你的審查。', inputs: { request: '請求', requestPlaceholder: '小組應規劃什麼？', engines: '規劃者' } },
     openAPullRequest: { title: '開啟提取請求', description: '先徵詢第二意見，再開啟提取請求。如果第二意見不同意，它會等待你。', inputs: { base: '基礎分支', title: '提取請求標題', body: '描述', question: '給第二意見的問題' } },
 };
@@ -11191,7 +11295,8 @@ const zhHant: WorkflowEditorPageTranslations = {
         workflowSub: '執行另一個工作流程 · 其步驟顯示在此次執行中',
         builtin: '內建',
         waitTitle: '等待你',
-        waitSub: '此通道會等待你繼續。',
+        waitSub: '此通道會等待你繼續',
+        waitSubRoot: '此工作流程會等待你繼續。',
         waitPlaceholder: '你需要在這裡檢查或決定什麼？',
         returnsText: '傳回文字',
         returnsFields: ({ fields }) => `傳回 ${fields}`,
@@ -11203,11 +11308,18 @@ const zhHant: WorkflowEditorPageTranslations = {
         actionSearch: '搜尋動作',
         workflowSearch: '搜尋工作流程',
         libraryGroup: '你的工作流程',
-        noAgentTurn: '無代理回合。',
+        noAgentTurn: '通知、審查、發布 — 無代理回合',
+        agentSub: '給代理的一條指示',
+        parallelSub: '同時執行的分支',
+        loopSub: '逐項、重複指定次數，或直到…',
+        ifSub: '僅在結果滿足條件時',
+        actionSourcePhone: '你的手機',
+        actionSourceReview: '審查引擎',
         useNumber: '使用數字',
         actionUnavailable: ({ action }: { action: string }) => `${action} 在此無法使用。`,
         childInputs: ({ workflow }: { workflow: string }) => `輸入來自 ${workflow}。`,
         retryLoading: "重試載入",
+        openWorkflow: ({ workflow }) => `開啟 ${workflow}`,
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} 會執行此工作流程，因此無法在其中執行。`,
         maxFromInput: ({ name }: { name: string }) => `來自輸入 · ${name}`,
         useInput: ({ name }: { name: string }) => `使用輸入 ${name}`,
@@ -11226,10 +11338,12 @@ const zhHant: WorkflowEditorPageTranslations = {
     settings: '工作流程設定',
     settingsSubtitle: '除非步驟自行變更，否則都使用這些設定。',
     deleteWorkflow: '刪除工作流程',
-    deleteBody: '過去的執行仍保留在記錄中。',
+    deleteBody: '過去的執行會保留。',
+    discardChangesBody: '回到上次儲存的版本。復原可找回你的變更。',
     deleteFailedTitle: '無法刪除工作流程',
     changedForStep: '已為此步驟變更',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '執行前還有 1 處需要修正' : `執行前還有 ${count} 處需要修正`),
+    readyToRun: '就緒',
     saveStatus: {
         notSaved: '尚未儲存',
         unsaved: '有未儲存的變更',
@@ -11295,6 +11409,7 @@ const zhHant: WorkflowEditorPageTranslations = {
         dropContinue: ({ session }) => `在此步驟中繼續 ${session}`,
         dropRefused: ({ session, machine, where }) => `${session} 在 ${machine} 上；此工作流程在 ${where} 上執行。`,
         lanes: ({ count }) => `並排 · ${count} 條通道`,
+        laneCount: ({ count }) => `${count} 條通道`,
         lane: ({ position }) => `通道 ${position}`,
         forEachIn: ({ source }) => `對 ${source} 中的每個項目`,
         atATime: ({ count }) => `每次 ${count} 個`,
@@ -11322,8 +11437,14 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHant"> = { zhHant: {
+        notifyWhenAgentWaits: { title: "在代理等待時通知我", description: "選擇一個工作階段，每當其中的代理需要你的輸入時，就會收到通知。" },
+        dailySummaryInSession: { title: "在此工作階段中每日摘要", description: "選擇一個工作階段，每天09:00產生摘要。" },
+        memoryUpkeepInSession: { title: '記憶維護', description: '每天09:00檢查此工作階段的記憶，並更新有用的資訊。' },
+        installDepsInWorktree: { title: "在新工作樹中安裝相依套件", description: "建立一個新工作樹，並在其中執行可編輯的安裝指令。" },
+        testAfterEveryTurn: { title: "每回合結束後測試", description: "選擇一個工作階段，在每回合完成、失敗或取消後執行可編輯的測試指令。" },
+        noSessions: "啟動一個工作階段以使用此範本。",
         nodes: { ask: '提問', 'review-correctness': '審查正確性', 'review-tests': '審查測試', summarize: '彙總發現', analyze: '分析', review: '審查', fix: '修復', check: '檢查', classify: '分類', reply: '起草回覆', digest: '彙總變更' },
-        title: '從範例開始', fromExample: '使用範例', description: '每個範例都以草稿開啟。選擇「立即執行」之前不會執行。', use: '使用此範例', chooseSession: '選擇工作階段…', builtInDescription: 'Happier 內建。複製後即可修改。', stepCount: ({ count }) => `${count} 個步驟`,
+        title: '從範例開始', fromExample: '使用範例', description: '每個範例都以草稿開啟。選擇「立即執行」之前不會執行。', sessionDescription: '每個都會在此工作階段以草稿開啟。開啟之前不會執行。', use: '使用此範例', chooseSession: '選擇工作階段…', builtInDescription: 'Happier 內建。複製後即可修改。', stepCount: ({ count }) => `${count} 個步驟`,
         askOnce: { title: '問一次', description: '一個步驟：向代理提問並取得回答。' },
         reviewPullRequest: { title: '審查提取請求', description: '兩位審查者並行工作，然後彙總所有發現。' },
         workThroughEachFile: { title: '逐個處理檔案', description: '逐個分析清單中的檔案，然後審查修改。' },
@@ -11396,7 +11517,7 @@ const workflowRunCompositionTranslations = {...Domain_workflowRunCompositionTran
 
 const en = Shared_workflowStartTranslations.en;
 
-const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHant"> = { zhHant: { ...workflowRunRoleTranslations.zhHant, ...workflowRunCompositionTranslations.zhHant, neededNamed: ({ name }) => `輸入 · 需要${name}`, addToStart: ({ name }) => `新增${name}後即可開始`, workflow: '工作流程', inputs: '輸入', start: '開始', starting: '正在開始…', stillStarting: '仍在開始…', needed: ({ count }) => `輸入 · 還需 ${count} 項`, required: '開始前必填', preview: '將執行的內容', unsaved: '包含未儲存的變更', remove: '返回一般工作階段', search: '尋找工作流程', builtin: '內建', library: '你的程式庫', noInputs: '無需輸入', asksFor: ({ names }) => `需要：${names}`, optional: '選填 — 留空', defaultValue: ({ value }) => `預設值：${value}` } };
+const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHant"> = { zhHant: { ...workflowRunRoleTranslations.zhHant, ...workflowRunCompositionTranslations.zhHant, shortcutStarts: '開始', neededNamed: ({ name }) => `輸入 · 需要${name}`, addToStart: ({ name }) => `新增${name}後即可開始`, workflow: '工作流程', inputs: '輸入', start: '開始', starting: '正在開始…', stillStarting: '仍在開始…', needed: ({ count }) => `輸入 · 還需 ${count} 項`, required: '開始前必填', preview: '將執行的內容', unsaved: '包含未儲存的變更', remove: '返回一般工作階段', search: '尋找工作流程', builtin: '內建', library: '你的程式庫', noInputs: '無需輸入', asksFor: ({ names }) => `需要：${names}`, optional: '選填 — 留空', defaultValue: ({ value }) => `預設值：${value}` } };
 
 return { workflowStartTranslations };
 })();
@@ -11472,7 +11593,6 @@ const zhHant: WorkflowsDestinationTranslations = {
         share: '共用…',
     },
     deleteTitle: '要刪除此工作流程嗎？',
-    deleteBody: '過去的執行會保留在歷史中。',
     deleteFailedTitle: '無法刪除工作流程',
     exportFailedTitle: '無法匯出工作流程',
     gate: {
@@ -11502,6 +11622,15 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const zhHant: WorkflowTriggersCopy = {
+    activity: {
+        create: "根據此事件建立觸發條件",
+        test: "測試此觸發條件",
+        matched: "此事件相符",
+        noMatch: "此事件不相符",
+        sourceMismatch: "此事件來自其他來源",
+        tooOld: "此事件已超出觀察時限",
+        invalid: "請先設定事件再進行測試",
+    },
     pullRequest: {
         label: "提取要求",
         description: "新增此觸發器會將提取要求連結至此工作階段。",
@@ -11521,6 +11650,7 @@ const zhHant: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · 另有 ${count} 個`,
     },
     kind: {
+        pluginEvent: "外掛程式事件",
         sessionStarts: '當工作階段開始時',
         sessionArchived: '當工作階段被封存時',
         schedule: '依排程',
@@ -11540,6 +11670,9 @@ const zhHant: WorkflowTriggersCopy = {
         templateDecryptionFailed: '無法解密觸發器',
         machines: ({ count }: Count) => `${count} 台機器`,
         nextRun: ({ time }: { time: string }) => `下次執行：${time}`,
+        nextMinutes: ({ count }: Count) => `${count} 分鐘後`,
+        nextHours: ({ count }: Count) => `${count} 小時後`,
+        nextDays: ({ count }: Count) => count === 1 ? '明天' : `${count} 天後`,
         steps: ({ count }) => (count === 1 ? `${count} 個步驟` : `${count} 個步驟`),
         off: '已關閉',
         running: '執行中',
@@ -11557,6 +11690,7 @@ const zhHant: WorkflowTriggersCopy = {
         info: '發生某事時在此工作階段中執行的內容。它們留在此工作階段中，不會出現在你的資料庫中。',
         saveFailed: '無法儲存此觸發器。你的變更仍在這裡。',
     },    kindDescription: {
+        pluginEvent: "在外掛程式觀察到事件時執行。",
         turnEnds: '在你或與你協作的代理完成一輪之後。',
         needsYou: '每當此工作階段等待你時，包括由工作流程或「持續到完成」驅動時。',
         sessionArchived: '在你封存此工作階段時執行一次。',
@@ -11591,6 +11725,8 @@ const zhHant: WorkflowTriggersCopy = {
         choose: '選擇…',
     },
     popover: {
+        configureEvent: "設定事件",
+        editEvent: "編輯事件",
         saveAsWorkflow: '另存為工作流程',
         saveAsWorkflowDescription: '將這些步驟作為新工作流程開啟以供審查。此觸發器保留自己的步驟。',
         when: '何時',
@@ -11634,6 +11770,8 @@ const zhHant: WorkflowTriggersCopy = {
 const legacyTranslations = { zhHant: {
         editNotice: '建立於 Happier 0.2。開啟不會變更任何內容。',
         conversionBoundary: '此變更後僅在執行 Happier 0.3 或更新版本的機器上執行。',
+        reviewRequired: '需要你審核',
+        reviewConversionNotice: '儲存後，工作流程將以非端對端加密方式儲存，並恢復其已啟用的觸發器。工作階段仍保持端對端加密。',
         channelReplyRefusal: '此自動化有無法轉移的頻道回覆綁定。尚未轉換，原設定和你的編輯均保留。',
         notAvailable: '此自動化已無法使用。',
     } };
@@ -11648,7 +11786,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { 'zh-Hant': {
         checkoutRoot: '簽出根資料夾',
-        unavailableValue: '值無法使用', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? '工作階段上下文' : `最近${turns}回合工作階段`,
+        unavailableValue: '值無法使用', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? '工作階段上下文' : turns === 1 ? '最近一回合工作階段' : `最近${turns}回合工作階段`,
         tokensUsed: '已用權杖', goalTokenBudget: '目標權杖預算',
         trailingCount: ({ source, value }: { source: string; value: string }) => `連續符合${value}的${source}`,
         stopCondition: '已滿足停止條件', stopConditionArm: ({ arm }: { arm: number }) => `已滿足停止條件${arm}`,
@@ -11696,6 +11834,23 @@ const pluralPl = Shared_workflowTranslations.pluralPl;
 const pluralRu = Shared_workflowTranslations.pluralRu;
 
 const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
+    testRun: {
+        title: "測試執行",
+        savedNotice: "實際執行已儲存的版本。未儲存的編輯會留在這裡。",
+        resultsNotice: "已儲存版本的結果 · 最近一次執行。未儲存的編輯未參與執行。",
+        recordedDuration: ({ seconds }) => `記錄的耗時 · ${seconds} 秒`,
+        loading: "正在載入測試結果…",
+    },
+    runWhen: {
+        title: "執行條件",
+        success: "成功",
+        failure: "失敗",
+        always: "一律",
+        ifSuccess: "如果成功",
+        ifFailure: "如果失敗",
+        regardless: "無論結果如何",
+        previousStep: "相對於上一個步驟",
+    },
     title: '工作流程',
     newWorkflow: '新增工作流程',
     copyName: ({ name }: { name: string }) => `${name} 副本`,
@@ -11801,6 +11956,17 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
     loadFailedBody: '你的工作不受影響。準備好之後再試一次。',
     retry: '重試',
     contentUnavailable: '這台裝置無法顯示私密內容。',
+    readState: {
+        historyTitle: '無法讀取歷史記錄',
+        historyBody: '此執行由較早的 Happier 開發版本記錄，因此無法開啟其歷史記錄。請開始新的執行以繼續。',
+        encryptionTitle: '需要設定加密',
+        encryptionBody: '此內容採用端對端加密。請為此帳戶設定加密後再開啟。',
+        keysTitle: '正在等待金鑰',
+        keysBody: '這台裝置尚未取得此執行的加密金鑰。金鑰可用後請重試。',
+        storageTitle: '執行儲存空間無法使用',
+        storageBody: 'Happier 無法存取執行儲存空間。請檢查連線後重試。',
+        openSettings: '開啟設定',
+    },
     contentReasons: {
         invalidHeader: '此工作流程儲存的資訊無效。',
         revisionMismatch: '此工作流程與儲存的修訂版本不一致。',
@@ -11859,7 +12025,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         undo: '復原',
         redo: '重做',
         historyRestoreRequiresSetup: '此事件需要重新設定。刪除後無法還原已儲存的私人設定。',
-        history: { edited: '編輯工作流程', agent: '代理修改', description: '編輯描述', where: '變更執行位置', target: '變更步驟執行方式', triggers: '編輯觸發器', example: '插入範例', document: '編輯提示詞' },
+        history: { edited: '編輯工作流程', agent: '代理修改', description: '編輯描述', where: '變更執行位置', target: '變更步驟執行方式', triggers: '編輯觸發器', example: '插入範例', document: '編輯提示詞', renameWorkflow: '重新命名工作流程', renameStep: '重新命名步驟', renameLane: '重新命名分支' },
         undoAction: ({ change }: { change: string }) => `復原：${change}`,
         redoAction: ({ change }: { change: string }) => `重做：${change}`,
         removedBlock: ({ block }) => `已移除 ${block}`,
@@ -11870,8 +12036,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         unnamedLoop: '迴圈',
         unnamedIf: '條件判斷',
         branch: '分支',
-        addBranch: '新增分支',
-        ifTrue: '條件成立時',
+        addBranch: '新增通道',
+        ifTrue: '則',
         otherwise: '否則',
         addOtherwise: '新增「否則」分支',
         evaluator: '判斷是否繼續',
@@ -11933,7 +12099,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         change: '變更',
         clear: '清除選擇',
         fieldPath: '欄位路徑',
-        explain: '最終輸出是這個工作流程結束時回傳的內容。完成的先後順序不會改變它。',
+        explain: '這個工作流程結束時回傳的內容。',
     },
 
     conversation: {
@@ -11987,7 +12153,13 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         operatorLte: '不大於',
         operatorGt: '大於',
         operatorGte: '不小於',
+        notFirstRound: '不是第一輪',
+        trailingCountAtLeast: ({ source, value, count }) => `${source} 連續 ${count} 次為 ${value}`,
+        loopRanOutOfRounds: ({ loop }) => `${loop} 已用完回合`,
+        loopEnded: ({ loop, outcome }) => `${loop} 已結束：${outcome}`,
+        loopStoppedBecause: ({ loop, condition }) => `${loop} 已停止，因為 ${condition}`,
         valuePlaceholder: '值',
+        literalPlaceholder: '輸入值',
         skippedReason: ({ block }) => `因為 ${block} 的條件不成立，已略過。`,
     },
 
@@ -12211,6 +12383,10 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         unsupported_persisted_attachment: '附加的媒體檔案在儲存前必須有持久參照。',
         conversation_workspace_mismatch: '這個對話和工作區無法一起繼續。',
         target_unavailable: '執行之前，請先為這個工作流程選擇一個代理。',
+        emptyPrompt: '寫下這一步要做什麼。',
+        emptyWaitPrompt: '寫下你需要在這裡檢查或決定什麼。',
+        fieldMissing: ({ field }) => `${field} 為必填。`,
+        fieldInvalid: ({ field }) => `${field} 需要有效的值。`,
     },
 
     problem: {
@@ -12365,7 +12541,7 @@ const zhHant = completeWorkspaceSyncTranslation({
     state: { loading: '正在檢查狀態…', starting: '正在準備', watching: '正在監視', flushing: '正在同步', paused: '已暫停', peerOffline: '離線', conflicted: '存在衝突', controllerUnavailable: '需要處理', engineUnavailable: '元件無法使用', error: '需要處理', stopped: '已停止', working: '正在處理…' },
     lastChecked: ({ at }) => `上次檢查：${at}`, endpoint: { source: ({ label }) => `來源 · ${label}`, destination: ({ label }) => `目標 · ${label}`, synced: ({ label }) => `同步端點 · ${label}` },
     error: { componentUnavailable: '此版本無法使用工作區同步。請安裝所需元件後重試。', machineOffline: '目標電腦無法使用。請重新連線後重試。', destinationNeedsPreparation: '開始同步前需要準備目標資料夾。', gitPreparationFailed: 'Happier 無法準備此 Git 工作區。請檢查目標位置後重試。', authorizationExpired: '工作區授權已過期。請重新開始操作。', rootNoLongerAuthorized: '工作區資料夾已變更，不再獲得授權。請先檢查同步關係，再重試。', conflictNeedsAttention: '此衝突已變更。請先重新整理，再選擇版本。', needsAttention: '工作區同步需要處理。請重新整理狀態後重試。' },
-    start: { blocked: { targetMachine: '請選擇目標電腦以繼續。', targetMachineOffline: '該電腦目前無法使用。請重新連線後重試。', relationshipUnavailable: '此同步關係已不再涵蓋這兩個資料夾。請選擇其他工作區選項。', sourceFolder: '無法安全同步此工作階段的資料夾。請選擇「不要移動檔案」以僅移交工作階段。', destinationFolder: '請選擇可以安全同步的目標資料夾。', workspaceOptions: '開始前請檢查工作區選項。' } },
+    start: { blocked: { targetMachine: '請選擇目標電腦以繼續。', targetMachineOffline: '該電腦目前無法使用。請重新連線後重試。', relationshipUnavailable: '此同步關係已不再涵蓋這兩個資料夾。請選擇其他工作區選項。', sourceFolder: '無法安全同步此工作階段的資料夾。請選擇「不要移動檔案」以僅移交工作階段。', destinationFolder: '請選擇有效的目標資料夾。', workspaceOptions: '開始前請檢查工作區選項。' } },
     engine: { checking: '正在檢查此電腦上的工作區同步…' },
     actions: { refresh: '重新整理狀態', syncNow: '立即同步', more: '工作區同步操作', pause: '暫停', resume: '繼續', terminate: '停止同步', openOnMachine: ({ machine }) => `在 ${machine} 上開啟`, openFolder: ({ label }) => `開啟 ${label} 資料夾`, keepLocal: '保留本機版本', keepRemote: '保留遠端版本', keepNamed: ({ side }) => `保留 ${side} 的版本` },
     terminate: { title: '移除工作區同步？', body: '同步將停止，相關關係也會被移除。兩個工作區中的檔案都會保留。' },

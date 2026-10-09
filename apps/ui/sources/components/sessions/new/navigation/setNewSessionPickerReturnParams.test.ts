@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { peekTempData, storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
+import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { SessionAuthoringExecutionTargetV2Schema } from '@happier-dev/protocol';
 
 import {
     buildNewSessionPickerFallbackHref,
@@ -120,6 +123,43 @@ describe('resolveNewSessionPickerReturnRouteKey', () => {
 });
 
 describe('setNewSessionPickerReturnParams', () => {
+    it('returns reviewed managed intent through the existing one-shot draft channel', () => {
+        const selection = createManagedMachineSelectionDraft({ selection: { kind: 'preset', homeId: 'srv_home', id: 'recipe', revision: 3 },
+            receipt: { controller: { machineId: 'controller', installationId: 'installation' },
+                launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Work', choices: {} },
+                optionStatus: 'current', prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'billed' },
+                retentionCapabilities: { supportedIntents: ['delete'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const staleTarget = SessionAuthoringExecutionTargetV2Schema.parse({ kind: 'machine', target: { serverId: 'home', machineId: 'old' } });
+        const dataId = storeTempData({ prompt: 'Keep my prompt', machineId: 'old', executionTarget: staleTarget } satisfies NewSessionData);
+        const dispatch = vi.fn();
+        setNewSessionPickerReturnParams({ navigation: { dispatch, getState: () => ({ index: 1, routes: [
+            { key: 'composer', name: '(app)/new/index' }, { key: 'picker', name: '(app)/new/pick/machine' },
+        ] }) }, router: { replace: vi.fn() }, currentParams: { dataId }, routeParams: { machineId: undefined, spawnServerId: 'home' },
+            managedMachineSelection: selection });
+        const returnedDataId = dispatch.mock.calls[0][0].payload.params.dataId as string;
+        expect(peekTempData<NewSessionData>(returnedDataId)).toEqual(expect.objectContaining({
+            prompt: 'Keep my prompt', executionTarget: null, managedMachineSelection: selection,
+        }));
+        expect(peekTempData<NewSessionData>(returnedDataId)?.machineId).toBeUndefined();
+        const temporaryTarget = { kind: 'temporary_computer', serverId: 'home', artifactTarget: 'darwin-arm64', workspace: null } as const;
+        setNewSessionPickerReturnParams({ navigation: { dispatch, getState: () => ({ index: 1, routes: [
+            { key: 'composer', name: '(app)/new/index' }, { key: 'picker', name: '(app)/new/pick/machine' },
+        ] }) }, router: { replace: vi.fn() }, currentParams: { dataId: returnedDataId }, routeParams: { machineId: undefined },
+            authoringExecutionTarget: temporaryTarget });
+        const temporaryDataId = dispatch.mock.calls[1][0].payload.params.dataId as string;
+        expect(peekTempData<NewSessionData>(temporaryDataId)).toEqual(expect.objectContaining({
+            prompt: 'Keep my prompt', executionTarget: temporaryTarget, managedMachineSelection: null,
+        }));
+        setNewSessionPickerReturnParams({ navigation: { dispatch, getState: () => ({ index: 1, routes: [
+            { key: 'composer', name: '(app)/new/index' }, { key: 'picker', name: '(app)/new/pick/machine' },
+        ] }) }, router: { replace: vi.fn() }, currentParams: { dataId: returnedDataId }, routeParams: { machineId: 'chosen' },
+            managedMachineSelection: null });
+        const machineDataId = dispatch.mock.calls[2][0].payload.params.dataId as string;
+        expect(peekTempData<NewSessionData>(machineDataId)).toEqual(expect.objectContaining({
+            prompt: 'Keep my prompt', executionTarget: undefined, managedMachineSelection: null,
+        }));
+        expect(dispatch.mock.calls[2][0].payload.params.machineId).toBe('chosen');
+    });
     it('preserves the exact draft identity through replace fallback', () => {
         const replace = vi.fn();
 

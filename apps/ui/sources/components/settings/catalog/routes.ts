@@ -8,6 +8,7 @@ export const SETTINGS_ROUTES = {
     secrets: '/settings/secrets',
     usage: '/settings/usage',
     machines: '/settings/machines',
+    machineDefaults: '/settings/machines/defaults',
     machinePoolsNew: '/settings/machines/pools/new',
     machinesAdd: '/settings/machines/add',
     machinesThisComputer: '/settings/machines/this-computer',

@@ -1,6 +1,11 @@
 
 
 export const en = {
+    defaultsTitle: "Machine defaults",
+    localVirtualMachines: "Local virtual machines",
+    runningOnly: "Cloud billed only while running",
+    stoppedBilled: "Cloud billed while stopped",
+    billingUnknown: "Billing unknown",
     pageDescription: 'The computers your sessions run on, and the pools that choose between them.',
     thisComputerTitle: 'This computer',
     thisComputerRowSubtitle: 'Background service and command line',

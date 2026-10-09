@@ -1,4 +1,5 @@
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { eraseAccountSettingsPluginSecretBindings } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { PluginAccountSettingsMutationResponseV1Schema, PluginAccountSettingsReadResponseV1Schema, PluginAccountSettingsStorageUnavailableV1Schema, PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
 
@@ -53,6 +54,7 @@ import {
     type AccountPluginSecretSettingsWriteResult,
 } from './scopedPluginAccountSecretSettingsAdapter';
 import { watchActiveScopedPluginSettingsChanges } from './scopedPluginSettingsChangeWatch';
+import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 
 type ActiveAccountRequestContext = Readonly<{
     target: ScopedPluginSettingsAccountTarget;
@@ -225,7 +227,29 @@ export async function eraseCurrentAccountPluginSecretBindings(input: Readonly<{
     pluginId: string;
     target: ScopedPluginSettingsAccountTarget;
     signal?: AbortSignal;
+    accountContext?: Pick<LazyActionAccountContext, 'serverIdentityId' | 'accountLifetime' | 'assertCurrent' | 'mutateRawSettings'>;
 }>): Promise<AccountPluginSecretSettingsEraseResult> {
+    const account = input.accountContext;
+    if (account) {
+        if (input.signal?.aborted || !account.accountLifetime.isCurrent()
+            || account.serverIdentityId !== input.target.serverIdentityId) return { status: 'unavailable' };
+        try {
+            account.assertCurrent();
+            let changed = false;
+            const result = await account.mutateRawSettings(raw => {
+                input.signal?.throwIfAborted();
+                account.assertCurrent();
+                const erased = eraseAccountSettingsPluginSecretBindings(raw, input.pluginId);
+                changed = erased.removedBindingCount > 0;
+                return { ...erased.settings };
+            }, { rebaseOnConflict: false, observeOutcome: true });
+            if (result.status === 'conflict') return { status: 'conflict' };
+            if (result.status === 'outcomeUnknown') return { status: 'outcomeUnknown' };
+            return { status: 'completed', changed };
+        } catch {
+            return { status: 'unavailable' };
+        }
+    }
     const context = captureActiveAccountRequestContext(input.target);
     if (!context) return { status: 'unavailable' };
     return eraseAccountPluginSecretSettingsBindings({

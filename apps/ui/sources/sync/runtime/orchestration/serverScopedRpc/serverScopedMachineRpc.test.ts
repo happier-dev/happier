@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import {
     RPC_METHODS,
     SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
@@ -15,6 +16,15 @@ import { socketRpcCodec } from '@happier-dev/sync-client';
 import { MachineEncryption } from '@/sync/encryption/machineEncryption';
 import { SecretBoxEncryption } from '@/sync/encryption/encryptor';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';
+import { Encryption } from '@/sync/encryption/encryption';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
+
+let machineContextOwner: Encryption;
+const machineContextAuthority = {
+    captureMachineEncryptionContext: (...args: Parameters<Encryption['captureMachineEncryptionContext']>) => machineContextOwner.captureMachineEncryptionContext(...args),
+    getMachineEncryptionContext: (...args: Parameters<Encryption['getMachineEncryptionContext']>) => machineContextOwner.getMachineEncryptionContext(...args),
+    removeMachineEncryption: (id: string) => machineContextOwner.removeMachineEncryption(id),
+};
 
 function createMachineEncryption() {
     const cipher = new MachineEncryption('machine-1', new SecretBoxEncryption(new Uint8Array(32).fill(17)), new EncryptionCache());
@@ -38,6 +48,7 @@ const machineRpcSpy = vi.hoisted(() => vi.fn<MachineRpcSpy>());
 const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
 const getReadyServerFeaturesSpy = vi.hoisted(() => vi.fn());
 const getCredentialsSpy = vi.hoisted(() => vi.fn());
+const homeCredentialMutationListeners = vi.hoisted(() => new Set<(event: { serverId: string }) => void>());
 const createEncryptionSpy = vi.hoisted(() => vi.fn());
 const listServerProfilesSpy = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotSpy = vi.hoisted(() => vi.fn());
@@ -71,7 +82,10 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/auth/storage/tokenStorage')>(),
-    subscribeHomeCredentialMutations: () => () => undefined,
+    subscribeHomeCredentialMutations: (listener: (event: { serverId: string }) => void) => {
+        homeCredentialMutationListeners.add(listener);
+        return () => { homeCredentialMutationListeners.delete(listener); };
+    },
     isTokenOnlyAuthCredentials: (credentials: {
         secret?: unknown;
         encryption?: unknown;
@@ -128,12 +142,14 @@ function findTelemetryEvent(name: string) {
 function mockScopedMachineFetch(machine: Readonly<{
     id: string;
     dataEncryptionKey: string | null;
-}>): void {
-    runtimeFetchWithServerReachabilitySpy.mockResolvedValue({
+    installationId?: string;
+    installationPublicKey?: string;
+}>, accountMode: 'e2ee' | 'plain' = 'e2ee'): void {
+    runtimeFetchWithServerReachabilitySpy.mockImplementation(async ({ url }: { url: string }) => ({
         ok: true,
         status: 200,
-        json: async () => ({ machine }),
-    });
+        json: async () => url.includes('/v1/account/encryption') ? { mode: accountMode, updatedAt: 1 } : { machine },
+    }));
 }
 
 function installDefaultPeerMediationFallback(): void {
@@ -208,13 +224,18 @@ describe('machineRpcWithServerScope', () => {
         expect(encryption.getMachineEncryption('machine-1')).toBeNull();
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
+        machineContextOwner = await Encryption.create(new Uint8Array(32).fill(17));
         resetRunnerCreatorMachineContentKeyTrustProjectionForTests();
+        // Device custody is an external persistent boundary; successful absence
+        // lets real Account-material trust resolution run beneath it.
+        vi.spyOn(deviceLocalStorage, 'readDeviceLocalStorageString').mockResolvedValue(null);
         getAppliedActiveServerSnapshotSpy.mockImplementation(() => getActiveServerSnapshotSpy());
         installDefaultPeerMediationFallback();
     });
 
     afterEach(() => {
+        homeCredentialMutationListeners.clear();
         vi.restoreAllMocks();
         machineRpcSpy.mockReset();
         createEphemeralSocketSpy.mockReset();
@@ -523,6 +544,148 @@ describe('machineRpcWithServerScope', () => {
         } finally { vi.useRealTimers(); }
     });
 
+    it.each(['daemon.filesystem.upload', 'daemon.filesystem.download'] as const)('keeps concrete transfer custody mounted while blocking approval is pending (%s)', async (actionId) => {
+        vi.useFakeTimers();
+        try {
+            getActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', generation: 1 });
+            getAppliedActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', generation: 1 });
+            getReadyServerFeaturesSpy.mockResolvedValue(createRootLayoutFeaturesResponse({ features: { machines: { transfer: { enabled: true } } } }));
+            let resolveResult!: (value: unknown) => void;
+            machineRpcSpy.mockImplementation(async (_machineId, _method, _params, options) => {
+                options?.onIssued?.();
+                return await new Promise(resolve => { resolveResult = resolve; });
+            });
+            const { callFilesystemTransferAction } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/filesystemTransferActionClient');
+            const pending = callFilesystemTransferAction({ actionId, machineId: 'machine-1', serverId: 'server-a',
+                input: { rootPath: '/repo', path: 'binary.dat' }, timeoutMs: 5_000 });
+            const settled = vi.fn();
+            void pending.then(settled, settled);
+            await vi.advanceTimersByTimeAsync(31_000);
+            expect(settled).not.toHaveBeenCalled();
+            resolveResult({ success: true, status: 'accepted', operationId: 'transfer-operation' });
+            await expect(pending).resolves.toMatchObject({ status: 'accepted' });
+            expect(createEphemeralSocketSpy).not.toHaveBeenCalled();
+        } finally { vi.useRealTimers(); }
+    });
+
+    it('keeps recovery Account custody independent of the completed upload signal and retires it on actual Home credential replacement', async () => {
+        listServerProfilesSpy.mockReturnValue([{ id: 'server-a', serverUrl: 'https://server-a.example.test' }]);
+        getActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', generation: 1 });
+        getCredentialsSpy.mockResolvedValue({ token: TOKEN_A });
+        const upload = new AbortController();
+        const { captureFilesystemTransferAccountScope } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/filesystemTransferAccountScope');
+        const account = await captureFilesystemTransferAccountScope('server-a', upload.signal);
+        try {
+            expect(account.accountId).toBe('account-a');
+            upload.abort();
+            expect(account.signal.aborted).toBe(true);
+            expect(account.accountLifetime.isCurrent()).toBe(true);
+            getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
+            for (const listener of [...homeCredentialMutationListeners]) listener({ serverId: 'server-a' });
+            expect(account.accountLifetime.isCurrent()).toBe(false);
+        } finally { account.dispose(); }
+        expect(homeCredentialMutationListeners.size).toBe(0);
+    });
+
+    it('refuses a public prepared entry descriptor without replacing its original export custody', async () => {
+        const { copyPreparedFilesystemFile } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/preparedFilesystemCopy');
+        await expect(copyPreparedFilesystemFile({ input: { kind: 'prepared_transfer',
+            source: { kind: 'entry_tree', serverId: 'server-a', machineId: 'source', rootPath: '/source', path: 'tree', sourceId: 'original-source',
+                sizeBytes: 1, sha256: 'a'.repeat(64), entryTree: { operationId: 'original-export', expectation: { kind: 'directory', fingerprint: 'b'.repeat(64) }, blobs: [] } },
+            destination: { serverId: 'server-a', machineId: 'destination', rootPath: '/destination', path: 'tree' }, overwrite: false, recursive: true },
+            acquireSourceCarrier: async () => { throw new Error('Replacement source carrier'); },
+            acquireDestinationCarrier: async () => { throw new Error('Replacement destination carrier'); },
+        })).resolves.toMatchObject({ success: false, status: 'failed', errorCode: 'filesystem_transfer_custody_required' });
+        expect(machineRpcSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(['file', 'entry_tree', 'entry_tree_unknown'] as const)('streams qualified copy bytes into the admitted import before acknowledging the source (%s)', async (mode) => {
+        getActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', generation: 1 });
+        getAppliedActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', generation: 1 });
+        getReadyServerFeaturesSpy.mockResolvedValue(createRootLayoutFeaturesResponse({ features: { machines: { transfer: { enabled: true } } } }));
+        const { createTransferRecipientKeyPair, createEncryptedTransferChunkEnvelope, decryptEncryptedTransferChunkEnvelope } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption');
+        const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        const binary = new Uint8Array([0, 255, 128, 42]);
+        const bytes = mode === 'file' ? binary : new TextEncoder().encode('{"entry":".hidden/binary.dat","blob":"copy-blob"}');
+        const hash = async (payload: Uint8Array<ArrayBuffer>) => Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', payload)), byte => byte.toString(16).padStart(2, '0')).join('');
+        const sha256 = await hash(bytes);
+        const blobSha256 = await hash(binary);
+        const expectation = { kind: 'directory' as const, fingerprint: 'a'.repeat(64) };
+        const entryTree = { operationId: 'copy-source', expectation, blobs: [{ transferId: 'copy-blob', sizeBytes: binary.length, manifestHash: `sha256:${blobSha256}` }] };
+        const recipient = createTransferRecipientKeyPair();
+        const payloads = new Map([['copy-source', { bytes, sha256 }], ['copy-blob', { bytes: binary, sha256: blobSha256 }]]);
+        const received = new Map<string, number[]>();
+        const finalized = new Set<string>();
+        const preparedImport = (uploadId: string, expectedSizeBytes: number) => ({ uploadId, destDisplayPath: '/destination/copied.dat',
+            expectedSizeBytes, chunkSizeBytes: 2, recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+            expiresAt: 50_000, endpointCandidates: [{ kind: 'http' as const, url: `http://127.0.0.1:4002/machine-transfers/direct/imports/${uploadId}`, expiresAt: 50_000 }] });
+        machineRpcSpy.mockImplementation(async (_machineId, method, request) => {
+            const wire = request as { input: { destination?: { destinationId: string }; source?: { sourceId: string } } };
+            if (method === 'daemon.filesystem.download') return { success: true, status: 'accepted', operationId: 'source-operation',
+                destinationId: wire.input.destination!.destinationId, prepared: { transferId: 'copy-source', name: 'binary.dat', sizeBytes: bytes.length,
+                    manifestHash: `sha256:${sha256}`, expiresAt: 50_000, endpointCandidates: [{ kind: 'http',
+                        url: 'http://127.0.0.1:4001/machine-transfers/direct/Y29weS1zb3VyY2U', authorizationToken: 'source-token', expiresAt: 50_000 }] },
+                ...(mode === 'file' ? {} : { entryTree }) };
+            if (method === 'daemon.filesystem.copy') return { success: true, status: 'accepted', operationId: 'copy-operation',
+                sourceId: wire.input.source!.sourceId, prepared: mode === 'file' ? preparedImport('copy-import', bytes.length)
+                    : { manifest: preparedImport('copy-import', bytes.length), blobs: [{ transferId: 'copy-blob', prepared: preparedImport('blob-import', binary.length) }] } };
+            if (method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+                expect(finalized).toEqual(new Set(['copy-import', 'blob-import']));
+                expect(request).toMatchObject({ operationId: 'copy-operation', waitForTerminal: true });
+                return { kind: 'found', operation: { version: 1, operationId: 'copy-operation', revision: 3,
+                    actionId: 'daemon.filesystem.copy', state: mode === 'entry_tree_unknown' ? 'running' : 'succeeded',
+                    scope: { accountId: 'account-a', machineId: 'destination-machine' }, title: 'Copy', createdAt: 1, startedAt: 2,
+                    cancellation: 'supported', ...(mode === 'entry_tree_unknown' ? { observation: { kind: 'outcome_uncertain', code: 'indeterminate' } }
+                        : { settledAt: 3, result: { success: true, status: 'completed', sourceId: 'copy-source', path: '/destination/copied.dat', expectation } }) } };
+            }
+            return { success: true, aborted: true };
+        });
+        const encrypted = new Map<string, Awaited<ReturnType<typeof createEncryptedTransferChunkEnvelope>>>();
+        setRuntimeFetch(async (request, init) => {
+            const url = String(request);
+            const pathname = new URL(url).pathname;
+            if (url.includes('/open')) {
+                const sourceId = atob(pathname.split('/').at(-2)!);
+                const payload = payloads.get(sourceId)!;
+                encrypted.set(sourceId, await createEncryptedTransferChunkEnvelope({ transferId: sourceId, sequence: 0, payload: payload.bytes,
+                    recipientPublicKeyBase64: new Headers(init?.headers).get('x-happier-transfer-recipient-public-key')! }));
+                return Response.json({ transferId: sourceId, sizeBytes: payload.bytes.length, totalChunks: 1, manifestHash: `sha256:${payload.sha256}` });
+            }
+            if (url.includes('/imports/') && url.includes('/chunks/')) {
+                const uploadId = pathname.split('/imports/')[1]!.split('/')[0]!;
+                const body = JSON.parse(String(init?.body)) as { payloadBase64: string; encryptedDataKeyEnvelopeBase64: string };
+                const sequence = Number(url.split('/').at(-1));
+                const chunk = await decryptEncryptedTransferChunkEnvelope({ transferId: uploadId, sequence, ...body,
+                    recipientSecretKeySeed: recipient.recipientSecretKeySeed });
+                const previous = received.get(uploadId) ?? [];
+                previous.push(...chunk); received.set(uploadId, previous);
+                return Response.json({ success: true });
+            }
+            if (url.includes('/finalize')) {
+                const uploadId = pathname.split('/imports/')[1]!.split('/')[0]!;
+                const payload = payloads.get(uploadId === 'copy-import' ? 'copy-source' : 'copy-blob')!;
+                expect(received.get(uploadId)).toEqual(Array.from(payload.bytes)); finalized.add(uploadId);
+                return Response.json({ success: true, finalized: { success: true, path: '/destination/copied.dat', sizeBytes: payload.bytes.length }, sha256: payload.sha256 });
+            }
+            if (url.includes('/complete')) { expect(finalized).toEqual(new Set(mode === 'file' ? ['copy-import'] : ['copy-import', 'blob-import'])); return Response.json({ success: true }); }
+            const sourceId = atob(pathname.split('/chunks/')[0]!.split('/').at(-1)!);
+            return Response.json({ transferId: sourceId, kind: 'chunk', sequence: 0, ...encrypted.get(sourceId) });
+        });
+        try {
+            const { copyPreparedFilesystemFile } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/preparedFilesystemCopy');
+            const source = { serverId: 'server-a', machineId: 'source-machine', rootPath: '/source', path: 'binary.dat' };
+            const destination = { serverId: 'server-a', machineId: 'destination-machine', rootPath: '/destination', path: 'copied.dat' };
+            await expect(copyPreparedFilesystemFile({ input: mode === 'file' ? { kind: 'prepared_transfer',
+                source: { kind: 'file', serverId: 'server-a', machineId: 'source-machine', rootPath: '/source', path: 'binary.dat', sourceId: 'copy-source', sizeBytes: bytes.length, sha256 },
+                destination, overwrite: false, recursive: false } : { kind: 'target_copy', source, destination, overwrite: false, recursive: true },
+                acquireSourceCarrier: async () => ({ kind: 'native_http', localOrigin: 'http://127.0.0.1:4001', release: async () => {} }),
+                acquireDestinationCarrier: async () => ({ kind: 'native_http', localOrigin: 'http://127.0.0.1:4002', release: async () => {} }),
+            })).resolves.toMatchObject(mode === 'file' ? { success: true, status: 'completed', sizeBytes: bytes.length }
+                : mode === 'entry_tree_unknown' ? { success: false, status: 'unknown', errorCode: 'indeterminate' }
+                    : { success: true, status: 'completed', expectation });
+        } finally { resetRuntimeFetch(); }
+    });
+
     it.each(['capability', 'installDecision', 'marketplaceQuery'] as const)('keeps plugin capability execution pending until its admitted daemon operation completes (%s)', async (operation) => {
         vi.useFakeTimers();
         try {
@@ -532,7 +695,7 @@ describe('machineRpcWithServerScope', () => {
             // A wrong timed-out implementation may try its ordinary scoped fallback;
             // keep that transport available so RED is not a missing-credentials fixture failure.
             getCredentialsSpy.mockResolvedValue({ token: TOKEN_A });
-            mockScopedMachineFetch({ id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+            mockScopedMachineFetch({ id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }, 'plain');
             const emitWithAck = vi.fn(() => new Promise<never>(() => {}));
             createEphemeralSocketSpy.mockResolvedValue({
                 timeout: () => ({ emitWithAck }), emitWithAck, emit: vi.fn(), disconnect: vi.fn(),
@@ -610,7 +773,11 @@ describe('machineRpcWithServerScope', () => {
         createEncryptionSpy.mockResolvedValue(encryption);
         mockScopedMachineFetch({ id: 'machine-1', dataEncryptionKey: null });
         let resolveAck!: (value: unknown) => void;
-        const emitWithAck = vi.fn(() => new Promise((resolve) => { resolveAck = resolve; }));
+        let issuedRequest!: { method: string; params: unknown };
+        const emitWithAck = vi.fn((_event: string, request: { method: string; params: unknown }) => {
+            issuedRequest = request;
+            return new Promise((resolve) => { resolveAck = resolve; });
+        });
         const socket = { timeout: vi.fn(() => ({ emitWithAck })), emitWithAck, emit: vi.fn(), disconnect: vi.fn() };
         createEphemeralSocketSpy.mockResolvedValue(socket);
         const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
@@ -619,7 +786,9 @@ describe('machineRpcWithServerScope', () => {
         const settled = vi.fn();
         void pending.then(settled, settled);
         await vi.waitFor(() => expect(emitWithAck).toHaveBeenCalledOnce());
-        const ciphertext = await encryption.getMachineEncryption('machine-1')!.encryptRaw({ run: { status: 'running' } });
+        const codec = { mode: 'e2ee' as const, cipher: encryption.getMachineEncryption('machine-1')! };
+        const request = await socketRpcCodec.decodeRequestParams(codec, issuedRequest.params, issuedRequest.method);
+        const ciphertext = await socketRpcCodec.encodeResponse(codec, { run: { status: 'running' } }, request.callId);
         const startedAt = Date.now();
         vi.spyOn(Date, 'now').mockReturnValue(startedAt + 31_000);
         resolveAck({ ok: true, result: ciphertext });
@@ -645,6 +814,7 @@ describe('machineRpcWithServerScope', () => {
             getCredentialsSpy.mockResolvedValue({ token: TOKEN_A, secret: SECRET_A });
             const machineEncryption = createMachineEncryption();
             createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
                 decryptEncryptionKey: vi.fn(async () => null),
                 initializeMachines: vi.fn(async () => {}),
                 getMachineEncryption: vi.fn(() => machineEncryption),
@@ -695,6 +865,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),
@@ -739,6 +910,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),
@@ -833,12 +1005,12 @@ describe('machineRpcWithServerScope', () => {
         mockScopedMachineFetch({
             id: 'machine-plain',
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-        });
+        }, 'plain');
         const emitWithAck = vi.fn(async () => ({
             ok: true,
             result: { decoded: true },
         }));
-        createEphemeralSocketSpy.mockResolvedValueOnce({
+        createEphemeralSocketSpy.mockResolvedValue({
             timeout: vi.fn(() => ({ emitWithAck })),
             emit: vi.fn(),
             disconnect: vi.fn(),
@@ -861,6 +1033,62 @@ describe('machineRpcWithServerScope', () => {
                 params: { value: 2 },
             }),
         );
+        await expect(machineRpcWithServerScope({
+            machineId: 'machine-plain', method: RPC_METHODS.SESSION_SPAWN_NEW,
+            payload: { credential: 'must-not-be-emitted' }, serverId: 'server-b',
+            requireEncryptedPayload: true,
+        })).rejects.toMatchObject({ rpcErrorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
+        expect(emitWithAck).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['e2ee', 'plain'] as const)('keeps %s requester Account material installation-sealed on the existing Plain Machine carrier', async accountMode => {
+        getActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1 });
+        listServerProfilesSpy.mockReturnValue([{ id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' }]);
+        getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
+        // RFC 8032 installation test vector; the real shared seal/open codec remains in the path.
+        const installationPublicKey = '11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=';
+        const privateHex = '9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a';
+        const installationPrivateKey = Uint8Array.from(privateHex.match(/../gu)!, byte => Number.parseInt(byte, 16));
+        mockScopedMachineFetch({ id: 'machine-plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            installationId: 'installation', installationPublicKey }, 'plain');
+        let emitted: unknown;
+        const emitWithAck = vi.fn(async (_event: string, payload: { params: unknown }) => {
+            emitted = payload.params;
+            return { ok: true, result: { decoded: true } };
+        });
+        createEphemeralSocketSpy.mockResolvedValue({ timeout: vi.fn(() => ({ emitWithAck })), emit: vi.fn(), disconnect: vi.fn() });
+        const request = { kind: 'requester_session_bootstrap_v1', input: {
+            executionTarget: { serverId: 'server-b', machineId: 'machine-plain' },
+            directory: { kind: 'path', path: '/workspace' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        }, requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: {
+            token: TOKEN_B, ...(accountMode === 'e2ee' ? { secret: SECRET_B } : {}),
+        } } } as const;
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        if (accountMode === 'plain') {
+            // Reach the ordinary public UI spawn sender, not an explicit private-transport flag.
+            const { dispatchSessionSpawnNewToMachine } = await import('@/sync/ops/actions/sessionSpawnNewAction');
+            await expect(dispatchSessionSpawnNewToMachine({ payload: request.input, requesterBootstrap: request.requesterBootstrap }))
+                .resolves.toEqual({ decoded: true });
+        } else {
+            await expect(machineRpcWithServerScope({ machineId: 'machine-plain', method: RPC_METHODS.SESSION_SPAWN_NEW,
+                payload: request, serverId: 'server-b', requireEncryptedPayload: true })).resolves.toEqual({ decoded: true });
+        }
+        expect(emitted).toMatchObject({ kind: request.kind, input: request.input,
+            requesterBootstrap: { kind: 'installation_sealed_v1', installationId: 'installation' } });
+        expect(JSON.stringify(emitted)).not.toContain(TOKEN_B);
+        expect(JSON.stringify(emitted)).not.toContain(SECRET_B);
+        const { openSessionRequesterBootstrapRpcRequestV1 } = await import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1');
+        expect(openSessionRequesterBootstrapRpcRequestV1({ request: emitted, machineId: 'machine-plain',
+            installationId: 'installation', installationPrivateKey })).toEqual(request);
+        for (const unavailableKey of [undefined, 'AAAA', 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=']) {
+            mockScopedMachineFetch({ id: 'machine-plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                installationId: 'installation', ...(unavailableKey ? { installationPublicKey: unavailableKey } : {}) }, 'plain');
+            await expect(machineRpcWithServerScope({ machineId: 'machine-plain', method: RPC_METHODS.SESSION_SPAWN_NEW,
+                payload: request, serverId: 'server-b', requireEncryptedPayload: true }))
+                .rejects.toMatchObject({ rpcErrorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
+        }
+        expect(emitWithAck).toHaveBeenCalledTimes(1);
     });
 
     it('preserves issued cancellation disposition when mapping the scoped machine abort error', async () => {
@@ -871,7 +1099,7 @@ describe('machineRpcWithServerScope', () => {
             { id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' },
         ]);
         getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
-        mockScopedMachineFetch({ id: 'machine-plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+        mockScopedMachineFetch({ id: 'machine-plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }, 'plain');
         let resolveAck!: (value: unknown) => void;
         const emitWithAck = vi.fn<(event: string, payload: unknown) => Promise<unknown>>(
             () => new Promise((resolve) => { resolveAck = resolve; }),
@@ -916,6 +1144,7 @@ describe('machineRpcWithServerScope', () => {
             readObservedPath: () => 'relay' as const,
             request: async (url: string, init: RequestInit) => {
                 carrierRequests.push({ url, init });
+                if (url.includes('/v1/account/encryption')) return Response.json({ mode: 'plain', updatedAt: 1 });
                 return Response.json({
                     machine: {
                         id: 'machine-plain',
@@ -968,7 +1197,7 @@ describe('machineRpcWithServerScope', () => {
             homeCarrier: expect.objectContaining({ endpointId: homeCarrier.endpointId }),
             takeCarrierRelease: expect.any(Function),
         }));
-        expect(carrierRequests).toHaveLength(1);
+        expect(carrierRequests.filter(({ url }) => url.includes('/v1/machines/'))).toHaveLength(1);
         expect(carrierRequests[0]?.url).toBe('https://server-b.example.test/v1/machines/machine-plain');
         expect(runtimeFetchWithServerReachabilitySpy).not.toHaveBeenCalled();
         expect(disconnect).toHaveBeenCalledTimes(1);
@@ -987,6 +1216,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),
@@ -1035,6 +1265,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),
@@ -1083,6 +1314,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),
@@ -1166,6 +1398,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),
@@ -1252,6 +1485,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),
@@ -1296,6 +1530,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),
@@ -1348,6 +1583,7 @@ describe('machineRpcWithServerScope', () => {
 
         const machineEncryption = createMachineEncryption();
         createEncryptionSpy.mockResolvedValue({
+                ...machineContextAuthority,
             decryptEncryptionKey: vi.fn(async () => null),
             initializeMachines: vi.fn(async () => {}),
             getMachineEncryption: vi.fn(() => machineEncryption),

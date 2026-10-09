@@ -5,6 +5,7 @@ import { createMachineFixture, renderHook } from '@/dev/testkit';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
 import { useNewSessionMachinePathState } from './useNewSessionMachinePathState';
+import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -88,6 +89,120 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it('defaults a foreign controller to Keep and exposes the owner-only reason while refusing Stop/Delete selection', async () => {
+        const draft = createManagedMachineSelectionDraft({
+            selection: { kind: 'preset', homeId: 'srv-home-a', id: 'preset-a', revision: 3 },
+            receipt: { launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                controller: { machineId: 'host', installationId: 'installation' }, optionStatus: 'current', prerequisites: [],
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['stop', 'delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            archiveEffect: 'stop',
+        });
+        const shared = createMachineFixture({ id: 'host', isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
+        } });
+        const hook = await renderMachinePathState({ machines: [shared], recentMachinePaths: [], machineIdParam: null,
+            pathParam: null, requestedManagedMachineSelection: draft });
+        expect(hook.getCurrent().managedMachineSelection?.archiveEffect).toBe('keep');
+        expect(hook.getCurrent()).toMatchObject({ managedMachineArchiveChoiceAvailability: {
+            supportedEffects: ['keep'], reason: 'shared_unsupported', controllerMachineId: 'host',
+            custodian: { accountId: 'alice', displayName: 'Alice' },
+        } });
+        for (const effect of ['stop', 'delete'] as const) {
+            await act(async () => hook.getCurrent().setManagedMachineArchiveEffect(effect));
+            expect(hook.getCurrent().managedMachineSelection?.archiveEffect).toBe('keep');
+        }
+        await hook.unmount();
+        const owned = await renderMachinePathState({ machines: [createMachineFixture({ id: 'host', active: false, activeAt: 0 })],
+            recentMachinePaths: [], machineIdParam: null, pathParam: null, requestedManagedMachineSelection: draft });
+        expect(owned.getCurrent().managedMachineSelection?.archiveEffect).toBe('stop');
+        expect(owned.getCurrent()).toMatchObject({ managedMachineArchiveChoiceAvailability: {
+            supportedEffects: ['keep', 'stop', 'delete'], nativeUnsupportedEffects: [],
+        } });
+        expect(owned.getCurrent().managedMachineArchiveChoiceAvailability?.reason).toBeUndefined();
+        await owned.unmount();
+    });
+
+    it('consumes a fresh reviewed managed picker request once without restoring a previous paid target or replacing the authored path', async () => {
+        const draft = createManagedMachineSelectionDraft({
+            selection: { kind: 'preset', homeId: 'srv-home-a', id: 'new-recipe', revision: 3 },
+            receipt: { launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                controller: { machineId: 'host', installationId: 'installation' }, optionStatus: 'current', prerequisites: [],
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+        });
+        const initial = { machines: toMachines({ id: 'host' }, { id: 'previous-paid' }), recentMachinePaths: [], machineIdParam: null, pathParam: null };
+        const hook = await renderMachinePathState(initial);
+        await act(async () => hook.getCurrent().setSelectedMachineId('previous-paid'));
+        await act(async () => hook.getCurrent().setSelectedPath('/authored'));
+        expect(hook.getCurrent().selectedPath).toBe('/authored');
+        await hook.rerender({ ...initial, requestedManagedMachineSelection: draft, executionTargetRequestKey: 'managed-picker-use', persistedExecutionTarget: null });
+        expect(hook.getCurrent()).toMatchObject({ managedMachineSelection: draft, executionTarget: null, selectedMachineId: null, selectedPath: '/authored' });
+        await act(async () => hook.getCurrent().cancelManagedMachineTarget());
+        await hook.rerender({ ...initial, requestedManagedMachineSelection: draft, executionTargetRequestKey: 'managed-picker-use', persistedExecutionTarget: null });
+        expect(hook.getCurrent().managedMachineSelection).toBeNull();
+        await hook.unmount();
+        const reopened = await renderMachinePathState({ ...initial, requestedManagedMachineSelection: draft,
+            executionTargetRequestKey: 'reopened-managed-use', persistedExecutionTarget: null, persistedPath: '/authored' });
+        expect(reopened.getCurrent()).toMatchObject({ managedMachineSelection: draft, selectedMachineId: null, selectedPath: '/authored' });
+        await reopened.unmount();
+    });
+
+    it('keeps a reviewed managed recipe unallocated, preserves authored input on enrollment, and clears it on a replacement target', async () => {
+        const draft = createManagedMachineSelectionDraft({
+            selection: { kind: 'preset', homeId: 'srv-home-a', id: 'preset-a', revision: 3 },
+            receipt: {
+                launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1,
+                    name: 'Guest', choices: { cores: 2 } },
+                controller: { machineId: 'host', installationId: 'installation' }, optionStatus: 'current',
+                prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+                retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+                preset: { id: 'preset-a', revision: 3, name: 'Guest' },
+            },
+        });
+        const hook = await renderMachinePathState({ machines: toMachines({ id: 'host' }),
+            recentMachinePaths: [], machineIdParam: null, pathParam: null });
+        await act(async () => {
+            hook.getCurrent().setSelectedPath('/authored');
+            hook.getCurrent().setManagedMachineTarget(draft);
+        });
+        expect(hook.getCurrent().managedMachineSelection).toEqual(draft);
+        expect(hook.getCurrent().executionTarget).toBeNull();
+        expect(hook.getCurrent().selectedMachineId).toBeNull();
+        expect(hook.getCurrent().agentCatalogMachineId).toBe('host');
+        expect(hook.getCurrent().selectedPath).toBe('/authored');
+        await act(async () => hook.getCurrent().adoptManagedMachineTarget('enrolled'));
+        expect(hook.getCurrent().selectedMachineId).toBe('enrolled');
+        expect(hook.getCurrent().managedMachineSelection).toEqual(draft);
+        expect(hook.getCurrent().selectedPath).toBe('/authored');
+        await act(async () => hook.getCurrent().setManagedMachineArchiveEffect('stop'));
+        expect(hook.getCurrent().managedMachineSelection).toEqual({ ...draft, archiveEffect: 'stop' });
+        // Archive policy edits keep the admitted target and paid selection identity.
+        expect(hook.getCurrent().managedMachineSelection?.selection).toBe(draft.selection);
+        expect(hook.getCurrent().selectedMachineId).toBe('enrolled');
+        expect(hook.getCurrent().selectedPath).toBe('/authored');
+        await act(async () => hook.getCurrent().cancelManagedMachineTarget());
+        expect(hook.getCurrent().managedMachineSelection).toBeNull();
+        expect(hook.getCurrent().selectedMachineId).toBeNull();
+        expect(hook.getCurrent().selectedPath).toBe('/authored');
+        await act(async () => hook.getCurrent().setManagedMachineTarget(draft));
+        await act(async () => hook.getCurrent().setTemporaryComputerTarget({
+            serverId: 'server-a', artifactTarget: 'linux-x64', workspace: { kind: 'choose_on_endpoint' },
+        }));
+        expect(hook.getCurrent().managedMachineSelection).toBeNull();
+        await act(async () => hook.getCurrent().setManagedMachineTarget(draft));
+        await hook.rerender({ machines: toMachines({ id: 'host' }), recentMachinePaths: [],
+            machineIdParam: null, pathParam: null, serverId: 'server-b' });
+        expect(hook.getCurrent().managedMachineSelection).toBeNull();
+        // A deliberate cross-Home Use carries the local profile separately from stable Home identity.
+        await act(async () => hook.getCurrent().setManagedMachineTarget(draft, 'server-c'));
+        await hook.rerender({ machines: toMachines({ id: 'host' }), recentMachinePaths: [],
+            machineIdParam: null, pathParam: null, serverId: 'server-c' });
+        expect(hook.getCurrent().managedMachineSelection).toEqual(draft);
+        await hook.unmount();
+    });
+
     it('commits a Temporary computer target without pairing it with a machine', async () => {
         const hook = await renderHook(() => useNewSessionMachinePathState({
             serverId: 'server-a',

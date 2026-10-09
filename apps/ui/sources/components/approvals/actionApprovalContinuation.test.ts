@@ -37,6 +37,7 @@ function executedArtifact(overrides?: Readonly<{
     requestId?: string;
     result?: unknown;
     preview?: unknown;
+    executionOrigin?: ApprovalRequestV2['executionOriginV1'];
 }>): ReadableArtifact {
     const requestActionId = overrides?.actionId ?? actionId;
     const request: ApprovalRequestV2 = {
@@ -46,7 +47,7 @@ function executedArtifact(overrides?: Readonly<{
         updatedAtMs: 2,
         createdBy: { surface: 'system' },
         requestedSurface: overrides?.requestedSurface ?? 'ui',
-        executionOriginV1: {
+        executionOriginV1: overrides?.executionOrigin ?? {
             v: 1,
             authority: 'present_user',
             surface: overrides?.surface ?? 'ui',
@@ -134,6 +135,33 @@ function failedArtifact(overrides?: Readonly<{
 }
 
 describe('createHomeActionApprovalContinuation', () => {
+    it('delivers an exact immutable Agent terminal receipt and rejects altered origin facts', async () => {
+        const terminalActionId = 'machines.terminal.restart' as const;
+        const input = { serverId: 'home-1', machineId: 'machine-1', terminalKey: 'requester-owned', cwd: '/accepted',
+            workspace: { serverId: 'home-1', workspaceId: 'accepted', machineId: 'machine-1', rootPath: '/accepted' } };
+        const origin: ApprovalRequestV2['executionOriginV1'] = { v: 1, authority: 'account_automation', surface: 'agent',
+            caller: { kind: 'host' }, serverId: 'home-1', accountId: 'account-1', actionId: terminalActionId, requestId: 'agent-restart' };
+        const receipt = { ok: true, terminalId: 'requester-pty', reused: false };
+        const onSucceeded = vi.fn();
+        const onFailed = vi.fn();
+        const create = () => createActionApprovalContinuation({ artifactId: 'approval-1', actionId: terminalActionId,
+            scope: { serverId: 'home-1', accountId: 'account-1' }, expectedInput: input, expectedRequestId: origin.requestId,
+            expectedExecutionOrigin: origin, onSucceeded, onFailed });
+        const artifact = (executionOrigin: typeof origin) => executedArtifact({ actionId: terminalActionId, actionArgs: input,
+            executionOrigin, requestedSurface: executionOrigin.surface, result: receipt });
+        // This is the strict stored daemon receipt boundary, not an executor or
+        // authority mock. The canonical Artifact header/body matcher is real.
+        expect(await create().onExecuted(artifact(origin))).toBe('consumed');
+        expect(onSucceeded).toHaveBeenCalledWith(receipt);
+        expect(onFailed).not.toHaveBeenCalled();
+        for (const changed of [{ ...origin, surface: 'voice' as const }, { ...origin, authority: 'present_user' as const },
+            { ...origin, caller: { kind: 'session' as const, sessionId: 'other-agent', starterDepth: 0, turnDepth: 0 } }]) {
+            onSucceeded.mockClear(); onFailed.mockClear();
+            expect(await create().onExecuted(artifact(changed))).toBe('consumed');
+            expect(onSucceeded).not.toHaveBeenCalled();
+            expect(onFailed).toHaveBeenCalledWith('approval_binding_mismatch');
+        }
+    });
     it('delivers the exact executed result through the canonical Action output schema', async () => {
         const onSucceeded = vi.fn();
         const onFailed = vi.fn();

@@ -6,11 +6,11 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({ __esModule: true, default: {}, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module', () => ({ __esModule: true, default: {}, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module/index.js', () => ({ __esModule: true, default: {}, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module/index', () => ({ __esModule: true, default: {}, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module/publicGlobals', () => ({ __esModule: true, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
+vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+vi.mock('react-native-reanimated/lib/module', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+vi.mock('react-native-reanimated/lib/module/index.js', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+vi.mock('react-native-reanimated/lib/module/index', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+vi.mock('react-native-reanimated/lib/module/publicGlobals', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
 vi.mock('@/components/sessions/new/components/NewSessionPathSelectionContent', () => ({
     NewSessionPathSelectionContent: () => null,
 }));

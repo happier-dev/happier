@@ -91,6 +91,9 @@ import {
 import type { PendingInputServerWireMode } from './pendingInputServerWireContract';
 import { assertValidPendingMessageId } from '@/sync/domains/pending/pendingMessageId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { PendingMessageWithdrawOutcomeV1Schema, type PendingMessageWithdrawOutcomeV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { SessionMessageHostAdmissionOrigin } from '@/sync/domains/session/input/types';
 import { encodeBase64 } from '@/encryption/base64';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -1652,6 +1655,7 @@ async function buildPendingEnqueueWriteBody(params: Parameters<typeof buildPendi
     const body = await buildPendingUserMessageWriteBody(params);
     if (!params.recipient) return {
         ...body,
+        ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}),
         ...(params.deliveryMode ? { deliveryMode: params.deliveryMode } : {}),
         requestedAction: params.requestedAction,
         ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
@@ -2292,6 +2296,14 @@ async function enqueuePendingMessageV2Owned(params: {
         || (params.session ? session.serverId !== outboxScope.serverId : session.serverId && session.serverId !== outboxScope.serverId)) {
         throw new Error(`Session ${sessionId} not found in storage`);
     }
+    const ownerMetadata = readSessionOwnerMetadataView(session);
+    const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(ownerMetadata?.sessionCreationCorrespondenceV1);
+    const ordinaryMachineId = correspondence.success ? correspondence.data.recipe.execution.machineId
+        : resolveSessionMachineId(ownerMetadata);
+    if (!recipient && ordinaryMachineId && params.targetMachineId && ordinaryMachineId !== params.targetMachineId) {
+        throw createPendingTargetConflictError();
+    }
+    const targetMachineId = recipient ? params.targetMachineId : ordinaryMachineId ?? params.targetMachineId;
     const requestedLocalId = readPendingLocalId(params.localId);
     const localId = requestedLocalId ?? randomUUID();
     let existingOutboxRow: PersistedPendingOutboxMessage | null;
@@ -2476,7 +2488,7 @@ async function enqueuePendingMessageV2Owned(params: {
                     ...(recipient ? { recipient } : {}),
                     body: JSON.stringify(await buildPendingEnqueueWriteBody({
                         sessionId, localId, rawRecord: rawRecord!, sessionEncryptionMode, sessionEncryption,
-                        recipient, targetMachineId: params.targetMachineId,
+                        recipient, targetMachineId,
                         deliveryMode: effectiveDeliveryMode,
                         requestedAction: effectiveRequestedAction ?? DEFAULT_PENDING_REQUESTED_ACTION_V1,
                         ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
@@ -3206,14 +3218,19 @@ export async function updatePendingRequestedActionV2(params: {
     }
 }
 
-export async function deletePendingMessageV2(params: {
+type PendingMessageDeletionParams = {
     sessionId: string;
     pendingId: string;
     request: (path: string, init?: RequestInit) => Promise<Response>;
     outboxScope: ServerAccountScope;
+    targetExecutionRunId?: string;
     /** Captured owner currentness; the local projection is this Home's alone. */
     isOutboxScopeCurrent?: () => boolean | Promise<boolean>;
-}): Promise<void> {
+};
+
+export function deletePendingMessageV2(params: PendingMessageDeletionParams & { withdraw: true }): Promise<PendingMessageWithdrawOutcomeV1>;
+export function deletePendingMessageV2(params: PendingMessageDeletionParams & { withdraw?: false }): Promise<void>;
+export async function deletePendingMessageV2(params: PendingMessageDeletionParams & { withdraw?: boolean }): Promise<void | PendingMessageWithdrawOutcomeV1> {
     const { sessionId, pendingId, request } = params;
     // Past an accepted server operation a retired owner scope may only stop the
     // LOCAL projection: the mounted bag now belongs to the replacement Home.
@@ -3221,7 +3238,7 @@ export async function deletePendingMessageV2(params: {
         !params.isOutboxScopeCurrent || await params.isOutboxScopeCurrent()
     );
     const initialProjection = findCanonicalPendingProjection(sessionId, pendingId, params.outboxScope);
-    if (initialProjection?.source === 'local_outbound' && initialProjection.deliveryStatus === 'queued') {
+    if (!params.withdraw && initialProjection?.source === 'local_outbound' && initialProjection.deliveryStatus === 'queued') {
         markPendingCancellationRequested(params.outboxScope, sessionId, initialProjection.localId ?? initialProjection.id);
     }
     const { target: resolvedTarget, localId, recipient } = (await resolvePendingMutationIdentity(
@@ -3232,6 +3249,41 @@ export async function deletePendingMessageV2(params: {
     const pendingMessages = storage.getState().sessionPending[sessionId]?.messages ?? [];
     const collidingMessages = pendingMessages.filter((message) => message.id === pendingId || message.localId === pendingId);
     const existing = resolvedTarget;
+    if (params.withdraw) {
+        if (params.targetExecutionRunId !== undefined && existing?.recipient?.runId !== params.targetExecutionRunId && existing) {
+            return 'delivery_unknown';
+        }
+        const withdrawalRecipient = params.targetExecutionRunId === undefined
+            ? recipient
+            : { kind: 'execution_run' as const, runId: params.targetExecutionRunId };
+        if (!existing && collidingMessages.some((message) => message.pendingOutboxScope != null)) return 'delivery_unknown';
+        return await runPendingEnqueueCommitInOrder(params.outboxScope, sessionId, async () => {
+            if (!await isProjectionOwnerCurrent()) return 'delivery_unknown';
+            // Older servers may ignore an unknown DELETE query and still remove
+            // the input. The distinct semantic endpoint refuses before mutation.
+            const response = await request(`${pendingMessagePath(sessionId, localId, withdrawalRecipient)}/withdraw`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+            });
+            if (response.status === 404) return 'delivery_unknown';
+            await assertPendingResponseOk(response, 'Failed to withdraw pending message');
+            const body: unknown = await response.json().catch(() => undefined);
+            const parsed = PendingMessageWithdrawOutcomeV1Schema.safeParse(
+                isPlainObject(body) && body.ok === true ? body.outcome : undefined,
+            );
+            // An unqualified acknowledgement has no delivery-custody fact.
+            // It cannot authorize restoring another copy of the original input.
+            const outcome = parsed.success ? parsed.data : 'delivery_unknown';
+            if (outcome !== 'removed') return outcome;
+            markPendingCancellationRequested(params.outboxScope, sessionId, localId);
+            await removePendingOutboxMessage(sessionId, localId, params.outboxScope);
+            supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
+            markPendingLocalIdDeleted(params.outboxScope, sessionId, localId);
+            if (existing && await isProjectionOwnerCurrent()) {
+                storage.getState().removePendingMessage(sessionId, existing.id);
+            }
+            return outcome;
+        });
+    }
     if (!existing && collidingMessages.some((message) => message.pendingOutboxScope != null)) return;
     const retainedOutbox = (await findPendingOutboxMessage(sessionId, localId, params.outboxScope));
     if (

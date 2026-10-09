@@ -128,21 +128,20 @@ describe('machines domain: contribution projection currentness', () => {
         });
     });
 
-    it('routes a workspace status event through the exact Home and machine scope', async () => {
-        const { createMachinesDomain } = await loadMachinesDomain();
+    it('routes a content-free workspace readiness event through the exact Home and machine scope', async () => {
+        const { createMachinesDomain, revision } = await loadMachinesDomain();
         const { domain } = createHarness(createMachinesDomain);
+        const scope = { machineId: 'm-1', serverId: 'server_a' } as const;
+        const daemonState = { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 };
         const workspaceSync = {
             v: 1,
-            status: {
-                relationshipId: 'relationship-1',
-                controllerMachineId: 'm-1',
-                state: 'paused',
-            },
+            readiness: { engine: { state: 'ready' }, carrier: { state: 'ready' } },
         };
 
-        domain.applyMachines([makeMachine({ daemonStateVersion: 4 })], true, { sourceServerId: 'server_a' });
+        domain.applyMachines([makeMachine({ daemonStateVersion: 4, daemonState })], true, { sourceServerId: 'server_a' });
+        const baseline = revision.getMachineContributionRegistryProjectionRevision(scope);
         applyWorkspaceSyncRuntimeEvent.mockClear();
-        domain.applyMachines([makeMachine({ daemonStateVersion: 5, daemonState: { workspaceSync } as any })], false, {
+        domain.applyMachines([makeMachine({ daemonStateVersion: 5, daemonState: { ...daemonState, workspaceSync } })], false, {
             sourceServerId: 'server_a',
         });
 
@@ -151,6 +150,25 @@ describe('machines domain: contribution projection currentness', () => {
             machineId: 'm-1',
             event: workspaceSync,
         });
+        expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline);
+
+        // A registry adoption may arrive in the same state update as an
+        // unrelated workspace change; its explicit revision must survive it.
+        domain.applyMachines([makeMachine({ daemonStateVersion: 6, daemonState: {
+            ...daemonState, contributionRegistryProjectionRevision: 1, workspaceSync,
+        } })], false, { sourceServerId: 'server_a' });
+        expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline + 1);
+
+        // A replacement can report the same revision as its predecessor.
+        domain.applyMachines([makeMachine({ daemonStateVersion: 7, daemonState: {
+            ...daemonState, pid: 18, contributionRegistryProjectionRevision: 1, workspaceSync,
+        } })], false, { sourceServerId: 'server_a' });
+        expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline + 2);
+        // A later replacement may reset that revision to zero.
+        domain.applyMachines([makeMachine({ daemonStateVersion: 8, daemonState: {
+            ...daemonState, pid: 19, workspaceSync,
+        } })], false, { sourceServerId: 'server_a' });
+        expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline + 3);
     });
 
     it('routes a workspace status event for a hydrated non-active Home without projecting it as active', async () => {
@@ -208,6 +226,23 @@ describe('machines domain: contribution projection currentness', () => {
         });
 
         expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline);
+    });
+
+    it('retains version invalidation when an explicit projection revision is malformed or absent', async () => {
+        const { createMachinesDomain, revision } = await loadMachinesDomain();
+        const { domain } = createHarness(createMachinesDomain);
+        const scope = { machineId: 'm-1', serverId: 'server_a' } as const;
+        const daemonState = { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 };
+        domain.applyMachines([makeMachine({ daemonStateVersion: 4, daemonState })], true, { sourceServerId: 'server_a' });
+        const baseline = revision.getMachineContributionRegistryProjectionRevision(scope);
+        domain.applyMachines([makeMachine({ daemonStateVersion: 5, daemonState: {
+            ...daemonState, contributionRegistryProjectionRevision: '0',
+        } })], false, { sourceServerId: 'server_a' });
+        expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline + 1);
+        domain.applyMachines([makeMachine({ daemonStateVersion: 6, daemonState: {
+            status: 'running', pid: 17,
+        } })], false, { sourceServerId: 'server_a' });
+        expect(revision.getMachineContributionRegistryProjectionRevision(scope)).toBe(baseline + 2);
     });
 });
 

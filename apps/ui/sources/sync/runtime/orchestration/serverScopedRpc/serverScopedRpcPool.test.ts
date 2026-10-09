@@ -6,6 +6,8 @@ import {
 } from './serverScopedRpcPool';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
+import { Encryption } from '@/sync/encryption/encryption';
+import { createDeferred } from '@/dev/testkit';
 import {
     computeRunnerMachineContentKeyFingerprintV1,
     encodeBase64,
@@ -26,6 +28,132 @@ function readAuthorizationHeader(headers: RequestInit['headers']): string {
 }
 
 describe('resolveScopedMachineTransport', () => {
+    it('keeps a joined caller newer canonical selection when another owner holds the HTTP read', async () => {
+        const first = await Encryption.create(new Uint8Array(32).fill(17));
+        const joined = await Encryption.create(new Uint8Array(32).fill(17));
+        const oldEnvelope = encodeBase64(await first.encryptEncryptionKey(new Uint8Array(32).fill(23)), 'base64');
+        const nextEnvelope = encodeBase64(await first.encryptEncryptionKey(new Uint8Array(32).fill(24)), 'base64');
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        vi.stubGlobal('fetch', vi.fn(async () => {
+            entered.resolve(); await release.promise;
+            return Response.json({ machine: { id: 'machine-1', dataEncryptionKey: oldEnvelope } });
+        }));
+        const scope = { serverId: 'home-1', serverUrl: 'https://home-1.example.test', token: 'token-1', machineId: 'machine-1' };
+        const firstRead = resolveScopedMachineTransport({ ...scope, encryption: first, decryptEncryptionKey: first.decryptEncryptionKey.bind(first) });
+        await entered.promise;
+        const joinedRead = resolveScopedMachineTransport({ ...scope, encryption: joined, decryptEncryptionKey: joined.decryptEncryptionKey.bind(joined) });
+        joined.captureMachineEncryptionContext('machine-1', { dataEncryptionKey: nextEnvelope, expectedDataEncryptionKey: nextEnvelope });
+        await joined.initializeMachines(new Map([['machine-1', new Uint8Array(32).fill(24)]]));
+        const cipher = joined.getMachineEncryption('machine-1');
+        release.resolve();
+        expect(await firstRead).toMatchObject({ mode: 'e2ee' });
+        expect(await joinedRead).toBeNull();
+        expect(joined.getMachineEncryption('machine-1')).toBe(cipher);
+    });
+    it('does not let a held old HTTP row retire a newer canonical context', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const oldKey = new Uint8Array(32).fill(23);
+        const nextKey = new Uint8Array(32).fill(24);
+        const oldEnvelope = encodeBase64(await encryption.encryptEncryptionKey(oldKey), 'base64');
+        const nextEnvelope = encodeBase64(await encryption.encryptEncryptionKey(nextKey), 'base64');
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        vi.stubGlobal('fetch', vi.fn(async () => {
+            entered.resolve(); await release.promise;
+            return Response.json({ machine: { id: 'machine-1', dataEncryptionKey: oldEnvelope } });
+        }));
+        const pending = resolveScopedMachineTransport({
+            serverId: 'home-1', serverUrl: 'https://home-1.example.test', token: 'token-1',
+            machineId: 'machine-1', encryption,
+            decryptEncryptionKey: encryption.decryptEncryptionKey.bind(encryption),
+        });
+        await entered.promise;
+        encryption.captureMachineEncryptionContext('machine-1', { dataEncryptionKey: nextEnvelope, expectedDataEncryptionKey: nextEnvelope });
+        await encryption.initializeMachines(new Map([['machine-1', nextKey]]));
+        const currentCipher = encryption.getMachineEncryption('machine-1');
+        release.resolve();
+        expect(await pending).toBeNull();
+        expect(encryption.getMachineDataEncryptionKey('machine-1')).toBe(nextEnvelope);
+        expect(encryption.getMachineEncryption('machine-1')).toBe(currentCipher);
+    });
+    it('does not publish a pending old open after same-key access facts are withdrawn', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const envelope = encodeBase64(await encryption.encryptEncryptionKey(new Uint8Array(32).fill(23)), 'base64');
+        const opened = createDeferred<void>();
+        const release = createDeferred<void>();
+        let accessState: 'ready' | 'key_pending' = 'ready';
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ machine: {
+            id: 'machine-1', dataEncryptionKey: envelope,
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'use', resourceMode: 'e2ee', accessState },
+        } })));
+        const scope = { serverId: 'home-1', serverUrl: 'https://home-1.example.test', token: 'token-1', machineId: 'machine-1', accountId: 'viewer', encryption };
+        const pending = resolveScopedMachineTransport({ ...scope, timeoutMs: 1_000,
+            decryptEncryptionKey: async (value) => {
+                const key = await encryption.decryptEncryptionKey(value);
+                opened.resolve(); await release.promise; return key;
+            },
+        });
+        await opened.promise;
+        accessState = 'key_pending';
+        expect(await resolveScopedMachineTransport({ ...scope, timeoutMs: 5_000,
+            decryptEncryptionKey: encryption.decryptEncryptionKey.bind(encryption),
+        })).toBeNull();
+        release.resolve();
+        expect(await pending).toBeNull();
+        expect(encryption.getMachineEncryption('machine-1')).toBeNull();
+    });
+    it('refreshes a scoped row across distinct crypto instances and retires its old request context', async () => {
+        const firstEncryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const nextEncryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const oldKey = new Uint8Array(32).fill(23);
+        const nextKey = new Uint8Array(32).fill(24);
+        const oldEnvelope = encodeBase64(await firstEncryption.encryptEncryptionKey(oldKey), 'base64');
+        const nextEnvelope = encodeBase64(await firstEncryption.encryptEncryptionKey(nextKey), 'base64');
+        let envelope = oldEnvelope;
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ machine: { id: 'machine-1', dataEncryptionKey: envelope } })));
+        const scope = { serverId: 'home-1', serverUrl: 'https://home-1.example.test', token: 'token-1', machineId: 'machine-1' };
+        const old = await resolveScopedMachineTransport({ ...scope, encryption: firstEncryption,
+            decryptEncryptionKey: firstEncryption.decryptEncryptionKey.bind(firstEncryption) });
+        expect(old?.context?.isCurrent()).toBe(true);
+        envelope = nextEnvelope;
+        const next = await resolveScopedMachineTransport({ ...scope, encryption: nextEncryption,
+            decryptEncryptionKey: nextEncryption.decryptEncryptionKey.bind(nextEncryption) });
+        expect(next).toMatchObject({ mode: 'e2ee', dataKey: nextKey });
+        expect(old?.context?.isCurrent()).toBe(false);
+        expect(next?.context?.isCurrent()).toBe(true);
+    });
+    it('rejects an old in-flight envelope opening after the canonical Machine context changes', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const oldKey = new Uint8Array(32).fill(23);
+        const newKey = new Uint8Array(32).fill(24);
+        const oldEnvelope = encodeBase64(await encryption.encryptEncryptionKey(oldKey), 'base64');
+        const newEnvelope = encodeBase64(await encryption.encryptEncryptionKey(newKey), 'base64');
+        const opened = createDeferred<void>();
+        const release = createDeferred<void>();
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+            machine: { id: 'machine-1', dataEncryptionKey: oldEnvelope },
+        })));
+        const pending = resolveScopedMachineTransport({
+            serverId: 'home-1', serverUrl: 'https://home-1.example.test', token: 'token-1',
+            machineId: 'machine-1', encryption,
+            decryptEncryptionKey: async (value) => {
+                const key = await encryption.decryptEncryptionKey(value);
+                opened.resolve();
+                await release.promise;
+                return key;
+            },
+        });
+        await opened.promise;
+        encryption.captureMachineEncryptionContext('machine-1', { dataEncryptionKey: newEnvelope, expectedDataEncryptionKey: newEnvelope });
+        await encryption.initializeMachines(new Map([['machine-1', newKey]]));
+        release.resolve();
+        expect(await pending).toBeNull();
+        expect(encryption.getMachineDataEncryptionKey('machine-1')).toBe(newEnvelope);
+        expect(await encryption.getMachineEncryption('machine-1')!.decryptRaw(
+            await encryption.getMachineEncryption('machine-1')!.encryptRaw({ current: true }),
+        )).toEqual({ current: true });
+    });
     it('does not let a short cold read decide a later caller with a longer budget', async () => {
         let releaseShortRead!: () => void;
         const shortReadPending = new Promise<void>((resolve) => { releaseShortRead = resolve; });
@@ -52,7 +180,7 @@ describe('resolveScopedMachineTransport', () => {
         const long = resolveScopedMachineTransport({ ...input, timeoutMs: 5_000 });
         releaseShortRead();
         await expect(short).resolves.toBeNull();
-        await expect(long).resolves.toEqual({ mode: 'plain' });
+        await expect(long).resolves.toMatchObject({ mode: 'plain' });
     });
 
     it('does not reuse a cached Plain decision for an E2EE caller', async () => {
@@ -63,7 +191,7 @@ describe('resolveScopedMachineTransport', () => {
             serverId: 'server-b', serverUrl: 'https://server-b.example.test', token: 'token-b', machineId: 'machine-plain',
         };
         await expect(resolveScopedMachineTransport({ ...input, expectedAccountMode: 'plain' }))
-            .resolves.toEqual({ mode: 'plain' });
+            .resolves.toMatchObject({ mode: 'plain' });
         await expect(resolveScopedMachineTransport({ ...input, expectedAccountMode: 'e2ee' }))
             .resolves.toBeNull();
     });
@@ -82,11 +210,11 @@ describe('resolveScopedMachineTransport', () => {
         const first = resolveScopedMachineTransport(input);
         if (state === 'cached') {
             release();
-            await expect(first).resolves.toEqual({ mode: 'e2ee', dataKey });
+            await expect(first).resolves.toMatchObject({ mode: 'e2ee', dataKey });
         }
         const trusted = resolveScopedMachineTransport({ ...input, trustedMachineKind: 'ephemeral_session_runner' });
         release();
-        await expect(first).resolves.toEqual({ mode: 'e2ee', dataKey });
+        await expect(first).resolves.toMatchObject({ mode: 'e2ee', dataKey });
         await expect(trusted).resolves.toBeNull();
     });
 
@@ -204,7 +332,7 @@ describe('resolveScopedMachineTransport', () => {
             serverUrl: 'https://server-b.example.test',
             token: 'token-b',
             machineId: 'machine-exact',
-        })).resolves.toEqual({ mode: 'plain' });
+        })).resolves.toMatchObject({ mode: 'plain' });
 
         expect(fetchSpy.mock.calls.some(([url]) =>
             String(url).endsWith('/v1/machines/machine-exact'),
@@ -241,7 +369,7 @@ describe('resolveScopedMachineTransport', () => {
             runtimeOrigin: 'http://127.0.0.1:43111',
             token: 'token-b',
             machineId: 'machine-iroh',
-        })).resolves.toEqual({ mode: 'plain' });
+        })).resolves.toMatchObject({ mode: 'plain' });
 
         expect(fetchSpy).toHaveBeenCalledWith(
             'http://127.0.0.1:43111/v1/machines/machine-iroh',
@@ -287,7 +415,7 @@ describe('resolveScopedMachineTransport', () => {
             machineId: 'machine-exact',
             expectedAccountMode: 'plain',
             timeoutMs: 100,
-        })).resolves.toEqual({ mode: 'plain' });
+        })).resolves.toMatchObject({ mode: 'plain' });
 
         expect(networkFetch).not.toHaveBeenCalled();
         expect(carried).toHaveLength(1);
@@ -295,7 +423,7 @@ describe('resolveScopedMachineTransport', () => {
         expect(new Headers(carried[0]?.init.headers).get('Authorization')).toBe(`Bearer ${token}`);
     });
 
-    it('fetches and decrypts machine key on first request then uses cache', async () => {
+    it('refreshes each Machine row while reusing its unchanged opened key', async () => {
         const fetchSpy = vi.fn(async (url: string) => {
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                 return { ok: true, status: 200, json: async () => ({}) };
@@ -327,9 +455,9 @@ describe('resolveScopedMachineTransport', () => {
             decryptEncryptionKey: decryptSpy,
         });
 
-        expect(first).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([1, 2, 3]) });
-        expect(second).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([1, 2, 3]) });
-        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(1);
+        expect(first).toMatchObject({ mode: 'e2ee', dataKey: new Uint8Array([1, 2, 3]) });
+        expect(second).toMatchObject({ mode: 'e2ee', dataKey: new Uint8Array([1, 2, 3]) });
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(2);
         expect(decryptSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -367,10 +495,10 @@ describe('resolveScopedMachineTransport', () => {
             decryptEncryptionKey: decryptSpy,
         });
 
-        expect(first).toEqual({ mode: 'plain' });
-        expect(second).toEqual({ mode: 'plain' });
+        expect(first).toMatchObject({ mode: 'plain' });
+        expect(second).toMatchObject({ mode: 'plain' });
         expect(decryptSpy).not.toHaveBeenCalled();
-        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines'))).toHaveLength(1);
+        expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines'))).toHaveLength(2);
     });
 
     it('does not reuse cached machine key when auth token changes', async () => {
@@ -417,8 +545,8 @@ describe('resolveScopedMachineTransport', () => {
             decryptEncryptionKey: decryptSpy,
         });
 
-        expect(first).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([4, 5, 6]) });
-        expect(second).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([7, 8, 9]) });
+        expect(first).toMatchObject({ mode: 'e2ee', dataKey: new Uint8Array([4, 5, 6]) });
+        expect(second).toMatchObject({ mode: 'e2ee', dataKey: new Uint8Array([7, 8, 9]) });
         expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(2);
         expect(decryptSpy).toHaveBeenCalledTimes(2);
     });
@@ -503,8 +631,8 @@ describe('resolveScopedMachineTransport', () => {
         // A released persistent Machine with no published envelope still uses
         // the Account-derived legacy key. The unresolved result is deliberately
         // not cached, so a later published envelope is fetched and opened.
-        expect(first).toEqual({ mode: 'e2ee', dataKey: null });
-        expect(second).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([9, 9, 9]) });
+        expect(first).toMatchObject({ mode: 'e2ee', dataKey: null });
+        expect(second).toMatchObject({ mode: 'e2ee', dataKey: new Uint8Array([9, 9, 9]) });
         expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/v1/machines')).length).toBe(2);
         expect(decryptSpy).toHaveBeenCalledTimes(1);
     });

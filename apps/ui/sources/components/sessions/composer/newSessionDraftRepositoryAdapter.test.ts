@@ -1,6 +1,8 @@
-import { buildNewSessionAuthoringDraftFromPersistedDraft, buildNewSessionAuthoringDraftFromTempData, buildNewSessionTempDataFromAuthoringDraft, buildPersistedNewSessionDraftFromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import { buildNewSessionAuthoringDraftFromPersistedDraft, buildNewSessionAuthoringDraftFromTempData, buildNewSessionTempDataFromAuthoringDraft, buildPersistedNewSessionDraftFromAuthoringDraft, buildSessionSpawnNewInputV2FromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { afterEach, describe, expect, it } from 'vitest';
 import { seedNewSessionDraftV1 } from '@/components/sessions/new/newSessionDraftSeed';
+import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
+import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 import { SessionInitialTriggerV1Schema, type ComposerAttachmentDraftV1 } from '@happier-dev/protocol';
 import type {
@@ -11,6 +13,7 @@ import {
     getSessionDraftSnapshot,
     resetSessionDraftRepositoryForTests,
     writeNewSessionDraft,
+    writeSessionDraftLocalSupplement,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import {
@@ -21,6 +24,8 @@ import {
     hasNewSessionDraftPrimaryTeamConflict,
     writeTemporaryComputerActivationRefToRepository,
     writeNewSessionAuthoringDraftToRepository,
+    writeNewSessionNameToRepository,
+    writeNewSessionInstructionsToRepository,
     writeNewSessionDraftToRepository,
 } from './newSessionDraftRepositoryAdapter';
 
@@ -69,6 +74,204 @@ function cataloguedNewSessionAuthoring(
 }
 
 describe('newSessionDraftRepositoryAdapter', () => {
+    it('materializes the ordinary local draft on the first Instructions edit without an Artifact', () => {
+        const draftId = 'first-instructions-edit';
+        const instructionsDraft = { title: 'Remit', markdown: 'Keep the remit.' };
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toBeNull();
+        writeNewSessionInstructionsToRepository({ scope, draftId, instructionsDraft });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ instructionsDraft });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).not.toHaveProperty('promptStack');
+    });
+
+    it('reopens lazy Instructions authoring and carries selected qualified Session context into the ordinary spawn recipe', () => {
+        const promptStack = [{ id: 'session.instructions',
+            ref: { kind: 'doc', serverId: 'instructions-home', artifactId: 'instructions-doc' },
+            enabled: true, required: true, placement: 'system_append' }] as const;
+        const instructionsDraft = { title: 'Build caretaker', markdown: '' };
+        const draftId = 'instructions-authoring';
+        const draft = { ...authoringDraft({ input: '', sessionName: 'Build caretaker',
+            initialSessionFacts: { bot: { kind: 'bot' }, createdAsBot: true },
+            executionTarget: { kind: 'machine', target: { serverId: scope.serverId, machineId: 'machine-b' } },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        }), instructionsDraft };
+        writeNewSessionDraftToRepository({ scope, draftId, draft, materializationIntent: 'seeded' });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ instructionsDraft });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).not.toHaveProperty('promptStack');
+        writeNewSessionDraftToRepository({ scope, draftId, draft: { ...draft, instructionsDraft: null, promptStack }, materializationIntent: 'seeded' });
+        resetSessionDraftRepositoryForTests();
+        const reopened = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(reopened).toMatchObject({ promptStack, instructionsDraft: null });
+        if (!reopened) throw new Error('Expected ordinary Instructions authoring custody');
+        const spawn = buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: buildNewSessionAuthoringDraftFromPersistedDraft(reopened),
+            creationKey: 'manual:instructions-authoring', permissionMode: 'default', configurationUpdatedAtMs: 10,
+        });
+        expect(spawn).toMatchObject({ title: 'Build caretaker', promptStack });
+        expect(spawn).not.toHaveProperty('initialInput');
+        expect(spawn).not.toHaveProperty('instructionsDraft');
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: buildNewSessionAuthoringDraftFromPersistedDraft(authoringDraft({ input: '',
+                executionTarget: { kind: 'machine', target: { serverId: scope.serverId, machineId: 'machine-b' } },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            })),
+            creationKey: 'manual:untouched-bot', permissionMode: 'default', configurationUpdatedAtMs: 10,
+        })).not.toHaveProperty('promptStack');
+    });
+    it('recovers the exact managed Home, profile routing id and reviewed receipt locally through reload and authoring edits', () => {
+        const draftId = 'managed-selection-draft';
+        const receipt = {
+            launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1,
+                name: 'Reviewed guest', choices: { cores: 2 } },
+            controller: { machineId: 'controller-a', installationId: 'installation-a' },
+            optionStatus: 'current', billing: { location: 'local', stoppedBilling: 'not-billed' },
+            prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            preset: { id: 'preset-a', revision: 7, name: 'Reviewed preset' },
+        } satisfies ManagedConfigurationFactsV1;
+        const managedMachineSelection = {
+            selection: { kind: 'preset' as const, homeId: 'home-b', id: 'preset-a', revision: 7 },
+            receipt, archiveEffect: 'delete' as const,
+        };
+        const managedMachineAcquisition = {
+            requestId: 'reviewed-request', selection: managedMachineSelection.selection, managedId: 'paid-resource',
+            operation: { operationId: 'install-operation', waitForTerminal: true as const },
+        };
+        const draft = { ...authoringDraft({ input: 'Live reviewed request', selectedMachineId: null,
+            executionTarget: null, targetServerId: 'profile-b' }), managedMachineSelection, managedMachineAcquisition };
+        writeNewSessionDraftToRepository({ scope, draftId, draft });
+        const storedLocalState = { ...buildNewSessionDraftLocalState(draft), managedMachineSelection: {
+                ...managedMachineSelection,
+                selection: { ...managedMachineSelection.selection, future: true },
+                receipt: { ...receipt, billing: { ...receipt.billing, future: true } },
+            } };
+        writeSessionDraftLocalSupplement({ scope, address: { kind: 'newSession', draftId }, patch: {
+            newSessionLocalState: storedLocalState,
+        } });
+        resetSessionDraftRepositoryForTests();
+
+        const recovered = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(recovered).toMatchObject({ input: 'Live reviewed request', targetServerId: 'profile-b',
+            executionTarget: null, selectedMachineId: null, managedMachineSelection, managedMachineAcquisition });
+        if (!recovered) throw new Error('Expected the retained managed draft');
+        expect(recovered.managedMachineSelection).toEqual(managedMachineSelection);
+        const roundtripped = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft: buildNewSessionAuthoringDraftFromPersistedDraft(recovered), machineId: null,
+            targetServerId: recovered.targetServerId, managedMachineSelection: recovered.managedMachineSelection,
+            managedMachineAcquisition: recovered.managedMachineAcquisition,
+            selectedSecretId: recovered.selectedSecretId,
+            selectedSecretIdByProfileIdByEnvVarName: recovered.selectedSecretIdByProfileIdByEnvVarName,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: recovered.sessionOnlySecretValueEncByProfileIdByEnvVarName,
+            backendNewSessionOptionStateByTargetKey: recovered.backendNewSessionOptionStateByTargetKey,
+            updatedAt: 42,
+        });
+        expect(roundtripped).toMatchObject({ targetServerId: 'profile-b', managedMachineSelection, managedMachineAcquisition });
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId,
+            draft: { ...roundtripped, input: 'Stale autosave', selectedPath: '/edited' } });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            input: 'Live reviewed request', selectedPath: '/edited', targetServerId: 'profile-b', managedMachineSelection, managedMachineAcquisition,
+        });
+        expect(JSON.stringify(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document))
+            .not.toContain('managedMachineSelection');
+        expect(JSON.stringify(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document))
+            .not.toContain('managedMachineAcquisition');
+        expect(readNewSessionDraftFromRepository({ scope: { ...scope, accountId: 'other' }, draftId })).toBeNull();
+
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: { ...roundtripped,
+            selectedMachineId: 'enrolled-machine',
+            executionTarget: { kind: 'machine', target: { serverId: 'home-b', machineId: 'enrolled-machine' } },
+        } });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            selectedMachineId: 'enrolled-machine', managedMachineSelection, managedMachineAcquisition,
+        });
+
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId,
+            draft: { ...recovered, managedMachineSelection: null, managedMachineAcquisition: null } });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            input: 'Live reviewed request', managedMachineSelection: null, managedMachineAcquisition: null,
+        });
+    });
+
+    it('carries a reopened Bot name and initial identity through the ordinary spawn boundary', () => {
+        const initialSessionFacts = { bot: { kind: 'bot' }, createdAsBot: true } as const;
+        const draftId = 'bot-creation';
+        writeNewSessionDraftToRepository({ scope, draftId, draft: authoringDraft({
+            sessionName: '  Look after builds  ', initialSessionFacts, memoryEnabled: false,
+            executionTarget: { kind: 'machine', target: { serverId: scope.serverId, machineId: 'machine-b' } },
+        }) });
+        const storedFacts = { ...initialSessionFacts, future: true, bot: { ...initialSessionFacts.bot, future: true } };
+        writeSessionDraftLocalSupplement({ scope, address: { kind: 'newSession', draftId }, patch: {
+            newSessionLocalState: {
+                ...buildNewSessionDraftLocalState(authoringDraft()),
+                sessionName: '  Look after builds  ', initialSessionFacts: storedFacts, memoryEnabled: false,
+            },
+        } });
+        resetSessionDraftRepositoryForTests();
+        const reopened = readNewSessionDraftFromRepository({ scope, draftId });
+        if (!reopened) throw new Error('Expected retained Bot draft');
+        expect(reopened.initialSessionFacts).toEqual(initialSessionFacts);
+        const authored = buildNewSessionAuthoringDraftFromPersistedDraft(reopened);
+        const spawn = buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: authored, creationKey: 'manual:bot-test', permissionMode: 'default', configurationUpdatedAtMs: 10,
+        });
+        expect(spawn).toMatchObject({ title: 'Look after builds', identity: initialSessionFacts, memoryEnabled: false });
+        expect(spawn).not.toHaveProperty('initialInput');
+        const automatic = buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: { ...authored, sessionName: '   ' }, creationKey: 'manual:bot-test', permissionMode: 'default', configurationUpdatedAtMs: 10,
+        });
+        expect(automatic).not.toHaveProperty('title');
+        writeNewSessionNameToRepository({ scope, draftId, sessionName: 'Current title' });
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: reopened, preserveLiveSessionName: true });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.sessionName).toBe('Current title');
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: { ...reopened, sessionName: '' } });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ sessionName: '', initialSessionFacts });
+    });
+    it('reopens stored authoring origin without extras and preserves it when launch target changes', () => {
+        const draftId = 'qualified-authoring-origin';
+        const authoringOrigin = {
+            kind: 'project',
+            accountId: scope.accountId,
+            workspace: { serverId: scope.serverId, workspaceId: 'workspace-a', machineId: 'machine-a', rootPath: '/original' },
+            page: 'changes',
+            comparisonId: 'comparison-a',
+        } as const;
+        writeNewSessionDraftToRepository({ scope, draftId, draft: authoringDraft({ input: 'Review this checkout' }) });
+        const storedOrigin = { ...authoringOrigin, future: true, workspace: { ...authoringOrigin.workspace, future: true } };
+        writeSessionDraftLocalSupplement({
+            scope,
+            address: { kind: 'newSession', draftId },
+            patch: { newSessionLocalState: {
+                ...buildNewSessionDraftLocalState(authoringDraft()),
+                authoringOrigin: storedOrigin,
+            } },
+        });
+        resetSessionDraftRepositoryForTests();
+        const recovered = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(recovered?.authoringOrigin).toEqual(authoringOrigin);
+        if (!recovered) throw new Error('Expected a reopened qualified authoring draft');
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: {
+            ...recovered,
+            executionTarget: { kind: 'machine', target: { serverId: 'server-b', machineId: 'machine-b' } },
+            selectedPath: '/edited',
+            targetServerId: 'server-b',
+            selectedMachineId: 'machine-b',
+        } });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            input: 'Review this checkout', selectedPath: '/edited', selectedMachineId: 'machine-b',
+            targetServerId: 'server-b', authoringOrigin,
+        });
+        expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.localSupplement.newSessionLocalState?.authoringOrigin)
+            .toEqual(authoringOrigin);
+        expect(JSON.stringify(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.document))
+            .not.toContain('comparison-a');
+    });
+
     it('persists initial triggers in the canonical authoring document and clears them without changing composer text', () => {
         const draftId = 'birth-triggers';
         const initialTriggers = SessionInitialTriggerV1Schema.array().parse([{
@@ -142,6 +345,7 @@ describe('newSessionDraftRepositoryAdapter', () => {
             materializationIntent: 'userEdit',
         });
         const before = getSessionDraftSnapshot(scope, { kind: 'newSession', draftId });
+        if (!before || !('composer' in before.document)) throw new Error('Expected a Session composer draft');
         const reference = {
             v: 1,
             activationId: '1d79cf10-cabc-4132-a8b8-bafaa7d60b2e',
@@ -151,7 +355,8 @@ describe('newSessionDraftRepositoryAdapter', () => {
         writeTemporaryComputerActivationRefToRepository({ scope, draftId, activationRef: reference });
 
         const written = getSessionDraftSnapshot(scope, { kind: 'newSession', draftId });
-        expect(written?.document.composer.text).toEqual(before?.document.composer.text);
+        if (!written || !('composer' in written.document)) throw new Error('Expected the retained composer draft');
+        expect(written.document.composer.text).toEqual(before.document.composer.text);
         expect(written?.document.target).toMatchObject({
             authoring: {
                 executionTarget: cataloguedNewSessionAuthoring(before)?.executionTarget,
@@ -163,7 +368,8 @@ describe('newSessionDraftRepositoryAdapter', () => {
         writeTemporaryComputerActivationRefToRepository({ scope, draftId, activationRef: null });
 
         const cleared = getSessionDraftSnapshot(scope, { kind: 'newSession', draftId });
-        expect(cleared?.document.composer.text).toEqual(before?.document.composer.text);
+        if (!cleared || !('composer' in cleared.document)) throw new Error('Expected the retained composer draft');
+        expect(cleared.document.composer.text).toEqual(before.document.composer.text);
         expect(cataloguedNewSessionAuthoring(cleared)?.temporaryComputerActivationRef?.value).toBeNull();
         expect(cataloguedNewSessionAuthoring(cleared)?.executionTarget)
             .toEqual(cataloguedNewSessionAuthoring(before)?.executionTarget);
@@ -398,11 +604,11 @@ describe('newSessionDraftRepositoryAdapter', () => {
         });
 
         const snapshot = getSessionDraftSnapshot(scope, { kind: 'newSession', draftId });
-        expect(snapshot?.document.composer).toMatchObject({
+        expect(snapshot?.document).toMatchObject({ composer: {
             text: { value: 'live composer text' },
             mentions: { value: [{ kind: 'mention', tokenText: '@issue', start: 0, end: 6 }] },
             attachments: { value: [attachment] },
-        });
+        } });
         expect(snapshot?.document.target).toMatchObject({
             kind: 'newSession',
             authoring: {
@@ -494,11 +700,11 @@ describe('newSessionDraftRepositoryAdapter', () => {
             }),
         });
 
-        expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: 'seeded-draft' })?.document.composer)
-            .toMatchObject({
+        expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: 'seeded-draft' })?.document)
+            .toMatchObject({ composer: {
                 text: { value: 'Seeded prompt' },
                 attachments: { value: [attachment] },
-            });
+            } });
     });
 
     it('round-trips device-local launch choices without synchronizing them', () => {

@@ -131,6 +131,31 @@ describe('DetailsPaneSlotHost (the page details pane a plugin DetailsPane render
         expect(focusedEntry).toBe('second');
     });
 
+    it('draws the identity mark beside the title and the mark leading the line in the pane header band', async () => {
+        function Publisher() {
+            const binding = useDetailsPaneSlotBinding();
+            return <>{binding?.renderDetailsPane({
+                open: true,
+                title: 'Move cart totals to server-side rounding',
+                subtitle: 'tidewater/checkout-web #2476 · You opened 42m ago',
+                leading: React.createElement('KindMark'),
+                subtitleLeading: React.createElement('SourceMark'),
+                children: 'Detail',
+                onClose() {},
+                testID: 'entry',
+            })}</>;
+        }
+        const screen = await renderScreen(<AppPaneProvider><DetailsPaneSlotHost><Publisher /></DetailsPaneSlotHost></AppPaneProvider>);
+        const header = screen.root.find((node) => node.props.testID === 'entry.header' && typeof node.type !== 'string');
+        expect(header.findAllByType('KindMark' as any)).toHaveLength(1);
+        expect(header.findAllByType('SourceMark' as any)).toHaveLength(1);
+        const words = React.Children.toArray(screen.findByTestId('entry.header.subtitle')?.props.children)
+            .flatMap((child) => (React.isValidElement(child) ? React.Children.toArray((child.props as { children?: React.ReactNode }).children) : [child]))
+            .filter((child): child is string => typeof child === 'string')
+            .join('');
+        expect(words).toBe('tidewater/checkout-web #2476 · You opened 42m ago');
+    });
+
     it('renders a plugin DetailsPane in the page details pane, beside the page, with the plugin context intact', async () => {
         const { screen, context } = await mountPluginPage();
 

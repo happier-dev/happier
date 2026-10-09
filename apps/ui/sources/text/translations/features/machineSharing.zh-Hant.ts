@@ -1,0 +1,19 @@
+import { createMachineSharingTranslations } from '../machineSharingTranslations.shared';
+export const machineSharing = createMachineSharingTranslations({
+    terminals: { projectEmpty: '在此專案中開啟終端。', opening: '正在開啟終端。', sharedOs: '此終端以 {machine} 的作業系統使用者身分執行。該使用者可以讀取本機憑證和加密金鑰。建議使用團隊專用機器進行共享工作。', denied: '你已無權存取此終端。', rootDenied: '此工作區無法用於終端。', offline: '此機器離線。正在顯示最後已知的輸出。', openUnknown: '終端可能已開啟。請先檢查現有終端，再重試。', unavailable: '此機器不支援終端。', failed: '無法開啟此終端。' },
+    revoked: '{owner} 已停止共享 {machine}。你在這裡執行中的工作正在停止。工作階段仍保留在歷史記錄中，但你無法在這裡開始新工作。',
+    recipientEncryptionIncompatible: '這台端對端加密機器需要使用端對端加密帳戶。',
+    destinations: { yours: '你的機器', created: '由 Happier 建立', shared: '共享給你 · {team}', owner: '{owner} 的機器 · {platform}', pendingKey: '正在等候安全存取', sharedPurposeUnsupported: '此工作需要使用你自己的機器。' },
+    title: '共享', description: '新增的人員和團隊可以在 {machine} 的工作區啟動工作階段、執行指令碼和開啟終端機。',
+    trustedOs: '擁有 {machine} 終端機或代理存取權的人會以你的作業系統使用者身分執行，可以取得本機憑證以及帳戶加密金鑰（如有）。Happier API 不會讀取或匯出擁有者的憑證或金鑰，但共享終端機的輸出可能包含這些內容。建議共享團隊專用機器。',
+    manageHelp: '可以管理 {machine} 的人也能將相同存取權共享給其他人。', empty: '共享 {machine}，讓團隊成員在這裡工作。',
+    loading: '正在載入 {machine} 的存取權。', readError: '無法載入 {machine} 的存取權。', offline: '{machine} 已離線。存取權變更會儲存在這裡。',
+    denied: '只有可以管理 {machine} 的人才能變更共享設定。', use: '可以使用', manage: '可以管理', allMembers: '所有目前成員，包括之後加入的成員',
+    pending: '正在等候有權限的金鑰持有者為 {machine} 準備存取權。', incompatible: '{machine} 已啟用端對端加密，但 {person} 的帳戶尚未啟用，因此 {person} 無法開啟它。',
+    incompatibleHelp: '共享未加密的機器，或請 {person} 在帳戶設定中啟用端對端加密。',
+    plain: '其資料未使用端對端加密，因此 Home 可以讀取。', saved: '共享已更新', yourAccess: '你的存取權',
+    ownHistory: '你在這裡啟動的工作階段在 Happier 中仍屬於你。登入 {machine} 作業系統的人可以查看相關檔案和輸出。',
+    leave: '退出此共享', inherited: '你仍透過 {audience} 擁有存取權。請聯絡管理者變更權限。', unavailable: '無法檢查 {machine} 的存取權。',
+    effectiveLoss: '失去最後一項存取權的人，其執行中的工作階段、指令碼、執行任務、排隊及準備中的工作、終端機和服務將停止。Happier 歷程記錄仍歸本人所有；已取得的資料無法收回。',
+    overlap: '其他有效存取權仍然保留。工作將繼續執行。', custodianProtected: '無法在這裡移除或取代機器的原始擁有者。',
+});

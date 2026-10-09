@@ -91,4 +91,13 @@ describe('machine inventory reference stability through the real store', () => {
         expect(notifications).toBe(0);
         expect(store.getState()).toBe(before);
     });
+
+    it('retains unaffected display references when a stale snapshot only admits current rows', () => {
+        const store = createTestStore();
+        store.getState().applyMachines([machine('one'), machine('two')], true);
+        const before = store.getState();
+        store.getState().replaceMachineDisplays([{ ...before.machineDisplayById.one!, active: false, activeAt: 2 }], { replace: false });
+        expect(store.getState().machineDisplayById.two).toBe(before.machineDisplayById.two);
+        expect(store.getState().machineDisplayById.one?.active).toBe(false);
+    });
 });

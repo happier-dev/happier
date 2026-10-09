@@ -7,6 +7,7 @@ import {
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 import type { NewSessionAuthoringContext } from './sessionAuthoringContext';
 
@@ -14,6 +15,7 @@ export function buildNewSessionAuthoringContext(params: Readonly<{
     automationDraft: NewSessionAutomationDraft;
     automationFeatureEnabled: boolean;
     selectedMachineId: string | null;
+    managedMachineSelection?: ManagedMachineSelectionDraft | null;
     selectedMachine: Machine | null;
     hostBoundMachineId?: string | null;
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
@@ -37,6 +39,7 @@ export function buildNewSessionAuthoringContext(params: Readonly<{
         // wrapper's journey, and a hydrated pre-change Automation draft is
         // handed there.
         canSubmit: canCreateNewSession({
+            managedMachineSelection: params.managedMachineSelection,
             selectedMachineId: params.selectedMachineId,
             selectedMachine: params.selectedMachine,
             hostBoundMachineId: params.hostBoundMachineId,

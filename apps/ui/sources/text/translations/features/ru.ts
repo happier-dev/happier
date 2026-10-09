@@ -349,6 +349,7 @@ const actionFamilyTranslations = { ru: translated({
             computer: 'Управление компьютером',
             artifact_access: 'Общий доступ к артефактам',
             workflows: 'Рабочие процессы',
+            workflow_effects: 'Вебхуки и команды',
             notifications: 'Уведомления',
             machine_agent_install: 'Установка агентов',
             machine_agent_sign_in: 'Вход агентов',
@@ -834,6 +835,35 @@ const artifactsBrowserTranslations = { ru: {
             label: 'Вид',
             grid: 'Сетка',
             list: 'Список',
+            folders: 'Папки',
+        },
+        folders: {
+            newFolder: 'Новая папка',
+            newFolderInside: 'Новая папка внутри',
+            rename: 'Переименовать',
+            moveTo: 'Переместить в папку…',
+            moveVerb: 'Переместить в',
+            topLevel: 'Верхний уровень',
+            moveToTopLevel: 'Переместить на верхний уровень',
+            deleteFolder: 'Удалить папку',
+            deleteTitle: ({ name }) => `Удалить «${name}»?`,
+            deleteBody: 'Её элементы и папки поднимутся на уровень выше. Ничего не удаляется.',
+            nameHelp: 'Папки видны только вам. Раскладка по папкам ничего не меняет для тех, с кем этим поделились.',
+            namePlaceholder: 'Название папки',
+            create: 'Создать',
+            options: ({ name }) => `Параметры: ${name}`,
+            expand: ({ name }) => `Развернуть ${name}`,
+            collapse: ({ name }) => `Свернуть ${name}`,
+            columnName: 'Название',
+            columnEdited: 'Изменено',
+            emptyInvite: 'Папок пока нет. Сгруппируйте то, что связано; раскладку видите только вы.',
+            unavailable: 'Не удалось загрузить папки с этого Home. Всё показано без них.',
+            saveFailed: 'Изменение не сохранено. Попробуйте ещё раз.',
+            refusedCycle: 'Папку нельзя переместить в саму себя',
+            refusedUnavailable: 'Папки сейчас недоступны',
+            refusedOther: 'Сюда переместить нельзя',
+            showAllKinds: 'Показать все типы в Артефактах',
+            promptSearch: 'Поиск промптов и навыков',
         },
         provenance: {
             savedByYou: 'Сохранено вами',
@@ -1528,6 +1558,7 @@ const computerUseTranslations = { ru: {
             accessValue: 'Видеть и использовать',
             accessSee: 'Только смотреть',
             displayUnavailable: 'На этом компьютере нельзя предоставить доступ ко всему экрану.',
+            wholeDisplayBody: ({ display }) => `Всё, что видно на ${display}, будет видно, включая другие приложения и уведомления.`,
             policyBoth: ({ agent }) => `${agent} спрашивает перед каждым снимком, нажатием и вводом.`,
             policyInput: ({ agent }) => `${agent} спрашивает перед каждым нажатием и вводом.`,
             policyCapture: ({ agent }) => `${agent} спрашивает перед каждым снимком.`,
@@ -1567,6 +1598,27 @@ const computerUseTranslations = { ru: {
             notSharedBody: ({ agent }) => `Выберите окно для ${agent}.`,
             moreA11y: 'Параметры окна',
             tabFallback: 'Компьютер',
+            sourceComputer: 'Компьютер',
+            sourceBrowser: 'Браузер',
+            sourceA11y: 'Источник',
+            watchingA11y: ({ source, machine }) => `Просмотр: ${source} на ${machine}`,
+            expandView: 'Развернуть вид',
+            restoreView: 'Восстановить вид',
+            dockView: 'Закрепить вид',
+            closeView: 'Закрыть вид',
+            moveView: 'Переместить вид',
+            resizeView: 'Изменить размер вида',
+            moveTopLeft: 'Переместить вверх влево',
+            moveTopRight: 'Переместить вверх вправо',
+            moveBottomLeft: 'Переместить вниз влево',
+            moveBottomRight: 'Переместить вниз вправо',
+            larger: 'Больше',
+            smaller: 'Меньше',
+            viewOptions: 'Параметры вида',
+            presentedElsewhereTitle: 'Показывается в плавающем виде',
+            presentedElsewhereBody: 'Закрепите его здесь, чтобы он был рядом с работой.',
+            closeHint: 'Закрывает этот просмотр. Сессия продолжает работать.',
+            captureOnly: 'Этот экран можно смотреть. Управление мышью и клавиатурой не разрешено.',
         },
         strip: {
             using: ({ target }) => `Использует ${target}`,
@@ -2672,6 +2724,7 @@ const filesPaneTranslations = { ru: {
         noChangedFilesReason: 'Рабочая копия совпадает с последним коммитом.',
         rootErrorTitle: ({ machine }) => `Не удалось получить список файлов на ${machine}`,
         rootErrorTitleUnnamed: 'Не удалось получить список файлов',
+        workspaceUnavailableReason: 'Happier не удалось определить компьютер и папку для этой сессии.',
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "ru">;
 
 return { filesPaneTranslations };
@@ -4961,6 +5014,9 @@ const ru: typeof en = {
         settle: 'Закрыть',
         snoozedUntil: ({ time }) => `Отложена до ${time}`,
         more: 'Другие действия',
+        approvalNeeded: 'Нужно ваше одобрение',
+        approvalUntitled: 'Одобрите действие',
+        approvalAskedBy: ({ session }) => `Запрос от ${session}`,
     },
     popover: {
         moreInOther: ({ count }) => `Ещё ${count} в «Других сессиях»`,
@@ -5545,8 +5601,8 @@ const pluralPl = Shared_personalHomeSettingsTranslations.pluralPl;
 const pluralRu = Shared_personalHomeSettingsTranslations.pluralRu;
 
 const ru = {
-    standardOnlyTitle: 'Только стандартное подключение',
-    standardOnlySubtitle: 'Новые подключения на этом устройстве используют стандартные маршруты. Текущие передачи завершаются по прежнему маршруту.',
+    standardOnlyTitle: 'Подключаться через адреса Home',
+    standardOnlySubtitle: 'На этом устройстве используйте адрес каждого Home вместо однорангового соединения.',
     installOrUpdateAction: 'Установить или обновить личный Home', startAction: 'Запустить личный Home', stopAction: 'Остановить личный Home',
     defaultHomeLabel: 'Личный Home', homeTitle: 'Home', canonicalAddress: 'Адрес Home', identityComparison: 'Текущий Home', identityComparisonMatch: 'Совпадает', identityComparisonMismatch: 'Не совпадает', identityComparisonUnknown: 'Не удалось подтвердить',
     unknownSize: 'Размер неизвестен', unknownTimestamp: 'Время неизвестно', restoreBackupTitle: 'Резервная копия', identityTitle: 'Идентификатор Home', identityUnavailable: 'Идентификатор недоступен', restoreBackupDate: 'Создано', restoreCompatibility: 'Совместимость', restoreCompatible: 'Совместимо', restoreCompatibilityVerified: 'Проверено этой версией', restoreBackupSize: 'Размер', restoreReplacementNotice: 'Текущие данные Home будут заменены. Проверенная копия для восстановления будет сохранена.', restoreConfirmTitle: 'Заменить и восстановить этот личный Home?', restoreConfirmAction: 'Заменить и восстановить', relocateConfirmTitle: 'Переместить этот личный Home?', relocateConfirmBody: 'Текущий Home будет остановлен, прежде чем его проверенная копия станет активной в новом месте.', relocateDestination: 'Назначение', relocateConfirmAction: 'Переместить Home', recoverRestoreTitle: 'Восстановить прерванное восстановление?', recoverRestoreBody: 'Откатить прерванное восстановление с помощью сохранённых материалов восстановления.', recoverRestoreAction: 'Восстановить операцию', eraseDataTitle: 'Удалить данные личного Home?', eraseHomeTarget: 'Home', eraseDataBody: 'Это отдельная операция от удаления приложения и навсегда удаляет только следующие определённые пути Home:', estimatedSize: 'Оценочный размер', summaryTitle: 'Личный Home', footer: 'Ваш Home останется на этом компьютере. Эти действия не изменят другой Home.', statusTitle: 'Статус', notAvailable: 'Недоступно', storageTitle: 'Хранилище', masterSecretTitle: 'Секрет доступа Home', masterSecretPresent: 'Есть', masterSecretUnavailable: 'Недоступно', inspectAction: 'Обновить сведения о Home', actionsTitle: 'Резервная копия и восстановление', protectionTitle: 'Защита', backupsSectionFooter: 'Резервные копии содержат читаемые разговоры, данные Home, состояние доверенных устройств и секрет доступа Home. Храните их только в надёжном месте.', lastBackupTitle: 'Последняя копия', lastBackupUnknown: 'Последняя копия неизвестна', backupsTitle: 'Архивы копий', backupAction: 'Создать копию', backupSubtitle: 'Создаёт и проверяет открытый архив Home.', exportBackupAction: 'Экспортировать копию…', exportBackupSubtitle: 'Создаёт проверенную копию в выбранном вами месте.', verifyAction: 'Проверить копию…', verifySubtitle: 'Проверяет архив без его восстановления.', restoreAction: 'Восстановить…', restoreSubtitle: 'Проверяет копию перед заменой данных Home.', relocateAction: 'Переместить Home…', relocateSubtitle: 'Переместить этот Home на управляемый компьютер.', relocationFinishAction: 'Завершить перемещение', relocationReturnAction: 'Вернуться к исходному Home', relocationFinishSubtitle: 'Завершить перемещение после проверки назначения.', relocationReturnSubtitle: 'Оставить исходный Home активным местом.', recoverRestoreSubtitle: 'Прерванное восстановление можно явно откатить.', restoreRecoveryWarningTitle: 'Восстановление требует исправления', restoreRecoveryWarningBody: 'Состояние восстановления неоднозначно. Автоматические изменения выполнены не будут. Просмотрите диагностику перед исправлением этого Home.', restoreCleanupWarningTitle: 'Очистка после восстановления требует внимания', restoreCleanupWarningBody: 'Home восстановлен, но автоматическая очистка не завершилась. Просмотрите диагностику и повторите операцию Home.', backupVerified: 'Копия проверена', backupNeedsAttention: 'Копия проверена; перезапуск Home требует внимания', backupHomeReady: 'Home перезапущен', backupRevealAction: 'Показать копию', restoreResultTitle: 'Результат восстановления', restoreOutcomeRecoveryRequired: 'Требуется восстановление', restoreOutcomeRolledBack: 'Восстановление отменено', restoreOutcomeRestored: 'Home восстановлен', advancedTitle: 'Дополнительно', advancedFooter: 'Управление runtime и диагностика этого компьютера.', restartAction: 'Перезапустить личный Home', openDataLocationAction: 'Открыть расположение данных Home', openLogsAction: 'Открыть журналы runtime', removeProfileAction: 'Удалить Home из Happier', removeProfileSubtitle: 'Удаляет этот профиль; данные runtime остаются на этом компьютере.', removeProfileTitle: 'Удалить профиль личного Home?', removeProfileBody: 'Профиль будет удалён, но runtime и данные сохранятся.', uninstallRuntimeAction: 'Удалить runtime, сохранить данные', uninstallRuntimeSubtitle: 'Удаляет службу и бинарные файлы; данные Home сохраняются.', deleteHomeDataTitle: 'Удалить данные Home', removeSectionFooter: 'Удаление приложения сохраняет данные Home. Полное удаление — отдельное подтверждаемое действие.', eraseDataAction: 'Удалить данные личного Home навсегда', eraseDataSubtitle: 'Отдельно от удаления приложения. Навсегда удаляет определённые данные Home.', eraseResultTitle: 'Данные Home удалены', eraseStoppedHome: 'Работающий Home остановлен', eraseHomeAlreadyStopped: 'Home уже был остановлен', eraseRemainingPaths: 'Не удалось удалить', progressTitle: 'Операция с личным Home', dismissResult: 'Закрыть',
@@ -6253,12 +6309,12 @@ const translated = Shared_profilesPageTranslations.translated;
 
 const profilesPageTranslations = { ru: translated({
         profilesPage: {
-            searchPlaceholder: 'Поиск профилей',
-            emptyTitle: 'Профилей пока нет',
-            newProfileTitle: 'Новый профиль',
+            searchPlaceholder: "Поиск профилей запуска",
+            emptyTitle: "Профилей запуска пока нет",
+            newProfileTitle: "Новый профиль запуска",
             notFoundTitle: 'Этого профиля больше нет',
             notFoundDescription: 'Возможно, его удалили на другом устройстве.',
-            backToProfiles: 'К профилям',
+            backToProfiles: "Вернуться к профилям запуска",
             discardDraft: 'Отменить',
             detailDescription: 'Используется, когда новая сессия запускается с этим профилем.',
             builtInDetailDescription: 'Готовый профиль. При сохранении изменений создаётся ваша собственная копия.',
@@ -6270,6 +6326,7 @@ const profilesPageTranslations = { ru: translated({
             environmentDescription: 'Переменные окружения, которые задаются при запуске сессии с этим профилем. Значения могут ссылаться на переменные машины.',
             descriptionTitle: 'Описание',
             descriptionHint: 'Необязательно. Показывается при выборе этого профиля.',
+            modelRequiresAgent: 'Сначала выберите предпочтительного агента, чтобы выбрать его модель.',
         },
     }) };
 
@@ -6459,12 +6516,23 @@ const rolesTranslations = { ru: {
             label: 'Роли',
             title: 'Роль',
             searchPlaceholder: 'Поиск ролей…',
-            empty: 'Подходящих ролей нет.',
+            empty: 'Ролей пока нет.',
+            emptyWithManage: 'Ролей пока нет. Добавьте роль в разделе «Управлять ролями».',
             footer: 'Роль несёт свои инструкции, движок и способ запуска, поэтому рабочие процессы остаются переносимыми.',
             manage: 'Управлять ролями',
             engineAppliesOnStart: 'Движок применяется при запуске этой роли',
             defaultEngine: 'Агент по умолчанию',
             activeAccessibilityLabel: 'Роли, роль используется',
+        },
+        builtIn: {
+            orchestrator: "Ведёт работу и передаёт её части другим агентам",
+            planner: "Составляет план, прежде чем что-то строить",
+            builder: "Вносит изменение и проверяет, что оно работает",
+            reviewer: "Проверяет изменение и показывает, что исправить",
+            judge: "Решает спорные замечания и говорит, когда цель достигнута",
+            second_opinion: "Независимая проверка, прежде чем идти дальше",
+            scout: "Просматривает код и отвечает, где что находится",
+            approval_reviewer: "Отвечает на запросы разрешений с низким риском, а остальное спрашивает у вас",
         },
         settings: {
             description: 'Кто выполняет каждый вид работы. Процессы и оркестраторы запрашивают роль; роль говорит, как её выполнять.',
@@ -6486,7 +6554,7 @@ const rolesTranslations = { ru: {
             instructionsTitle: 'Инструкции',
             instructionsDescription: 'Что она делает, когда её использовать и как отчитываться. Агенты читают это, раздавая работу.',
             resetToDefault: 'Сбросить по умолчанию',
-            readOnlyNote: 'Доступна вам для просмотра. Выбор движка и профиля остаётся вашим.',
+            readOnlyNote: 'Исходная роль доступна только для чтения. Настройте здесь свои инструкции; сброс восстановит оригинал.',
             howItRunsTitle: 'Как она работает',
             engineTitle: 'Движок',
             engineDescription: 'Агент, модель и усилие.',
@@ -6535,7 +6603,7 @@ const rolesTranslations = { ru: {
             ladderRoot: 'Работа, которую запускаете вы',
             ladderRootDetail: 'Запущено вами · без ограничений',
             ladderLevel: ({ level }) => `Уровень ${level}`,
-            ladderLevelDetail: 'Запущено агентом',
+            ladderLevelDetail: ({ level }) => (level === 1 ? "Запущено агентом в работе, которую начали вы" : `Запущено агентом уровня ${level - 1}`),
             ladderRefused: 'Ещё одна передача',
             ladderRefusedDetail: ({ level }) => `Уровень ${level} · отказ; агент делает сам`,
         },
@@ -6773,7 +6841,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const ru: SecretsSettingsCopy = {
-    purpose: 'API-ключи и токены, которые используют ваши агенты и серверы MCP. После сохранения значение больше не показывается.',
+    purpose: "API-ключи и токены для агентов и серверов MCP. Сохранённые значения больше не отображаются.",
     yoursTitle: 'Ваши секреты',
     yoursDescription: 'Секреты, которые вы сохранили или которыми владеете. Выбирайте их везде, где Happier просит ключ.',
     sharedWithYouTitle: 'Доступные вам',
@@ -6817,6 +6885,7 @@ const sessionAccessTranslations = { "ru": {
         accessibleSummary: ({ title, label }: { title: string; label: string }) => `${title}: ${label}`,
         accessibleControl: ({ name, control, value }: { name: string; control: string; value: string }) => `${name}, ${control}, ${value}`,
         title: "Доступ к сессии",
+        context: "Контекст сессии",
         search: "Поиск людей, групп или команд",
         hasAccess: "Есть доступ",
         yourAccess: "Ваш доступ",
@@ -7293,6 +7362,7 @@ const sessionCollaborationPaneTranslations: Pick<Record<'en' | 'ca' | 'de' | 'es
         newLinkReplaces: 'Текущая ссылка перестанет работать, когда будет создана новая.',
         linkDenied: 'Создавать публичную ссылку могут только те, кто управляет этой сессией.',
         linkLoadFailed: 'Не удалось проверить публичную ссылку.',
+        linkUnavailable: 'Публичные ссылки недоступны в этом Home. Попросите администратора настроить их размещение.',
         justYouTitle: 'Работайте над сессией вместе',
         justYouBody: ({ home }) => `Поделитесь ею с людьми в ${home}. Они смогут следить за ней, обсуждать её здесь и продолжить, пока вас нет.`,
         share: 'Поделиться',
@@ -7934,7 +8004,7 @@ const sessionListFilterTranslations = { ru: translated({
         filtersShowBothSummary: 'Сессии и запуски', filtersStartedByNone: 'Инициаторы не выбраны',
         filtersStartedBy: 'Кто запустил', filtersStartedByYou: 'Вы', filtersStartedByTriggers: 'Триггеры', filtersStartedByAgents: 'Агенты',
         filtersRunsNeedingYouAlwaysShow: 'Запуски, которым вы нужны, всегда отображаются',
-        filtersMyWork: 'Моя работа', filtersLegacyOwnerDirect: 'Собственные и напрямую предоставленные', filtersAssignedToMe: 'Назначенные мне', filtersFollowing: 'Отслеживаемые',
+        filtersMyWork: 'Моя работа', filtersLegacyOwnerDirect: 'Моя работа', filtersAssignedToMe: 'Назначенные мне', filtersFollowing: 'Отслеживаемые',
         filtersInvolvingMe: 'С моим участием', filtersAllAccessible: 'Все доступные', filtersAttention: 'Внимание',
         filtersAttentionAny: 'Любые', filtersAttentionNeedsMe: 'Только сессии, которым я нужен', filtersScopeNeedsMe: 'Нужен я',
         filtersInactive: 'Неактивные сессии', filtersInactiveShow: 'Показывать', filtersInactiveHide: 'Скрывать',
@@ -8120,6 +8190,16 @@ const Domain_sessionWorkTranslations = (() => {
 const en = Shared_sessionWorkTranslations.en;
 
 const ru: typeof en = {
+    scheduled: {
+        title: "Запланировано",
+        writesHere: "Пишет сюда",
+        empty: "Нет workflow, запланированных для записи сюда.",
+        step: ({ ordinal, title }) => `шаг ${ordinal} · ${title}`,
+        provenanceWorkflowStep: ({ source, step }) => `От ${source} · шаг ${step}`,
+        notifyOnlyReported: "Только если агент что-то сообщил",
+        notifyOnlyReportedDescription: "Пропустить уведомление, если агент не вернул текст.",
+        notifyOnlyReportedNeedsResult: "Используйте текстовый результат предыдущего шага агента как сообщение.",
+    },
     workerUpdate: {
         settled: "Завершено",
         stalled: "Застопорилось",
@@ -8147,6 +8227,7 @@ const ru: typeof en = {
         positionUnder: ({ position, total, parent }) => `${position} из ${total} под ${parent}`,
     },
     actions: {
+        showInTranscript: 'Показать в переписке',
         makeOrchestrator: 'Сделать оркестратором',
         makeOrchestratorSubtitle: 'Эта сессия планирует, делегирует и отчитывается',
         makeOrchestratorFailed: "Не удалось сделать сессию оркестратором",
@@ -8193,6 +8274,8 @@ const ru: typeof en = {
     list: {
         level: ({ level }) => `Уровень ${level}`,
         subSessions: ({ count }) => `Подсессий: ${count}`,
+        showReports: ({ name, count }) => (count > 0 ? `Показать сессии под ${name} (${count})` : `Показать сессии под ${name}`),
+        hideReports: ({ name }) => `Скрыть сессии под ${name}`,
         reportsWorking: ({ count }) => `В работе: ${count}`,
         reportsNeedYou: ({ count }) => `Подсессий ждут вас: ${count}`,
     },
@@ -8247,6 +8330,11 @@ const Domain_settingsMachinesTranslations = (() => {
 const en = Shared_settingsMachinesTranslations.en;
 
 const ru: typeof en = {
+    defaultsTitle: "Настройки машин по умолчанию",
+    localVirtualMachines: "Локальные виртуальные машины",
+    runningOnly: "Облако: оплата только при работе",
+    stoppedBilled: "Облако: оплата при остановке",
+    billingUnknown: "Оплата неизвестна",
     pageDescription: 'Компьютеры, на которых выполняются ваши сессии, и пулы, которые выбирают между ними.',
     thisComputerTitle: 'Этот компьютер',
     thisComputerRowSubtitle: 'Фоновая служба и командная строка',
@@ -8760,7 +8848,7 @@ const settingsSessionPagesTranslations: Pick<Record<
                 timingWhenIdle: 'Когда всё простаивает',
                 layoutSection: 'Вид поля ввода',
                 actionBarTitle: 'Панель действий',
-                actionBarAutoDescription: 'На широких экранах чипы переносятся на вторую строку, на телефоне прокручиваются вбок.',
+                actionBarAutoDescription: 'Элементы управления используют доступное место и при необходимости переносятся на новую строку.',
                 actionBarWrapDescription: 'Чипы переносятся на вторую строку, если не помещаются.',
                 actionBarScrollDescription: 'Чипы остаются в одной строке; прокрутите, чтобы увидеть остальные.',
                 actionBarCollapsedDescription: 'Чипы убираются в меню, оставляя больше места для текста.',
@@ -8794,6 +8882,10 @@ const shareSheetTranslations = { ru: {
         confirmRemove: 'Подтвердить удаление',
         removedAnnouncement: ({ name }) => `У ${name} больше нет доступа`,
         browseAll: 'Показать все',
+        browsePeople: 'Показать всех людей',
+        browseTeams: 'Показать все команды',
+        browseGroups: 'Показать все группы команд',
+        membersOnlyLink: 'Копирование ссылки предназначено для тех, у кого уже есть доступ.',
         allLoaded: 'Все результаты загружены',
         copyLink: 'Копировать ссылку',
         linkCopied: 'Ссылка скопирована',
@@ -8810,19 +8902,28 @@ const shareSheetTranslations = { ru: {
             levels: { canUse: 'Может использовать', canRead: 'Может читать', canEdit: 'Может редактировать', admin: 'Управление' },
             help: {
                 workflowUse: 'просматривать и запускать',
-                roleUse: 'использовать; собственные изменения остаются в своих Настройках',
+                roleUse: '— собственные изменения остаются в своих Настройках',
                 profileUse: 'запускать с ним сессии',
                 documentUse: 'открывать и копировать на любом своём устройстве',
                 promptUse: 'использовать в своих сессиях',
                 boardUse: 'видеть доску; каждая карточка открывает только то, что уже доступно',
+                dashboardUse: 'Просмотр этой панели: каждый виджет показывает только то, что вы уже можете открыть.',
                 editForEveryone: 'изменять для всех, с кем им поделились',
-                adminOwnerShares: 'изменять и управлять доступом; только владелец может назначать администраторов',
+                adminOwnerShares: 'изменять и управлять доступом',
             },
             notes: {
                 personalRuns: 'Запуски и триггеры остаются у того, кто их запускает.',
                 teamRuns: 'Команда видит каждый запуск.',
                 roleLive: 'Ваши изменения доходят до всех, с кем им поделились.',
-                profileSecrets: 'Секретные значения никогда не передаются · привяжите сохранённый секрет',
+                profileSecrets: 'Профили ссылаются на сохранённые секреты; их значения не передаются.',
+                dashboardAccess: 'Добавленные люди открывают её от своего имени. Виджетам, определениям, подключениям, машинам и репозиториям нужны отдельные права доступа.',
+            },
+            privateChoices: {
+                title: 'Личные подключения',
+                account: ({ widget, service }) => `${widget} использует ваш аккаунт ${service}`,
+                letViewersPick: 'Дать читателям выбрать',
+                removeChoice: 'Удалить выбор',
+                authoredInput: ({ widget }) => `Измените ${widget} чтобы удалить личные входные данные перед публикацией.`,
             },
             errors: {
                 unavailable: 'Общий доступ здесь пока недоступен.',
@@ -10101,6 +10202,8 @@ type VoicePresenceTranslation = Shared_voicePresenceTranslations.VoicePresenceTr
 
 const voicePresenceTranslations = { ru: {
         welcomeText: "Привет, я слушаю — что вы хотите сделать?",
+        customVoice: 'Пользовательский голос',
+        boundWelcomeText: ({ name }: Readonly<{ name: string }>) => `Привет, вы говорите с ${name} — что вы хотите сделать?`,
         greetingLiteralUnavailable: "При этом языке ответа сервис ждёт, пока вы заговорите.",
         title: 'Голос',
         howYouTalk: "Как вы говорите",
@@ -10676,7 +10779,7 @@ type SavedCopy = Shared_walkthroughSavedTranslations.SavedCopy;
 
 const en = Shared_walkthroughSavedTranslations.en;
 
-const walkthroughSavedTranslations = { ru: { edit: 'Редактировать обзор', title: 'Название обзора', stopTitle: 'Название этапа', prose: 'Объяснение', refine: 'Уточнить', instructions: 'Что нужно изменить?', moveUp: 'Переместить выше', moveDown: 'Переместить ниже', mergeNext: 'Объединить со следующим этапом', addSummary: 'Добавить сводку', addCommitPlan: 'Предложить коммиты', updated: 'Сохранённый результат обновлён', conflict: 'Этот обзор изменён в другом месте. Ваш черновик сохранён. Загрузите последнюю версию и проверьте её перед повторным сохранением.', reload: 'Загрузить последнюю версию', missingStop: "Этого этапа больше нет в последней версии обзора. Черновик сохранён; выберите другой этап, чтобы продолжить.", applicationLocked: 'Выполняются коммиты. Редактирование приостановлено.' } } satisfies Pick<Record<string, SavedCopy>, "ru">;
+const walkthroughSavedTranslations = { ru: { discuss: 'Обсудить', message: 'Сообщение', edit: 'Редактировать обзор', title: 'Название обзора', stopTitle: 'Название этапа', prose: 'Объяснение', refine: 'Уточнить', instructions: 'Что нужно изменить?', moveUp: 'Переместить выше', moveDown: 'Переместить ниже', mergeNext: 'Объединить со следующим этапом', addSummary: 'Добавить сводку', addCommitPlan: 'Предложить коммиты', updated: 'Сохранённый результат обновлён', conflict: 'Этот обзор изменён в другом месте. Ваш черновик сохранён. Загрузите последнюю версию и проверьте её перед повторным сохранением.', reload: 'Загрузить последнюю версию', missingStop: "Этого этапа больше нет в последней версии обзора. Черновик сохранён; выберите другой этап, чтобы продолжить.", applicationLocked: 'Выполняются коммиты. Редактирование приостановлено.' } } satisfies Pick<Record<string, SavedCopy>, "ru">;
 
 return { walkthroughSavedTranslations };
 })();
@@ -11088,6 +11191,8 @@ const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'
         callWebhook: "Вызвать вебхук",
         runCommand: "Выполнить команду",
         commandValuesInEnv: "Передавайте значения процесса через переменные окружения. Текст команды выполняется в том виде, в котором вы его написали.",
+        waitForWork: "Ждать работу",
+        waitForWorkDescription: "Ждать, пока выбранная работа достигнет указанного состояния",
         artifactCreate: "Создать документ",
         artifactGet: "Прочитать документ",
         artifactList: "Список документов",
@@ -11163,9 +11268,8 @@ type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBu
 const en = Shared_workflowBuiltinTranslations.en;
 
 const ru: WorkflowBuiltinTranslations = {
-    runsInsideSession: 'Выполняется в сессии',
-    keepGoing: { title: 'Продолжать до готовности' },
-    reviewAndConverge: { title: 'Проверить и свести', apply: 'Применить', verifyAndFix: 'Проверить и исправить', verifyOnly: 'Только проверить', rounds: 'Раунды до остановки' },
+    keepGoing: { title: 'Продолжать до готовности', description: 'Продолжает, пока цель не достигнута' },
+    reviewAndConverge: { title: 'Проверить и свести', description: 'Проверять, пока рецензенты не согласятся', apply: 'Применить', verifyAndFix: 'Проверить и исправить', verifyOnly: 'Только проверить', rounds: 'Раунды до остановки' },
     planWithAPanel: { title: 'Спланировать с панелью', description: 'Несколько агентов планируют параллельно, затем план ждёт вашей проверки.', inputs: { request: 'Запрос', requestPlaceholder: 'Что должна спланировать панель?', engines: 'Планировщики' } },
     openAPullRequest: { title: 'Открыть pull request', description: 'Запрашивает второе мнение, затем открывает pull request. Если второе мнение не согласно, ждёт вас.', inputs: { base: 'Базовая ветка', title: 'Заголовок pull request', body: 'Описание', question: 'Вопрос для второго мнения' } },
 };
@@ -11231,7 +11335,8 @@ const ru: WorkflowEditorPageTranslations = {
         workflowSub: 'Запускает другой сценарий · его шаги видны в этом запуске',
         builtin: 'Встроенный',
         waitTitle: 'Ждать вас',
-        waitSub: 'Эта ветка ждёт, пока вы не продолжите.',
+        waitSub: 'Эта ветка ждёт, пока вы не продолжите',
+        waitSubRoot: 'Этот рабочий процесс ждёт, пока вы не продолжите.',
         waitPlaceholder: 'Что здесь нужно проверить или решить?',
         returnsText: 'Возвращает текст',
         returnsFields: ({ fields }) => `Возвращает ${fields}`,
@@ -11243,11 +11348,18 @@ const ru: WorkflowEditorPageTranslations = {
         actionSearch: 'Искать действия',
         workflowSearch: 'Искать сценарии',
         libraryGroup: 'Ваши сценарии',
-        noAgentTurn: 'Без хода агента.',
+        noAgentTurn: 'Уведомить, проверить, опубликовать — без хода агента',
+        agentSub: 'Инструкция для агента',
+        parallelSub: 'Ветви, выполняемые одновременно',
+        loopSub: 'Для каждого элемента, несколько раз или пока…',
+        ifSub: 'Только когда это определяет результат',
+        actionSourcePhone: 'Ваш телефон',
+        actionSourceReview: 'Движки проверки',
         useNumber: 'Указать число',
         actionUnavailable: ({ action }: { action: string }) => `${action} здесь недоступно.`,
         childInputs: ({ workflow }: { workflow: string }) => `Входные данные приходят из ${workflow}.`,
         retryLoading: "Повторить загрузку",
+        openWorkflow: ({ workflow }) => `Открыть ${workflow}`,
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} запускает этот сценарий, поэтому не может выполняться внутри него.`,
         maxFromInput: ({ name }: { name: string }) => `Из входа · ${name}`,
         useInput: ({ name }: { name: string }) => `Взять вход ${name}`,
@@ -11266,10 +11378,12 @@ const ru: WorkflowEditorPageTranslations = {
     settings: 'Настройки сценария',
     settingsSubtitle: 'Каждый шаг использует их, если не меняет.',
     deleteWorkflow: 'Удалить сценарий',
-    deleteBody: 'Прошлые запуски останутся в истории.',
+    deleteBody: 'Прошлые запуски сохраняются.',
+    discardChangesBody: 'Возвращает последнюю сохранённую версию. Отмена вернёт ваши изменения.',
     deleteFailedTitle: 'Не удалось удалить сценарий',
     changedForStep: 'Изменено для этого шага',
     issuesToFix: ({ count }: { count: number }) => `${count} ${pluralRu(count, 'пункт', 'пункта', 'пунктов')} нужно исправить перед запуском`,
+    readyToRun: 'Готово',
     saveStatus: {
         notSaved: 'Ещё не сохранено',
         unsaved: 'Несохранённые изменения',
@@ -11335,6 +11449,7 @@ const ru: WorkflowEditorPageTranslations = {
         dropContinue: ({ session }) => `Продолжить ${session} в этом шаге`,
         dropRefused: ({ session, machine, where }) => `${session} на ${machine}; этот процесс выполняется на ${where}.`,
         lanes: ({ count }) => `Параллельно · дорожек: ${count}`,
+        laneCount: ({ count }) => `дорожек: ${count}`,
         lane: ({ position }) => `Дорожка ${position}`,
         forEachIn: ({ source }) => `Для каждого элемента из ${source}`,
         atATime: ({ count }) => `по ${count} одновременно`,
@@ -11362,8 +11477,14 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ru"> = { ru: {
+        notifyWhenAgentWaits: { title: "Уведомить меня, когда агент ждёт", description: "Выберите сессию и получайте уведомление каждый раз, когда её агенту нужно ваше участие." },
+        dailySummaryInSession: { title: "Ежедневная сводка в этой сессии", description: "Выберите сессию для сводки каждый день в 09:00." },
+        memoryUpkeepInSession: { title: 'Обновление памяти', description: 'Проверяйте память этой сессии каждый день в 09:00 и поддерживайте полезные факты в актуальном состоянии.' },
+        installDepsInWorktree: { title: "Установить зависимости в новом рабочем дереве", description: "Создайте новое рабочее дерево и выполните в нём команду установки, которую можно изменить." },
+        testAfterEveryTurn: { title: "Проверять после каждого хода", description: "Выберите сессию и выполняйте редактируемую команду проверки после каждого завершённого, неудачного или отменённого хода." },
+        noSessions: "Начните рабочую сессию, чтобы использовать этот шаблон.",
         nodes: { ask: 'Спросить', 'review-correctness': 'Проверить корректность', 'review-tests': 'Проверить тесты', summarize: 'Подвести итоги', analyze: 'Проанализировать', review: 'Проверить', fix: 'Исправить', check: 'Проверить результат', classify: 'Классифицировать', reply: 'Подготовить ответ', digest: 'Собрать изменения' },
-        title: 'Начать с примера', fromExample: 'Из примера', description: 'Каждый открывается как черновик. Ничего не запускается до выбора «Запустить сейчас».', use: 'Использовать', chooseSession: 'Выбрать сессию…', builtInDescription: 'Часть Happier. Создайте копию для изменений.', stepCount: ({ count }) => `Шагов: ${count}`,
+        title: 'Начать с примера', fromExample: 'Из примера', description: 'Каждый открывается как черновик. Ничего не запускается до выбора «Запустить сейчас».', sessionDescription: 'Каждый открывается как черновик в этой сессии. Ничего не запустится, пока вы его не включите.', use: 'Использовать', chooseSession: 'Выбрать сессию…', builtInDescription: 'Часть Happier. Создайте копию для изменений.', stepCount: ({ count }) => `Шагов: ${count}`,
         askOnce: { title: 'Спросить один раз', description: 'Один шаг: задать агенту вопрос и получить ответ.' },
         reviewPullRequest: { title: 'Проверить pull request', description: 'Два рецензента параллельно, затем сводка всех замечаний.' },
         workThroughEachFile: { title: 'Обработать каждый файл', description: 'Каждый файл списка по очереди: анализ, затем проверка изменения.' },
@@ -11436,7 +11557,7 @@ const workflowRunCompositionTranslations = {...Domain_workflowRunCompositionTran
 
 const en = Shared_workflowStartTranslations.en;
 
-const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ru"> = { ru: { ...workflowRunRoleTranslations.ru, ...workflowRunCompositionTranslations.ru, neededNamed: ({ name }) => `Входные данные · нужно: ${name}`, addToStart: ({ name }) => `Добавьте ${name}, чтобы запустить`, workflow: 'Рабочий процесс', inputs: 'Входные данные', start: 'Запустить', starting: 'Запуск…', stillStarting: 'Запуск ещё продолжается…', needed: ({ count }) => `Входные данные · не хватает ${count}`, required: 'Нужно для запуска', preview: 'Что будет сделано', unsaved: 'Включает несохранённые изменения', remove: 'Вернуться к обычной сессии', search: 'Найти рабочий процесс', builtin: 'Встроенные', library: 'Ваша библиотека', noInputs: 'Входные данные не нужны', asksFor: ({ names }) => `Запрашивает: ${names}`, optional: 'Необязательно — оставлено пустым', defaultValue: ({ value }) => `По умолчанию: ${value}` } };
+const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ru"> = { ru: { ...workflowRunRoleTranslations.ru, ...workflowRunCompositionTranslations.ru, shortcutStarts: 'запускает', neededNamed: ({ name }) => `Входные данные · нужно: ${name}`, addToStart: ({ name }) => `Добавьте ${name}, чтобы запустить`, workflow: 'Рабочий процесс', inputs: 'Входные данные', start: 'Запустить', starting: 'Запуск…', stillStarting: 'Запуск ещё продолжается…', needed: ({ count }) => `Входные данные · не хватает ${count}`, required: 'Нужно для запуска', preview: 'Что будет сделано', unsaved: 'Включает несохранённые изменения', remove: 'Вернуться к обычной сессии', search: 'Найти рабочий процесс', builtin: 'Встроенные', library: 'Ваша библиотека', noInputs: 'Входные данные не нужны', asksFor: ({ names }) => `Запрашивает: ${names}`, optional: 'Необязательно — оставлено пустым', defaultValue: ({ value }) => `По умолчанию: ${value}` } };
 
 return { workflowStartTranslations };
 })();
@@ -11512,7 +11633,6 @@ const ru: WorkflowsDestinationTranslations = {
         share: 'Поделиться…',
     },
     deleteTitle: 'Удалить этот рабочий процесс?',
-    deleteBody: 'Прошлые запуски останутся в Истории.',
     deleteFailedTitle: 'Не удалось удалить рабочий процесс',
     exportFailedTitle: 'Не удалось экспортировать рабочий процесс',
     gate: {
@@ -11542,6 +11662,15 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const ru: WorkflowTriggersCopy = {
+    activity: {
+        create: "Создать триггер из этого события",
+        test: "Проверить этот триггер",
+        matched: "Это событие соответствует условиям",
+        noMatch: "Это событие не соответствует условиям",
+        sourceMismatch: "Это событие пришло из другого источника",
+        tooOld: "Это событие старше допустимого срока наблюдения",
+        invalid: "Настройте событие перед проверкой",
+    },
     pullRequest: {
         label: "Pull request",
         description: "Добавление триггера связывает pull request с этой сессией.",
@@ -11561,6 +11690,7 @@ const ru: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · ещё ${count}`,
     },
     kind: {
+        pluginEvent: "Событие плагина",
         sessionStarts: 'Когда сессия начинается',
         sessionArchived: 'Когда сессия архивируется',
         schedule: 'По расписанию',
@@ -11580,6 +11710,9 @@ const ru: WorkflowTriggersCopy = {
         templateDecryptionFailed: 'Не удалось расшифровать триггер',
         machines: ({ count }: Count) => `${count} машин`,
         nextRun: ({ time }: { time: string }) => `Следующий запуск: ${time}`,
+        nextMinutes: ({ count }: Count) => `через ${count} мин`,
+        nextHours: ({ count }: Count) => `через ${count} ч`,
+        nextDays: ({ count }: Count) => count === 1 ? 'завтра' : `через ${count} дн.`,
         steps: ({ count }) => (count === 1 ? `Шагов: ${count}` : `Шагов: ${count}`),
         off: 'Выкл.',
         running: 'Выполняется',
@@ -11597,6 +11730,7 @@ const ru: WorkflowTriggersCopy = {
         info: 'Что запускается в этой сессии, когда что-то происходит. Они остаются с этой сессией и не появляются в вашей библиотеке.',
         saveFailed: 'Не удалось сохранить этот триггер. Ваши изменения на месте.',
     },    kindDescription: {
+        pluginEvent: "Запускать, когда плагин наблюдает событие.",
         turnEnds: 'После хода — вашего или агента, с которым вы работаете.',
         needsYou: 'Каждый раз, когда сессия ждёт вас, в том числе пока её ведёт процесс или «Продолжать до конца».',
         sessionArchived: 'Запускается один раз, когда вы архивируете эту сессию.',
@@ -11631,6 +11765,8 @@ const ru: WorkflowTriggersCopy = {
         choose: 'Выбрать…',
     },
     popover: {
+        configureEvent: "Настроить событие",
+        editEvent: "Изменить событие",
         saveAsWorkflow: 'Сохранить как процесс',
         saveAsWorkflowDescription: 'Открывает эти шаги как новый процесс для проверки. Этот триггер сохраняет свои шаги.',
         when: 'Когда',
@@ -11674,6 +11810,8 @@ const ru: WorkflowTriggersCopy = {
 const legacyTranslations = { ru: {
         editNotice: 'Создано в Happier 0.2. Открытие ничего не меняет.',
         conversionBoundary: 'После этого изменения она работает только на машинах с Happier 0.3 или новее.',
+        reviewRequired: 'Требуется проверка',
+        reviewConversionNotice: 'При сохранении workflow хранится без сквозного шифрования, а его включённые триггеры возобновляются. Сеанс остаётся зашифрованным сквозным шифрованием.',
         channelReplyRefusal: 'У этой автоматизации есть привязка ответа к каналу, которую нельзя перенести. Преобразование не выполнено; настройки и ваши изменения сохранены.',
         notAvailable: 'Эта автоматизация больше недоступна.',
     } };
@@ -11688,7 +11826,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { ru: {
         checkoutRoot: 'Корневая папка рабочей копии',
-        unavailableValue: 'Значение недоступно', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Контекст сессии' : `Последние ходы сессии: ${turns}`,
+        unavailableValue: 'Значение недоступно', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Контекст сессии' : turns === 1 ? 'Последний ход сессии' : `Последние ходы сессии: ${turns}`,
         tokensUsed: 'Использовано токенов', goalTokenBudget: 'Бюджет токенов цели',
         trailingCount: ({ source, value }: { source: string; value: string }) => `Последовательные ${source}, совпадающие с ${value}`,
         stopCondition: 'Условие остановки выполнено', stopConditionArm: ({ arm }: { arm: number }) => `Условие остановки ${arm} выполнено`,
@@ -11736,6 +11874,23 @@ const pluralPl = Shared_workflowTranslations.pluralPl;
 const pluralRu = Shared_workflowTranslations.pluralRu;
 
 const ru = translated(workflowValueReferenceTranslations.ru, {
+    testRun: {
+        title: "Пробный запуск",
+        savedNotice: "Запускает сохранённую версию по-настоящему. Несохранённые изменения остаются здесь.",
+        resultsNotice: "Результаты сохранённой версии · последний запуск. Несохранённые изменения не выполнялись.",
+        recordedDuration: ({ seconds }) => `Записанное время выполнения · ${seconds} с`,
+        loading: "Загрузка результатов проверки…",
+    },
+    runWhen: {
+        title: "Условие запуска",
+        success: "Успех",
+        failure: "Ошибка",
+        always: "Всегда",
+        ifSuccess: "Если завершится успешно",
+        ifFailure: "Если завершится с ошибкой",
+        regardless: "В любом случае",
+        previousStep: "Относительно предыдущего шага",
+    },
     title: 'Рабочие процессы',
     newWorkflow: 'Новый рабочий процесс',
     copyName: ({ name }: { name: string }) => `${name} копия`,
@@ -11841,6 +11996,17 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
     loadFailedBody: 'Ваша работа не затронута. Повторите попытку, когда будете готовы.',
     retry: 'Повторить',
     contentUnavailable: 'Приватное содержимое недоступно на этом устройстве.',
+    readState: {
+        historyTitle: 'История недоступна для чтения',
+        historyBody: 'Этот запуск записан в более ранней версии Happier для разработки, поэтому его историю нельзя открыть. Начните новый запуск, чтобы продолжить.',
+        encryptionTitle: 'Требуется настройка шифрования',
+        encryptionBody: 'Это содержимое защищено сквозным шифрованием. Настройте шифрование этой учётной записи, чтобы открыть его.',
+        keysTitle: 'Ожидание ключей',
+        keysBody: 'На этом устройстве ещё нет ключей шифрования для этого запуска. Повторите попытку, когда они станут доступны.',
+        storageTitle: 'Хранилище запусков недоступно',
+        storageBody: 'Happier не удалось получить доступ к хранилищу запусков. Проверьте соединение и повторите попытку.',
+        openSettings: 'Открыть настройки',
+    },
     contentReasons: {
         invalidHeader: 'Сохранённые сведения об этом рабочем процессе недействительны.',
         revisionMismatch: 'Этот рабочий процесс не соответствует сохранённой редакции.',
@@ -11899,7 +12065,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         undo: 'Отменить',
         redo: 'Повторить',
         historyRestoreRequiresSetup: 'Это событие нужно настроить заново. Сохранённую приватную конфигурацию нельзя восстановить после удаления.',
-        history: { edited: 'Изменить workflow', agent: 'Изменение агента', description: 'Изменить описание', where: 'Изменить место запуска', target: 'Изменить выполнение шагов', triggers: 'Изменить триггеры', example: 'Вставить пример', document: 'Изменить запрос' },
+        history: { edited: 'Изменить workflow', agent: 'Изменение агента', description: 'Изменить описание', where: 'Изменить место запуска', target: 'Изменить выполнение шагов', triggers: 'Изменить триггеры', example: 'Вставить пример', document: 'Изменить запрос', renameWorkflow: 'Переименовать workflow', renameStep: 'Переименовать шаг', renameLane: 'Переименовать ветку' },
         undoAction: ({ change }: { change: string }) => `Отменить: ${change}`,
         redoAction: ({ change }: { change: string }) => `Повторить: ${change}`,
         removedBlock: ({ block }) => `${block} удалён`,
@@ -11910,8 +12076,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         unnamedLoop: 'Цикл',
         unnamedIf: 'Условие',
         branch: 'Ветка',
-        addBranch: 'Добавить ветку',
-        ifTrue: 'Если истинно',
+        addBranch: 'Добавить дорожку',
+        ifTrue: 'Тогда',
         otherwise: 'Иначе',
         addOtherwise: 'Добавить ветку «иначе»',
         evaluator: 'Решить, продолжать ли',
@@ -11973,7 +12139,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         change: 'Изменить',
         clear: 'Очистить выбор',
         fieldPath: 'Путь к полю',
-        explain: 'Итоговый результат — это то, что рабочий процесс возвращает по завершении. Порядок завершения его никогда не меняет.',
+        explain: 'То, что рабочий процесс возвращает по завершении.',
     },
 
     conversation: {
@@ -12027,7 +12193,13 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         operatorLte: 'не больше чем',
         operatorGt: 'больше чем',
         operatorGte: 'не меньше чем',
+        notFirstRound: 'это не первый раунд',
+        trailingCountAtLeast: ({ source, value, count }) => `${source} равно ${value} ${count} раз подряд`,
+        loopRanOutOfRounds: ({ loop }) => `${loop}: раунды закончились`,
+        loopEnded: ({ loop, outcome }) => `${loop} завершено: ${outcome}`,
+        loopStoppedBecause: ({ loop, condition }) => `${loop} остановлено, потому что ${condition}`,
         valuePlaceholder: 'Значение',
+        literalPlaceholder: 'Введите значение',
         skippedReason: ({ block }) => `Пропущено, потому что условие блока ${block} не выполнилось.`,
     },
 
@@ -12252,6 +12424,10 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         unsupported_persisted_attachment: 'У прикреплённых файлов должна быть постоянная ссылка до сохранения.',
         conversation_workspace_mismatch: 'Эту беседу и эту рабочую область нельзя продолжить вместе.',
         target_unavailable: 'Выберите Агента для этого рабочего процесса перед запуском.',
+        emptyPrompt: 'Напишите, что должен сделать этот шаг.',
+        emptyWaitPrompt: 'Напишите, что здесь нужно проверить или решить.',
+        fieldMissing: ({ field }) => `${field}: обязательное поле.`,
+        fieldInvalid: ({ field }) => `${field}: нужно допустимое значение.`,
     },
 
     problem: {
@@ -12439,7 +12615,7 @@ const ru = completeWorkspaceSyncTranslation({
         targetMachineOffline: 'Этот компьютер сейчас недоступен. Подключите его снова и повторите попытку.',
         relationshipUnavailable: 'Эта связь синхронизации больше не охватывает эти две папки. Выберите другой вариант рабочего пространства.',
         sourceFolder: 'Папку этой сессии нельзя безопасно синхронизировать. Выберите «Не перемещать файлы», чтобы передать только сессию.',
-        destinationFolder: 'Выберите папку назначения, которую можно безопасно синхронизировать.',
+        destinationFolder: 'Выберите допустимую папку назначения.',
         workspaceOptions: 'Проверьте параметры рабочего пространства перед запуском.',
     } },
     engine: { checking: 'Проверка синхронизации на этом компьютере…' },

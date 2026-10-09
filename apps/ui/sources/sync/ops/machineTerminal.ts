@@ -8,6 +8,7 @@ import { isRpcMethodNotAvailableError } from '@/sync/runtime/rpcErrors';
 
 type MachineTerminalOpts = Readonly<{
     serverId?: string | null;
+    accountId?: string | null;
     timeoutMs?: number | null;
     signal?: AbortSignal;
 }>;
@@ -28,11 +29,22 @@ async function trackTerminalCreation<T>(key: string, run: () => Promise<T>): Pro
     }
 }
 
+/** Initial Action issuance/association shares the incumbent physical-creation custody. */
+export function trackPendingMachineTerminalCreation<T>(machineId: string, terminalKey: string,
+    run: () => Promise<T>, opts?: MachineTerminalOpts): Promise<T> {
+    return trackTerminalCreation(terminalCreationKey(machineId, terminalKey, opts), run);
+}
+
 /** A connecting/restarting pane may not yet appear in the daemon's PTY list. */
-export async function awaitPendingMachineTerminalCreation(machineId: string, terminalKey: string, opts?: MachineTerminalOpts): Promise<void> {
+export async function awaitPendingMachineTerminalCreation(machineId: string, terminalKey: string,
+    opts?: MachineTerminalOpts & Readonly<{ shouldStopWaiting?: () => boolean }>): Promise<void> {
     const key = terminalCreationKey(machineId, terminalKey, opts);
     while (pendingTerminalCreations.has(key)) {
-        await Promise.all(pendingTerminalCreations.get(key)!);
+        if (opts?.shouldStopWaiting?.()) return;
+        // An initial issuance can install durable Artifact custody while another
+        // Inbox already holds the physical operation. Observe that association
+        // after either operation settles, without waiting for a human decision.
+        await Promise.race(pendingTerminalCreations.get(key)!);
     }
 }
 
@@ -43,16 +55,17 @@ function throwUnsupportedResponse(method: string): never {
 /** Null means this daemon lacks listing; operational failures retain their real result. */
 export async function machineTerminalList(
     machineId: string,
-    opts?: MachineTerminalOpts,
+    opts?: MachineTerminalOpts & DaemonTerminalListRequestV1,
 ): Promise<DaemonTerminalListResponseV1 | null> {
     let response: unknown;
     try {
         response = await machineRpcWithServerScope<unknown, DaemonTerminalListRequestV1>({
             machineId,
             serverId: opts?.serverId,
+            accountId: opts?.accountId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_TERMINAL_LIST,
-            payload: DaemonTerminalListRequestV1Schema.parse({}),
+            payload: DaemonTerminalListRequestV1Schema.parse({ ...(opts?.workspace ? { workspace: opts.workspace } : {}) }),
             ...(opts?.signal ? { signal: opts.signal } : {}),
         });
     } catch (error) {
@@ -74,6 +87,7 @@ export async function machineTerminalEnsure(
         const response = await machineRpcWithServerScope<unknown, DaemonTerminalEnsureRequest>({
             machineId,
             serverId: opts?.serverId,
+            accountId: opts?.accountId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_TERMINAL_ENSURE,
             payload,
@@ -96,9 +110,11 @@ export async function machineTerminalStreamRead(
     const response = await machineRpcWithServerScope<unknown, DaemonTerminalStreamReadRequest>({
         machineId,
         serverId: opts?.serverId,
+        accountId: opts?.accountId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         method: RPC_METHODS.DAEMON_TERMINAL_STREAM_READ,
         payload,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
     });
     const parsed = DaemonTerminalStreamReadResponseSchema.safeParse(response);
     if (!parsed.success) {
@@ -124,9 +140,11 @@ export async function machineTerminalStreamReadBytes(
     const response = await machineRpcWithServerScope<unknown, TerminalStreamReadRequest>({
         machineId,
         serverId: opts?.serverId,
+        accountId: opts?.accountId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         method: RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
         payload,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
     });
     const parsed = TerminalStreamReadResponseSchema.safeParse(response);
     if (!parsed.success) {
@@ -144,9 +162,11 @@ export async function machineTerminalStreamAcknowledge(
     const response = await machineRpcWithServerScope<unknown, TerminalStreamAckRequest>({
         machineId,
         serverId: opts?.serverId,
+        accountId: opts?.accountId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         method: RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK,
         payload,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
     });
     const parsed = TerminalStreamAckResponseSchema.safeParse(response);
     if (!parsed.success) {
@@ -164,9 +184,11 @@ export async function machineTerminalStreamSendInput(
     const response = await machineRpcWithServerScope<unknown, TerminalStreamInputRequest>({
         machineId,
         serverId: opts?.serverId,
+        accountId: opts?.accountId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         method: RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT,
         payload,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
     });
     const parsed = TerminalStreamInputResponseSchema.safeParse(response);
     if (!parsed.success) {
@@ -184,9 +206,11 @@ export async function machineTerminalInput(
     const response = await machineRpcWithServerScope<unknown, DaemonTerminalInputRequest>({
         machineId,
         serverId: opts?.serverId,
+        accountId: opts?.accountId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         method: RPC_METHODS.DAEMON_TERMINAL_INPUT,
         payload,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
     });
     const parsed = DaemonTerminalInputResponseSchema.safeParse(response);
     if (!parsed.success) {
@@ -204,9 +228,11 @@ export async function machineTerminalResize(
     const response = await machineRpcWithServerScope<unknown, DaemonTerminalResizeRequest>({
         machineId,
         serverId: opts?.serverId,
+        accountId: opts?.accountId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         method: RPC_METHODS.DAEMON_TERMINAL_RESIZE,
         payload,
+        ...(opts?.signal ? { signal: opts.signal } : {}),
     });
     const parsed = DaemonTerminalResizeResponseSchema.safeParse(response);
     if (!parsed.success) {
@@ -224,6 +250,7 @@ export async function machineTerminalClose(
     const response = await machineRpcWithServerScope<unknown, DaemonTerminalCloseRequest>({
         machineId,
         serverId: opts?.serverId,
+        accountId: opts?.accountId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         method: RPC_METHODS.DAEMON_TERMINAL_CLOSE,
         payload,
@@ -246,9 +273,11 @@ export async function machineTerminalRestart(
         const response = await machineRpcWithServerScope<unknown, DaemonTerminalRestartRequest>({
             machineId,
             serverId: opts?.serverId,
+            accountId: opts?.accountId,
             timeoutMs: opts?.timeoutMs ?? undefined,
             method: RPC_METHODS.DAEMON_TERMINAL_RESTART,
             payload,
+            ...(opts?.signal ? { signal: opts.signal } : {}),
         });
         const parsed = DaemonTerminalRestartResponseSchema.safeParse(response);
         if (!parsed.success) {

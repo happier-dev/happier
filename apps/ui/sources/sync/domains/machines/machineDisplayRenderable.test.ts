@@ -24,6 +24,20 @@ function makeMachineDisplay(partial: Partial<MachineDisplayRenderable> & Pick<Ma
 }
 
 describe('machine display renderables', () => {
+    it('preserves admitted access facts and invalidates them when readiness changes', () => {
+        const machine = {
+            id: 'shared', seq: 1, createdAt: 1, updatedAt: 2, active: true, activeAt: 1,
+            metadataVersion: 0, metadata: null, daemonState: null, daemonStateVersion: 0,
+            isShared: true, access: { custodian: { accountId: 'alice', displayName: 'Alice' },
+                role: 'use', resourceMode: 'plain', accessState: 'ready' },
+        } satisfies Machine;
+        const ready = buildMachineDisplayRenderableFromMachine(machine);
+        const pending = buildMachineDisplayRenderableFromMachine({ ...machine,
+            access: { ...machine.access, accessState: 'key_pending' } });
+        expect(ready).toMatchObject({ isShared: true, access: machine.access });
+        expect(areMachineDisplayRenderablesEqual(ready, pending)).toBe(false);
+    });
+
     it('treats a changed locked availability as a changed display snapshot', () => {
         const available = makeMachineDisplay({
             id: 'machine-a',

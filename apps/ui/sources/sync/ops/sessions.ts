@@ -70,11 +70,13 @@ import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/regis
 import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { supportsSessionForkRequestId } from '@/utils/system/versionUtils';
 import { machineResolveSpawnSessionByNonceUntilSettled } from './machines';
+import { captureLazyActionAccountContext } from './actions/actionAccountContext';
+import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
 export {
     sessionScmBranchCheckout,
     sessionScmBranchCreate,
@@ -188,6 +190,8 @@ interface SessionRipgrepResponse {
 
 // Response types for spawn session
 export type ResumeSessionResult = SpawnSessionResult;
+/** Local pending-input projection, not a daemon spawn acknowledgement. */
+export type PendingInputRuntimeEnsureResult = ResumeSessionResult | Readonly<{ type: 'pending' }>;
 
 /**
  * Options for resuming an inactive session.
@@ -214,6 +218,8 @@ export interface ResumeSessionOptions {
     serverId?: string;
     /** Exact route credential lifetime; fences daemon admission and forbids ambient Account fallback. */
     accountLifetime?: ServerAccountScopeLifetime;
+    /** Host-private accepted-input authority; never serialized into the spawn RPC. */
+    pendingActivationAuthorization?: import('@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1').PendingActivationAuthorizationV1;
     /**
      * Optional: publish an explicit UI-selected permission mode at resume time.
      * Use only when the UI selection is newer than metadata.permissionModeUpdatedAt.
@@ -277,11 +283,21 @@ async function runResumeSession(
     };
     assertExactAccountCurrent();
     let providerSafeRpcRequired = false;
-    const shouldPresentAsResuming = !exactAccountLifetime && (
+    const canProjectResumePresentation = (): boolean => {
+        if (!exactAccountLifetime) return true;
+        const focusedSession = storage.getState().sessions[options.sessionId];
+        return exactAccountLifetime.isCurrent()
+            && areServerAccountScopesEqual(getActiveServerAccountScope(), exactAccountLifetime.scope)
+            && typeof focusedSession?.serverId === 'string'
+            && areServerProfileIdentifiersEquivalent(focusedSession.serverId, exactAccountLifetime.scope.serverId);
+    };
+    // A scoped RPC may remain valid for a background Account. Its local status
+    // belongs only to the still-focused Account and matching Session Home.
+    const shouldPresentAsResuming = canProjectResumePresentation() && (
         presentation === 'explicit_resume'
         || storage.getState().sessions[options.sessionId]?.active !== true
     );
-    if (shouldPresentAsResuming) {
+    if (shouldPresentAsResuming && canProjectResumePresentation()) {
         storage.getState().markSessionResuming(options.sessionId);
     }
     try {
@@ -292,7 +308,7 @@ async function runResumeSession(
         if (session?.archivedAt != null) {
             const unarchiveResult = await sessionUnarchiveWithServerScope(options.sessionId, { serverId });
             if (!unarchiveResult.success) {
-                if (shouldPresentAsResuming) {
+                if (shouldPresentAsResuming && canProjectResumePresentation()) {
                     storage.getState().clearSessionResuming(options.sessionId);
                 }
                 return {
@@ -335,7 +351,7 @@ async function runResumeSession(
         const machineId = useRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
         const directory = useRequestedMachineTarget ? rawDirectory.trim() : machineTarget?.basePath ?? rawDirectory.trim();
         if (!machineId || !directory) {
-            if (shouldPresentAsResuming) {
+            if (shouldPresentAsResuming && canProjectResumePresentation()) {
                 storage.getState().clearSessionResuming(sessionId);
             }
             return {
@@ -457,7 +473,7 @@ async function runResumeSession(
                         };
             }
         }
-        if (shouldPresentAsResuming) {
+        if (shouldPresentAsResuming && canProjectResumePresentation()) {
             if (normalizedResult.type === 'error') {
                 storage.getState().clearSessionResuming(sessionId);
             } else {
@@ -466,7 +482,7 @@ async function runResumeSession(
         }
         return normalizedResult;
     } catch (error) {
-        if (shouldPresentAsResuming) {
+        if (shouldPresentAsResuming && canProjectResumePresentation()) {
             storage.getState().clearSessionResuming(options.sessionId);
         }
         if (isAccountSettingsScopeChangedDuringSpawnPreparationError(error)) {
@@ -519,7 +535,39 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
  */
 export async function ensureSessionRuntimeForPendingInput(
     options: ResumeSessionOptions,
-): Promise<ResumeSessionResult> {
+): Promise<PendingInputRuntimeEnsureResult> {
+    const activation = options.pendingActivationAuthorization;
+    const target = activation?.managedWakeTargetV1;
+    if (target) {
+        // A protected Session reference selects the native read. Ambient Machine
+        // metadata and a desired Start are neither enrollment nor running facts.
+        const serverId = options.accountLifetime?.scope.serverId ?? options.serverId;
+        if (!serverId || options.accountLifetime?.isCurrent() === false
+            || target.origin.kind !== 'session-input' || target.origin.session.sessionId !== options.sessionId
+            || target.origin.session.homeId !== target.homeId || target.enrolledMachineId !== options.machineId
+            || target.origin.pendingRequestId !== activation.requestId || target.origin.requestedAt !== activation.requestedAt) {
+            return { type: 'pending' };
+        }
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            if (account.serverIdentityId !== target.homeId
+                || (options.accountLifetime && !areServerAccountScopesEqual(account.accountLifetime.scope, options.accountLifetime.scope))) return { type: 'pending' };
+            const managed = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
+                homeId: target.homeId, managedId: target.managedId,
+            });
+            account.assertCurrent();
+            const observed = managed.observation;
+            if (options.accountLifetime?.isCurrent() === false || managed.id !== target.managedId
+                || managed.homeId !== target.homeId || managed.enrolledMachineId !== target.enrolledMachineId
+                || managed.creationState !== 'active' || managed.allocation === 'confirmed-absent'
+                || activation.status !== 'waiting' || observed?.availability !== 'present'
+                || observed.power !== 'running' || observed.storage === 'lost' || observed.daemon !== 'connected') return { type: 'pending' };
+        } catch {
+            // Missing/unknown native observations leave accepted custody intact.
+            // Server/controller wake and guest activation retain their owners.
+            return { type: 'pending' };
+        } finally { account.dispose(); }
+    }
     return await runResumeSession(options, 'ensure_pending_consumer');
 }
 

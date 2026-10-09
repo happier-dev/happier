@@ -20,6 +20,8 @@ import { randomUUID } from '@/platform/randomUUID';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { ENCRYPTED_DATA_KEY_V1_BYTES, openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { decodePlainMachineStoredContent, isMachineDataEncryptionKeyTransferableV1, resolvePublishedMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachineContentKeyPreparationErrorV1, prepareMachineContentKeyV1, type MachinePublishedRowV1, type MachineContentKeyTransitionInputV1, type MachineContentKeyTransitionResultV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { AutomationEncryptedTriggerDefinitionEnvelopeV1Schema, type AutomationEncryptedTriggerDefinitionEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/event';
@@ -61,6 +63,18 @@ export type EncryptionScopeInput = Readonly<{
 export type SessionEncryptionScopeInput = EncryptionScopeInput & Readonly<{
     /** Rechecked after async opening and immediately before installing each Session. */
     isSessionCurrent?: (sessionId: string) => boolean;
+}>;
+
+export type MachineEncryptionContextInput = Readonly<{
+    /** Envelope this viewer can open; distinct from the owner's write identity on shared rows. */
+    dataEncryptionKey: string | null;
+    expectedDataEncryptionKey: string | null | undefined;
+    resourceMode?: 'plain' | 'e2ee';
+    accessState?: 'ready' | 'key_pending' | 'refused' | 'unavailable';
+}>;
+
+export type MachineEncryptionContext = MachineEncryptionContextInput & Readonly<{
+    isCurrent: () => boolean;
 }>;
 
 export type EncryptionGenerationScope = Readonly<{
@@ -189,6 +203,8 @@ export class Encryption {
     private sessionKeyFingerprints = new Map<string, string>();
     private machineEncryptions = new Map<string, MachineEncryption>();
     private machineKeyFingerprints = new Map<string, string>();
+    private machineEncryptionContexts = new Map<string, MachineEncryptionContext>();
+    private machineEncryptionOpenings = new Map<string, object>();
     private cache: EncryptionCache;
     private aesBatchConcurrencyLimit = DEFAULT_AES_BATCH_CONCURRENCY_LIMIT;
     // Per-instance worker object. This is the cross-account fence: the queue registry
@@ -512,6 +528,41 @@ export class Encryption {
     // Machine operations
     //
 
+    captureMachineEncryptionContext(machineId: string, input: MachineEncryptionContextInput): MachineEncryptionContext {
+        const existing = this.machineEncryptionContexts.get(machineId);
+        if (existing && existing.dataEncryptionKey === input.dataEncryptionKey
+            && existing.expectedDataEncryptionKey === input.expectedDataEncryptionKey
+            && existing.resourceMode === input.resourceMode && existing.accessState === input.accessState) return existing;
+        this.removeMachineEncryption(machineId);
+        const context: MachineEncryptionContext = {
+            ...input,
+            isCurrent: () => this.machineEncryptionContexts.get(machineId) === context,
+        };
+        this.machineEncryptionContexts.set(machineId, context);
+        return context;
+    }
+
+    getMachineEncryptionContext(machineId: string): MachineEncryptionContext | undefined {
+        return this.machineEncryptionContexts.get(machineId);
+    }
+
+    /** Bind a pending list read to each incumbent selection, including absent entries. */
+    captureMachineEncryptionContextRead(): (machineId: string) => boolean {
+        const contexts = new Map(this.machineEncryptionContexts);
+        return (machineId) => this.machineEncryptionContexts.get(machineId) === contexts.get(machineId);
+    }
+
+    getMachineDataEncryptionKey(machineId: string): string | null | undefined {
+        return this.machineEncryptionContexts.get(machineId)?.expectedDataEncryptionKey;
+    }
+
+    removeMachineEncryption(machineId: string): void {
+        this.machineEncryptionOpenings.delete(machineId);
+        this.machineEncryptions.delete(machineId);
+        this.machineKeyFingerprints.delete(machineId);
+        this.cache.clearMachineCache(machineId);
+    }
+
     /**
      * Initialize machines with their encryption keys
      * This should be called once when machines are loaded
@@ -519,16 +570,16 @@ export class Encryption {
     async initializeMachines(
         machines: Map<string, Uint8Array | null>,
         unavailableMachineIds?: ReadonlySet<string>,
+        options: Readonly<{ isMachineCurrent?: (machineId: string) => boolean }> = {},
     ): Promise<void> {
         // Failed present envelopes are unavailable, never the null legacy-key
         // compatibility input. Retire their previous ciphers before any await.
         for (const machineId of unavailableMachineIds ?? []) {
-            this.machineEncryptions.delete(machineId);
-            this.machineKeyFingerprints.delete(machineId);
-            this.cache.clearMachineCache(machineId);
+            if (options.isMachineCurrent?.(machineId) === false) continue;
+            this.removeMachineEncryption(machineId);
         }
         for (const [machineId, dataKey] of machines) {
-            if (unavailableMachineIds?.has(machineId)) continue;
+            if (unavailableMachineIds?.has(machineId) || options.isMachineCurrent?.(machineId) === false) continue;
             const fingerprint = dataKey ? encodeBase64(dataKey, 'base64') : '__no_key__';
             const existing = this.machineEncryptions.get(machineId);
             const existingFingerprint = this.machineKeyFingerprints.get(machineId);
@@ -537,14 +588,22 @@ export class Encryption {
                 continue;
             }
 
+            // Retire before platform opening yields; only this latest opening may install.
+            this.removeMachineEncryption(machineId);
+            const opening = {};
+            this.machineEncryptionOpenings.set(machineId, opening);
+
             // Create appropriate encryptor based on data key
             const encryptor = await this.openEncryption(dataKey);
+            if (this.machineEncryptionOpenings.get(machineId) !== opening
+                || options.isMachineCurrent?.(machineId) === false) continue;
 
             // Create and cache machine encryption
             const machineEnc = new MachineEncryption(
                 machineId,
                 encryptor,
-                this.cache
+                this.cache,
+                () => this.machineEncryptions.get(machineId) === machineEnc,
             );
             this.machineEncryptions.set(machineId, machineEnc);
             this.machineKeyFingerprints.set(machineId, fingerprint);
@@ -658,6 +717,51 @@ export class Encryption {
     async decryptEncryptionKey(encrypted: string, scope?: EncryptionScopeInput) {
         const [decrypted] = await this.decryptEncryptionKeys([encrypted], scope);
         return decrypted ?? null;
+    }
+
+    /** Owner material is transferable only when C40 rules out historical Account borrowing. */
+    async readTransferableMachineDataKey(encrypted: string, scope?: EncryptionScopeInput): Promise<Uint8Array | null> {
+        const key = await this.decryptEncryptionKey(encrypted, scope);
+        return isMachineDataEncryptionKeyTransferableV1({ publishedDataEncryptionKey: encrypted,
+            openedDataEncryptionKey: key, accountScopedMaterial: this.accountScopedCryptoMaterial }) ? key : null;
+    }
+
+    /** Thin crypto adapter to the same C40 lifecycle used by ApiClient. */
+    async prepareMachineContentKey(params: Readonly<{
+        machineId: string;
+        custodianAccountId: string;
+        accountMode: 'plain' | 'e2ee';
+        observe: (signal?: AbortSignal) => Promise<MachinePublishedRowV1>;
+        transition: (input: MachineContentKeyTransitionInputV1, signal?: AbortSignal) => Promise<MachineContentKeyTransitionResultV1<MachinePublishedRowV1>>;
+        isCurrent: () => boolean;
+        signal?: AbortSignal;
+    }>): Promise<Readonly<{ row: MachinePublishedRowV1; encryptionMode: 'plain' | 'e2ee'; encryptionKey?: Uint8Array }>> {
+        type Opened = Readonly<{ row: MachinePublishedRowV1; encryptionMode: 'plain' | 'e2ee'; encryptionKey?: Uint8Array; legacy?: boolean }>;
+        const scope = { accountId: params.custodianAccountId, signal: params.signal, shouldContinue: params.isCurrent };
+        const decodeStored = async (opened: Opened, ciphertext: string): Promise<unknown> => {
+            if (opened.encryptionMode === 'plain') return decodePlainMachineStoredContent(ciphertext);
+            const codec = opened.legacy ? this.fallbackEncryption : await this.openEncryption(opened.encryptionKey ?? null, scope);
+            const [value] = await codec.decrypt([decodeBase64(ciphertext)], { signal: params.signal });
+            return value;
+        };
+        return await prepareMachineContentKeyV1<Opened>({ ...params, material: this.accountScopedCryptoMaterial,
+            ...(this.accountScopedCryptoMaterial.type === 'dataKey' ? { dataKeyPublicKey: this.contentKeyPair.publicKey } : {}), randomBytes: getRandomBytes,
+            open: async row => {
+                const openedKey = row.dataEncryptionKey ? await this.decryptEncryptionKey(row.dataEncryptionKey, scope) : null;
+                const resolution = resolvePublishedMachineDataEncryptionKeyV1({ machine: row, openedDataEncryptionKey: openedKey,
+                    expectedAccountMode: row.access?.resourceMode ?? row.storageMode ?? params.accountMode, viewerAccountId: params.custodianAccountId });
+                if (resolution.status === 'unavailable') throw new MachineContentKeyPreparationErrorV1('encryption_material_unavailable');
+                const opened: Opened = resolution.status === 'plain' ? { row, encryptionMode: 'plain' }
+                    : { row, encryptionMode: 'e2ee', encryptionKey: resolution.status === 'e2ee' ? resolution.dataKey
+                        : this.accountScopedCryptoMaterial.type === 'dataKey' ? this.accountScopedCryptoMaterial.machineKey : this.accountScopedCryptoMaterial.secret,
+                        ...(resolution.status === 'legacy' ? { legacy: true } : {}) };
+                if ((row.metadata !== null && await decodeStored(opened, row.metadata) === null)
+                    || (row.daemonState !== null && await decodeStored(opened, row.daemonState) === null)) throw new MachineContentKeyPreparationErrorV1('encryption_material_unavailable');
+                return opened;
+            },
+            decodeStored,
+            encodeStored: async (key, value) => encodeBase64((await new AES256Encryption(key).encrypt([value]))[0]!),
+        });
     }
 
     async decryptEncryptionKeys(encryptedValues: readonly string[], scopeInput: EncryptionScopeInput = {}): Promise<Array<Uint8Array | null>> {

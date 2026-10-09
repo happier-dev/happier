@@ -1,6 +1,9 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { TERMINAL_STREAM_MAX_READ_BYTES } from '@happier-dev/protocol/terminal/stream';
 import type { DaemonTerminalLaunchIntent } from '@happier-dev/protocol/daemon/terminal';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 import { createEmptyTerminalSurfaceState, readTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
 import {
@@ -48,10 +51,12 @@ import { resolveTerminalReplayPlan } from '@/sync/domains/terminal/stream/replay
 import {
     createTerminalStreamRuntime,
     createTerminalUtf8ProjectionDecoder,
+    TERMINAL_OUTPUT_GAP_MARKER,
     type TerminalStreamRuntime,
 } from '@/sync/domains/terminal/stream/runtime';
-import { machineTerminalClose, machineTerminalEnsure, machineTerminalRestart } from '@/sync/ops/machineTerminal';
+import { machineTerminalClose } from '@/sync/ops/machineTerminal';
 import { buildMachineTerminalSessionRequest } from './machineTerminalSessionRequest';
+import { useMachineTerminalActionAdmission } from './useMachineTerminalActionAdmission';
 import { delay } from '@/utils/timing/time';
 
 export type TerminalStatus = 'idle' | 'connecting' | 'connected' | 'error' | 'exited';
@@ -78,6 +83,9 @@ export function useMachineTerminalSession(params: Readonly<{
     initialCommand?: string | null;
     closeOnUnmount?: boolean;
     sessionId?: string;
+    scopeId?: string;
+    memberId?: string;
+    workspace?: WorkspaceAddressV1;
     /** A borrowed view may read output, but never mutate its owning process. */
     readOnly?: boolean;
     /** An existing process owned by another lifecycle. Null waits for that owner;
@@ -85,6 +93,13 @@ export function useMachineTerminalSession(params: Readonly<{
     attachedTerminalId?: string | null;
 }>) {
     const rendererInstanceId = React.useId();
+    const workspace = React.useMemo(() => params.workspace, [params.workspace?.serverId, params.workspace?.machineId,
+        params.workspace?.workspaceId, params.workspace?.rootPath]);
+    const admission = useMachineTerminalActionAdmission({ terminalKey: params.terminalKey, workspace,
+        machineId: params.machineId, serverId: params.serverId, scopeId: params.scopeId, memberId: params.memberId });
+    const admissionRef = React.useRef(admission);
+    admissionRef.current = admission;
+    const attachmentScopeRef = React.useRef<ServerAccountScope | null>(null);
     const embeddedTerminalRendererId = params.readOnly
         ? `embedded-terminal-view:${rendererInstanceId}`
         : mutableTerminalRendererId;
@@ -110,6 +125,7 @@ export function useMachineTerminalSession(params: Readonly<{
 
     const [connectionNonce, bumpConnectionNonce] = React.useReducer((x: number) => x + 1, 0);
     const restartRequestedRef = React.useRef(false);
+    const restartContextRef = React.useRef<ActionExecutorContext | undefined>(undefined);
     const autoRetryAttemptRef = React.useRef(0);
     const autoRetryTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const clearNonceRef = React.useRef(0);
@@ -124,6 +140,7 @@ export function useMachineTerminalSession(params: Readonly<{
     const terminalStreamRuntimeRef = React.useRef<TerminalStreamRuntime | null>(null);
     const terminalCreditStateRef = React.useRef<TerminalStreamCreditState | null>(null);
     const pendingRendererWriteRef = React.useRef<PendingRendererWrite | null>(null);
+    const handleWithdrawalRef = React.useRef<(code: string | null) => boolean>(() => false);
     const pendingWritePreviewBytesRef = React.useRef(new Map<string, Uint8Array>());
     const replaceCachedPreviewOnReplayRef = React.useRef(false);
     const terminalStreamDoneRef = React.useRef(false);
@@ -163,6 +180,7 @@ export function useMachineTerminalSession(params: Readonly<{
 
     const handleInputError = React.useCallback((inputError: unknown) => {
         const inputErrorCode = readTerminalStreamInputErrorCode(inputError);
+        if (handleWithdrawalRef.current(inputErrorCode)) return;
         clearActiveTerminalStream();
         if (isRecoverableTerminalSessionErrorCode(inputErrorCode) && scheduleAutoRetry()) {
             return;
@@ -191,6 +209,23 @@ export function useMachineTerminalSession(params: Readonly<{
         clearNonceRef,
         hydrateOnRender: false,
     });
+    const clearWithdrawnTerminal = React.useCallback((code: string) => {
+        resetAutoRetryState();
+        clearActiveTerminalStream();
+        terminalIdRef.current = null;
+        terminalPreviewDecoderRef.current.reset();
+        params.terminalRef.current?.clear();
+        replaceSurfaceState(createEmptyTerminalSurfaceState());
+        setTerminalTitle(null);
+        setTerminalBell(null);
+        setStatus('error');
+        setError(code);
+    }, [clearActiveTerminalStream, params.terminalRef, replaceSurfaceState, resetAutoRetryState]);
+    handleWithdrawalRef.current = code => {
+        if (!code || !['terminal_forbidden', 'terminal_cwd_denied', 'terminal_access_denied', 'access_denied'].includes(code)) return false;
+        clearWithdrawnTerminal(code);
+        return true;
+    };
     const acknowledgeAcceptedBytes = React.useCallback((input: Readonly<{
         terminalId: string;
         ackedByteOffset: number;
@@ -268,10 +303,11 @@ export function useMachineTerminalSession(params: Readonly<{
         clearTerminalOutput();
     }, [clearTerminalOutput]);
 
-    const requestRestart = React.useCallback(() => {
+    const requestRestart = React.useCallback((context?: ActionExecutorContext) => {
         if (params.readOnly) return;
         resetAutoRetryState();
         restartRequestedRef.current = true;
+        restartContextRef.current = context;
         terminalPreviewDecoderRef.current.reset();
         clearActiveTerminalStream();
         cursorModeRef.current = byteStreamEnabled ? 'byte-offset' : 'legacy-event-cursor';
@@ -283,6 +319,7 @@ export function useMachineTerminalSession(params: Readonly<{
     const retryConnect = React.useCallback(() => {
         resetAutoRetryState();
         restartRequestedRef.current = false;
+        restartContextRef.current = undefined;
         bumpConnectionNonce();
     }, [resetAutoRetryState]);
 
@@ -331,6 +368,13 @@ export function useMachineTerminalSession(params: Readonly<{
 
     React.useEffect(() => {
         let canceled = false;
+        const interest = new AbortController();
+        const retire = () => {
+            canceled = true;
+            interest.abort();
+            clearWithdrawnTerminal('terminal_forbidden');
+        };
+        let retirement = admissionRef.current.lifetime?.onRetire(retire);
 
         const start = async () => {
             const cachedSurfaceState = readTerminalSurfaceState(params.terminalKey) ?? createEmptyTerminalSurfaceState();
@@ -359,28 +403,44 @@ export function useMachineTerminalSession(params: Readonly<{
             }
 
             const terminalSize = latestTerminalSizeRef.current ?? initialTerminalSize;
+            const authority = await admission.capture(interest.signal);
+            attachmentScopeRef.current = authority.scope;
+            if (!retirement) retirement = authority.onRetire(retire);
+            if (canceled) return;
 
             const request = {
                 ...buildMachineTerminalSessionRequest({
                     terminalKey: params.terminalKey, cwd: params.cwd, cols: terminalSize?.cols, rows: terminalSize?.rows,
                     launch: params.launch, initialCommand: params.initialCommand ?? undefined,
+                    workspace,
                 }),
                 ...(params.sessionId ? { sessionId: params.sessionId } : {}),
             };
             const ensured = params.attachedTerminalId
                 ? { ok: true as const, terminalId: params.attachedTerminalId, reused: true }
-                : restartRequestedRef.current
-                ? await machineTerminalRestart(params.machineId, request, { serverId: params.serverId })
-                : await machineTerminalEnsure(params.machineId, request, { serverId: params.serverId });
+                : await admission.admit(request, restartRequestedRef.current, interest.signal, restartContextRef.current,
+                    params.closeOnUnmount && !params.readOnly && params.attachedTerminalId === undefined
+                        ? async (receipt, scope) => {
+                            if (canceled && !mountedRef.current) {
+                                await machineTerminalClose(params.machineId!, { terminalId: receipt.terminalId }, {
+                                    serverId: scope.serverId, accountId: scope.accountId,
+                                });
+                            }
+                        } : undefined);
             restartRequestedRef.current = false;
+            restartContextRef.current = undefined;
+            if (!retirement) retirement = admissionRef.current.lifetime?.onRetire(retire);
+            const scope = attachmentScopeRef.current;
 
             if (canceled) {
                 if (ensured.ok && !mountedRef.current && params.closeOnUnmount && !params.readOnly && params.attachedTerminalId === undefined) {
-                    await machineTerminalClose(params.machineId, { terminalId: ensured.terminalId }, { serverId: params.serverId });
+                    await machineTerminalClose(params.machineId, { terminalId: ensured.terminalId }, {
+                        serverId: scope?.serverId ?? params.serverId, accountId: scope?.accountId });
                 }
                 return;
             }
             if (!ensured.ok) {
+                if (handleWithdrawalRef.current(ensured.errorCode)) return;
                 if (isRecoverableTerminalSessionErrorCode(ensured.errorCode) && scheduleAutoRetry()) {
                     return;
                 }
@@ -434,7 +494,8 @@ export function useMachineTerminalSession(params: Readonly<{
 
             const carrier = createMachineRpcTerminalStreamCarrier({
                 machineId: params.machineId,
-                serverId: params.serverId,
+                serverId: scope?.serverId ?? params.serverId,
+                accountId: scope?.accountId,
             });
             terminalStreamCarrierRef.current = carrier;
             terminalRendererAckDeliveryRef.current = createTerminalRendererAckDelivery({
@@ -496,7 +557,7 @@ export function useMachineTerminalSession(params: Readonly<{
                 },
                 onGap: () => {
                     terminalPreviewDecoderRef.current.reset();
-                    writeTerminalOutput('\u0018\r\n[Output truncated]\r\n');
+                    writeTerminalOutput(`\u0018${TERMINAL_OUTPUT_GAP_MARKER}`);
                 },
                 onUrl: (event) => {
                     syncDetectedUrl({
@@ -538,6 +599,7 @@ export function useMachineTerminalSession(params: Readonly<{
                 if (canceled) return;
 
                 if (!read.ok) {
+                    if (handleWithdrawalRef.current(read.code)) return;
                     clearActiveTerminalStream();
                     if (isRecoverableTerminalSessionErrorCode(read.code) && scheduleAutoRetry()) {
                         return;
@@ -664,6 +726,7 @@ export function useMachineTerminalSession(params: Readonly<{
 
         void start().catch((e) => {
             if (canceled) return;
+            if (handleWithdrawalRef.current(readTerminalStreamInputErrorCode(e))) return;
             clearActiveTerminalStream();
             if (isRecoverableTerminalRpcError(e) && scheduleAutoRetry()) {
                 return;
@@ -674,10 +737,15 @@ export function useMachineTerminalSession(params: Readonly<{
 
         return () => {
             canceled = true;
+            interest.abort();
+            retirement?.dispose();
             clearActiveTerminalStream();
         };
     }, [
         acknowledgeAcceptedBytes,
+        admission.admit,
+        admission.capture,
+        clearWithdrawnTerminal,
         connectionNonce,
         byteStreamEnabled,
         embeddedTerminalRendererId,
@@ -691,6 +759,7 @@ export function useMachineTerminalSession(params: Readonly<{
         params.attachedTerminalId,
         params.readOnly,
         params.sessionId,
+        workspace,
         params.closeOnUnmount,
         params.machineId,
         params.serverId,
@@ -712,7 +781,9 @@ export function useMachineTerminalSession(params: Readonly<{
     React.useEffect(() => {
         return () => {
             if (!params.closeOnUnmount || params.readOnly || params.attachedTerminalId !== undefined || !params.machineId || !terminalIdRef.current) return;
-            void machineTerminalClose(params.machineId, { terminalId: terminalIdRef.current }, { serverId: params.serverId });
+            const scope = attachmentScopeRef.current;
+            void machineTerminalClose(params.machineId, { terminalId: terminalIdRef.current }, {
+                serverId: scope?.serverId ?? params.serverId, accountId: scope?.accountId });
         };
     }, [params.attachedTerminalId, params.closeOnUnmount, params.machineId, params.readOnly, params.serverId]);
 
@@ -863,6 +934,9 @@ export function useMachineTerminalSession(params: Readonly<{
         onBell,
         terminalTitle,
         terminalBell,
+        approvalId: admission.approvalId,
+        approvalPending: admission.approvalPending,
+        approvalServerId: admission.approvalServerId,
         copySelection,
         onResize,
         onReady,

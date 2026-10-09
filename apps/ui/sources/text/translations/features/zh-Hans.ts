@@ -349,6 +349,7 @@ const actionFamilyTranslations = { 'zh-Hans': translated({
             computer: '计算机控制',
             artifact_access: '制品共享',
             workflows: '工作流',
+            workflow_effects: 'Webhook 和命令',
             notifications: '通知',
             machine_agent_install: '代理安装',
             machine_agent_sign_in: '代理登录',
@@ -834,6 +835,35 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             label: '视图',
             grid: '网格',
             list: '列表',
+            folders: '文件夹',
+        },
+        folders: {
+            newFolder: '新建文件夹',
+            newFolderInside: '在其中新建文件夹',
+            rename: '重命名',
+            moveTo: '移动到文件夹…',
+            moveVerb: '移动到',
+            topLevel: '顶层',
+            moveToTopLevel: '移动到顶层',
+            deleteFolder: '删除文件夹',
+            deleteTitle: ({ name }) => `删除“${name}”？`,
+            deleteBody: '其中的项目和文件夹会上移一层。不会删除任何内容。',
+            nameHelp: '文件夹只属于你。归档不会改变共享对象看到的内容。',
+            namePlaceholder: '文件夹名称',
+            create: '创建',
+            options: ({ name }) => `${name} 选项`,
+            expand: ({ name }) => `展开 ${name}`,
+            collapse: ({ name }) => `折叠 ${name}`,
+            columnName: '名称',
+            columnEdited: '编辑时间',
+            emptyInvite: '还没有文件夹。把相关内容归到一起；只有你能看到自己的归档方式。',
+            unavailable: '无法从此 Home 加载文件夹。所有内容均不按文件夹列出。',
+            saveFailed: '更改未保存。请重试。',
+            refusedCycle: '文件夹不能移动到自身内',
+            refusedUnavailable: '文件夹暂时不可用',
+            refusedOther: '无法移动到那里',
+            showAllKinds: '在工件中显示所有类型',
+            promptSearch: '搜索提示词和技能',
         },
         provenance: {
             savedByYou: '由你保存',
@@ -1501,6 +1531,7 @@ const computerUseTranslations = { 'zh-Hans': {
             accessValue: '查看并使用',
             accessSee: '仅查看',
             displayUnavailable: '此电脑无法共享整个显示屏。',
+            wholeDisplayBody: ({ display }) => `${display} 上可见的一切都能被看到，包括其他应用和通知。`,
             policyBoth: ({ agent }) => `${agent} 每次截图、点按和按键前都会询问。`,
             policyInput: ({ agent }) => `${agent} 每次点按和按键前都会询问。`,
             policyCapture: ({ agent }) => `${agent} 每次截图前都会询问。`,
@@ -1540,6 +1571,27 @@ const computerUseTranslations = { 'zh-Hans': {
             notSharedBody: ({ agent }) => `选择一个窗口让 ${agent} 使用。`,
             moreA11y: '窗口选项',
             tabFallback: '电脑',
+            sourceComputer: '电脑',
+            sourceBrowser: '浏览器',
+            sourceA11y: '来源',
+            watchingA11y: ({ source, machine }) => `正在查看 ${machine} 上的${source}`,
+            expandView: '展开视图',
+            restoreView: '还原视图',
+            dockView: '停靠视图',
+            closeView: '关闭视图',
+            moveView: '移动视图',
+            resizeView: '调整视图大小',
+            moveTopLeft: '移到左上角',
+            moveTopRight: '移到右上角',
+            moveBottomLeft: '移到左下角',
+            moveBottomRight: '移到右下角',
+            larger: '放大',
+            smaller: '缩小',
+            viewOptions: '视图选项',
+            presentedElsewhereTitle: '正在浮动视图中显示',
+            presentedElsewhereBody: '停靠到这里，让它待在你的工作旁边。',
+            closeHint: '关闭此查看器。会话会继续运行。',
+            captureOnly: '可以查看此屏幕，但不允许用鼠标和键盘控制。',
         },
         strip: {
             using: ({ target }) => `正在使用 ${target}`,
@@ -2645,6 +2697,7 @@ const filesPaneTranslations = { 'zh-Hans': {
         noChangedFilesReason: '工作副本与最近一次提交一致。',
         rootErrorTitle: ({ machine }) => `无法列出 ${machine} 上的文件`,
         rootErrorTitleUnnamed: '无法列出文件',
+        workspaceUnavailableReason: 'Happier 无法确定此会话的机器和文件夹。',
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "zh-Hans">;
 
 return { filesPaneTranslations };
@@ -4932,6 +4985,9 @@ const zhHans: typeof en = {
         settle: '结束',
         snoozedUntil: ({ time }) => `已推迟到 ${time}`,
         more: '更多操作',
+        approvalNeeded: '需要你的批准',
+        approvalUntitled: '批准一项操作',
+        approvalAskedBy: ({ session }) => `来自 ${session}`,
     },
     popover: {
         moreInOther: ({ count }) => `其他会话中还有 ${count} 项`,
@@ -5516,8 +5572,8 @@ const pluralPl = Shared_personalHomeSettingsTranslations.pluralPl;
 const pluralRu = Shared_personalHomeSettingsTranslations.pluralRu;
 
 const zhHans = {
-    standardOnlyTitle: '仅使用标准连接',
-    standardOnlySubtitle: '此设备上的新连接使用标准路径。正在进行的传输沿当前路径完成。',
+    standardOnlyTitle: '通过 Home 地址连接',
+    standardOnlySubtitle: '在此设备上使用各个 Home 的地址，而不是点对点连接。',
     installOrUpdateAction: '安装或更新个人 Home', startAction: '启动个人 Home', stopAction: '停止个人 Home',
     defaultHomeLabel: '个人 Home', homeTitle: 'Home', canonicalAddress: 'Home 地址', identityComparison: '当前 Home', identityComparisonMatch: '一致', identityComparisonMismatch: '不一致', identityComparisonUnknown: '无法确认',
     unknownSize: '大小未知', unknownTimestamp: '时间戳未知', restoreBackupTitle: '备份', identityTitle: 'Home 身份', identityUnavailable: '身份不可用', restoreBackupDate: '创建时间', restoreCompatibility: '兼容性', restoreCompatible: '兼容', restoreCompatibilityVerified: '已由此版本验证', restoreBackupSize: '大小', restoreReplacementNotice: '当前 Home 数据将被替换。经过验证的恢复备份将予以保留。', restoreConfirmTitle: '替换并恢复此个人 Home？', restoreConfirmAction: '替换并恢复', relocateConfirmTitle: '移动此个人 Home？', relocateConfirmBody: '经过验证的副本在目标位置启用前，当前 Home 将停止运行。', relocateDestination: '目标位置', relocateConfirmAction: '移动 Home', recoverRestoreTitle: '恢复中断的恢复操作？', recoverRestoreBody: '使用保留的恢复材料回滚中断的恢复操作。', recoverRestoreAction: '恢复操作', eraseDataTitle: '删除个人 Home 数据？', eraseHomeTarget: 'Home', eraseDataBody: '这与卸载不同，只会永久删除以下已解析的 Home 路径：', estimatedSize: '估计大小', summaryTitle: '个人 Home', footer: '你的 Home 会保留在此电脑上。这些操作不会改变其他 Home。', statusTitle: '状态', notAvailable: '不可用', storageTitle: '存储', masterSecretTitle: 'Home 访问密钥', masterSecretPresent: '存在', masterSecretUnavailable: '不可用', inspectAction: '刷新 Home 详情', actionsTitle: '备份与恢复', protectionTitle: '保护', backupsSectionFooter: '备份包含可读取的对话、Home 数据、受信任设备状态和 Home 访问密钥。请只将其存储在你信任的位置。', lastBackupTitle: '上次备份', lastBackupUnknown: '上次备份未知', backupsTitle: '备份归档', backupAction: '立即备份', backupSubtitle: '创建并验证纯文本 Home 归档。', exportBackupAction: '导出备份…', exportBackupSubtitle: '在你选择的位置创建经过验证的备份。', verifyAction: '验证备份…', verifySubtitle: '检查归档但不进行恢复。', restoreAction: '恢复…', restoreSubtitle: '在替换 Home 数据前验证备份。', relocateAction: '移动 Home…', relocateSubtitle: '将此 Home 移动到受管理的电脑。', relocationFinishAction: '完成移动', relocationReturnAction: '返回原始 Home', relocationFinishSubtitle: '验证目标位置后完成移动此 Home。', relocationReturnSubtitle: '保留原始 Home 作为活动位置。', recoverRestoreSubtitle: '可以明确回滚中断的恢复操作。', restoreRecoveryWarningTitle: '恢复需要修复', restoreRecoveryWarningBody: '恢复状态不明确。不会执行自动更改。请在修复此 Home 前查看诊断信息。', restoreCleanupWarningTitle: '恢复清理需要注意', restoreCleanupWarningBody: 'Home 已恢复，但自动清理未完成。请查看诊断信息并重试 Home 操作。', backupVerified: '备份已验证', backupNeedsAttention: '备份已验证；Home 重启需要注意', backupHomeReady: 'Home 已重启', backupRevealAction: '显示备份', restoreResultTitle: '恢复结果', restoreOutcomeRecoveryRequired: '需要恢复', restoreOutcomeRolledBack: '恢复已回滚', restoreOutcomeRestored: 'Home 已恢复', advancedTitle: '高级', advancedFooter: '此电脑的运行时控制和诊断。', restartAction: '重启个人 Home', openDataLocationAction: '打开 Home 数据位置', openLogsAction: '打开运行时日志', removeProfileAction: '从 Happier 移除 Home', removeProfileSubtitle: '移除此配置文件；运行时数据保留在此电脑上。', removeProfileTitle: '移除个人 Home 配置文件？', removeProfileBody: '这会移除配置文件，但保留运行时和数据。', uninstallRuntimeAction: '卸载运行时，保留数据', uninstallRuntimeSubtitle: '移除服务和二进制文件；Home 数据会保留。', deleteHomeDataTitle: '删除 Home 数据', removeSectionFooter: '卸载会保留 Home 数据。永久删除是单独确认的操作。', eraseDataAction: '永久删除个人 Home 数据', eraseDataSubtitle: '与卸载分开。永久删除已解析的 Home 数据。', eraseResultTitle: 'Home 数据已删除', eraseStoppedHome: '运行中的 Home 已停止', eraseHomeAlreadyStopped: 'Home 已经停止', eraseRemainingPaths: '无法删除', progressTitle: '个人 Home 操作', dismissResult: '关闭',
@@ -6222,12 +6278,12 @@ const translated = Shared_profilesPageTranslations.translated;
 
 const profilesPageTranslations = { 'zh-Hans': translated({
         profilesPage: {
-            searchPlaceholder: '搜索配置文件',
-            emptyTitle: '还没有配置文件',
-            newProfileTitle: '新配置文件',
+            searchPlaceholder: "搜索启动配置",
+            emptyTitle: "暂无启动配置",
+            newProfileTitle: "新建启动配置",
             notFoundTitle: '此配置文件已不存在',
             notFoundDescription: '它可能已在另一台设备上被删除。',
-            backToProfiles: '返回配置文件',
+            backToProfiles: "返回启动配置",
             discardDraft: '放弃',
             detailDescription: '新会话使用此配置文件启动时生效。',
             builtInDetailDescription: '预设配置文件。保存更改会创建你自己的副本。',
@@ -6239,6 +6295,7 @@ const profilesPageTranslations = { 'zh-Hans': translated({
             environmentDescription: '使用此配置文件启动会话时设置的环境变量。值可以引用机器上的变量。',
             descriptionTitle: '描述',
             descriptionHint: '可选。选择此配置文件时显示。',
+            modelRequiresAgent: '请先选择首选智能体，再选择其模型。',
         },
     }) };
 
@@ -6426,12 +6483,23 @@ const rolesTranslations = { 'zh-Hans': {
             label: '角色',
             title: '角色',
             searchPlaceholder: '搜索角色…',
-            empty: '没有匹配的角色。',
+            empty: '还没有角色。',
+            emptyWithManage: '还没有角色。可在“管理角色”中添加。',
             footer: '角色自带指令、引擎和运行方式，因此工作流可以随处使用。',
             manage: '管理角色',
             engineAppliesOnStart: '启动此角色时才会使用其引擎',
             defaultEngine: '默认智能体',
             activeAccessibilityLabel: '角色，正在使用某个角色',
+        },
+        builtIn: {
+            orchestrator: "主导一项工作，并把部分交给其他智能体",
+            planner: "在动手之前先制定计划",
+            builder: "完成修改并确认它能正常工作",
+            reviewer: "审查修改并指出需要修正的地方",
+            judge: "裁定有争议的发现，并判断目标是否达成",
+            second_opinion: "继续之前的一次独立检查",
+            scout: "浏览代码并回答东西在哪里",
+            approval_reviewer: "处理低风险的权限请求，其余的交给你决定",
         },
         settings: {
             description: '谁来做每一类工作。工作流和编排者请求一个角色；角色决定如何运行。',
@@ -6453,7 +6521,7 @@ const rolesTranslations = { 'zh-Hans': {
             instructionsTitle: '指令',
             instructionsDescription: '它做什么、何时使用以及如何汇报。智能体分派工作时会读取这些内容。',
             resetToDefault: '恢复默认',
-            readOnlyNote: '以查看权限与你共享。你对引擎和配置的选择只属于你。',
+            readOnlyNote: '原始角色是只读的。在此自定义你的指令；重置可恢复原始内容。',
             howItRunsTitle: '运行方式',
             engineTitle: '引擎',
             engineDescription: '智能体、模型和推理强度。',
@@ -6502,7 +6570,7 @@ const rolesTranslations = { 'zh-Hans': {
             ladderRoot: '你启动的工作',
             ladderRootDetail: '由你启动 · 永不受限',
             ladderLevel: ({ level }) => `第 ${level} 层`,
-            ladderLevelDetail: '由智能体启动',
+            ladderLevelDetail: ({ level }) => (level === 1 ? "由你发起的工作中的智能体启动" : `由第 ${level - 1} 层的智能体启动`),
             ladderRefused: '再委派一次',
             ladderRefusedDetail: ({ level }) => `第 ${level} 层 · 被拒绝；智能体自己完成`,
         },
@@ -6740,7 +6808,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const zhHans: SecretsSettingsCopy = {
-    purpose: '你的代理和 MCP 服务器使用的 API 密钥和令牌。保存后，值不会再次显示。',
+    purpose: "供智能体和 MCP 服务器使用的 API 密钥与令牌。保存后不再显示其值。",
     yoursTitle: '你的密钥',
     yoursDescription: '你保存或拥有的密钥。在 Happier 需要密钥的地方选择它们。',
     sharedWithYouTitle: '与你共享',
@@ -6784,6 +6852,7 @@ const sessionAccessTranslations = { "zh-Hans": {
         accessibleSummary: ({ title, label }: { title: string; label: string }) => `${title}: ${label}`,
         accessibleControl: ({ name, control, value }: { name: string; control: string; value: string }) => `${name}, ${control}, ${value}`,
         title: "会话访问权限",
+        context: "会话上下文",
         search: "搜索人员、群组或团队",
         hasAccess: "拥有访问权限",
         yourAccess: "你的访问权限",
@@ -7260,6 +7329,7 @@ const sessionCollaborationPaneTranslations: Pick<Record<'en' | 'ca' | 'de' | 'es
         newLinkReplaces: '新链接创建后,当前链接将失效。',
         linkDenied: '只有管理此会话的人才能创建公开链接。',
         linkLoadFailed: '无法检查公开链接。',
+        linkUnavailable: '此 Home 不支持公开链接。请联系管理员配置公开链接托管。',
         justYouTitle: '一起处理这个会话',
         justYouBody: ({ home }) => `与 ${home} 上的人共享。他们可以关注进展、在这里讨论,并在你离开时接手。`,
         share: '共享',
@@ -7901,7 +7971,7 @@ const sessionListFilterTranslations = { zhHans: translated({
         filtersShowBothSummary: '会话和运行', filtersStartedByNone: '未选择发起者',
         filtersStartedBy: '发起者', filtersStartedByYou: '你', filtersStartedByTriggers: '触发器', filtersStartedByAgents: '代理',
         filtersRunsNeedingYouAlwaysShow: '需要你处理的运行始终显示',
-        filtersMyWork: '我的工作', filtersLegacyOwnerDirect: '我拥有和直接共享的', filtersAssignedToMe: '分配给我', filtersFollowing: '正在关注',
+        filtersMyWork: '我的工作', filtersLegacyOwnerDirect: '我的工作', filtersAssignedToMe: '分配给我', filtersFollowing: '正在关注',
         filtersInvolvingMe: '与我有关', filtersAllAccessible: '所有可访问', filtersAttention: '待处理',
         filtersAttentionAny: '不限', filtersAttentionNeedsMe: '仅显示需要我处理的会话', filtersScopeNeedsMe: '需要我处理',
         filtersInactive: '非活跃会话', filtersInactiveShow: '显示', filtersInactiveHide: '隐藏',
@@ -8087,6 +8157,16 @@ const Domain_sessionWorkTranslations = (() => {
 const en = Shared_sessionWorkTranslations.en;
 
 const zhHans: typeof en = {
+    scheduled: {
+        title: "已计划",
+        writesHere: "写入此处",
+        empty: "没有计划写入此处的工作流。",
+        step: ({ ordinal, title }) => `步骤 ${ordinal} · ${title}`,
+        provenanceWorkflowStep: ({ source, step }) => `来自 ${source} · 步骤 ${step}`,
+        notifyOnlyReported: "仅在智能体报告了内容时",
+        notifyOnlyReportedDescription: "智能体未返回文本时跳过通知。",
+        notifyOnlyReportedNeedsResult: "使用之前智能体步骤的文本结果作为消息。",
+    },
     workerUpdate: {
         settled: "已完成",
         stalled: "已停滞",
@@ -8114,6 +8194,7 @@ const zhHans: typeof en = {
         positionUnder: ({ position, total, parent }) => `${parent} 下的第 ${position}/${total} 项`,
     },
     actions: {
+        showInTranscript: '在对话记录中显示',
         makeOrchestrator: '设为编排者',
         makeOrchestratorSubtitle: '此会话负责规划、委派并汇报',
         makeOrchestratorFailed: "无法将此会话设为编排者",
@@ -8160,6 +8241,8 @@ const zhHans: typeof en = {
     list: {
         level: ({ level }) => `第 ${level} 级`,
         subSessions: ({ count }) => `${count} 个子会话`,
+        showReports: ({ name, count }) => (count > 0 ? `显示 ${name} 下的 ${count} 个会话` : `显示 ${name} 下的会话`),
+        hideReports: ({ name }) => `隐藏 ${name} 下的会话`,
         reportsWorking: ({ count }) => `${count} 个进行中`,
         reportsNeedYou: ({ count }) => `${count} 个子会话需要你`,
     },
@@ -8214,6 +8297,11 @@ const Domain_settingsMachinesTranslations = (() => {
 const en = Shared_settingsMachinesTranslations.en;
 
 const zhHans: typeof en = {
+    defaultsTitle: "机器默认设置",
+    localVirtualMachines: "本地虚拟机",
+    runningOnly: "仅运行时计费的云机器",
+    stoppedBilled: "停止时仍计费的云机器",
+    billingUnknown: "计费方式未知",
     pageDescription: '运行会话的计算机，以及在它们之间进行选择的机器池。',
     thisComputerTitle: '这台计算机',
     thisComputerRowSubtitle: '后台服务和命令行',
@@ -8721,7 +8809,7 @@ const settingsSessionPagesTranslations: Pick<Record<
                 timingWhenIdle: '全部空闲时',
                 layoutSection: '输入框布局',
                 actionBarTitle: '操作栏',
-                actionBarAutoDescription: '宽屏上标签会换到第二行，手机上可横向滚动。',
+                actionBarAutoDescription: '控件根据可用空间排列，必要时换行。',
                 actionBarWrapDescription: '放不下时标签会换到第二行。',
                 actionBarScrollDescription: '标签保持一行，横向滚动查看其余部分。',
                 actionBarCollapsedDescription: '标签收进菜单，留出最多的输入空间。',
@@ -8755,6 +8843,10 @@ const shareSheetTranslations = { 'zh-Hans': {
         confirmRemove: '确认移除',
         removedAnnouncement: ({ name }) => `${name} 不再有访问权限`,
         browseAll: '浏览全部',
+        browsePeople: '浏览所有人员',
+        browseTeams: '浏览所有团队',
+        browseGroups: '浏览所有团队组',
+        membersOnlyLink: '复制链接供已有访问权限的人使用。',
         allLoaded: '已加载全部结果',
         copyLink: '复制链接',
         linkCopied: '链接已复制',
@@ -8771,19 +8863,28 @@ const shareSheetTranslations = { 'zh-Hans': {
             levels: { canUse: '可使用', canRead: '可查看', canEdit: '可编辑', admin: '管理' },
             help: {
                 workflowUse: '查看并运行',
-                roleUse: '使用；各自的更改保留在各自的设置中',
+                roleUse: '— 各自的更改保留在各自的设置中',
                 profileUse: '用它启动会话',
                 documentUse: '在其任意设备上打开和复制',
                 promptUse: '在其会话中使用',
                 boardUse: '查看看板；每张卡片只打开其已有权限的内容',
+                dashboardUse: '查看此仪表板；每个组件仅显示你已有权限打开的内容。',
                 editForEveryone: '为所有共享对象更改',
-                adminOwnerShares: '更改并管理共享；只有所有者可以指定管理员',
+                adminOwnerShares: '更改并管理共享',
             },
             notes: {
                 personalRuns: '运行和触发器归启动它们的人所有。',
                 teamRuns: '团队能看到每次运行。',
                 roleLive: '你的更改会同步给所有共享对象。',
-                profileSecrets: '机密值永不传输 · 关联已保存的机密',
+                profileSecrets: '配置引用已保存的机密；机密值不会传输。',
+                dashboardAccess: '你添加的人会以自己的身份打开它。组件、定义、连接、机器和仓库各自需要独立访问权限。',
+            },
+            privateChoices: {
+                title: '私人连接选择',
+                account: ({ widget, service }) => `${widget} 使用你的 ${service} 账户`,
+                letViewersPick: '让查看者选择',
+                removeChoice: '移除选择',
+                authoredInput: ({ widget }) => `编辑 ${widget}，在共享前移除私人输入。`,
             },
             errors: {
                 unavailable: '此处暂不支持共享。',
@@ -10061,6 +10162,8 @@ type VoicePresenceTranslation = Shared_voicePresenceTranslations.VoicePresenceTr
 
 const voicePresenceTranslations = { 'zh-Hans': {
         welcomeText: "你好，我在听。你想做什么？",
+        customVoice: '自定义声音',
+        boundWelcomeText: ({ name }: Readonly<{ name: string }>) => `你好，你正在与${name}交谈。你想做什么？`,
         greetingLiteralUnavailable: "使用此回复语言时，服务会等待你先开口。",
         title: '语音',
         howYouTalk: "说话方式",
@@ -10636,7 +10739,7 @@ type SavedCopy = Shared_walkthroughSavedTranslations.SavedCopy;
 
 const en = Shared_walkthroughSavedTranslations.en;
 
-const walkthroughSavedTranslations = { 'zh-Hans': { edit: '编辑导览', title: '导览标题', stopTitle: '步骤标题', prose: '说明', refine: '优化', instructions: '需要更改什么？', moveUp: '上移', moveDown: '下移', mergeNext: '与下一步骤合并', addSummary: '添加摘要', addCommitPlan: '提议提交', updated: '已更新保存的结果', conflict: '此导览已在其他地方更改。草稿已保留。请加载最新版本并检查，然后再次保存。', reload: '加载最新版本', missingStop: "最新导览中已没有此步骤。草稿已保留，请选择其他步骤以继续。", applicationLocked: '正在应用提交。编辑已暂停。' } } satisfies Pick<Record<string, SavedCopy>, "zh-Hans">;
+const walkthroughSavedTranslations = { 'zh-Hans': { discuss: '讨论', message: '消息', edit: '编辑导览', title: '导览标题', stopTitle: '步骤标题', prose: '说明', refine: '优化', instructions: '需要更改什么？', moveUp: '上移', moveDown: '下移', mergeNext: '与下一步骤合并', addSummary: '添加摘要', addCommitPlan: '提议提交', updated: '已更新保存的结果', conflict: '此导览已在其他地方更改。草稿已保留。请加载最新版本并检查，然后再次保存。', reload: '加载最新版本', missingStop: "最新导览中已没有此步骤。草稿已保留，请选择其他步骤以继续。", applicationLocked: '正在应用提交。编辑已暂停。' } } satisfies Pick<Record<string, SavedCopy>, "zh-Hans">;
 
 return { walkthroughSavedTranslations };
 })();
@@ -11048,6 +11151,8 @@ const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'
         callWebhook: "调用 Webhook",
         runCommand: "运行命令",
         commandValuesInEnv: "通过环境变量传递工作流的值。命令文本按原样执行。",
+        waitForWork: "等待工作",
+        waitForWorkDescription: "等待所选工作达到指定状态",
         artifactCreate: "创建文档",
         artifactGet: "读取文档",
         artifactList: "列出文档",
@@ -11123,9 +11228,8 @@ type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBu
 const en = Shared_workflowBuiltinTranslations.en;
 
 const zhHans: WorkflowBuiltinTranslations = {
-    runsInsideSession: '在会话中运行',
-    keepGoing: { title: '持续直到完成' },
-    reviewAndConverge: { title: '审查并收敛', apply: '应用', verifyAndFix: '验证并修复', verifyOnly: '仅验证', rounds: '停止前的轮数' },
+    keepGoing: { title: '持续直到完成', description: '持续进行，直到达成目标' },
+    reviewAndConverge: { title: '审查并收敛', description: '审查直到审阅者达成一致', apply: '应用', verifyAndFix: '验证并修复', verifyOnly: '仅验证', rounds: '停止前的轮数' },
     planWithAPanel: { title: '由小组规划', description: '多个代理并行规划，然后计划等待你的审查。', inputs: { request: '请求', requestPlaceholder: '小组应规划什么？', engines: '规划者' } },
     openAPullRequest: { title: '打开拉取请求', description: '先征求第二意见，再打开拉取请求。如果第二意见不同意，它会等待你。', inputs: { base: '基础分支', title: '拉取请求标题', body: '描述', question: '给第二意见的问题' } },
 };
@@ -11191,7 +11295,8 @@ const zhHans: WorkflowEditorPageTranslations = {
         workflowSub: '运行另一个工作流 · 其步骤显示在此次运行中',
         builtin: '内置',
         waitTitle: '等待你',
-        waitSub: '此通道会等待你继续。',
+        waitSub: '此通道会等待你继续',
+        waitSubRoot: '此工作流会等待你继续。',
         waitPlaceholder: '你需要在这里检查或决定什么？',
         returnsText: '返回文本',
         returnsFields: ({ fields }) => `返回 ${fields}`,
@@ -11203,11 +11308,18 @@ const zhHans: WorkflowEditorPageTranslations = {
         actionSearch: '搜索操作',
         workflowSearch: '搜索工作流',
         libraryGroup: '你的工作流',
-        noAgentTurn: '无代理回合。',
+        noAgentTurn: '通知、审查、发布 — 无代理回合',
+        agentSub: '给代理的一条指令',
+        parallelSub: '同时运行的分支',
+        loopSub: '逐项、重复指定次数，或直到…',
+        ifSub: '仅在结果满足条件时',
+        actionSourcePhone: '你的手机',
+        actionSourceReview: '审查引擎',
         useNumber: '使用数字',
         actionUnavailable: ({ action }: { action: string }) => `${action} 在此不可用。`,
         childInputs: ({ workflow }: { workflow: string }) => `输入来自 ${workflow}。`,
         retryLoading: "重试加载",
+        openWorkflow: ({ workflow }) => `打开 ${workflow}`,
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} 会运行此工作流，因此不能在其中运行。`,
         maxFromInput: ({ name }: { name: string }) => `来自输入 · ${name}`,
         useInput: ({ name }: { name: string }) => `使用输入 ${name}`,
@@ -11226,10 +11338,12 @@ const zhHans: WorkflowEditorPageTranslations = {
     settings: '工作流设置',
     settingsSubtitle: '除非步骤自行更改，否则都使用这些设置。',
     deleteWorkflow: '删除工作流',
-    deleteBody: '过去的运行仍保留在历史记录中。',
+    deleteBody: '过去的运行会保留。',
+    discardChangesBody: '回到上次保存的版本。撤销可恢复你的更改。',
     deleteFailedTitle: '无法删除工作流',
     changedForStep: '已为此步骤更改',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '运行前还有 1 处需要修正' : `运行前还有 ${count} 处需要修正`),
+    readyToRun: '就绪',
     saveStatus: {
         notSaved: '尚未保存',
         unsaved: '有未保存的更改',
@@ -11295,6 +11409,7 @@ const zhHans: WorkflowEditorPageTranslations = {
         dropContinue: ({ session }) => `在此步骤中继续 ${session}`,
         dropRefused: ({ session, machine, where }) => `${session} 在 ${machine} 上；此工作流在 ${where} 上运行。`,
         lanes: ({ count }) => `并排 · ${count} 条通道`,
+        laneCount: ({ count }) => `${count} 条通道`,
         lane: ({ position }) => `通道 ${position}`,
         forEachIn: ({ source }) => `对 ${source} 中的每个项目`,
         atATime: ({ count }) => `每次 ${count} 个`,
@@ -11322,8 +11437,14 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHans"> = { zhHans: {
+        notifyWhenAgentWaits: { title: "在代理等待时通知我", description: "选择一个会话，每当其中的代理需要你的输入时，就会收到通知。" },
+        dailySummaryInSession: { title: "在此会话中每日总结", description: "选择一个会话，每天09:00生成总结。" },
+        memoryUpkeepInSession: { title: '记忆维护', description: '每天09:00检查此会话的记忆，并更新有用的信息。' },
+        installDepsInWorktree: { title: "在新工作树中安装依赖", description: "创建一个新工作树，并在其中运行可编辑的安装命令。" },
+        testAfterEveryTurn: { title: "每轮结束后测试", description: "选择一个会话，在每轮完成、失败或取消后运行可编辑的测试命令。" },
+        noSessions: "启动一个工作会话以使用此模板。",
         nodes: { ask: '提问', 'review-correctness': '审查正确性', 'review-tests': '审查测试', summarize: '汇总发现', analyze: '分析', review: '审查', fix: '修复', check: '检查', classify: '分类', reply: '起草回复', digest: '汇总变更' },
-        title: '从示例开始', fromExample: '使用示例', description: '每个示例都以草稿打开。选择“立即运行”之前不会运行。', use: '使用此示例', chooseSession: '选择会话…', builtInDescription: 'Happier 内置。复制后即可修改。', stepCount: ({ count }) => `${count} 个步骤`,
+        title: '从示例开始', fromExample: '使用示例', description: '每个示例都以草稿打开。选择“立即运行”之前不会运行。', sessionDescription: '每个都会在此会话中以草稿打开。打开之前不会运行。', use: '使用此示例', chooseSession: '选择会话…', builtInDescription: 'Happier 内置。复制后即可修改。', stepCount: ({ count }) => `${count} 个步骤`,
         askOnce: { title: '问一次', description: '一个步骤：向代理提问并获取回答。' },
         reviewPullRequest: { title: '审查拉取请求', description: '两位审查者并行工作，然后汇总所有发现。' },
         workThroughEachFile: { title: '逐个处理文件', description: '逐个分析列表中的文件，然后审查修改。' },
@@ -11396,7 +11517,7 @@ const workflowRunCompositionTranslations = {...Domain_workflowRunCompositionTran
 
 const en = Shared_workflowStartTranslations.en;
 
-const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHans"> = { zhHans: { ...workflowRunRoleTranslations.zhHans, ...workflowRunCompositionTranslations.zhHans, neededNamed: ({ name }) => `输入 · 需要${name}`, addToStart: ({ name }) => `添加${name}后即可开始`, workflow: '工作流', inputs: '输入', start: '开始', starting: '正在开始…', stillStarting: '仍在开始…', needed: ({ count }) => `输入 · 还需 ${count} 项`, required: '开始前必填', preview: '将执行的内容', unsaved: '包含未保存的更改', remove: '返回普通会话', search: '查找工作流', builtin: '内置', library: '你的库', noInputs: '无需输入', asksFor: ({ names }) => `需要：${names}`, optional: '可选 — 留空', defaultValue: ({ value }) => `默认值：${value}` } };
+const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHans"> = { zhHans: { ...workflowRunRoleTranslations.zhHans, ...workflowRunCompositionTranslations.zhHans, shortcutStarts: '开始', neededNamed: ({ name }) => `输入 · 需要${name}`, addToStart: ({ name }) => `添加${name}后即可开始`, workflow: '工作流', inputs: '输入', start: '开始', starting: '正在开始…', stillStarting: '仍在开始…', needed: ({ count }) => `输入 · 还需 ${count} 项`, required: '开始前必填', preview: '将执行的内容', unsaved: '包含未保存的更改', remove: '返回普通会话', search: '查找工作流', builtin: '内置', library: '你的库', noInputs: '无需输入', asksFor: ({ names }) => `需要：${names}`, optional: '可选 — 留空', defaultValue: ({ value }) => `默认值：${value}` } };
 
 return { workflowStartTranslations };
 })();
@@ -11472,7 +11593,6 @@ const zhHans: WorkflowsDestinationTranslations = {
         share: '共享…',
     },
     deleteTitle: '删除此工作流？',
-    deleteBody: '过去的运行会保留在历史中。',
     deleteFailedTitle: '无法删除工作流',
     exportFailedTitle: '无法导出工作流',
     gate: {
@@ -11502,6 +11622,15 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const zhHans: WorkflowTriggersCopy = {
+    activity: {
+        create: "根据此事件创建触发器",
+        test: "测试此触发器",
+        matched: "此事件匹配",
+        noMatch: "此事件不匹配",
+        sourceMismatch: "此事件来自其他来源",
+        tooOld: "此事件已超出观察时限",
+        invalid: "请先设置事件再进行测试",
+    },
     pullRequest: {
         label: "拉取请求",
         description: "添加此触发器会将拉取请求链接到此会话。",
@@ -11521,6 +11650,7 @@ const zhHans: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · 另有 ${count} 个`,
     },
     kind: {
+        pluginEvent: "插件事件",
         sessionStarts: '当会话开始时',
         sessionArchived: '当会话被归档时',
         schedule: '按计划',
@@ -11540,6 +11670,9 @@ const zhHans: WorkflowTriggersCopy = {
         templateDecryptionFailed: '无法解密触发器',
         machines: ({ count }: Count) => `${count} 台机器`,
         nextRun: ({ time }: { time: string }) => `下次运行：${time}`,
+        nextMinutes: ({ count }: Count) => `${count} 分钟后`,
+        nextHours: ({ count }: Count) => `${count} 小时后`,
+        nextDays: ({ count }: Count) => count === 1 ? '明天' : `${count} 天后`,
         steps: ({ count }) => (count === 1 ? `${count} 个步骤` : `${count} 个步骤`),
         off: '已关闭',
         running: '运行中',
@@ -11557,6 +11690,7 @@ const zhHans: WorkflowTriggersCopy = {
         info: '发生某事时在此会话中运行的内容。它们留在此会话中，不会出现在你的库中。',
         saveFailed: '无法保存此触发器。你的更改仍在这里。',
     },    kindDescription: {
+        pluginEvent: "在插件观察到事件时运行。",
         turnEnds: '在你或与你协作的代理完成一轮之后。',
         needsYou: '每当此会话等待你时，包括由工作流或“持续到完成”驱动时。',
         sessionArchived: '在你归档此会话时运行一次。',
@@ -11591,6 +11725,8 @@ const zhHans: WorkflowTriggersCopy = {
         choose: '选择…',
     },
     popover: {
+        configureEvent: "设置事件",
+        editEvent: "编辑事件",
         saveAsWorkflow: '另存为工作流',
         saveAsWorkflowDescription: '将这些步骤作为新工作流打开以供审查。此触发器保留自己的步骤。',
         when: '何时',
@@ -11634,6 +11770,8 @@ const zhHans: WorkflowTriggersCopy = {
 const legacyTranslations = { zhHans: {
         editNotice: '创建于 Happier 0.2。打开不会更改任何内容。',
         conversionBoundary: '此更改后仅在运行 Happier 0.3 或更新版本的机器上执行。',
+        reviewRequired: '需要你审核',
+        reviewConversionNotice: '保存后，工作流将以非端到端加密方式存储，并恢复其已启用的触发器。会话仍保持端到端加密。',
         channelReplyRefusal: '此自动化有无法转移的频道回复绑定。尚未转换，原设置和你的编辑均保留。',
         notAvailable: '此自动化已不可用。',
     } };
@@ -11648,7 +11786,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { zh: {
         checkoutRoot: '检出根文件夹',
-        unavailableValue: '值不可用', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? '会话上下文' : `最近${turns}轮会话`,
+        unavailableValue: '值不可用', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? '会话上下文' : turns === 1 ? '最近一轮会话' : `最近${turns}轮会话`,
         tokensUsed: '已用令牌', goalTokenBudget: '目标令牌预算',
         trailingCount: ({ source, value }: { source: string; value: string }) => `连续匹配${value}的${source}`,
         stopCondition: '已满足停止条件', stopConditionArm: ({ arm }: { arm: number }) => `已满足停止条件${arm}`,
@@ -11696,6 +11834,23 @@ const pluralPl = Shared_workflowTranslations.pluralPl;
 const pluralRu = Shared_workflowTranslations.pluralRu;
 
 const zhHans = translated(workflowValueReferenceTranslations.zh, {
+    testRun: {
+        title: "测试运行",
+        savedNotice: "实际运行已保存的版本。未保存的编辑会留在这里。",
+        resultsNotice: "已保存版本的结果 · 最近一次执行。未保存的编辑未参与运行。",
+        recordedDuration: ({ seconds }) => `记录的耗时 · ${seconds} 秒`,
+        loading: "正在加载测试结果…",
+    },
+    runWhen: {
+        title: "运行条件",
+        success: "成功",
+        failure: "失败",
+        always: "始终",
+        ifSuccess: "如果成功",
+        ifFailure: "如果失败",
+        regardless: "无论结果如何",
+        previousStep: "相对于上一个步骤",
+    },
     title: '工作流',
     newWorkflow: '新建工作流',
     copyName: ({ name }: { name: string }) => `${name} 副本`,
@@ -11801,6 +11956,17 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
     loadFailedBody: '你的工作不受影响。准备好后再试一次。',
     retry: '重试',
     contentUnavailable: '此设备上无法显示私密内容。',
+    readState: {
+        historyTitle: '无法读取历史记录',
+        historyBody: '此运行由较早的 Happier 开发版本记录，因此无法打开其历史记录。请开始新的运行以继续。',
+        encryptionTitle: '需要设置加密',
+        encryptionBody: '此内容采用端到端加密。请为此账户设置加密后再打开。',
+        keysTitle: '正在等待密钥',
+        keysBody: '此设备尚未获得此运行的加密密钥。密钥可用后请重试。',
+        storageTitle: '运行存储不可用',
+        storageBody: 'Happier 无法访问运行存储。请检查连接后重试。',
+        openSettings: '打开设置',
+    },
     contentReasons: {
         invalidHeader: '此工作流保存的信息无效。',
         revisionMismatch: '此工作流与保存的修订版本不一致。',
@@ -11859,7 +12025,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         undo: '撤销',
         redo: '重做',
         historyRestoreRequiresSetup: '此事件需要重新设置。删除后无法恢复其已保存的私有配置。',
-        history: { edited: '编辑工作流', agent: '智能体修改', description: '编辑描述', where: '更改运行位置', target: '更改步骤运行方式', triggers: '编辑触发器', example: '插入示例', document: '编辑提示词' },
+        history: { edited: '编辑工作流', agent: '智能体修改', description: '编辑描述', where: '更改运行位置', target: '更改步骤运行方式', triggers: '编辑触发器', example: '插入示例', document: '编辑提示词', renameWorkflow: '重命名工作流', renameStep: '重命名步骤', renameLane: '重命名分支' },
         undoAction: ({ change }: { change: string }) => `撤销：${change}`,
         redoAction: ({ change }: { change: string }) => `重做：${change}`,
         removedBlock: ({ block }) => `已移除 ${block}`,
@@ -11870,8 +12036,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         unnamedLoop: '循环',
         unnamedIf: '条件判断',
         branch: '分支',
-        addBranch: '添加分支',
-        ifTrue: '条件成立时',
+        addBranch: '添加通道',
+        ifTrue: '则',
         otherwise: '否则',
         addOtherwise: '添加“否则”分支',
         evaluator: '判断是否继续',
@@ -11933,7 +12099,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         change: '更改',
         clear: '清除选择',
         fieldPath: '字段路径',
-        explain: '最终输出是这个工作流结束时返回的内容。完成的先后顺序不会改变它。',
+        explain: '这个工作流结束时返回的内容。',
     },
 
     conversation: {
@@ -11987,7 +12153,13 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         operatorLte: '不大于',
         operatorGt: '大于',
         operatorGte: '不小于',
+        notFirstRound: '不是第一轮',
+        trailingCountAtLeast: ({ source, value, count }) => `${source} 连续 ${count} 次为 ${value}`,
+        loopRanOutOfRounds: ({ loop }) => `${loop} 已用完轮次`,
+        loopEnded: ({ loop, outcome }) => `${loop} 已结束：${outcome}`,
+        loopStoppedBecause: ({ loop, condition }) => `${loop} 已停止，因为 ${condition}`,
         valuePlaceholder: '值',
+        literalPlaceholder: '输入值',
         skippedReason: ({ block }) => `因为 ${block} 的条件不成立，已跳过。`,
     },
 
@@ -12211,6 +12383,10 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         unsupported_persisted_attachment: '附加的媒体文件在保存前必须有持久引用。',
         conversation_workspace_mismatch: '此对话和工作区无法一起继续。',
         target_unavailable: '运行之前，请先为这个工作流选择一个代理。',
+        emptyPrompt: '写下这一步要做什么。',
+        emptyWaitPrompt: '写下你需要在这里检查或决定什么。',
+        fieldMissing: ({ field }) => `${field} 为必填项。`,
+        fieldInvalid: ({ field }) => `${field} 需要有效的值。`,
     },
 
     problem: {
@@ -12365,7 +12541,7 @@ const zhHans = completeWorkspaceSyncTranslation({
     state: { loading: '正在检查状态…', starting: '正在准备', watching: '正在监视', flushing: '正在同步', paused: '已暂停', peerOffline: '离线', conflicted: '存在冲突', controllerUnavailable: '需要处理', engineUnavailable: '组件不可用', error: '需要处理', stopped: '已停止', working: '正在处理…' },
     lastChecked: ({ at }) => `上次检查：${at}`, endpoint: { source: ({ label }) => `来源 · ${label}`, destination: ({ label }) => `目标 · ${label}`, synced: ({ label }) => `同步端点 · ${label}` },
     error: { componentUnavailable: '此版本无法使用工作区同步。请安装所需组件后重试。', machineOffline: '目标计算机不可用。请重新连接后重试。', destinationNeedsPreparation: '开始同步前需要准备目标文件夹。', gitPreparationFailed: 'Happier 无法准备此 Git 工作区。请检查目标位置后重试。', authorizationExpired: '工作区授权已过期。请重新开始操作。', rootNoLongerAuthorized: '工作区文件夹已更改，不再获得授权。请先检查同步关系，然后重试。', conflictNeedsAttention: '此冲突已更改。请先刷新，再选择版本。', needsAttention: '工作区同步需要处理。请刷新状态后重试。' },
-    start: { blocked: { targetMachine: '请选择目标计算机以继续。', targetMachineOffline: '该计算机目前不可用。请重新连接后重试。', relationshipUnavailable: '此同步关系已不再涵盖这两个文件夹。请选择其他工作区选项。', sourceFolder: '无法安全同步此会话的文件夹。请选择“不移动文件”以仅移交会话。', destinationFolder: '请选择可以安全同步的目标文件夹。', workspaceOptions: '开始前请检查工作区选项。' } },
+    start: { blocked: { targetMachine: '请选择目标计算机以继续。', targetMachineOffline: '该计算机目前不可用。请重新连接后重试。', relationshipUnavailable: '此同步关系已不再涵盖这两个文件夹。请选择其他工作区选项。', sourceFolder: '无法安全同步此会话的文件夹。请选择“不移动文件”以仅移交会话。', destinationFolder: '请选择有效的目标文件夹。', workspaceOptions: '开始前请检查工作区选项。' } },
     engine: { checking: '正在检查此计算机上的工作区同步…' },
     actions: { refresh: '刷新状态', syncNow: '立即同步', more: '工作区同步操作', pause: '暂停', resume: '继续', terminate: '停止同步', openOnMachine: ({ machine }) => `在 ${machine} 上打开`, openFolder: ({ label }) => `打开 ${label} 文件夹`, keepLocal: '保留本地版本', keepRemote: '保留远程版本', keepNamed: ({ side }) => `保留 ${side} 的版本` },
     terminate: { title: '移除工作区同步？', body: '同步将停止，相关关系也会被移除。两个工作区中的文件都会保留。' },

@@ -15,6 +15,7 @@ import { buildActiveServerSessionListIndex } from '../sessionListIndex/buildSess
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import {
     areServerProfileIdentifiersEquivalent,
+    resolveServerProfileScopeIdForIdentifier,
 } from '../../domains/server/serverProfiles';
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { invalidateCachedTransferRoutesForMachine } from '../../domains/transfers/runtime/transferRouteCache';
@@ -25,7 +26,7 @@ import {
     scheduleMachineDisplayWarmCacheSave,
     scheduleMachineListDisplayWarmCacheSave,
 } from '../../domains/state/machineDisplayWarmCacheWriter';
-import { areStoredMachinesEqual, hasMachineDaemonBeenReplaced, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
+import { areStoredMachinesEqual, hasMachineContributionRegistryProjectionChanged, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
 import { applyWorkspaceSyncRuntimeEvent } from '../../domains/sessionHandoff/applyWorkspaceSyncRuntimeEvent';
 
 import type { StoreGet, StoreSet } from './_shared';
@@ -38,7 +39,7 @@ export type MachinesDomain = {
     machineListByServerId: Record<string, Machine[] | null>;
     machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
     applyMachines: (machines: Machine[], replace?: boolean, options?: ApplyMachinesOptions) => void;
-    replaceMachineDisplays: (machines: MachineDisplayRenderable[], options?: ApplyMachinesOptions) => void;
+    replaceMachineDisplays: (machines: MachineDisplayRenderable[], options?: ApplyMachinesOptions & Readonly<{ replace?: boolean }>) => void;
     /** The Home's machine list could not be read; retained rows stay, the loading state ends. */
     markMachineListUnavailable: (serverId: string) => void;
 };
@@ -103,7 +104,7 @@ function mergeMachineListById(
 }
 
 function normalizeMachineServerId(serverId: string | null | undefined): string {
-    return String(serverId ?? '').trim();
+    return resolveServerProfileScopeIdForIdentifier(serverId);
 }
 
 type MachinePresence = Readonly<{
@@ -224,6 +225,15 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     )
                 ));
                 for (const machine of scopedMachinesWithAdvancedDaemonState) {
+                    const previous = Array.isArray(currentScopedMachines)
+                        ? currentScopedMachines.find((current) => current.id === machine.id)
+                        : shouldUpdateActiveProjection ? state.machines[machine.id] : undefined;
+                    if (sourceServerId && hasMachineContributionRegistryProjectionChanged(previous, machine)) {
+                        publishMachineContributionRegistryProjectionInvalidation({
+                            serverId: sourceServerId,
+                            machineId: machine.id,
+                        });
+                    }
                     applyWorkspaceSyncRuntimeEvent({
                         serverId: sourceServerId,
                         machineId: machine.id,
@@ -252,7 +262,6 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 let mergedMachines = state.machines;
                 let mergedMachineDisplays = state.machineDisplayById;
                 const machinesWithAdvancedDaemonState = new Set<string>();
-                const machinesWithReplacedDaemon = new Set<string>();
 
                 if (replace) {
                     const retainedIds = new Set(normalizedMachines.map((machine) => machine.id));
@@ -271,9 +280,6 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     const previousMachine = state.machines[machine.id];
                     if (hasMachineDaemonStateAdvanced(previousMachine, machine)) {
                         machinesWithAdvancedDaemonState.add(machine.id);
-                    }
-                    if (hasMachineDaemonBeenReplaced(previousMachine, machine)) {
-                        machinesWithReplacedDaemon.add(machine.id);
                     }
                     if (!areStoredMachinesEqual(previousMachine, machine)) {
                         if (mergedMachines === state.machines) {
@@ -356,19 +362,6 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                             serverId,
                             remoteMachineId: machineId,
                         });
-                        // A replaced or restarted daemon is a different
-                        // projection endpoint, and this is the one place that
-                        // observes that transition. Advancing the incumbent
-                        // projection revision is what makes every projection
-                        // consumer re-describe and what lets an in-flight
-                        // response recognise that it answered for the previous
-                        // endpoint.
-                        if (machinesWithReplacedDaemon.has(machineId)) {
-                            publishMachineContributionRegistryProjectionInvalidation({
-                                serverId,
-                                machineId,
-                            });
-                        }
                     }
                 }
                 const nextSessionListIndexByServerId = activeServerId
@@ -399,7 +392,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
 
                 const incomingDisplayIds = new Set(machines.map((machine) => machine.id));
                 const displays = [...machines, ...Object.values(state.machineDisplayById).filter((machine) => (
-                    !isPersistentMachine(machine) && !incomingDisplayIds.has(machine.id)
+                    (options?.replace === false || !isPersistentMachine(machine)) && !incomingDisplayIds.has(machine.id)
                 ))];
                 const nextMachineDisplays = Object.fromEntries(displays.map((machine) => {
                     const nextDisplay = preserveNewestMachinePresence(machine, [

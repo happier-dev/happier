@@ -6,6 +6,11 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';
 import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
+import { Encryption } from '@/sync/encryption/encryption';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { createDeferred, createMachineFixture } from '@/dev/testkit';
+import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
+import { encodeBase64 } from '@happier-dev/protocol';
 import {
     markSessionSurfaceVisible,
     resetSessionSurfaceVisibilityForTests,
@@ -18,6 +23,8 @@ import { readPresentationNotice, retirePresentationNotice } from '@/components/s
 import { subscribeActivityLocalNotifications } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 
 const initialStorageState = storage.getState();
+let machineContextOwner: Encryption;
+beforeEach(async () => { machineContextOwner = await Encryption.create(new Uint8Array(32).fill(17)); });
 
 describe('committed personal in-app facts', () => {
     afterEach(() => retirePresentationNotice());
@@ -63,7 +70,7 @@ describe('committed personal in-app facts', () => {
 function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'>> = {}) {
     const decryptEncryptionKey = vi.fn(async () => null as Uint8Array | null);
     const initializeMachines = vi.fn(async (_machineKeysMap: Map<string, Uint8Array | null>) => {});
-    return {
+    const params = {
         encryption: {
             getSessionEncryption: () => null,
             getMachineEncryption: () => null,
@@ -92,6 +99,15 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
         invalidateTodos: vi.fn(),
         log: { log: vi.fn() },
         ...overrides,
+    };
+    return {
+        ...params,
+        readAccountMode: async () => 'e2ee' as const,
+        ...overrides,
+        encryption: params.encryption === null || typeof params.encryption !== 'object' || params.encryption instanceof Encryption ? params.encryption : {
+            ...params.encryption,
+            captureMachineEncryptionContext: machineContextOwner.captureMachineEncryptionContext.bind(machineContextOwner),
+        } as Parameters<typeof handleUpdateContainer>[0]['encryption'],
     };
 }
 
@@ -244,6 +260,22 @@ function enableTranscriptStreamingCoalescingForTest(): void {
 describe('socket update handling: new-machine', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
+    });
+
+    it('rejects a legacy Plain marker when the owning Account is E2EE', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const params = buildBaseParams({ encryption, readAccountMode: async () => 'e2ee' });
+        await handleUpdateContainer({ ...params, updateData: {
+            id: 'marker-substitution', seq: 1, createdAt: 1,
+            body: {
+                t: 'new-machine', machineId: 'm-marker', seq: 1,
+                metadata: '{}', metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+                dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                active: false, activeAt: 1, createdAt: 1, updatedAt: 1,
+            },
+        } });
+        expect(storage.getState().machines['m-marker']?.availability?.kind).toBe('locked');
+        expect(encryption.getMachineEncryption('m-marker')).toBeNull();
     });
 
     it('applies a placeholder machine and invalidates machines sync', async () => {
@@ -422,6 +454,57 @@ describe('socket update handling: update-machine (missing encryption)', () => {
         storage.setState(initialStorageState, true);
     });
 
+    it('does not let a held old list undo a later current key hint at unchanged content versions', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const oldKey = new Uint8Array(32).fill(23);
+        const oldEnvelope = encodeBase64(await encryption.encryptEncryptionKey(oldKey), 'base64');
+        const nextEnvelope = encodeBase64(await encryption.encryptEncryptionKey(new Uint8Array(32).fill(24)), 'base64');
+        encryption.captureMachineEncryptionContext('m-held', { dataEncryptionKey: oldEnvelope, expectedDataEncryptionKey: oldEnvelope });
+        await encryption.initializeMachines(new Map([['m-held', oldKey]]));
+        const machine = createMachineFixture({ id: 'm-held', dataEncryptionKey: oldEnvelope, metadataVersion: 1, daemonStateVersion: 0 });
+        storage.getState().applyMachines([machine]);
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        const pending = fetchAndApplyMachines({
+            credentials: { token: `e30.${btoa(JSON.stringify({ sub: 'owner' }))}.signature`, secret: encodeBase64(new Uint8Array(32).fill(17), 'base64') },
+            encryption, machineDataKeys: new Map(), sourceServerId: 'home-1',
+            request: async () => { entered.resolve(); await release.promise; return Response.json([{ ...machine, metadata: 'old-ciphertext', dataEncryptionKey: oldEnvelope }]); },
+            getExistingMachine: (id) => storage.getState().machines[id],
+            applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+        });
+        await entered.promise;
+        await handleUpdateContainer({ ...buildBaseParams(), encryption, updateData: {
+            id: 'current-key-hint', seq: 2, createdAt: 2,
+            body: { t: 'update-machine', machineId: machine.id, dataEncryptionKey: nextEnvelope,
+                keyBasis: { dataEncryptionKey: nextEnvelope, metadataVersion: 1, daemonStateVersion: 0 } },
+        } });
+        release.resolve();
+        await pending;
+        expect(encryption.getMachineDataEncryptionKey(machine.id)).toBe(nextEnvelope);
+        expect(encryption.getMachineEncryption(machine.id)).toBeNull();
+    });
+
+    it('retains newer canonical encryption when an older envelope hint arrives late', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(17));
+        const key = new Uint8Array(32).fill(23);
+        const currentEnvelope = 'current-envelope';
+        encryption.captureMachineEncryptionContext('m-current', { dataEncryptionKey: currentEnvelope, expectedDataEncryptionKey: currentEnvelope });
+        await encryption.initializeMachines(new Map([['m-current', key]]));
+        const cipher = encryption.getMachineEncryption('m-current');
+        const machine = createMachineFixture({ id: 'm-current', dataEncryptionKey: currentEnvelope, metadataVersion: 3, daemonStateVersion: 3 });
+        storage.getState().applyMachines([machine]);
+        const params = buildBaseParams({ encryption });
+        await handleUpdateContainer({ ...params, encryption, updateData: {
+            id: 'late-envelope', seq: 2, createdAt: 2,
+            body: { t: 'update-machine', machineId: machine.id,
+                dataEncryptionKey: 'old-envelope',
+                keyBasis: { dataEncryptionKey: 'old-envelope', metadataVersion: 1, daemonStateVersion: 1 },
+            },
+        } });
+        expect(encryption.getMachineEncryption(machine.id)).toBe(cipher);
+        expect(storage.getState().machines[machine.id]).toBe(machine);
+    });
+
     it('still applies freshness fields before invalidating machines sync', async () => {
         const invalidateMachines = vi.fn();
         const params = buildBaseParams({ invalidateMachines });
@@ -485,9 +568,9 @@ describe('socket update handling: Action operation snapshot ephemerals', () => {
         }));
 
         expect(updateActionOperationSnapshot).toHaveBeenCalledWith({
-            type: 'action-operation-snapshot',
+            type: 'action-operation-updated',
             machineId: 'machine-1',
-            ciphertext: 'sealed-snapshot',
+            content: { t: 'encrypted', c: 'sealed-snapshot' },
         });
     });
 
@@ -504,9 +587,9 @@ describe('socket update handling: Action operation snapshot ephemerals', () => {
         }));
 
         expect(updateActionOperationSnapshot).toHaveBeenCalledWith({
-            type: 'action-operation-snapshot',
+            type: 'action-operation-updated',
             machineId: 'machine-1',
-            ciphertext: 'sealed-snapshot',
+            content: { t: 'encrypted', c: 'sealed-snapshot' },
         });
     });
 });

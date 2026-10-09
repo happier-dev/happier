@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 // File identities belong to Node, not Vite's client asset URL transform.
 const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
@@ -21,7 +22,8 @@ export type ServedHomeRequest = Readonly<{
     body: unknown;
 }>;
 
-type HomeSpec = Readonly<{ key: string; serverUrl: string; accountId: string }>;
+type HomeSpec = Readonly<{ key: string; serverUrl: string; accountId: string; settings?: Readonly<Record<string, unknown>>;
+    accountMode?: 'plain' | 'e2ee'; credentials?: AuthCredentials }>;
 
 function tokenFor(accountId: string): string {
     return `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
@@ -49,20 +51,16 @@ export async function installRealActionExecutorModuleLoader(): Promise<() => voi
 }
 
 /**
- * Real Homes behind a fake network: every Home is a real server profile and every Action, account
+ * Real Homes behind a fake network: every Home is a real server profile and every account
  * context, scoped transport and credential reader runs for real. Only the HTTP boundary (one
  * `runtimeFetch`) and the stored credentials (one plain-mode token per Home, switchable to another
  * Account) are replaced. The last Home listed is the focused one.
  */
-export async function serveActionHomes(params: Readonly<{
+export async function serveAccountHomes(params: Readonly<{
     homes: readonly HomeSpec[];
-    route: (request: ServedHomeRequest) => Response | Promise<Response> | undefined;
+    route: (request: ServedHomeRequest) => Response | undefined | Promise<Response | undefined>;
 }>) {
-    // Metro's call-time require must resolve to the SAME real executor module as Vitest's imports.
-    // Node's loader otherwise bypasses the workspace aliases and transport fixtures (vitestRnShim).
-    // This bridges module loading only; no Action logic or front-door result is substituted.
-    const restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
-    const [{ upsertAndActivateServer }, { TokenStorage }, { setRuntimeFetch, resetRuntimeFetch }, { getStorage }] = await Promise.all([
+    const [{ upsertServerProfileOnly, setActiveServer }, { TokenStorage }, { setRuntimeFetch, resetRuntimeFetch }, { getStorage }] = await Promise.all([
         import('@/sync/domains/server/serverRuntime'),
         import('@/auth/storage/tokenStorage'),
         import('@/utils/system/runtimeFetch'),
@@ -70,29 +68,22 @@ export async function serveActionHomes(params: Readonly<{
     ]);
     const accounts = new Map<string, string>();
     const byOrigin = new Map<string, string>();
+    const settingsByHome = new Map(params.homes.map(home => [home.key, home.settings ?? {}]));
+    const specsByHome = new Map(params.homes.map(home => [home.key, home]));
     const homes: Record<string, Readonly<{ id: string; serverUrl: string }>> = {};
-    for (const spec of params.homes) {
-        const home = await upsertAndActivateServer({ serverUrl: spec.serverUrl, scope: 'tab' });
-        homes[spec.key] = { id: home.id, serverUrl: home.serverUrl };
-        accounts.set(spec.key, spec.accountId);
-        byOrigin.set(new URL(home.serverUrl).origin, spec.key);
-    }
-    const focused = params.homes.at(-1)!;
-    const focusedScope = { serverId: homes[focused.key]!.id, accountId: focused.accountId };
-    getStorage().setState({ settingsScope: focusedScope, profileScope: focusedScope });
-    const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl: string) => {
-        const key = byOrigin.get(new URL(serverUrl).origin);
-        const accountId = key ? accounts.get(key) : undefined;
-        return accountId ? { token: tokenFor(accountId) } : null;
-    });
     const requests: ServedHomeRequest[] = [];
+    // Activation can start readiness immediately. Install the external HTTP
+    // boundary before publishing any fixture Home, as app-entry fixtures do.
     setRuntimeFetch(async (url, init) => {
         const target = new URL(String(url));
         if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
         const home = byOrigin.get(target.origin);
         if (!home) throw new Error(`Request to an unknown Home: ${target.origin}`);
-        if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-        if (target.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+        if (target.pathname === '/v1/account/encryption') {
+            const spec = specsByHome.get(home);
+            return Response.json({ mode: accounts.get(home) === spec?.accountId ? spec?.accountMode ?? 'plain' : 'plain', updatedAt: 0 });
+        }
+        if (target.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: settingsByHome.get(home) ?? {} }, version: 1 });
         const request: ServedHomeRequest = {
             home,
             method: init?.method ?? 'GET',
@@ -104,6 +95,28 @@ export async function serveActionHomes(params: Readonly<{
         requests.push(request);
         return await params.route(request) ?? Response.json({ error: 'not_found' }, { status: 404 });
     });
+    for (const spec of params.homes) {
+        const home = await upsertServerProfileOnly({ serverUrl: spec.serverUrl });
+        homes[spec.key] = { id: home.id, serverUrl: home.serverUrl };
+        accounts.set(spec.key, spec.accountId);
+        byOrigin.set(new URL(home.serverUrl).origin, spec.key);
+        // Device selection also works in Node/native harnesses without the
+        // browser sessionStorage that owns a tab-scoped selection.
+        await setActiveServer({ serverId: home.id });
+    }
+    const focused = params.homes.at(-1)!;
+    const focusedScope = { serverId: homes[focused.key]!.id, accountId: focused.accountId };
+    getStorage().setState({ settingsScope: focusedScope, profileScope: focusedScope });
+    // A focused Home reads the applied Settings projection, not its HTTP baseline.
+    // Publish the same fixture response through the real store producer.
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    getStorage().getState().applySettingsForScope(focusedScope, settingsParse(focused.settings ?? {}), 1);
+    const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl: string) => {
+        const key = byOrigin.get(new URL(serverUrl).origin);
+        const accountId = key ? accounts.get(key) : undefined;
+        const spec = key ? specsByHome.get(key) : undefined;
+        return accountId ? { ...(spec?.accountId === accountId ? spec.credentials : undefined), token: tokenFor(accountId) } : null;
+    });
     return {
         homes,
         requests,
@@ -112,9 +125,29 @@ export async function serveActionHomes(params: Readonly<{
             accounts.set(key, accountId);
         },
         dispose() {
-            restoreExecutorModuleLoader();
             resetRuntimeFetch();
             credentials.mockRestore();
         },
     };
+}
+
+/** Adds the real Metro executor bridge only for journeys that invoke the Action front door. */
+export async function serveActionHomes(params: Parameters<typeof serveAccountHomes>[0]) {
+    const restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+    try {
+        const home = await serveAccountHomes(params);
+        return {
+            ...home,
+            dispose() {
+                try {
+                    home.dispose();
+                } finally {
+                    restoreExecutorModuleLoader();
+                }
+            },
+        };
+    } catch (error) {
+        restoreExecutorModuleLoader();
+        throw error;
+    }
 }

@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Machine } from '@/sync/domains/state/storageTypes'
 
 import { buildUpdatedMachineFromSocketUpdate } from './syncMachines'
+import { Encryption } from '@/sync/encryption/encryption'
+import * as platformCrypto from 'rn-encryption'
+import { createDeferred, createMachineFixture } from '@/dev/testkit'
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent'
 
 type MachineUpdate = {
     machineId: string
@@ -36,9 +40,84 @@ function buildMachine(overrides: Partial<Machine> = {}): Machine {
 }
 
 describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
+    it('projects the admitted child fact independently of rewritten metadata and clears a retired fact', async () => {
+        const projection = { relation: { managedMachineId: 'managed-child', managedMachineKind: 'devcontainer' as const,
+            parentMachineId: 'physical-parent' }, observation: { nativeResourceId: 'native-child', user: 'custom-user',
+            workspaceFolder: '/work/custom', storage: { kind: 'child' as const, childPath: '/work/custom' } } }
+        const existing = createMachineFixture({ storageMode: 'plain', metadataVersion: 1 })
+        const renamed = { ...existing.metadata!, displayName: 'Renamed by predecessor' }
+        const updated = await buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: { machineId: existing.id, metadata: { version: 2, value: encodePlainMachineStoredContent(renamed) },
+                devcontainerChild: projection }, updateSeq: 2, updateCreatedAt: 2, existingMachine: existing,
+            getMachineEncryption: () => null,
+        })
+        expect(updated?.metadata).toMatchObject({ displayName: renamed.displayName, devcontainerChild: projection })
+        const replacement = { ...projection, observation: { ...projection.observation, nativeResourceId: 'replacement-native' } }
+        // A successful local CAS acknowledgement may already advance the blob
+        // version before the authoritative socket echo arrives.
+        const echoed = await buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: { machineId: existing.id, metadata: { version: 2, value: encodePlainMachineStoredContent(renamed) },
+                devcontainerChild: replacement }, updateSeq: 3, updateCreatedAt: 3, existingMachine: updated!,
+            getMachineEncryption: () => null,
+        })
+        expect(echoed?.metadata?.devcontainerChild).toEqual(replacement)
+        const retired = await buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: { machineId: existing.id, devcontainerChild: null }, updateSeq: 3, updateCreatedAt: 3,
+            existingMachine: echoed!, getMachineEncryption: () => null,
+        })
+        expect(retired?.metadata?.devcontainerChild).toBeUndefined()
+    })
+    it('retains the exact shared published context through a content-only update', async () => {
+        const machine = createMachineFixture({
+            id: 'shared', metadataVersion: 1, dataEncryptionKey: 'recipient-envelope', isShared: true,
+            keyBasis: { dataEncryptionKey: null, metadataVersion: 1, daemonStateVersion: 0 },
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'use', resourceMode: 'e2ee', accessState: 'ready' },
+        })
+        const updated = await buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: { machineId: machine.id, active: true },
+            updateSeq: 2, updateCreatedAt: 2, existingMachine: machine, getMachineEncryption: () => null,
+        })
+        expect(updated?.access).toBe(machine.access)
+        expect(updated?.keyBasis).toBe(machine.keyBasis)
+        expect(updated?.keyBasis?.dataEncryptionKey).toBeNull()
+        expect(updated?.dataEncryptionKey).toBe('recipient-envelope')
+        expect(updated?.isShared).toBe(true)
+    })
+    it('does not return a socket snapshot decrypted by a retired Machine context', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1))
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } })
+        await encryption.initializeMachines(new Map([['m1', new Uint8Array(32).fill(2)]]))
+        const before = encryption.getMachineEncryption('m1')!
+        const ciphertext = await before.encryptMetadata({ ...createMachineFixture().metadata!, displayName: 'Old update' })
+        const started = createDeferred<void>()
+        const release = createDeferred<void>()
+        const originalDecrypt = platformCrypto.decryptAsyncAES
+        const spy = vi.spyOn(platformCrypto, 'decryptAsyncAES').mockImplementationOnce(async (...args) => {
+            const plaintext = await originalDecrypt(...args)
+            started.resolve()
+            await release.promise
+            return plaintext
+        })
+        const pending = buildUpdatedMachineFromSocketUpdate({
+            machineUpdate: { machineId: 'm1', metadata: { version: 6, value: ciphertext } },
+            updateSeq: 10, updateCreatedAt: 10, existingMachine: createMachineFixture({ id: 'm1', metadataVersion: 5 }),
+            getMachineEncryption: (id) => encryption.getMachineEncryption(id),
+        })
+        try {
+            await started.promise
+            await encryption.initializeMachines(new Map([['m1', new Uint8Array(32).fill(3)]]))
+            release.resolve()
+            expect(await pending).toBeNull()
+        } finally {
+            release.resolve()
+            spy.mockRestore()
+            await pending
+        }
+    })
     it('ignores stale metadata updates and still applies newer daemonState updates', async () => {
         const decryptMetadata = vi.fn(async () => ({ m: true }))
         const decryptDaemonState = vi.fn(async () => ({ d: true }))
+        const cipher = { decryptMetadata, decryptDaemonState }
 
         const existingMachine = buildMachine()
 
@@ -51,10 +130,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             updateSeq: 999,
             updateCreatedAt: 100,
             existingMachine,
-            getMachineEncryption: () => ({
-                decryptMetadata,
-                decryptDaemonState,
-            }),
+            getMachineEncryption: () => cipher,
         })
 
         expect(updated).not.toBeNull()
@@ -75,6 +151,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
     it('applies metadata updates when version increases', async () => {
         const decryptMetadata = vi.fn(async () => ({ m: true }))
         const decryptDaemonState = vi.fn(async () => ({ d: true }))
+        const cipher = { decryptMetadata, decryptDaemonState }
 
         const existingMachine = buildMachine({
             daemonState: null,
@@ -89,10 +166,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             updateSeq: 999,
             updateCreatedAt: 100,
             existingMachine,
-            getMachineEncryption: () => ({
-                decryptMetadata,
-                decryptDaemonState,
-            }),
+            getMachineEncryption: () => cipher,
         })
 
         expect(updated).not.toBeNull()
@@ -205,6 +279,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
     it('applies revoke updates from the socket payload', async () => {
         const decryptMetadata = vi.fn(async () => ({ m: true }))
         const decryptDaemonState = vi.fn(async () => ({ d: true }))
+        const cipher = { decryptMetadata, decryptDaemonState }
 
         const existingMachine = buildMachine({ active: true, revokedAt: null })
 
@@ -217,10 +292,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             updateSeq: 999,
             updateCreatedAt: 500,
             existingMachine,
-            getMachineEncryption: () => ({
-                decryptMetadata,
-                decryptDaemonState,
-            }),
+            getMachineEncryption: () => cipher,
         })
 
         expect(updated).not.toBeNull()
@@ -231,6 +303,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
     it('keeps existing values when both metadata and daemonState updates are stale', async () => {
         const decryptMetadata = vi.fn(async () => ({ m: true }))
         const decryptDaemonState = vi.fn(async () => ({ d: true }))
+        const cipher = { decryptMetadata, decryptDaemonState }
         const existingMachine = buildMachine()
 
         const updated = await buildUpdatedMachineFromSocketUpdate({
@@ -242,10 +315,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             updateSeq: 999,
             updateCreatedAt: 200,
             existingMachine,
-            getMachineEncryption: () => ({
-                decryptMetadata,
-                decryptDaemonState,
-            }),
+            getMachineEncryption: () => cipher,
         })
 
         expect(updated).not.toBeNull()
@@ -262,6 +332,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             throw new Error('metadata decrypt failed')
         })
         const decryptDaemonState = vi.fn(async () => ({ d: true }))
+        const cipher = { decryptMetadata, decryptDaemonState }
         const existingMachine = buildMachine()
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -273,10 +344,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             updateSeq: 999,
             updateCreatedAt: 300,
             existingMachine,
-            getMachineEncryption: () => ({
-                decryptMetadata,
-                decryptDaemonState,
-            }),
+            getMachineEncryption: () => cipher,
         })
 
         expect(updated).not.toBeNull()
@@ -291,6 +359,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
         const decryptDaemonState = vi.fn(async () => {
             throw new Error('daemonState decrypt failed')
         })
+        const cipher = { decryptMetadata, decryptDaemonState }
         const existingMachine = buildMachine()
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -302,10 +371,7 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
             updateSeq: 999,
             updateCreatedAt: 400,
             existingMachine,
-            getMachineEncryption: () => ({
-                decryptMetadata,
-                decryptDaemonState,
-            }),
+            getMachineEncryption: () => cipher,
         })
 
         expect(updated).not.toBeNull()

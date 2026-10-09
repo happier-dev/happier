@@ -349,6 +349,7 @@ const actionFamilyTranslations = { ja: translated({
             computer: 'コンピューター操作',
             artifact_access: 'アーティファクト共有',
             workflows: 'ワークフロー',
+            workflow_effects: 'Webhook とコマンド',
             notifications: '通知',
             machine_agent_install: 'エージェントのインストール',
             machine_agent_sign_in: 'エージェントのサインイン',
@@ -834,6 +835,35 @@ const artifactsBrowserTranslations = { ja: {
             label: '表示',
             grid: 'グリッド',
             list: 'リスト',
+            folders: 'フォルダ',
+        },
+        folders: {
+            newFolder: '新規フォルダ',
+            newFolderInside: 'この中に新規フォルダ',
+            rename: '名前を変更',
+            moveTo: 'フォルダへ移動…',
+            moveVerb: '移動先:',
+            topLevel: '最上位',
+            moveToTopLevel: '最上位へ移動',
+            deleteFolder: 'フォルダを削除',
+            deleteTitle: ({ name }) => `「${name}」を削除しますか？`,
+            deleteBody: '中の項目とフォルダは1つ上の階層に移動します。削除されるものはありません。',
+            nameHelp: 'フォルダはあなただけのものです。整理しても、共有相手の表示は変わりません。',
+            namePlaceholder: 'フォルダ名',
+            create: '作成',
+            options: ({ name }) => `${name} のオプション`,
+            expand: ({ name }) => `${name} を展開`,
+            collapse: ({ name }) => `${name} を折りたたむ`,
+            columnName: '名前',
+            columnEdited: '編集',
+            emptyInvite: 'フォルダはまだありません。関連するものをまとめましょう。整理の仕方はあなたにしか見えません。',
+            unavailable: 'この Home からフォルダを読み込めませんでした。すべてフォルダなしで表示しています。',
+            saveFailed: '変更を保存できませんでした。もう一度お試しください。',
+            refusedCycle: 'フォルダを自身の中へは移動できません',
+            refusedUnavailable: '現在フォルダを利用できません',
+            refusedOther: 'そこへは移動できません',
+            showAllKinds: 'アーティファクトですべての種類を表示',
+            promptSearch: 'プロンプトとスキルを検索',
         },
         provenance: {
             savedByYou: 'あなたが保存',
@@ -1506,6 +1536,7 @@ const computerUseTranslations = { ja: {
             accessValue: '見て使う',
             accessSee: '見るだけ',
             displayUnavailable: 'このコンピュータでは画面全体を共有できません。',
+            wholeDisplayBody: ({ display }) => `${display} に表示されているものはすべて見えます。ほかのアプリや通知も含まれます。`,
             policyBoth: ({ agent }) => `${agent} はスクリーンショット、クリック、キー入力のたびに確認します。`,
             policyInput: ({ agent }) => `${agent} はクリックとキー入力のたびに確認します。`,
             policyCapture: ({ agent }) => `${agent} はスクリーンショットのたびに確認します。`,
@@ -1545,6 +1576,27 @@ const computerUseTranslations = { ja: {
             notSharedBody: ({ agent }) => `${agent} に使わせるウインドウを選んでください。`,
             moreA11y: 'ウインドウのオプション',
             tabFallback: 'コンピュータ',
+            sourceComputer: 'コンピュータ',
+            sourceBrowser: 'ブラウザ',
+            sourceA11y: 'ソース',
+            watchingA11y: ({ source, machine }) => `${machine} の ${source} を表示中`,
+            expandView: 'ビューを拡大',
+            restoreView: 'ビューを元に戻す',
+            dockView: 'ビューをドック',
+            closeView: 'ビューを閉じる',
+            moveView: 'ビューを移動',
+            resizeView: 'ビューのサイズを変更',
+            moveTopLeft: '左上に移動',
+            moveTopRight: '右上に移動',
+            moveBottomLeft: '左下に移動',
+            moveBottomRight: '右下に移動',
+            larger: '大きく',
+            smaller: '小さく',
+            viewOptions: 'ビューのオプション',
+            presentedElsewhereTitle: 'フローティングビューに表示中',
+            presentedElsewhereBody: 'ここにドックすると作業の横に置けます。',
+            closeHint: 'このビューを閉じます。セッションは続きます。',
+            captureOnly: 'この画面は見られますが、マウスとキーボードでの操作は許可されていません。',
         },
         strip: {
             using: ({ target }) => `${target} を使用中`,
@@ -2650,6 +2702,7 @@ const filesPaneTranslations = { ja: {
         noChangedFilesReason: '作業コピーは最新のコミットと一致しています。',
         rootErrorTitle: ({ machine }) => `${machine} のファイルを一覧できませんでした`,
         rootErrorTitleUnnamed: 'ファイルを一覧できませんでした',
+        workspaceUnavailableReason: 'Happier はこのセッションのマシンとフォルダーを特定できませんでした。',
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "ja">;
 
 return { filesPaneTranslations };
@@ -4937,6 +4990,9 @@ const ja: typeof en = {
         settle: '完了にする',
         snoozedUntil: ({ time }) => `${time} までスヌーズ`,
         more: 'その他の操作',
+        approvalNeeded: '承認が必要です',
+        approvalUntitled: 'アクションを承認',
+        approvalAskedBy: ({ session }) => `${session} からの依頼`,
     },
     popover: {
         moreInOther: ({ count }) => `その他のセッションにあと ${count} 件`,
@@ -5521,8 +5577,8 @@ const pluralPl = Shared_personalHomeSettingsTranslations.pluralPl;
 const pluralRu = Shared_personalHomeSettingsTranslations.pluralRu;
 
 const ja = {
-    standardOnlyTitle: '標準接続のみ',
-    standardOnlySubtitle: 'このデバイスの新しい接続には標準経路を使用します。進行中の転送は現在の経路で完了します。',
+    standardOnlyTitle: 'Homeのアドレス経由で接続',
+    standardOnlySubtitle: 'このデバイスでは、ピアツーピア接続の代わりに各Homeのアドレスを使用します。',
     installOrUpdateAction: 'パーソナル Home をインストールまたは更新', startAction: 'パーソナル Home を開始', stopAction: 'パーソナル Home を停止',
     defaultHomeLabel: 'パーソナル Home', homeTitle: 'Home', canonicalAddress: 'Home のアドレス', identityComparison: '現在の Home', identityComparisonMatch: '一致', identityComparisonMismatch: '不一致', identityComparisonUnknown: '確認できません',
     unknownSize: 'サイズ不明', unknownTimestamp: 'タイムスタンプ不明', restoreBackupTitle: 'バックアップ', identityTitle: 'Home の識別情報', identityUnavailable: '識別情報を利用できません', restoreBackupDate: '作成日時', restoreCompatibility: '互換性', restoreCompatible: '互換', restoreCompatibilityVerified: 'このバージョンで検証済み', restoreBackupSize: 'サイズ', restoreReplacementNotice: '現在の Home データは置き換えられます。検証済みの復旧バックアップは保持されます。', restoreConfirmTitle: 'このパーソナル Home を置き換えて復元しますか？', restoreConfirmAction: '置き換えて復元', relocateConfirmTitle: 'このパーソナル Home を移動しますか？', relocateConfirmBody: '検証済みのコピーが移動先で有効になる前に、現在の Home は停止します。', relocateDestination: '移動先', relocateConfirmAction: 'Home を移動', recoverRestoreTitle: '中断された復元を復旧しますか？', recoverRestoreBody: '保持されている復旧データを使って中断された復元をロールバックします。', recoverRestoreAction: '復元を復旧', eraseDataTitle: 'パーソナル Home のデータを削除しますか？', eraseHomeTarget: 'Home', eraseDataBody: 'これはアンインストールとは別の操作で、解決された次の Home パスだけを完全に削除します：', estimatedSize: '推定サイズ', summaryTitle: 'パーソナル Home', footer: 'Home はこのコンピューターに残ります。これらの操作で別の Home が変わることはありません。', statusTitle: 'ステータス', notAvailable: '利用できません', storageTitle: 'ストレージ', masterSecretTitle: 'Home アクセスシークレット', masterSecretPresent: 'あり', masterSecretUnavailable: '利用できません', inspectAction: 'Home の詳細を更新', actionsTitle: 'バックアップと復元', protectionTitle: '保護', backupsSectionFooter: 'バックアップには、読める状態の会話、Home データ、信頼済みデバイスの状態、Home アクセスシークレットが含まれます。信頼できる場所にだけ保存してください。', lastBackupTitle: '最新のバックアップ', lastBackupUnknown: '最新のバックアップは不明です', backupsTitle: 'バックアップアーカイブ', backupAction: '今すぐバックアップ', backupSubtitle: 'プレーンテキストの Home アーカイブを作成して検証します。', exportBackupAction: 'バックアップをエクスポート…', exportBackupSubtitle: '選択した場所に検証済みバックアップを作成します。', verifyAction: 'バックアップを検証…', verifySubtitle: '復元せずにアーカイブを確認します。', restoreAction: '復元…', restoreSubtitle: 'Home データを置き換える前にバックアップを検証します。', relocateAction: 'Home を移動…', relocateSubtitle: 'この Home を管理対象のコンピューターへ移動します。', relocationFinishAction: '移動を完了', relocationReturnAction: '元の Home に戻る', relocationFinishSubtitle: '移動先の検証後に Home の移動を完了します。', relocationReturnSubtitle: '元の Home をアクティブな場所として維持します。', recoverRestoreSubtitle: '中断された復元は明示的にロールバックできます。', restoreRecoveryWarningTitle: '復元の修復が必要です', restoreRecoveryWarningBody: '復旧状態が不明確です。自動変更は行いません。この Home を修復する前に診断を確認してください。', restoreCleanupWarningTitle: '復元後のクリーンアップを確認してください', restoreCleanupWarningBody: 'Home は復元されましたが、自動クリーンアップが完了しませんでした。診断を確認して Home の操作を再試行してください。', backupVerified: 'バックアップを検証済み', backupNeedsAttention: 'バックアップを検証済み；Home の再起動に注意が必要です', backupHomeReady: 'Home を再起動しました', backupRevealAction: 'バックアップを表示', restoreResultTitle: '復元結果', restoreOutcomeRecoveryRequired: '復旧が必要です', restoreOutcomeRolledBack: '復元をロールバックしました', restoreOutcomeRestored: 'Home を復元しました', advancedTitle: '詳細設定', advancedFooter: 'このコンピューターのランタイム操作と診断です。', restartAction: 'パーソナル Home を再起動', openDataLocationAction: 'Home データの場所を開く', openLogsAction: 'ランタイムログを開く', removeProfileAction: 'Happier から Home を削除', removeProfileSubtitle: 'このプロファイルを削除します。ランタイムデータはこのコンピューターに残ります。', removeProfileTitle: 'パーソナル Home プロファイルを削除しますか？', removeProfileBody: 'プロファイルは削除されますが、ランタイムとデータは保持されます。', uninstallRuntimeAction: 'ランタイムをアンインストール（データを保持）', uninstallRuntimeSubtitle: 'サービスとバイナリを削除します。Home データは保持されます。', deleteHomeDataTitle: 'Home データを削除', removeSectionFooter: 'アンインストールでは Home データが保持されます。完全な削除は別途確認が必要です。', eraseDataAction: 'パーソナル Home のデータを完全に削除', eraseDataSubtitle: 'アンインストールとは別です。解決された Home データを完全に削除します。', eraseResultTitle: 'Home データを削除しました', eraseStoppedHome: '実行中の Home を停止しました', eraseHomeAlreadyStopped: 'Home はすでに停止しています', eraseRemainingPaths: '削除できませんでした', progressTitle: 'パーソナル Home の操作', dismissResult: '閉じる',
@@ -6227,12 +6283,12 @@ const translated = Shared_profilesPageTranslations.translated;
 
 const profilesPageTranslations = { ja: translated({
         profilesPage: {
-            searchPlaceholder: 'プロファイルを検索',
-            emptyTitle: 'プロファイルはまだありません',
-            newProfileTitle: '新しいプロファイル',
+            searchPlaceholder: "起動プロファイルを検索",
+            emptyTitle: "起動プロファイルはまだありません",
+            newProfileTitle: "新しい起動プロファイル",
             notFoundTitle: 'このプロファイルはもう存在しません',
             notFoundDescription: '別のデバイスで削除された可能性があります。',
-            backToProfiles: 'プロファイルに戻る',
+            backToProfiles: "起動プロファイルに戻る",
             discardDraft: '破棄',
             detailDescription: '新しいセッションをこのプロファイルで開始するときに使われます。',
             builtInDetailDescription: '用意済みのプロファイルです。変更を保存すると自分用のコピーが作成されます。',
@@ -6244,6 +6300,7 @@ const profilesPageTranslations = { ja: translated({
             environmentDescription: 'このプロファイルでセッションを開始するときに設定される環境変数です。値にはマシンの変数を参照できます。',
             descriptionTitle: '説明',
             descriptionHint: '任意。このプロファイルを選ぶときに表示されます。',
+            modelRequiresAgent: 'モデルを選ぶには、先に優先エージェントを選んでください。',
         },
     }) };
 
@@ -6431,12 +6488,23 @@ const rolesTranslations = { ja: {
             label: 'ロール',
             title: 'ロール',
             searchPlaceholder: 'ロールを検索…',
-            empty: '一致するロールはありません。',
+            empty: 'ロールはまだありません。',
+            emptyWithManage: 'ロールはまだありません。「ロールを管理」で追加できます。',
             footer: 'ロールは独自の指示、エンジン、実行方法を持つため、ワークフローを持ち運べます。',
             manage: 'ロールを管理',
             engineAppliesOnStart: 'このロールの開始時にエンジンを適用',
             defaultEngine: 'デフォルトのエージェント',
             activeAccessibilityLabel: 'ロール、使用中のロールあり',
+        },
+        builtIn: {
+            orchestrator: "作業を率いて、一部を他のエージェントに任せます",
+            planner: "作る前に計画を立てます",
+            builder: "変更を行い、動作を確認します",
+            reviewer: "変更をレビューし、直すべき点を示します",
+            judge: "争点となった指摘を判定し、目標の達成を判断します",
+            second_opinion: "先に進む前の独立したチェック",
+            scout: "コードを調べ、どこに何があるかを答えます",
+            approval_reviewer: "低リスクの権限リクエストに答え、それ以外はあなたに確認します",
         },
         settings: {
             description: '各種の作業を誰が行うか。ワークフローやオーケストレーターはロールを指定し、ロールが実行方法を決めます。',
@@ -6458,7 +6526,7 @@ const rolesTranslations = { ja: {
             instructionsTitle: '指示',
             instructionsDescription: '何をするか、いつ使うか、どう報告するか。エージェントが作業を割り当てるときに読みます。',
             resetToDefault: 'デフォルトに戻す',
-            readOnlyNote: '閲覧用に共有されています。エンジンとプロファイルの選択はあなたのものです。',
+            readOnlyNote: '元のロールは読み取り専用です。ここで自分用の指示を変更できます。リセットすると元に戻ります。',
             howItRunsTitle: '実行方法',
             engineTitle: 'エンジン',
             engineDescription: 'エージェント、モデル、推論量。',
@@ -6507,7 +6575,7 @@ const rolesTranslations = { ja: {
             ladderRoot: 'あなたが開始した作業',
             ladderRootDetail: 'あなたが開始 · 制限なし',
             ladderLevel: ({ level }) => `レベル ${level}`,
-            ladderLevelDetail: 'エージェントが開始',
+            ladderLevelDetail: ({ level }) => (level === 1 ? "あなたが始めた作業のエージェントが開始" : `レベル ${level - 1} のエージェントが開始`),
             ladderRefused: 'さらにもう一段の委任',
             ladderRefusedDetail: ({ level }) => `レベル ${level} · 拒否。エージェントが自分で行います`,
         },
@@ -6745,7 +6813,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const ja: SecretsSettingsCopy = {
-    purpose: 'エージェントと MCP サーバーが使う API キーとトークンです。保存した値は二度と表示されません。',
+    purpose: "エージェントとMCPサーバー用のAPIキーとトークン。保存した値は再表示されません。",
     yoursTitle: '自分のシークレット',
     yoursDescription: '保存した、または所有しているシークレットです。Happier がキーを求める場所で選べます。',
     sharedWithYouTitle: '共有されたシークレット',
@@ -6789,6 +6857,7 @@ const sessionAccessTranslations = { "ja": {
         accessibleSummary: ({ title, label }: { title: string; label: string }) => `${title}: ${label}`,
         accessibleControl: ({ name, control, value }: { name: string; control: string; value: string }) => `${name}, ${control}, ${value}`,
         title: "セッションへのアクセス",
+        context: "セッションのコンテキスト",
         search: "人、グループ、チームを検索",
         hasAccess: "アクセス権あり",
         yourAccess: "あなたのアクセス権",
@@ -7265,6 +7334,7 @@ const sessionCollaborationPaneTranslations: Pick<Record<'en' | 'ca' | 'de' | 'es
         newLinkReplaces: '新しいリンクを作成すると、現在のリンクは使えなくなります。',
         linkDenied: '公開リンクを作成できるのは、このセッションの管理者だけです。',
         linkLoadFailed: '公開リンクを確認できませんでした。',
+        linkUnavailable: 'このHomeでは公開リンクを利用できません。管理者に公開リンクのホスティング設定を依頼してください。',
         justYouTitle: 'このセッションで一緒に作業しましょう',
         justYouBody: ({ home }) => `${home}のメンバーと共有しましょう。見守ったり、ここで話し合ったり、あなたが不在の間に引き継いだりできます。`,
         share: '共有',
@@ -7906,7 +7976,7 @@ const sessionListFilterTranslations = { ja: translated({
         filtersShowBothSummary: 'セッションと実行', filtersStartedByNone: '開始者が未選択',
         filtersStartedBy: '開始者', filtersStartedByYou: 'あなた', filtersStartedByTriggers: 'トリガー', filtersStartedByAgents: 'エージェント',
         filtersRunsNeedingYouAlwaysShow: 'あなたの対応が必要な実行は常に表示されます',
-        filtersMyWork: '自分の作業', filtersLegacyOwnerDirect: '自分が所有・直接共有', filtersAssignedToMe: '自分に割り当て済み', filtersFollowing: 'フォロー中',
+        filtersMyWork: '自分の作業', filtersLegacyOwnerDirect: '自分の作業', filtersAssignedToMe: '自分に割り当て済み', filtersFollowing: 'フォロー中',
         filtersInvolvingMe: '自分が関与', filtersAllAccessible: 'アクセス可能なすべて', filtersAttention: '要対応',
         filtersAttentionAny: 'すべて', filtersAttentionNeedsMe: '自分の対応が必要なセッションのみ', filtersScopeNeedsMe: '要対応',
         filtersInactive: '非アクティブなセッション', filtersInactiveShow: '表示', filtersInactiveHide: '非表示',
@@ -8091,6 +8161,16 @@ const Domain_sessionWorkTranslations = (() => {
 const en = Shared_sessionWorkTranslations.en;
 
 const ja: typeof en = {
+    scheduled: {
+        title: "予定",
+        writesHere: "ここに書き込み",
+        empty: "ここに書き込むワークフローの予定はありません。",
+        step: ({ ordinal, title }) => `ステップ ${ordinal} · ${title}`,
+        provenanceWorkflowStep: ({ source, step }) => `送信元 ${source} · ステップ ${step}`,
+        notifyOnlyReported: "エージェントが何かを報告した場合のみ",
+        notifyOnlyReportedDescription: "エージェントがテキストを返さない場合は通知をスキップします。",
+        notifyOnlyReportedNeedsResult: "前のエージェントステップのテキスト結果をメッセージに使ってください。",
+    },
     workerUpdate: {
         settled: "完了",
         stalled: "停滞",
@@ -8118,6 +8198,7 @@ const ja: typeof en = {
         positionUnder: ({ position, total, parent }) => `${parent} の下 ${position} / ${total}`,
     },
     actions: {
+        showInTranscript: '会話記録に表示',
         makeOrchestrator: 'オーケストレーターにする',
         makeOrchestratorSubtitle: 'このセッションが計画・委任・報告を行います',
         makeOrchestratorFailed: "このセッションをオーケストレーターにできませんでした",
@@ -8164,6 +8245,8 @@ const ja: typeof en = {
     list: {
         level: ({ level }) => `レベル ${level}`,
         subSessions: ({ count }) => `${count} 件のサブセッション`,
+        showReports: ({ name, count }) => (count > 0 ? `${name} の下の ${count} 件のセッションを表示` : `${name} の下のセッションを表示`),
+        hideReports: ({ name }) => `${name} の下のセッションを隠す`,
         reportsWorking: ({ count }) => `${count} 件作業中`,
         reportsNeedYou: ({ count }) => `${count} 件のサブセッションが対応待ち`,
     },
@@ -8218,6 +8301,11 @@ const Domain_settingsMachinesTranslations = (() => {
 const en = Shared_settingsMachinesTranslations.en;
 
 const ja: typeof en = {
+    defaultsTitle: "マシンの既定値",
+    localVirtualMachines: "ローカル仮想マシン",
+    runningOnly: "稼働中のみ課金されるクラウド",
+    stoppedBilled: "停止中も課金されるクラウド",
+    billingUnknown: "課金方式が不明",
     pageDescription: 'セッションを実行するコンピューターと、その中から選ぶプール。',
     thisComputerTitle: 'このコンピューター',
     thisComputerRowSubtitle: 'バックグラウンドサービスとコマンドライン',
@@ -8725,7 +8813,7 @@ const settingsSessionPagesTranslations: Pick<Record<
                 timingWhenIdle: 'すべてアイドル時',
                 layoutSection: '入力欄のレイアウト',
                 actionBarTitle: 'アクションバー',
-                actionBarAutoDescription: 'ワイド画面ではチップが 2 行目に折り返し、スマートフォンでは横にスクロールします。',
+                actionBarAutoDescription: 'コントロールは利用可能な幅に合わせて、必要に応じて折り返します。',
                 actionBarWrapDescription: '収まらないときはチップが 2 行目に折り返します。',
                 actionBarScrollDescription: 'チップは 1 行のまま。残りは横にスクロールします。',
                 actionBarCollapsedDescription: 'チップはメニューにまとめられ、入力スペースが最大になります。',
@@ -8759,6 +8847,10 @@ const shareSheetTranslations = { ja: {
         confirmRemove: '削除を確定',
         removedAnnouncement: ({ name }) => `${name} のアクセスを削除しました`,
         browseAll: 'すべて表示',
+        browsePeople: 'すべての人を表示',
+        browseTeams: 'すべてのチームを表示',
+        browseGroups: 'すべてのチームグループを表示',
+        membersOnlyLink: 'リンクのコピーは、すでにアクセス権がある人向けです。',
         allLoaded: 'すべての結果を読み込みました',
         copyLink: 'リンクをコピー',
         linkCopied: 'リンクをコピーしました',
@@ -8775,19 +8867,28 @@ const shareSheetTranslations = { ja: {
             levels: { canUse: '使用可', canRead: '閲覧可', canEdit: '編集可', admin: '管理' },
             help: {
                 workflowUse: '表示と実行',
-                roleUse: '使用。各自の変更は各自の設定に残ります',
+                roleUse: '— 各自の変更は各自の設定に残ります',
                 profileUse: 'これでセッションを開始',
                 documentUse: '自分のどのデバイスでも開いてコピーできます',
                 promptUse: '自分のセッションで使えます',
                 boardUse: 'ボードを表示できます。各カードはすでに開けるものだけを開きます',
+                dashboardUse: 'このダッシュボードを表示できます。各ウィジェットには、すでに開けるものだけが表示されます。',
                 editForEveryone: '共有先の全員に向けて変更',
-                adminOwnerShares: '変更と共有の管理。管理者を指定できるのはオーナーだけです',
+                adminOwnerShares: '変更と共有を管理',
             },
             notes: {
                 personalRuns: '実行とトリガーは開始した人に残ります。',
                 teamRuns: 'チームはすべての実行を見られます。',
                 roleLive: 'あなたの変更は共有先の全員に届きます。',
-                profileSecrets: 'シークレットの値は送られません · 保存済みシークレットをリンク',
+                profileSecrets: 'プロファイルは保存済みシークレットを参照します。値は送信されません。',
+                dashboardAccess: '追加された人は自分のアカウントで開きます。ウィジェット、定義、接続、マシン、リポジトリにはそれぞれ個別のアクセス権が必要です。',
+            },
+            privateChoices: {
+                title: '個人用の接続選択',
+                account: ({ widget, service }) => `${widget} はあなたの ${service} アカウントを使用します`,
+                letViewersPick: '閲覧者に選択させる',
+                removeChoice: '選択を削除',
+                authoredInput: ({ widget }) => `${widget} を編集し、共有前に個人用の入力を削除してください。`,
             },
             errors: {
                 unavailable: 'ここではまだ共有を利用できません。',
@@ -10065,6 +10166,8 @@ type VoicePresenceTranslation = Shared_voicePresenceTranslations.VoicePresenceTr
 
 const voicePresenceTranslations = { ja: {
         welcomeText: "こんにちは、お話を聞いています。何をしたいですか？",
+        customVoice: 'カスタム音声',
+        boundWelcomeText: ({ name }: Readonly<{ name: string }>) => `こんにちは、${name}と話しています。何をしたいですか？`,
         greetingLiteralUnavailable: "この応答言語では、話し始めるまでサービスは待機します。",
         title: '音声',
         howYouTalk: "話し方",
@@ -10640,7 +10743,7 @@ type SavedCopy = Shared_walkthroughSavedTranslations.SavedCopy;
 
 const en = Shared_walkthroughSavedTranslations.en;
 
-const walkthroughSavedTranslations = { ja: { edit: 'ウォークスルーを編集', title: 'ウォークスルーのタイトル', stopTitle: 'ステップのタイトル', prose: '説明', refine: '改善', instructions: '何を変更しますか？', moveUp: '上に移動', moveDown: '下に移動', mergeNext: '次のステップと結合', addSummary: '要約を追加', addCommitPlan: 'コミットを提案', updated: '保存済みの結果を更新しました', conflict: 'このウォークスルーは別の場所で変更されました。下書きは保持されています。最新のバージョンを読み込み、確認してから再度保存してください。', reload: '最新のバージョンを読み込む', missingStop: "このステップは最新のウォークスルーに含まれていません。下書きは保持されています。別のステップを選択して続けてください。", applicationLocked: 'コミットを適用中です。編集は一時停止しています。' } } satisfies Pick<Record<string, SavedCopy>, "ja">;
+const walkthroughSavedTranslations = { ja: { discuss: '話し合う', message: 'メッセージ', edit: 'ウォークスルーを編集', title: 'ウォークスルーのタイトル', stopTitle: 'ステップのタイトル', prose: '説明', refine: '改善', instructions: '何を変更しますか？', moveUp: '上に移動', moveDown: '下に移動', mergeNext: '次のステップと結合', addSummary: '要約を追加', addCommitPlan: 'コミットを提案', updated: '保存済みの結果を更新しました', conflict: 'このウォークスルーは別の場所で変更されました。下書きは保持されています。最新のバージョンを読み込み、確認してから再度保存してください。', reload: '最新のバージョンを読み込む', missingStop: "このステップは最新のウォークスルーに含まれていません。下書きは保持されています。別のステップを選択して続けてください。", applicationLocked: 'コミットを適用中です。編集は一時停止しています。' } } satisfies Pick<Record<string, SavedCopy>, "ja">;
 
 return { walkthroughSavedTranslations };
 })();
@@ -11052,6 +11155,8 @@ const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'
         callWebhook: "Webhook を呼び出す",
         runCommand: "コマンドを実行",
         commandValuesInEnv: "ワークフローの値は環境変数で渡します。コマンドのテキストは記述したまま実行されます。",
+        waitForWork: "作業を待つ",
+        waitForWorkDescription: "選んだ作業が指定した状態になるまで待ちます",
         artifactCreate: "ドキュメントを作成",
         artifactGet: "ドキュメントを読む",
         artifactList: "ドキュメント一覧",
@@ -11127,9 +11232,8 @@ type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBu
 const en = Shared_workflowBuiltinTranslations.en;
 
 const ja: WorkflowBuiltinTranslations = {
-    runsInsideSession: 'セッション内で実行',
-    keepGoing: { title: '完了まで続ける' },
-    reviewAndConverge: { title: 'レビューして収束', apply: '適用', verifyAndFix: '検証して修正', verifyOnly: '検証のみ', rounds: '停止までのラウンド数' },
+    keepGoing: { title: '完了まで続ける', description: '目標を達成するまで続けます' },
+    reviewAndConverge: { title: 'レビューして収束', description: 'レビュアーが合意するまでレビュー', apply: '適用', verifyAndFix: '検証して修正', verifyOnly: '検証のみ', rounds: '停止までのラウンド数' },
     planWithAPanel: { title: 'パネルで計画', description: '複数のエージェントが並行して計画し、計画はあなたのレビューを待ちます。', inputs: { request: '依頼内容', requestPlaceholder: 'パネルに何を計画させますか？', engines: '計画するエージェント' } },
     openAPullRequest: { title: 'プルリクエストを開く', description: 'セカンドオピニオンを求めてからプルリクエストを開きます。意見が合わない場合はあなたを待ちます。', inputs: { base: 'ベースブランチ', title: 'プルリクエストのタイトル', body: '説明', question: 'セカンドオピニオンへの質問' } },
 };
@@ -11195,7 +11299,8 @@ const ja: WorkflowEditorPageTranslations = {
         workflowSub: '別のワークフローを実行 · そのステップはこの実行に表示されます',
         builtin: '組み込み',
         waitTitle: 'あなたを待つ',
-        waitSub: 'このレーンはあなたが続けるまで待ちます。',
+        waitSub: 'このレーンはあなたが続けるまで待ちます',
+        waitSubRoot: '続行するまでこのワークフローは待機します。',
         waitPlaceholder: 'ここで何を確認または判断しますか？',
         returnsText: 'テキストを返す',
         returnsFields: ({ fields }) => `返す値: ${fields}`,
@@ -11207,11 +11312,18 @@ const ja: WorkflowEditorPageTranslations = {
         actionSearch: 'アクションを検索',
         workflowSearch: 'ワークフローを検索',
         libraryGroup: 'あなたのワークフロー',
-        noAgentTurn: 'エージェントのターンなし。',
+        noAgentTurn: '通知・レビュー・投稿 — エージェントのターンなし',
+        agentSub: 'エージェントへの指示',
+        parallelSub: '同時に実行する分岐',
+        loopSub: '各項目、指定回数、または条件を満たすまで…',
+        ifSub: '結果が条件を満たす場合のみ',
+        actionSourcePhone: 'あなたのスマートフォン',
+        actionSourceReview: 'レビューエンジン',
         useNumber: '数値を使う',
         actionUnavailable: ({ action }: { action: string }) => `${action} はここでは利用できません。`,
         childInputs: ({ workflow }: { workflow: string }) => `入力は ${workflow} から受け取ります。`,
         retryLoading: "読み込みを再試行",
+        openWorkflow: ({ workflow }) => `${workflow} を開く`,
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} はこのワークフローを実行するため、その中では実行できません。`,
         maxFromInput: ({ name }: { name: string }) => `入力から · ${name}`,
         useInput: ({ name }: { name: string }) => `入力 ${name} を使う`,
@@ -11230,10 +11342,12 @@ const ja: WorkflowEditorPageTranslations = {
     settings: 'ワークフローの設定',
     settingsSubtitle: '各ステップは変更しない限りこれを使います。',
     deleteWorkflow: 'ワークフローを削除',
-    deleteBody: '過去の実行は履歴に残ります。',
+    deleteBody: '過去の実行は保持されます。',
+    discardChangesBody: '最後に保存したバージョンに戻ります。元に戻すで変更を復元できます。',
     deleteFailedTitle: 'ワークフローを削除できませんでした',
     changedForStep: 'このステップで変更',
-    issuesToFix: ({ count }: { count: number }) => (count === 1 ? '実行前に直す点が 1 件あります' : `実行前に直す点が ${count} 件あります`),
+    issuesToFix: ({ count }: { count: number }) => (count === 1 ? '実行の前に直す点が 1 件あります' : `実行の前に直す点が ${count} 件あります`),
+    readyToRun: '準備完了',
     saveStatus: {
         notSaved: 'まだ保存されていません',
         unsaved: '未保存の変更',
@@ -11299,6 +11413,7 @@ const ja: WorkflowEditorPageTranslations = {
         dropContinue: ({ session }) => `このステップで ${session} を続ける`,
         dropRefused: ({ session, machine, where }) => `${session} は ${machine} 上にあります。このワークフローは ${where} で実行されます。`,
         lanes: ({ count }) => `並列 · ${count} レーン`,
+        laneCount: ({ count }) => `${count} レーン`,
         lane: ({ position }) => `レーン ${position}`,
         forEachIn: ({ source }) => `${source} の各項目について`,
         atATime: ({ count }) => `同時に ${count}`,
@@ -11326,8 +11441,14 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: {
+        notifyWhenAgentWaits: { title: "エージェントが待機したら通知する", description: "セッションを選ぶと、エージェントがあなたの入力を必要とするたびに通知されます。" },
+        dailySummaryInSession: { title: "このセッションで毎日の要約", description: "毎日09:00に要約を受け取るセッションを選びます。" },
+        memoryUpkeepInSession: { title: 'メモリの整理', description: '毎日09:00にこのセッションのメモリを確認し、役立つ情報を最新に保ちます。' },
+        installDepsInWorktree: { title: "新しいワークツリーに依存関係をインストール", description: "新しいワークツリーを作成し、そこで編集可能なインストールコマンドを実行します。" },
+        testAfterEveryTurn: { title: "各ターンの後にテスト", description: "セッションを選び、ターンが完了・失敗・キャンセルされるたびに編集可能なテストコマンドを実行します。" },
+        noSessions: "このテンプレートを使うには作業セッションを開始してください。",
         nodes: { ask: '質問', 'review-correctness': '正確性をレビュー', 'review-tests': 'テストをレビュー', summarize: '指摘をまとめる', analyze: '分析', review: 'レビュー', fix: '修正', check: '確認', classify: '分類', reply: '返信を作成', digest: '変更をまとめる' },
-        title: '例から始める', fromExample: '例から', description: 'どれも下書きとして開きます。「今すぐ実行」を選ぶまで実行されません。', use: 'これを使う', chooseSession: 'セッションを選択…', builtInDescription: 'Happierに組み込まれています。変更するには複製してください。', stepCount: ({ count }) => `${count} ステップ`,
+        title: '例から始める', fromExample: '例から', description: 'どれも下書きとして開きます。「今すぐ実行」を選ぶまで実行されません。', sessionDescription: 'どれもこのセッションの下書きとして開きます。オンにするまで実行されません。', use: 'これを使う', chooseSession: 'セッションを選択…', builtInDescription: 'Happierに組み込まれています。変更するには複製してください。', stepCount: ({ count }) => `${count} ステップ`,
         askOnce: { title: '一度だけ質問', description: '1ステップ：エージェントに質問して回答を受け取ります。' },
         reviewPullRequest: { title: 'プルリクエストをレビュー', description: '2人が並行でレビューし、すべての指摘をまとめます。' },
         workThroughEachFile: { title: '各ファイルを処理', description: 'リストの各ファイルを1つずつ分析し、変更をレビューします。' },
@@ -11400,7 +11521,7 @@ const workflowRunCompositionTranslations = {...Domain_workflowRunCompositionTran
 
 const en = Shared_workflowStartTranslations.en;
 
-const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: { ...workflowRunRoleTranslations.ja, ...workflowRunCompositionTranslations.ja, neededNamed: ({ name }) => `入力 · ${name}が必要`, addToStart: ({ name }) => `開始するには${name}を追加してください`, workflow: 'ワークフロー', inputs: '入力', start: '開始', starting: '開始中…', stillStarting: '引き続き開始中…', needed: ({ count }) => `入力 · あと${count}項目`, required: '開始に必要', preview: '実行する内容', unsaved: '未保存の変更を含む', remove: '通常のセッションに戻る', search: 'ワークフローを検索', builtin: '組み込み', library: 'あなたのライブラリ', noInputs: '入力は不要', asksFor: ({ names }) => `必要な入力：${names}`, optional: '任意 — 空欄', defaultValue: ({ value }) => `既定値：${value}` } };
+const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: { ...workflowRunRoleTranslations.ja, ...workflowRunCompositionTranslations.ja, shortcutStarts: '開始', neededNamed: ({ name }) => `入力 · ${name}が必要`, addToStart: ({ name }) => `開始するには${name}を追加してください`, workflow: 'ワークフロー', inputs: '入力', start: '開始', starting: '開始中…', stillStarting: '引き続き開始中…', needed: ({ count }) => `入力 · あと${count}項目`, required: '開始に必要', preview: '実行する内容', unsaved: '未保存の変更を含む', remove: '通常のセッションに戻る', search: 'ワークフローを検索', builtin: '組み込み', library: 'あなたのライブラリ', noInputs: '入力は不要', asksFor: ({ names }) => `必要な入力：${names}`, optional: '任意 — 空欄', defaultValue: ({ value }) => `既定値：${value}` } };
 
 return { workflowStartTranslations };
 })();
@@ -11476,7 +11597,6 @@ const ja: WorkflowsDestinationTranslations = {
         share: '共有…',
     },
     deleteTitle: 'このワークフローを削除しますか？',
-    deleteBody: '過去の実行は履歴に残ります。',
     deleteFailedTitle: 'ワークフローを削除できませんでした',
     exportFailedTitle: 'ワークフローを書き出せませんでした',
     gate: {
@@ -11506,6 +11626,15 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const ja: WorkflowTriggersCopy = {
+    activity: {
+        create: "このイベントからトリガーを作成",
+        test: "このトリガーをテスト",
+        matched: "このイベントは一致します",
+        noMatch: "このイベントは一致しません",
+        sourceMismatch: "このイベントは別のソースから発生しました",
+        tooOld: "このイベントは観測対象の期間外です",
+        invalid: "テストする前にイベントを設定してください",
+    },
     pullRequest: {
         label: "プルリクエスト",
         description: "このトリガーを追加すると、プルリクエストがこのセッションにリンクされます。",
@@ -11525,6 +11654,7 @@ const ja: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · ほか ${count} 件`,
     },
     kind: {
+        pluginEvent: "プラグインイベント",
         sessionStarts: 'セッションが始まったとき',
         sessionArchived: 'セッションがアーカイブされたとき',
         schedule: 'スケジュール',
@@ -11544,6 +11674,9 @@ const ja: WorkflowTriggersCopy = {
         templateDecryptionFailed: 'トリガーを復号できませんでした',
         machines: ({ count }: Count) => `${count} 台のマシン`,
         nextRun: ({ time }: { time: string }) => `次の実行: ${time}`,
+        nextMinutes: ({ count }: Count) => `${count}分後`,
+        nextHours: ({ count }: Count) => `${count}時間後`,
+        nextDays: ({ count }: Count) => count === 1 ? '明日' : `${count}日後`,
         steps: ({ count }) => (count === 1 ? `${count} ステップ` : `${count} ステップ`),
         off: 'オフ',
         running: '実行中',
@@ -11561,6 +11694,7 @@ const ja: WorkflowTriggersCopy = {
         info: '何かが起きたときにこのセッションで実行されるもの。このセッションに残り、ライブラリには表示されません。',
         saveFailed: 'このトリガーを保存できませんでした。変更はそのまま残っています。',
     },    kindDescription: {
+        pluginEvent: "プラグインがイベントを観測したときに実行します。",
         turnEnds: 'あなた、または一緒に作業するエージェントのターンの後。',
         needsYou: 'このセッションがあなたを待つたび。ワークフローや「完了まで続ける」が動かしている間も含みます。',
         sessionArchived: 'このセッションをアーカイブしたときに一度だけ実行されます。',
@@ -11595,6 +11729,8 @@ const ja: WorkflowTriggersCopy = {
         choose: '選択…',
     },
     popover: {
+        configureEvent: "イベントを設定",
+        editEvent: "イベントを編集",
         saveAsWorkflow: 'ワークフローとして保存',
         saveAsWorkflowDescription: 'これらのステップを新しいワークフローとして開いて確認します。このトリガーは自身のステップを保持します。',
         when: 'いつ',
@@ -11638,6 +11774,8 @@ const ja: WorkflowTriggersCopy = {
 const legacyTranslations = { ja: {
         editNotice: 'Happier 0.2 で作成されました。開くだけでは変更されません。',
         conversionBoundary: 'この変更後は Happier 0.3 以降のマシンでのみ実行されます。',
+        reviewRequired: '確認が必要です',
+        reviewConversionNotice: '保存するとワークフローはエンドツーエンド暗号化なしで保存され、有効なトリガーが再開されます。セッションのエンドツーエンド暗号化は維持されます。',
         channelReplyRefusal: '引き継げないチャンネル返信の紐付けがあります。変換されておらず、設定と編集中の内容は保持されています。',
         notAvailable: 'この自動化は利用できなくなりました。',
     } };
@@ -11652,7 +11790,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { ja: {
         checkoutRoot: 'チェックアウトのルートフォルダー',
-        unavailableValue: '値を利用できません', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'セッションのコンテキスト' : `直近${turns}ターンのセッション`,
+        unavailableValue: '値を利用できません', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'セッションのコンテキスト' : turns === 1 ? '直近1ターンのセッション' : `直近${turns}ターンのセッション`,
         tokensUsed: '使用トークン数', goalTokenBudget: '目標のトークン予算',
         trailingCount: ({ source, value }: { source: string; value: string }) => `${value}に一致する連続した${source}`,
         stopCondition: '停止条件を満たした', stopConditionArm: ({ arm }: { arm: number }) => `停止条件${arm}を満たした`,
@@ -11700,6 +11838,23 @@ const pluralPl = Shared_workflowTranslations.pluralPl;
 const pluralRu = Shared_workflowTranslations.pluralRu;
 
 const ja = translated(workflowValueReferenceTranslations.ja, {
+    testRun: {
+        title: "テスト実行",
+        savedNotice: "保存済みのバージョンを実際に実行します。未保存の編集はここに残ります。",
+        resultsNotice: "保存済みバージョンの結果 · 最新の実行。未保存の編集は実行されていません。",
+        recordedDuration: ({ seconds }) => `記録された経過時間 · ${seconds} 秒`,
+        loading: "テスト結果を読み込み中…",
+    },
+    runWhen: {
+        title: "実行条件",
+        success: "成功",
+        failure: "失敗",
+        always: "常に",
+        ifSuccess: "成功した場合",
+        ifFailure: "失敗した場合",
+        regardless: "結果にかかわらず",
+        previousStep: "前のステップを基準にします",
+    },
     title: 'ワークフロー',
     newWorkflow: '新しいワークフロー',
     copyName: ({ name }: { name: string }) => `${name} コピー`,
@@ -11805,6 +11960,17 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
     loadFailedBody: 'あなたの作業には影響しません。準備ができたら再試行してください。',
     retry: '再試行',
     contentUnavailable: 'このデバイスではプライベートな内容を表示できません。',
+    readState: {
+        historyTitle: '履歴を読み取れません',
+        historyBody: 'この実行は以前の開発版のHappierで記録されたため、履歴を開くことができません。続けるには新しい実行を開始してください。',
+        encryptionTitle: '暗号化の設定が必要です',
+        encryptionBody: 'この内容はエンドツーエンドで暗号化されています。開くには、このアカウントで暗号化を設定してください。',
+        keysTitle: '暗号鍵を待っています',
+        keysBody: 'このデバイスには、まだこの実行の暗号鍵がありません。鍵が利用可能になったら、もう一度お試しください。',
+        storageTitle: '実行ストレージを利用できません',
+        storageBody: 'Happierは実行ストレージにアクセスできませんでした。接続を確認して、もう一度お試しください。',
+        openSettings: '設定を開く',
+    },
     contentReasons: {
         invalidHeader: 'このワークフローの保存された情報は無効です。',
         revisionMismatch: 'このワークフローは保存されたリビジョンと一致しません。',
@@ -11863,7 +12029,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         undo: '元に戻す',
         redo: 'やり直す',
         historyRestoreRequiresSetup: 'このイベントは再設定が必要です。削除後は保存済みの非公開設定を復元できません。',
-        history: { edited: 'ワークフローを編集', agent: 'エージェントの変更', description: '説明を編集', where: '実行場所を変更', target: 'ステップの実行方法を変更', triggers: 'トリガーを編集', example: '例を挿入', document: 'プロンプトを編集' },
+        history: { edited: 'ワークフローを編集', agent: 'エージェントの変更', description: '説明を編集', where: '実行場所を変更', target: 'ステップの実行方法を変更', triggers: 'トリガーを編集', example: '例を挿入', document: 'プロンプトを編集', renameWorkflow: 'ワークフローの名前を変更', renameStep: 'ステップの名前を変更', renameLane: 'レーンの名前を変更' },
         undoAction: ({ change }: { change: string }) => `元に戻す: ${change}`,
         redoAction: ({ change }: { change: string }) => `やり直す: ${change}`,
         removedBlock: ({ block }) => `${block} を削除しました`,
@@ -11874,8 +12040,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         unnamedLoop: 'ループ',
         unnamedIf: '条件',
         branch: 'ブランチ',
-        addBranch: 'ブランチを追加',
-        ifTrue: '条件を満たすとき',
+        addBranch: 'レーンを追加',
+        ifTrue: 'その場合',
         otherwise: 'それ以外',
         addOtherwise: '「それ以外」のブランチを追加',
         evaluator: '続けるかどうかを判断',
@@ -11937,7 +12103,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         change: '変更',
         clear: '選択を解除',
         fieldPath: 'フィールドのパス',
-        explain: '最終出力は、このワークフローが終了したときに返すものです。完了の順序によって変わることはありません。',
+        explain: 'このワークフローが終了したときに返すもの。',
     },
 
     conversation: {
@@ -11991,7 +12157,13 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         operatorLte: 'が次以下',
         operatorGt: 'が次より大きい',
         operatorGte: 'が次以上',
+        notFirstRound: '最初のラウンドではない',
+        trailingCountAtLeast: ({ source, value, count }) => `${source} が ${count} 回連続で ${value}`,
+        loopRanOutOfRounds: ({ loop }) => `${loop} がラウンドを使い切った`,
+        loopEnded: ({ loop, outcome }) => `${loop} が終了: ${outcome}`,
+        loopStoppedBecause: ({ loop, condition }) => `${condition} のため ${loop} が停止`,
         valuePlaceholder: '値',
+        literalPlaceholder: '値を入力',
         skippedReason: ({ block }) => `${block} の条件を満たさなかったためスキップしました。`,
     },
 
@@ -12215,6 +12387,10 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         unsupported_persisted_attachment: '添付されたメディアには、保存前に永続的な参照が必要です。',
         conversation_workspace_mismatch: 'この会話とワークスペースを一緒に続けることはできません。',
         target_unavailable: '実行する前に、このワークフローのエージェントを選んでください。',
+        emptyPrompt: 'このステップで行うことを書いてください。',
+        emptyWaitPrompt: 'ここで確認または判断することを書いてください。',
+        fieldMissing: ({ field }) => `${field} は必須です。`,
+        fieldInvalid: ({ field }) => `${field} に有効な値が必要です。`,
     },
 
     problem: {
@@ -12391,7 +12567,7 @@ const ja = completeWorkspaceSyncTranslation({
         conflictNeedsAttention: 'この競合は変更されています。バージョンを選ぶ前に更新してください。',
         needsAttention: 'ワークスペース同期に対応が必要です。状態を更新して、もう一度お試しください。',
     },
-    start: { blocked: { targetMachine: '続行するには宛先コンピューターを選択してください。', targetMachineOffline: 'そのコンピューターは現在利用できません。再接続して、もう一度お試しください。', relationshipUnavailable: 'この同期関係は、この 2 つのフォルダーを対象としていません。別のワークスペースオプションを選択してください。', sourceFolder: 'このセッションのフォルダーは安全に同期できません。セッションだけを引き継ぐには「ファイルを移動しない」を選択してください。', destinationFolder: '安全に同期できる宛先フォルダーを選択してください。', workspaceOptions: '開始する前にワークスペースのオプションを確認してください。' } },
+    start: { blocked: { targetMachine: '続行するには宛先コンピューターを選択してください。', targetMachineOffline: 'そのコンピューターは現在利用できません。再接続して、もう一度お試しください。', relationshipUnavailable: 'この同期関係は、この 2 つのフォルダーを対象としていません。別のワークスペースオプションを選択してください。', sourceFolder: 'このセッションのフォルダーは安全に同期できません。セッションだけを引き継ぐには「ファイルを移動しない」を選択してください。', destinationFolder: '有効な宛先フォルダーを選択してください。', workspaceOptions: '開始する前にワークスペースのオプションを確認してください。' } },
     engine: { checking: 'このコンピューターのワークスペース同期を確認しています…' },
     actions: { refresh: '状態を更新', syncNow: '今すぐ同期', more: '同期の操作', pause: '一時停止', resume: '再開', terminate: '同期を停止', openOnMachine: ({ machine }) => `${machine} で開く`, openFolder: ({ label }) => `${label} フォルダーを開く`, keepLocal: 'ローカル版を保持', keepRemote: 'リモート版を保持', keepNamed: ({ side }) => `${side} のバージョンを保持` },
     terminate: { title: 'ワークスペース同期を削除しますか？', body: '同期を停止し、その関係を削除します。両方のワークスペースのファイルはそのまま残ります。' },

@@ -1,4 +1,7 @@
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
+import type { Encryption, MachineEncryptionContext, MachineEncryptionContextInput } from '@/sync/encryption/encryption';
+import { readMachineEncryptionContextInput } from '@/sync/encryption/machineEncryption';
+import { MachineKeyBasisStoredReadV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import {
     createNotAuthenticatedError,
     isAuthenticationResponseStatus,
@@ -15,9 +18,16 @@ import { createScopedResolutionSingleFlight } from './scopedResolutionSingleFlig
 import { createServerRequestForExplicitServerScope } from './createServerRequestWithServerScope';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
 
+type MachineContextAuthority = Pick<Encryption, 'captureMachineEncryptionContext' | 'getMachineEncryptionContext'>;
+
+type MachineInstallationTransportIdentity = Readonly<{
+    installationId?: string | null;
+    installationPublicKey?: string | null;
+}>;
+
 export type ScopedMachineTransport =
-    | Readonly<{ mode: 'plain' }>
-    | Readonly<{ mode: 'e2ee'; dataKey: Uint8Array | null }>;
+    | Readonly<{ mode: 'plain'; context?: MachineEncryptionContext } & MachineInstallationTransportIdentity>
+    | Readonly<{ mode: 'e2ee'; dataKey: Uint8Array | null; context?: MachineEncryptionContext } & MachineInstallationTransportIdentity>;
 
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
@@ -29,8 +39,12 @@ function toMachineTransportCacheKey(serverId: string, machineId: string, token: 
 }
 
 type MachineTransportEvidence = Readonly<{
-    machine: Parameters<typeof resolvePublishedMachineDataEncryptionKeyV1>[0]['machine'];
+    machine: Parameters<typeof resolvePublishedMachineDataEncryptionKeyV1>[0]['machine'] & MachineInstallationTransportIdentity;
     openedDataEncryptionKey: Uint8Array | null;
+    identity: MachineEncryptionContextInput;
+    selectedContext?: MachineEncryptionContext;
+    metadataVersion?: number;
+    daemonStateVersion?: number;
 }>;
 
 const machineTransportCache = new Map<string, MachineTransportEvidence>();
@@ -72,9 +86,12 @@ async function fetchMachineTransport(params: Readonly<{
     machineId: string;
     serverId: string;
     accountId?: string;
+    cacheKey: string;
+    encryption?: MachineContextAuthority;
     decryptEncryptionKey?: (value: string) => Promise<Uint8Array | null>;
     timeoutMs: number;
 }>): Promise<MachineTransportEvidence | null> {
+    const incumbentContext = params.encryption?.getMachineEncryptionContext(params.machineId);
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timeoutId = controller
         ? setTimeout(() => controller.abort(), Math.max(1, params.timeoutMs))
@@ -105,30 +122,59 @@ async function fetchMachineTransport(params: Readonly<{
                 id?: unknown;
                 kind?: 'persistent' | 'ephemeral_session_runner';
                 installationId?: string | null;
+                installationPublicKey?: string | null;
                 dataEncryptionKey?: unknown;
                 runnerContentKeyBinding?: unknown;
+                access?: unknown;
+                keyBasis?: unknown;
+                metadataVersion?: number;
+                daemonStateVersion?: number;
             };
         };
         const machine = body?.machine;
+        if (params.encryption && params.encryption.getMachineEncryptionContext(params.machineId) !== incumbentContext) return null;
         if (normalizeId(machine?.id) !== params.machineId) {
             return null;
         }
         const published = machine?.dataEncryptionKey;
-        const dataKey = typeof published === 'string'
+        const input = readMachineEncryptionContextInput(machine ?? {}, params.accountId ?? null);
+        const cached = getMachineTransportFromCache(params.cacheKey);
+        const basis = MachineKeyBasisStoredReadV1Schema.safeParse(machine?.keyBasis);
+        const metadataVersion = basis.success ? basis.data.metadataVersion : machine?.metadataVersion;
+        const daemonStateVersion = basis.success ? basis.data.daemonStateVersion : machine?.daemonStateVersion;
+        if ((metadataVersion !== undefined && cached?.metadataVersion !== undefined && metadataVersion < cached.metadataVersion)
+            || (daemonStateVersion !== undefined && cached?.daemonStateVersion !== undefined && daemonStateVersion < cached.daemonStateVersion)) return null;
+        const unchanged = cached && cached.identity.dataEncryptionKey === input.dataEncryptionKey
+            && cached.identity.expectedDataEncryptionKey === input.expectedDataEncryptionKey
+            && cached.identity.resourceMode === input.resourceMode && cached.identity.accessState === input.accessState;
+        const identity = unchanged ? cached.identity : input;
+        const context = params.encryption?.captureMachineEncryptionContext(
+            params.machineId,
+            input,
+        );
+        const selected: MachineTransportEvidence = {
+            machine: {
+                id: params.machineId, kind: machine?.kind, installationId: machine?.installationId,
+                installationPublicKey: machine?.installationPublicKey,
+                dataEncryptionKey: published, runnerContentKeyBinding: machine?.runnerContentKeyBinding,
+                access: machine?.access,
+            },
+            identity, metadataVersion, daemonStateVersion,
+            selectedContext: context,
+            openedDataEncryptionKey: unchanged ? cached.openedDataEncryptionKey : null,
+        };
+        // Publish selection before opening yields. A later row can retire this
+        // work even when its opening is still pending or its cipher is unchanged.
+        setMachineTransportCache(params.cacheKey, selected);
+        const dataKey = selected.openedDataEncryptionKey ?? (typeof published === 'string'
             && !isPlainMachineDataKeyMarker(published)
             && params.decryptEncryptionKey
             ? await params.decryptEncryptionKey(published)
-            : null;
-        return {
-            machine: {
-                id: params.machineId,
-                kind: machine?.kind,
-                installationId: machine?.installationId,
-                dataEncryptionKey: published,
-                runnerContentKeyBinding: machine?.runnerContentKeyBinding,
-            },
-            openedDataEncryptionKey: dataKey,
-        };
+            : null);
+        if (context?.isCurrent() === false || machineTransportCache.get(params.cacheKey) !== selected) return null;
+        const opened = { ...selected, openedDataEncryptionKey: dataKey };
+        setMachineTransportCache(params.cacheKey, opened);
+        return opened;
     } catch (error) {
         if (isTerminalAuthError(error)) {
             throw error;
@@ -147,7 +193,9 @@ export async function resolveScopedMachineTransport(params: Readonly<{
     token: string;
     machineId: string;
     accountId?: string;
+    encryption?: MachineContextAuthority;
     expectedAccountMode?: 'plain' | 'e2ee';
+    readAccountMode?: () => Promise<'plain' | 'e2ee'>;
     expectedRunnerBinding?: ExpectedRunnerMachineContentKeyBindingV1;
     trustedMachineKind?: 'ephemeral_session_runner';
     decryptEncryptionKey?: (value: string) => Promise<Uint8Array | null>;
@@ -158,40 +206,57 @@ export async function resolveScopedMachineTransport(params: Readonly<{
     const token = String(params.token ?? '');
     const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
     const keyCacheKey = toMachineTransportCacheKey(serverId, machineId, token);
+    const incumbentContext = params.encryption?.getMachineEncryptionContext(machineId);
     // A cold lookup is bounded by its caller's remaining RPC budget. Calls
     // with different budgets cannot share the first caller's timeout result.
     const flightKey = `${keyCacheKey}::${timeoutMs}`;
 
-    // Share only the published row and envelope open. Trust is caller-owned and
-    // must be rechecked even on cache hits and joins of an earlier cold read.
-    const evidence = getMachineTransportFromCache(keyCacheKey)
-        ?? await machineTransportResolutions.run(flightKey, async () => await fetchMachineTransport({
+    // Refresh the Home row each call; cached openings are reusable only after
+    // that row confirms the exact envelope and authenticated access identity.
+    const evidence = await machineTransportResolutions.run(flightKey, async () => await fetchMachineTransport({
             serverId,
             serverUrl: params.serverUrl,
             ...(params.runtimeOrigin ? { runtimeOrigin: params.runtimeOrigin } : {}),
             ...(params.homeCarrier ? { homeCarrier: params.homeCarrier } : {}),
             token,
             machineId,
+            cacheKey: keyCacheKey,
             ...(params.accountId ? { accountId: params.accountId } : {}),
+            ...(params.encryption ? { encryption: params.encryption } : {}),
             decryptEncryptionKey: params.decryptEncryptionKey,
             timeoutMs,
         }));
     if (!evidence) return null;
+    const isLocalReadCurrent = () => {
+        if (!params.encryption) return true;
+        const current = params.encryption.getMachineEncryptionContext(machineId);
+        return current === incumbentContext || current === evidence.selectedContext;
+    };
+    const isEvidenceCurrent = () => machineTransportCache.get(keyCacheKey)?.identity === evidence.identity;
+    if (!isEvidenceCurrent() || !isLocalReadCurrent()) return null;
+    const expectedAccountMode = params.expectedAccountMode ?? (evidence.machine.access === undefined ? await params.readAccountMode?.() : undefined);
+    if (!isEvidenceCurrent() || !isLocalReadCurrent()) return null;
     const resolution = resolvePublishedMachineDataEncryptionKeyV1({
         ...evidence,
-        ...(params.expectedAccountMode ? { expectedAccountMode: params.expectedAccountMode } : {}),
+        ...(params.accountId ? { viewerAccountId: params.accountId } : {}),
+        ...(expectedAccountMode ? { expectedAccountMode } : {}),
         ...(params.expectedRunnerBinding ? { expectedRunnerBinding: params.expectedRunnerBinding } : {}),
         ...(params.trustedMachineKind ? { trustedMachineKind: params.trustedMachineKind } : {}),
     });
     if (resolution.status === 'unavailable') {
-        machineTransportCache.delete(keyCacheKey);
         return null;
     }
-    if (resolution.status === 'legacy') return { mode: 'e2ee', dataKey: null };
-    setMachineTransportCache(keyCacheKey, evidence);
+    const localContext = params.encryption?.captureMachineEncryptionContext(machineId, evidence.identity);
+    const context: MachineEncryptionContext = {
+        ...evidence.identity,
+        isCurrent: () => isEvidenceCurrent() && localContext?.isCurrent() !== false,
+    };
+    const installation = { installationId: evidence.machine.installationId ?? null,
+        installationPublicKey: evidence.machine.installationPublicKey ?? null };
+    if (resolution.status === 'legacy') return { mode: 'e2ee', dataKey: null, context, ...installation };
     return resolution.status === 'plain'
-        ? { mode: 'plain' }
-        : { mode: 'e2ee', dataKey: resolution.dataKey };
+        ? { mode: 'plain', context, ...installation }
+        : { mode: 'e2ee', dataKey: resolution.dataKey, context, ...installation };
 }
 
 export function resetScopedMachineTransportCacheForTests(): void {

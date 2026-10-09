@@ -277,6 +277,17 @@ export function useServerCredentialAccountScopeBindings(
     }, [entries]);
 }
 
+/** Identity and current authority together, for multi-Home projections with terminal signed-out states. */
+export function useServerCredentialAccountScopeStates(
+    serverIds: readonly (string | null | undefined)[],
+): ReadonlyMap<string, ServerCredentialAccountScopeBindingState> {
+    const entries = useCredentialScopeEntries(serverIds);
+    return React.useMemo(() => new Map([...entries].map(([serverId, entry]) => [serverId, {
+        resolution: entry.resolution,
+        binding: 'binding' in entry ? entry.binding ?? null : null,
+    }])), [entries]);
+}
+
 /** Exact Home identity states without Session projection side effects. */
 export function useServerCredentialAccountScopeResolutions(
     serverIds: readonly (string | null | undefined)[],

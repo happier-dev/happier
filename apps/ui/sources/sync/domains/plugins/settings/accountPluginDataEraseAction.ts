@@ -24,6 +24,12 @@ import {
     resolveScopedPluginSettingsServerIdentity,
 } from './scopedPluginSettingsRuntime';
 import type { AccountPluginSecretSettingsEraseResult } from './scopedPluginAccountSecretSettingsAdapter';
+import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+
+type AccountPluginDataEraseActionOptions = Readonly<{
+    signal?: AbortSignal;
+    accountContext?: LazyActionAccountContext;
+}>;
 
 export type AccountPluginDataEraseActionDependencies = Readonly<{
     captureActiveAccountScopeLifetime(): ActiveServerAccountScopeLifetime | null;
@@ -33,6 +39,7 @@ export type AccountPluginDataEraseActionDependencies = Readonly<{
         pluginId: string;
         target: ScopedPluginSettingsAccountTarget;
         signal?: AbortSignal;
+        accountContext?: LazyActionAccountContext;
     }>): Promise<AccountPluginSecretSettingsEraseResult>;
     eraseData(
         input: PluginAccountDataEraseActionInputV1,
@@ -43,7 +50,7 @@ export type AccountPluginDataEraseActionDependencies = Readonly<{
 export type AccountPluginDataEraseAction = Readonly<{
     execute(
         input: PluginAccountDataEraseActionInputV1,
-        options?: Readonly<{ signal?: AbortSignal }>,
+        options?: AccountPluginDataEraseActionOptions,
     ): Promise<PluginAccountDataEraseActionOutputV1>;
 }>;
 
@@ -126,7 +133,7 @@ export function createAccountPluginDataEraseAction(
             const request = PluginAccountDataEraseActionInputV1Schema.parse(input);
             if (options?.signal?.aborted) return unavailableOutput();
 
-            const lifetime = dependencies.captureActiveAccountScopeLifetime();
+            const lifetime = options?.accountContext?.accountLifetime ?? dependencies.captureActiveAccountScopeLifetime();
             if (!lifetime || !lifetime.isCurrent()) return unavailableOutput();
 
             const controller = new AbortController();
@@ -142,6 +149,23 @@ export function createAccountPluginDataEraseAction(
                     ? dependencies.resolveAccountSettingsTarget(serverIdentityId)
                     : null;
 
+                let data = pendingDataUnavailable();
+                try {
+                    data = await dependencies.eraseData(request, { signal: controller.signal,
+                        ...(options?.accountContext ? { accountContext: options.accountContext } : {}) });
+                } catch {
+                    data = pendingDataUnavailable();
+                }
+                if (data.status === 'reviewRequired') {
+                    return isCurrent(lifetime, controller.signal)
+                        ? { status: 'reviewRequired', resources: data.resources }
+                        : outputForArms({ settings: pendingSettingsUnavailable(), data: { status: 'pending', reason: 'outcome-unknown' } });
+                }
+                // Native review or unsettled Data authority cannot authorize
+                // irreversible loss of the Account's SavedSecret bindings.
+                if (data.status !== 'completed' || !isCurrent(lifetime, controller.signal)) {
+                    return outputForArms({ settings: pendingSettingsUnavailable(), data });
+                }
                 let settings = pendingSettingsUnavailable();
                 if (target) {
                     if (!isCurrent(lifetime, controller.signal)) return unavailableOutput();
@@ -150,21 +174,13 @@ export function createAccountPluginDataEraseAction(
                             pluginId: request.pluginId,
                             target,
                             signal: controller.signal,
+                            ...(options?.accountContext ? { accountContext: options.accountContext } : {}),
                         }));
                     } catch {
                         settings = failedSettingsUnexpected();
                     }
                 }
 
-                if (!isCurrent(lifetime, controller.signal)) {
-                    return outputForArms({ settings, data: pendingDataUnavailable() });
-                }
-                let data = pendingDataUnavailable();
-                try {
-                    data = await dependencies.eraseData(request, { signal: controller.signal });
-                } catch {
-                    data = pendingDataUnavailable();
-                }
                 return outputForArms({ settings, data });
             } finally {
                 options?.signal?.removeEventListener('abort', abort);
@@ -179,7 +195,7 @@ const defaultAction = createAccountPluginDataEraseAction();
 
 export async function executeAccountPluginDataEraseAction(
     input: PluginAccountDataEraseActionInputV1,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: AccountPluginDataEraseActionOptions,
 ): Promise<PluginAccountDataEraseActionOutputV1> {
     return await defaultAction.execute(input, options);
 }

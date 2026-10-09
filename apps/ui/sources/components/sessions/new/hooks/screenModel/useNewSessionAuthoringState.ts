@@ -27,6 +27,7 @@ import {
 } from './newSessionDraftPersistenceBinding';
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 type PersistedDraft = ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>;
 type BuildResolvedInputs = Parameters<typeof buildNewSessionAuthoringDraftFromResolvedInputs>[0];
@@ -46,12 +47,19 @@ export function useNewSessionAuthoringState(params: Readonly<{
     /** `managed`: no folder (the machine keeps a private one). */
     directoryKind: 'path' | 'managed';
     executionTarget: SessionAuthoringDraft['executionTarget'];
+    managedMachineSelection?: ManagedMachineSelectionDraft | null;
+    managedMachineAcquisition?: ManagedMachineAcquisitionDraft | null;
     temporaryComputerActivationRef?: SessionAuthoringDraft['temporaryComputerActivationRef'];
     organizationPlacement: SessionOrganizationPlacementV1;
     access?: SessionAuthoringDraft['access'];
     primaryTeamId?: SessionAuthoringDraft['primaryTeamId'];
     teamCredentialBindings?: SessionAuthoringDraft['teamCredentialBindings'];
     initialTriggers?: SessionAuthoringDraft['initialTriggers'];
+    getSessionName?: () => string;
+    getInstructionsDraft?: () => SessionAuthoringDraft['instructionsDraft'];
+    getInstructionsPromptStack?: () => SessionAuthoringDraft['promptStack'];
+    initialSessionFacts?: SessionAuthoringDraft['initialSessionFacts'];
+    memoryEnabled?: SessionAuthoringDraft['memoryEnabled'];
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     promptStore: NewSessionPromptStore;
     /** Compatibility-only bundled identity for persisted legacy draft fields. */
@@ -81,6 +89,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     launchUserAttemptId?: string | null;
     placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
     zenTaskSource?: NewSessionDraft['zenTaskSource'];
+    authoringOrigin?: NewSessionDraft['authoringOrigin'];
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
     currentAuthoringDraft: SessionAuthoringDraft;
@@ -133,6 +142,11 @@ export function useNewSessionAuthoringState(params: Readonly<{
     const buildCurrentAuthoringDraft = React.useCallback((effectiveAutomationDraft: NewSessionAutomationDraft) => {
         const sessionPrompt = promptStore.getPrompt();
         return buildNewSessionAuthoringDraftFromResolvedInputs({
+        sessionName: params.getSessionName?.(),
+        instructionsDraft: params.getInstructionsDraft?.(),
+        promptStack: params.getInstructionsPromptStack?.(),
+        initialSessionFacts: params.initialSessionFacts,
+        memoryEnabled: params.memoryEnabled,
         executionTarget: params.executionTarget,
         temporaryComputerActivationRef: params.temporaryComputerActivationRef,
         directory: params.selectedPath,
@@ -175,6 +189,11 @@ export function useNewSessionAuthoringState(params: Readonly<{
         automation: effectiveAutomationDraft.enabled ? effectiveAutomationDraft : null,
         });
     }, [
+        params.getSessionName,
+        params.getInstructionsDraft,
+        params.getInstructionsPromptStack,
+        params.initialSessionFacts,
+        params.memoryEnabled,
         params.acpSessionModeId,
         params.temporaryComputerActivationRef,
         params.staticAgentId,
@@ -208,6 +227,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         automationDraft: params.automationDraft,
         automationFeatureEnabled: params.automationFeatureEnabled,
         selectedMachineId: params.selectedMachineId,
+        managedMachineSelection: params.managedMachineSelection,
         selectedMachine: params.selectedMachine,
         hostBoundMachineId: params.hostBoundMachineId,
         selectedMachineSpawnReadiness: params.selectedMachineSpawnReadiness ?? null,
@@ -222,6 +242,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.selectedMachine,
         params.hostBoundMachineId,
         params.selectedMachineSpawnReadiness,
+        params.managedMachineSelection,
         params.selectedMachineId,
         params.selectedPath,
     ]);
@@ -235,6 +256,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
         // no longer re-renders per keystroke, so `currentAuthoringDraft` can lag the input.
         const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
             draft: buildCurrentAuthoringDraft(effectiveAutomationDraft),
+            managedMachineSelection: params.managedMachineSelection,
+            managedMachineAcquisition: params.managedMachineAcquisition,
             machineId: params.selectedMachineId,
             targetServerId: params.targetServerId,
             windowsRemoteSessionLaunchModeOverride: params.windowsRemoteSessionLaunchModeOverride,
@@ -255,6 +278,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         return {
             ...persistedDraft,
             ...(params.zenTaskSource === undefined ? {} : { zenTaskSource: params.zenTaskSource }),
+            ...(params.authoringOrigin === undefined ? {} : { authoringOrigin: params.authoringOrigin }),
             ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
             agentType: resolveNewSessionCompatAgentType({
                 backendTarget: persistedDraft.backendTarget ?? null,
@@ -269,11 +293,14 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.backendNewSessionOptionStateByTargetKey,
         params.composerAttachments,
         params.placementCandidates,
+        params.managedMachineSelection,
+        params.managedMachineAcquisition,
         params.automationRequestedByRoute,
         draftAgentId,
         params.getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         params.launchUserAttemptId,
         params.zenTaskSource,
+        params.authoringOrigin,
         params.selectedMachineId,
         params.selectedSecretId,
         params.selectedSecretIdByProfileIdByEnvVarName,
@@ -288,6 +315,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
             scope,
             draftId: params.draftId,
             draft,
+            preserveLiveSessionName: true,
         });
     }, [params.draftId]);
 

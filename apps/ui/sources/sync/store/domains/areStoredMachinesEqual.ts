@@ -9,17 +9,36 @@ export function hasMachineDaemonStateAdvanced(
         && next.daemonStateVersion > (previous?.daemonStateVersion ?? 0);
 }
 
-/**
- * A machine this store already knew now reports a newer daemon: the daemon was
- * replaced or restarted, so it is a different endpoint. The first observation
- * of a machine is not a replacement: a reader that already asked the machine
- * asked the daemon this observation reports.
- */
-export function hasMachineDaemonBeenReplaced(
+function readDaemonState(value: unknown): Readonly<Record<string, unknown>> | null {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value as Readonly<Record<string, unknown>>
+        : null;
+}
+
+function readContributionRegistryProjectionRevision(state: Readonly<Record<string, unknown>> | null): number | null {
+    const revision = state?.contributionRegistryProjectionRevision;
+    return typeof revision === 'number' && Number.isInteger(revision) && revision >= 0 ? revision : null;
+}
+
+/** The machine writer owns projection currentness for every Home's readers. */
+export function hasMachineContributionRegistryProjectionChanged(
     previous: Machine | null | undefined,
     next: Machine,
 ): boolean {
-    return previous != null && hasMachineDaemonStateAdvanced(previous, next);
+    // The first inventory observation reports the endpoint an early reader
+    // already asked; it is not itself a replacement or registry adoption.
+    if (!previous || !hasMachineDaemonStateAdvanced(previous, next)) return false;
+    const previousState = readDaemonState(previous.daemonState);
+    const nextState = readDaemonState(next.daemonState);
+    const previousRevision = readContributionRegistryProjectionRevision(previousState);
+    const nextRevision = readContributionRegistryProjectionRevision(nextState);
+    // Older daemon publications have only the broad version signal. Retain
+    // that behavior until both observations carry the explicit revision.
+    if (previousRevision === null || nextRevision === null) return true;
+    return previousRevision !== nextRevision
+        || ['runtimeId', 'pid', 'startedAt', 'httpPort', 'status'].some((field) => (
+            previousState?.[field] !== nextState?.[field]
+        ));
 }
 
 export function areStoredMachinesEqual(
@@ -48,6 +67,9 @@ export function areStoredMachinesEqual(
         && (previous.operationProtocolCapabilitiesRevision ?? null) === (next.operationProtocolCapabilitiesRevision ?? null)
         && areSessionValuesDeepEqual(previous.operationProtocolCapabilities ?? null, next.operationProtocolCapabilities ?? null)
         && (previous.storageMode ?? null) === (next.storageMode ?? null)
+        && (previous.dataEncryptionKey ?? null) === (next.dataEncryptionKey ?? null)
+        && areSessionValuesDeepEqual(previous.keyBasis ?? null, next.keyBasis ?? null)
+        && areSessionValuesDeepEqual(previous.access ?? null, next.access ?? null)
         && areSessionValuesDeepEqual(previous.availability ?? null, next.availability ?? null)
         && areSessionValuesDeepEqual(previous.metadata ?? null, next.metadata ?? null)
         && areSessionValuesDeepEqual(previous.daemonState ?? null, next.daemonState ?? null);

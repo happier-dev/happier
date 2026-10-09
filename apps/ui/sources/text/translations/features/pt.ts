@@ -349,6 +349,7 @@ const actionFamilyTranslations = { pt: translated({
             computer: 'Controle do computador',
             artifact_access: 'Compartilhamento de artefatos',
             workflows: 'Fluxos de trabalho',
+            workflow_effects: 'Webhooks e comandos',
             notifications: 'Notificações',
             machine_agent_install: 'Instalações de agentes',
             machine_agent_sign_in: 'Login de agentes',
@@ -834,6 +835,35 @@ const artifactsBrowserTranslations = { pt: {
             label: 'Visualização',
             grid: 'Grade',
             list: 'Lista',
+            folders: 'Pastas',
+        },
+        folders: {
+            newFolder: 'Nova pasta',
+            newFolderInside: 'Nova pasta dentro',
+            rename: 'Renomear',
+            moveTo: 'Mover para pasta…',
+            moveVerb: 'Mover para',
+            topLevel: 'Nível superior',
+            moveToTopLevel: 'Mover para o nível superior',
+            deleteFolder: 'Excluir pasta',
+            deleteTitle: ({ name }) => `Excluir “${name}”?`,
+            deleteBody: 'Seus itens e pastas sobem um nível. Nada é excluído.',
+            nameHelp: 'As pastas são só suas. Arquivar algo nunca o altera para as pessoas com quem é compartilhado.',
+            namePlaceholder: 'Nome da pasta',
+            create: 'Criar',
+            options: ({ name }) => `Opções de ${name}`,
+            expand: ({ name }) => `Expandir ${name}`,
+            collapse: ({ name }) => `Recolher ${name}`,
+            columnName: 'Nome',
+            columnEdited: 'Editado',
+            emptyInvite: 'Ainda não há pastas. Agrupe o que anda junto; só você vê como arquiva.',
+            unavailable: 'Não foi possível carregar as pastas deste Home. Tudo é listado sem elas.',
+            saveFailed: 'Essa alteração não foi salva. Tente novamente.',
+            refusedCycle: 'Uma pasta não pode ser movida para dentro de si mesma',
+            refusedUnavailable: 'As pastas estão indisponíveis no momento',
+            refusedOther: 'Não pode ser movido para lá',
+            showAllKinds: 'Mostrar todos os tipos em Artefatos',
+            promptSearch: 'Buscar prompts e skills',
         },
         provenance: {
             savedByYou: 'Salvo por você',
@@ -1506,6 +1536,7 @@ const computerUseTranslations = { pt: {
             accessValue: 'Ver e usar',
             accessSee: 'Só ver',
             displayUnavailable: 'Não é possível compartilhar a tela inteira deste computador.',
+            wholeDisplayBody: ({ display }) => `Tudo o que estiver visível em ${display} pode ser visto, incluindo outras apps e notificações.`,
             policyBoth: ({ agent }) => `${agent} pergunta antes de cada captura, clique e tecla.`,
             policyInput: ({ agent }) => `${agent} pergunta antes de cada clique e tecla.`,
             policyCapture: ({ agent }) => `${agent} pergunta antes de cada captura.`,
@@ -1545,6 +1576,27 @@ const computerUseTranslations = { pt: {
             notSharedBody: ({ agent }) => `Escolha uma janela para ${agent} usar.`,
             moreA11y: 'Opções da janela',
             tabFallback: 'Computador',
+            sourceComputer: 'Computador',
+            sourceBrowser: 'Navegador',
+            sourceA11y: 'Fonte',
+            watchingA11y: ({ source, machine }) => `A ver ${source} em ${machine}`,
+            expandView: 'Expandir vista',
+            restoreView: 'Restaurar vista',
+            dockView: 'Ancorar vista',
+            closeView: 'Fechar vista',
+            moveView: 'Mover vista',
+            resizeView: 'Redimensionar vista',
+            moveTopLeft: 'Mover para cima à esquerda',
+            moveTopRight: 'Mover para cima à direita',
+            moveBottomLeft: 'Mover para baixo à esquerda',
+            moveBottomRight: 'Mover para baixo à direita',
+            larger: 'Maior',
+            smaller: 'Menor',
+            viewOptions: 'Opções da vista',
+            presentedElsewhereTitle: 'Mostrada na vista flutuante',
+            presentedElsewhereBody: 'Ancore-a aqui para a manter ao lado do seu trabalho.',
+            closeHint: 'Fecha este visualizador. A sessão continua.',
+            captureOnly: 'Pode ver este ecrã. O controlo com rato e teclado não é permitido.',
         },
         strip: {
             using: ({ target }) => `Usando ${target}`,
@@ -2652,6 +2704,7 @@ const filesPaneTranslations = { pt: {
         noChangedFilesReason: 'A cópia de trabalho corresponde ao último commit.',
         rootErrorTitle: ({ machine }) => `Não foi possível listar os arquivos em ${machine}`,
         rootErrorTitleUnnamed: 'Não foi possível listar os arquivos',
+        workspaceUnavailableReason: 'O Happier não conseguiu identificar uma máquina e uma pasta para esta sessão.',
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "pt">;
 
 return { filesPaneTranslations };
@@ -4941,6 +4994,9 @@ const pt: typeof en = {
         settle: 'Encerrar',
         snoozedUntil: ({ time }) => `Adiada até ${time}`,
         more: 'Mais ações',
+        approvalNeeded: 'Precisa da sua aprovação',
+        approvalUntitled: 'Aprove uma ação',
+        approvalAskedBy: ({ session }) => `Pedido por ${session}`,
     },
     popover: {
         moreInOther: ({ count }) => `Mais ${count} em Outras sessões`,
@@ -5525,8 +5581,8 @@ const pluralPl = Shared_personalHomeSettingsTranslations.pluralPl;
 const pluralRu = Shared_personalHomeSettingsTranslations.pluralRu;
 
 const pt = {
-    standardOnlyTitle: 'Apenas ligação padrão',
-    standardOnlySubtitle: 'As novas ligações neste dispositivo usam rotas padrão. As transferências em curso terminam na rota atual.',
+    standardOnlyTitle: 'Ligar através dos endereços dos Homes',
+    standardOnlySubtitle: 'Neste dispositivo, use o endereço de cada Home em vez de uma ligação entre pares.',
     installOrUpdateAction: 'Instalar ou atualizar o Home pessoal', startAction: 'Iniciar o Home pessoal', stopAction: 'Parar o Home pessoal',
     defaultHomeLabel: 'Home pessoal', homeTitle: 'Home', canonicalAddress: 'Endereço do Home', identityComparison: 'Home atual', identityComparisonMatch: 'Corresponde', identityComparisonMismatch: 'Não corresponde', identityComparisonUnknown: 'Não foi possível confirmar',
     unknownSize: 'Tamanho desconhecido', unknownTimestamp: 'Data/hora desconhecida', restoreBackupTitle: 'Cópia de segurança', identityTitle: 'Identidade do Home', identityUnavailable: 'Identidade indisponível', restoreBackupDate: 'Criado em', restoreCompatibility: 'Compatibilidade', restoreCompatible: 'Compatível', restoreCompatibilityVerified: 'Verificado por esta versão', restoreBackupSize: 'Tamanho', restoreReplacementNotice: 'Os dados atuais do Home serão substituídos. Será mantida uma cópia de recuperação verificada.', restoreConfirmTitle: 'Substituir e restaurar este Home pessoal?', restoreConfirmAction: 'Substituir e restaurar', relocateConfirmTitle: 'Mover este Home pessoal?', relocateConfirmBody: 'O Home atual será parado antes de a cópia verificada ficar ativa no destino.', relocateDestination: 'Destino', relocateConfirmAction: 'Mover Home', recoverRestoreTitle: 'Recuperar o restauro interrompido?', recoverRestoreBody: 'Reverte o restauro interrompido usando o material de recuperação mantido.', recoverRestoreAction: 'Recuperar restauro', eraseDataTitle: 'Eliminar os dados do Home pessoal?', eraseHomeTarget: 'Home', eraseDataBody: 'Esta ação é separada da desinstalação e elimina permanentemente apenas estes caminhos resolvidos do Home:', estimatedSize: 'Tamanho estimado', summaryTitle: 'Home pessoal', footer: 'O teu Home permanece neste computador. Estas ações não alteram outro Home.', statusTitle: 'Estado', notAvailable: 'Indisponível', storageTitle: 'Armazenamento', masterSecretTitle: 'Segredo de acesso do Home', masterSecretPresent: 'Presente', masterSecretUnavailable: 'Indisponível', inspectAction: 'Atualizar detalhes do Home', actionsTitle: 'Cópia e restauro', protectionTitle: 'Proteção', backupsSectionFooter: 'As cópias contêm conversas legíveis, dados do Home, estado de dispositivos confiáveis e o segredo de acesso do Home. Guarda-as apenas num local em que confies.', lastBackupTitle: 'Última cópia', lastBackupUnknown: 'Última cópia desconhecida', backupsTitle: 'Arquivos de cópia', backupAction: 'Fazer cópia agora', backupSubtitle: 'Cria e verifica um arquivo Home em texto simples.', exportBackupAction: 'Exportar cópia…', exportBackupSubtitle: 'Cria uma cópia verificada num local à tua escolha.', verifyAction: 'Verificar cópia…', verifySubtitle: 'Verifica um arquivo sem o restaurar.', restoreAction: 'Restaurar…', restoreSubtitle: 'Valida uma cópia antes de substituir os dados do Home.', relocateAction: 'Mover Home…', relocateSubtitle: 'Move este Home para um computador gerido.', relocationFinishAction: 'Concluir mudança', relocationReturnAction: 'Voltar ao Home original', relocationFinishSubtitle: 'Conclui a mudança depois de o destino ser verificado.', relocationReturnSubtitle: 'Mantém o Home original como localização ativa.', recoverRestoreSubtitle: 'Um restauro interrompido pode ser revertido explicitamente.', restoreRecoveryWarningTitle: 'O restauro precisa de reparação', restoreRecoveryWarningBody: 'O estado de recuperação é ambíguo. Não será feita nenhuma alteração automática. Consulta o diagnóstico antes de reparar este Home.', restoreCleanupWarningTitle: 'A limpeza do restauro requer atenção', restoreCleanupWarningBody: 'O Home foi restaurado, mas a limpeza automática não terminou. Revê os diagnósticos e tenta novamente a operação do Home.', backupVerified: 'Cópia verificada', backupNeedsAttention: 'Cópia verificada; o reinício do Home requer atenção', backupHomeReady: 'Home reiniciado', backupRevealAction: 'Mostrar cópia', restoreResultTitle: 'Resultado do restauro', restoreOutcomeRecoveryRequired: 'Recuperação necessária', restoreOutcomeRolledBack: 'Restauro revertido', restoreOutcomeRestored: 'Home restaurado', advancedTitle: 'Avançado', advancedFooter: 'Controlos do runtime e diagnóstico deste computador.', restartAction: 'Reiniciar o Home pessoal', openDataLocationAction: 'Abrir localização dos dados do Home', openLogsAction: 'Abrir registos do runtime', removeProfileAction: 'Remover Home do Happier', removeProfileSubtitle: 'Remove este perfil; os dados do runtime permanecem neste computador.', removeProfileTitle: 'Remover o perfil do Home pessoal?', removeProfileBody: 'Remove o perfil, mas mantém o runtime e os dados.', uninstallRuntimeAction: 'Desinstalar runtime, manter dados', uninstallRuntimeSubtitle: 'Remove o serviço e os binários; os dados do Home são preservados.', deleteHomeDataTitle: 'Eliminar dados do Home', removeSectionFooter: 'A desinstalação mantém os dados do Home. A eliminação permanente é uma ação confirmada separada.', eraseDataAction: 'Eliminar permanentemente os dados do Home pessoal', eraseDataSubtitle: 'Separada da desinstalação. Elimina permanentemente os dados resolvidos do Home.', eraseResultTitle: 'Dados do Home eliminados', eraseStoppedHome: 'O Home em execução foi parado', eraseHomeAlreadyStopped: 'O Home já estava parado', eraseRemainingPaths: 'Não foi possível remover', progressTitle: 'Operação do Home pessoal', dismissResult: 'Fechar',
@@ -6233,12 +6289,12 @@ const translated = Shared_profilesPageTranslations.translated;
 
 const profilesPageTranslations = { pt: translated({
         profilesPage: {
-            searchPlaceholder: 'Pesquisar perfis',
-            emptyTitle: 'Ainda não há perfis',
-            newProfileTitle: 'Novo perfil',
+            searchPlaceholder: "Buscar perfis de inicialização",
+            emptyTitle: "Ainda não há perfis de inicialização",
+            newProfileTitle: "Novo perfil de inicialização",
             notFoundTitle: 'Este perfil já não existe',
             notFoundDescription: 'Pode ter sido eliminado noutro dispositivo.',
-            backToProfiles: 'Voltar aos perfis',
+            backToProfiles: "Voltar aos perfis de inicialização",
             discardDraft: 'Descartar',
             detailDescription: 'Usado quando uma nova sessão começa com este perfil.',
             builtInDetailDescription: 'Um perfil já preparado. Guardar as alterações cria a sua própria cópia.',
@@ -6250,6 +6306,7 @@ const profilesPageTranslations = { pt: translated({
             environmentDescription: 'Variáveis de ambiente definidas quando uma sessão começa com este perfil. Os valores podem referir variáveis da máquina.',
             descriptionTitle: 'Descrição',
             descriptionHint: 'Opcional. Mostrada quando escolhe este perfil.',
+            modelRequiresAgent: 'Escolha primeiro um agente preferido para escolher o seu modelo.',
         },
     }) };
 
@@ -6439,12 +6496,23 @@ const rolesTranslations = { pt: {
             label: 'Funções',
             title: 'Função',
             searchPlaceholder: 'Pesquisar funções…',
-            empty: 'Nenhuma função corresponde.',
+            empty: 'Ainda não há funções.',
+            emptyWithManage: 'Ainda não há funções. Adicione uma em Gerir funções.',
             footer: 'Uma função traz as suas próprias instruções, motor e forma de execução, para que os fluxos continuem portáteis.',
             manage: 'Gerir funções',
             engineAppliesOnStart: 'O motor é aplicado ao iniciar este papel',
             defaultEngine: 'Agente predefinido',
             activeAccessibilityLabel: 'Funções, uma função está em uso',
+        },
+        builtIn: {
+            orchestrator: "Lidera um trabalho e entrega partes a outros agentes",
+            planner: "Prepara o plano antes de construir",
+            builder: "Faz a alteração e verifica que funciona",
+            reviewer: "Revê uma alteração e indica o que corrigir",
+            judge: "Decide as conclusões em disputa e diz quando um objetivo foi cumprido",
+            second_opinion: "Uma verificação independente antes de avançar",
+            scout: "Percorre o código e responde onde estão as coisas",
+            approval_reviewer: "Responde a pedidos de permissão de baixo risco e pergunta-te o resto",
         },
         settings: {
             description: 'Quem faz cada tipo de trabalho. Fluxos e orquestradores pedem uma função; a função diz como executá-lo.',
@@ -6466,7 +6534,7 @@ const rolesTranslations = { pt: {
             instructionsTitle: 'Instruções',
             instructionsDescription: 'O que faz, quando usá-la e como reportar. Os agentes leem isto ao distribuir trabalho.',
             resetToDefault: 'Repor predefinição',
-            readOnlyNote: 'Partilhada consigo para ver. As suas escolhas de motor e perfil continuam suas.',
+            readOnlyNote: 'O papel original é só de leitura. Personalize aqui as suas instruções; Repor restaura o original.',
             howItRunsTitle: 'Como é executada',
             engineTitle: 'Motor',
             engineDescription: 'Agente, modelo e esforço.',
@@ -6517,7 +6585,7 @@ const rolesTranslations = { pt: {
             ladderRoot: 'Trabalho que inicia',
             ladderRootDetail: 'Iniciado por si · nunca limitado',
             ladderLevel: ({ level }) => `Nível ${level}`,
-            ladderLevelDetail: 'Iniciado por um agente',
+            ladderLevelDetail: ({ level }) => (level === 1 ? "Iniciado por um agente do trabalho que começas" : `Iniciado por um agente do nível ${level - 1}`),
             ladderRefused: 'Mais uma delegação',
             ladderRefusedDetail: ({ level }) => `Nível ${level} · recusado; o agente faz sozinho`,
         },
@@ -6755,7 +6823,7 @@ type SecretsSettingsCopy = Shared_secretsSettingsTranslations.SecretsSettingsCop
 const en = Shared_secretsSettingsTranslations.en;
 
 const pt: SecretsSettingsCopy = {
-    purpose: 'Chaves de API e tokens que seus agentes e servidores MCP usam. Um valor nunca é mostrado de novo depois de salvo.',
+    purpose: "Chaves API e tokens para agentes e servidores MCP. Os valores salvos não são exibidos novamente.",
     yoursTitle: 'Seus segredos',
     yoursDescription: 'Segredos que você salvou ou possui. Escolha-os onde o Happier pedir uma chave.',
     sharedWithYouTitle: 'Compartilhados com você',
@@ -6799,6 +6867,7 @@ const sessionAccessTranslations = { "pt": {
         accessibleSummary: ({ title, label }: { title: string; label: string }) => `${title}: ${label}`,
         accessibleControl: ({ name, control, value }: { name: string; control: string; value: string }) => `${name}, ${control}, ${value}`,
         title: "Acesso à sessão",
+        context: "Contexto da sessão",
         search: "Pesquisar pessoas, grupos ou equipes",
         hasAccess: "Tem acesso",
         yourAccess: "Seu acesso",
@@ -7275,6 +7344,7 @@ const sessionCollaborationPaneTranslations: Pick<Record<'en' | 'ca' | 'de' | 'es
         newLinkReplaces: 'O link atual deixa de funcionar quando o novo for criado.',
         linkDenied: 'Só quem gerencia esta sessão pode criar um link público.',
         linkLoadFailed: 'Não foi possível verificar o link público.',
+        linkUnavailable: 'Os links públicos não estão disponíveis neste Home. Peça ao administrador para configurar o alojamento de links públicos.',
         justYouTitle: 'Trabalhem juntos nesta sessão',
         justYouBody: ({ home }) => `Compartilhe com pessoas em ${home}. Elas podem acompanhar, conversar aqui e assumir enquanto você está fora.`,
         share: 'Compartilhar',
@@ -7916,7 +7986,7 @@ const sessionListFilterTranslations = { pt: translated({
         filtersShowBothSummary: 'Sessões e execuções', filtersStartedByNone: 'Nenhum iniciador selecionado',
         filtersStartedBy: 'Iniciado por', filtersStartedByYou: 'Você', filtersStartedByTriggers: 'Gatilhos', filtersStartedByAgents: 'Agentes',
         filtersRunsNeedingYouAlwaysShow: 'As execuções que precisam de você sempre aparecem',
-        filtersMyWork: 'Meu trabalho', filtersLegacyOwnerDirect: 'Próprias e partilhadas diretamente', filtersAssignedToMe: 'Atribuídas a mim', filtersFollowing: 'Seguindo',
+        filtersMyWork: 'Meu trabalho', filtersLegacyOwnerDirect: 'Meu trabalho', filtersAssignedToMe: 'Atribuídas a mim', filtersFollowing: 'Seguindo',
         filtersInvolvingMe: 'Com minha participação', filtersAllAccessible: 'Todas acessíveis', filtersAttention: 'Atenção',
         filtersAttentionAny: 'Qualquer', filtersAttentionNeedsMe: 'Apenas sessões que precisam de mim', filtersScopeNeedsMe: 'Precisam de mim',
         filtersInactive: 'Sessões inativas', filtersInactiveShow: 'Mostrar', filtersInactiveHide: 'Ocultar',
@@ -8102,6 +8172,16 @@ const Domain_sessionWorkTranslations = (() => {
 const en = Shared_sessionWorkTranslations.en;
 
 const pt: typeof en = {
+    scheduled: {
+        title: "Agendado",
+        writesHere: "Escreve aqui",
+        empty: "Nenhum workflow está agendado para escrever aqui.",
+        step: ({ ordinal, title }) => `passo ${ordinal} · ${title}`,
+        provenanceWorkflowStep: ({ source, step }) => `De ${source} · passo ${step}`,
+        notifyOnlyReported: "Somente se o agente relatou algo",
+        notifyOnlyReportedDescription: "Ignorar a notificação quando o agente não retorna texto.",
+        notifyOnlyReportedNeedsResult: "Use o resultado de texto de uma etapa anterior do agente como mensagem.",
+    },
     workerUpdate: {
         settled: "Concluído",
         stalled: "Parado",
@@ -8129,6 +8209,7 @@ const pt: typeof en = {
         positionUnder: ({ position, total, parent }) => `${position} de ${total} sob ${parent}`,
     },
     actions: {
+        showInTranscript: 'Mostrar na transcrição',
         makeOrchestrator: 'Tornar orquestrador',
         makeOrchestratorSubtitle: 'Esta sessão planeja, delega e reporta',
         makeOrchestratorFailed: "Não foi possível tornar esta sessão um orquestrador",
@@ -8175,6 +8256,8 @@ const pt: typeof en = {
     list: {
         level: ({ level }) => `Nível ${level}`,
         subSessions: ({ count }) => (count === 1 ? '1 subsessão' : `${count} subsessões`),
+        showReports: ({ name, count }) => (count > 0 ? `Mostrar ${count} sessões sob ${name}` : `Mostrar as sessões sob ${name}`),
+        hideReports: ({ name }) => `Ocultar as sessões sob ${name}`,
         reportsWorking: ({ count }) => `${count} trabalhando`,
         reportsNeedYou: ({ count }) => (count === 1 ? '1 subsessão precisa de você' : `${count} subsessões precisam de você`),
     },
@@ -8229,6 +8312,11 @@ const Domain_settingsMachinesTranslations = (() => {
 const en = Shared_settingsMachinesTranslations.en;
 
 const pt: typeof en = {
+    defaultsTitle: "Padrões das máquinas",
+    localVirtualMachines: "Máquinas virtuais locais",
+    runningOnly: "Nuvem cobrada apenas em execução",
+    stoppedBilled: "Nuvem cobrada enquanto parada",
+    billingUnknown: "Cobrança desconhecida",
     pageDescription: 'Os computadores onde as suas sessões são executadas e os pools que escolhem entre eles.',
     thisComputerTitle: 'Este computador',
     thisComputerRowSubtitle: 'Serviço em segundo plano e linha de comando',
@@ -8736,7 +8824,7 @@ const settingsSessionPagesTranslations: Pick<Record<
                 timingWhenIdle: 'Com tudo ocioso',
                 layoutSection: 'Layout do compositor',
                 actionBarTitle: 'Barra de ações',
-                actionBarAutoDescription: 'Os chips quebram para uma segunda linha em telas largas e rolam na horizontal no celular.',
+                actionBarAutoDescription: 'Os controles usam o espaço disponível e passam para outra linha quando necessário.',
                 actionBarWrapDescription: 'Os chips quebram para uma segunda linha quando não cabem.',
                 actionBarScrollDescription: 'Os chips ficam em uma linha; role para ver o resto.',
                 actionBarCollapsedDescription: 'Os chips vão para um menu, deixando mais espaço para escrever.',
@@ -8770,6 +8858,10 @@ const shareSheetTranslations = { pt: {
         confirmRemove: 'Confirmar remoção',
         removedAnnouncement: ({ name }) => `${name} não tem mais acesso`,
         browseAll: 'Ver tudo',
+        browsePeople: 'Ver todas as pessoas',
+        browseTeams: 'Ver todas as equipes',
+        browseGroups: 'Ver todos os grupos de equipe',
+        membersOnlyLink: 'Copiar link é para quem já tem acesso.',
         allLoaded: 'Todos os resultados carregados',
         copyLink: 'Copiar link',
         linkCopied: 'Link copiado',
@@ -8786,19 +8878,28 @@ const shareSheetTranslations = { pt: {
             levels: { canUse: 'Pode usar', canRead: 'Pode ler', canEdit: 'Pode editar', admin: 'Administrar' },
             help: {
                 workflowUse: 'ver e executar',
-                roleUse: 'usar; as próprias alterações ficam nas próprias Configurações',
+                roleUse: '— as próprias alterações ficam nas próprias Configurações',
                 profileUse: 'iniciar sessões com ele',
                 documentUse: 'abri-lo e copiá-lo em qualquer um dos seus dispositivos',
                 promptUse: 'usá-lo nas suas sessões',
                 boardUse: 'ver o quadro; cada cartão abre só o que já pode abrir',
+                dashboardUse: 'Veja este painel; cada widget mostra apenas o que você já pode abrir.',
                 editForEveryone: 'alterar para todos com quem é compartilhado',
-                adminOwnerShares: 'alterar e gerenciar o compartilhamento; só o proprietário pode atribuir Admin',
+                adminOwnerShares: 'alterar e gerenciar o compartilhamento',
             },
             notes: {
                 personalRuns: 'Execuções e gatilhos ficam com quem os inicia.',
                 teamRuns: 'A equipe vê cada execução.',
                 roleLive: 'Suas alterações chegam a todos com quem é compartilhado.',
-                profileSecrets: 'Valores secretos nunca viajam · vincule um Segredo salvo',
+                profileSecrets: 'Perfis fazem referência a Segredos salvos; seus valores não são transmitidos.',
+                dashboardAccess: 'As pessoas adicionadas o abrem com a própria identidade. Widgets, definições, conexões, máquinas e repositórios precisam de acesso independente.',
+            },
+            privateChoices: {
+                title: 'Escolhas de conexão privadas',
+                account: ({ widget, service }) => `${widget} usa sua conta ${service}`,
+                letViewersPick: 'Deixar os leitores escolherem',
+                removeChoice: 'Remover a escolha',
+                authoredInput: ({ widget }) => `Edite ${widget} para remover as entradas privadas antes de compartilhar.`,
             },
             errors: {
                 unavailable: 'O compartilhamento ainda não está disponível aqui.',
@@ -10077,6 +10178,8 @@ type VoicePresenceTranslation = Shared_voicePresenceTranslations.VoicePresenceTr
 
 const voicePresenceTranslations = { pt: {
         welcomeText: "Olá, estou ouvindo — o que você gostaria de fazer?",
+        customVoice: 'Voz personalizada',
+        boundWelcomeText: ({ name }: Readonly<{ name: string }>) => `Olá, você está falando com ${name} — o que gostaria de fazer?`,
         greetingLiteralUnavailable: "Neste idioma de resposta, o serviço espera você falar.",
         title: 'Voz',
         howYouTalk: "Como você fala",
@@ -10652,7 +10755,7 @@ type SavedCopy = Shared_walkthroughSavedTranslations.SavedCopy;
 
 const en = Shared_walkthroughSavedTranslations.en;
 
-const walkthroughSavedTranslations = { pt: { edit: 'Editar percurso', title: 'Título do percurso', stopTitle: 'Título da etapa', prose: 'Explicação', refine: 'Refinar', instructions: 'O que deve mudar?', moveUp: 'Mover para cima', moveDown: 'Mover para baixo', mergeNext: 'Combinar com a próxima etapa', addSummary: 'Adicionar resumo', addCommitPlan: 'Propor commits', updated: 'Resultado salvo atualizado', conflict: 'Este percurso mudou em outro lugar. Seu rascunho foi preservado. Carregue a versão mais recente e confira antes de salvar novamente.', reload: 'Carregar versão mais recente', missingStop: "Esta etapa não está mais no percurso mais recente. Seu rascunho foi preservado; selecione outra etapa para continuar.", applicationLocked: 'Os commits estão sendo aplicados. A edição está pausada.' } } satisfies Pick<Record<string, SavedCopy>, "pt">;
+const walkthroughSavedTranslations = { pt: { discuss: 'Conversar', message: 'Mensagem', edit: 'Editar percurso', title: 'Título do percurso', stopTitle: 'Título da etapa', prose: 'Explicação', refine: 'Refinar', instructions: 'O que deve mudar?', moveUp: 'Mover para cima', moveDown: 'Mover para baixo', mergeNext: 'Combinar com a próxima etapa', addSummary: 'Adicionar resumo', addCommitPlan: 'Propor commits', updated: 'Resultado salvo atualizado', conflict: 'Este percurso mudou em outro lugar. Seu rascunho foi preservado. Carregue a versão mais recente e confira antes de salvar novamente.', reload: 'Carregar versão mais recente', missingStop: "Esta etapa não está mais no percurso mais recente. Seu rascunho foi preservado; selecione outra etapa para continuar.", applicationLocked: 'Os commits estão sendo aplicados. A edição está pausada.' } } satisfies Pick<Record<string, SavedCopy>, "pt">;
 
 return { walkthroughSavedTranslations };
 })();
@@ -11064,6 +11167,8 @@ const workflowActionTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'
         callWebhook: "Chamar um webhook",
         runCommand: "Executar um comando",
         commandValuesInEnv: "Passe os valores do fluxo de trabalho por variáveis de ambiente. O texto do comando permanece como foi escrito.",
+        waitForWork: "Esperar pelo trabalho",
+        waitForWorkDescription: "Espera até que o trabalho escolhido alcance o estado indicado",
         artifactCreate: "Criar um documento",
         artifactGet: "Ler um documento",
         artifactList: "Listar documentos",
@@ -11139,9 +11244,8 @@ type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBu
 const en = Shared_workflowBuiltinTranslations.en;
 
 const pt: WorkflowBuiltinTranslations = {
-    runsInsideSession: 'É executado numa sessão',
-    keepGoing: { title: 'Continuar até terminar' },
-    reviewAndConverge: { title: 'Rever e convergir', apply: 'Aplicar', verifyAndFix: 'Verificar e corrigir', verifyOnly: 'Apenas verificar', rounds: 'Rondas antes de parar' },
+    keepGoing: { title: 'Continuar até terminar', description: 'Continua até cumprir o objetivo' },
+    reviewAndConverge: { title: 'Rever e convergir', description: 'Revisa até os revisores concordarem', apply: 'Aplicar', verifyAndFix: 'Verificar e corrigir', verifyOnly: 'Apenas verificar', rounds: 'Rondas antes de parar' },
     planWithAPanel: { title: 'Planear com um painel', description: 'Vários agentes planeiam lado a lado e o plano aguarda a sua revisão.', inputs: { request: 'Pedido', requestPlaceholder: 'O que deve o painel planear?', engines: 'Planeadores' } },
     openAPullRequest: { title: 'Abrir um pull request', description: 'Pede uma segunda opinião e depois abre um pull request. Se a segunda opinião discordar, espera por si.', inputs: { base: 'Branch base', title: 'Título do pull request', body: 'Descrição', question: 'Pergunta para a segunda opinião' } },
 };
@@ -11207,7 +11311,8 @@ const pt: WorkflowEditorPageTranslations = {
         workflowSub: 'Executa outro workflow · os seus passos aparecem nesta execução',
         builtin: 'Integrado',
         waitTitle: 'Esperar por si',
-        waitSub: 'Esta faixa espera até que continue.',
+        waitSub: 'Esta faixa espera até que continue',
+        waitSubRoot: 'Este fluxo de trabalho espera até você continuar.',
         waitPlaceholder: 'O que deve verificar ou decidir aqui?',
         returnsText: 'Devolve texto',
         returnsFields: ({ fields }) => `Devolve ${fields}`,
@@ -11219,11 +11324,18 @@ const pt: WorkflowEditorPageTranslations = {
         actionSearch: 'Procurar ações',
         workflowSearch: 'Procurar workflows',
         libraryGroup: 'Os seus workflows',
-        noAgentTurn: 'Sem turno do agente.',
+        noAgentTurn: 'Notificar, rever, publicar — sem turno do agente',
+        agentSub: 'Uma instrução para um agente',
+        parallelSub: 'Ramificações executadas ao mesmo tempo',
+        loopSub: 'Para cada item, várias vezes ou até…',
+        ifSub: 'Somente quando um resultado indicar',
+        actionSourcePhone: 'Seu telefone',
+        actionSourceReview: 'Mecanismos de revisão',
         useNumber: 'Usar um número',
         actionUnavailable: ({ action }: { action: string }) => `${action} não está disponível aqui.`,
         childInputs: ({ workflow }: { workflow: string }) => `As entradas vêm de ${workflow}.`,
         retryLoading: "Tentar carregar novamente",
+        openWorkflow: ({ workflow }) => `Abrir ${workflow}`,
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} executa este workflow, por isso não pode ser executado dentro dele.`,
         maxFromInput: ({ name }: { name: string }) => `Da entrada · ${name}`,
         useInput: ({ name }: { name: string }) => `Usar a entrada ${name}`,
@@ -11242,10 +11354,12 @@ const pt: WorkflowEditorPageTranslations = {
     settings: 'Definições do workflow',
     settingsSubtitle: 'Cada passo usa-as, a menos que as altere.',
     deleteWorkflow: 'Eliminar workflow',
-    deleteBody: 'As execuções anteriores ficam no histórico.',
+    deleteBody: 'As execuções anteriores são mantidas.',
+    discardChangesBody: 'Volta à última versão guardada. Anular recupera as suas alterações.',
     deleteFailedTitle: 'Não foi possível eliminar o workflow',
     changedForStep: 'Alterado para este passo',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '1 coisa a corrigir antes de poder executar' : `${count} coisas a corrigir antes de poder executar`),
+    readyToRun: 'Pronto',
     saveStatus: {
         notSaved: 'Ainda não guardado',
         unsaved: 'Alterações por guardar',
@@ -11311,6 +11425,7 @@ const pt: WorkflowEditorPageTranslations = {
         dropContinue: ({ session }) => `Continuar ${session} nesta etapa`,
         dropRefused: ({ session, machine, where }) => `${session} está em ${machine}; este fluxo executa em ${where}.`,
         lanes: ({ count }) => `Lado a lado · ${count} faixas`,
+        laneCount: ({ count }) => (count === 1 ? '1 faixa' : `${count} faixas`),
         lane: ({ position }) => `Faixa ${position}`,
         forEachIn: ({ source }) => `Para cada item em ${source}`,
         atATime: ({ count }) => `${count} por vez`,
@@ -11338,8 +11453,14 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "pt"> = { pt: {
+        notifyWhenAgentWaits: { title: "Avise-me quando um agente esperar", description: "Escolha uma sessão e receba uma notificação sempre que o agente precisar da sua intervenção." },
+        dailySummaryInSession: { title: "Resumo diário nesta sessão", description: "Escolha uma sessão para receber um resumo todos os dias às 09:00." },
+        memoryUpkeepInSession: { title: 'Manutenção da memória', description: 'Revise a memória desta sessão todos os dias às 09:00 e mantenha os fatos úteis atualizados.' },
+        installDepsInWorktree: { title: "Instalar dependências em uma nova árvore de trabalho", description: "Crie uma nova árvore de trabalho e execute nela um comando de instalação que você pode editar." },
+        testAfterEveryTurn: { title: "Testar após cada turno", description: "Escolha uma sessão e execute um comando de teste que você pode editar após cada turno concluído, com falha ou cancelado." },
+        noSessions: "Inicie uma sessão de trabalho para usar este modelo.",
         nodes: { ask: 'Perguntar', 'review-correctness': 'Revisar a correção', 'review-tests': 'Revisar testes', summarize: 'Resumir achados', analyze: 'Analisar', review: 'Revisar', fix: 'Corrigir', check: 'Verificar', classify: 'Classificar', reply: 'Redigir uma resposta', digest: 'Resumir mudanças' },
-        title: 'Começar com um exemplo', fromExample: 'De um exemplo', description: 'Cada um abre como rascunho. Nada executa até você escolher Executar agora.', use: 'Usar este', chooseSession: 'Escolher uma sessão…', builtInDescription: 'Parte do Happier. Duplique para alterar.', stepCount: ({ count }) => `${count} ${count === 1 ? 'etapa' : 'etapas'}`,
+        title: 'Começar com um exemplo', fromExample: 'De um exemplo', description: 'Cada um abre como rascunho. Nada executa até você escolher Executar agora.', sessionDescription: 'Cada um abre como rascunho nesta sessão. Nada é executado até você ativá-lo.', use: 'Usar este', chooseSession: 'Escolher uma sessão…', builtInDescription: 'Parte do Happier. Duplique para alterar.', stepCount: ({ count }) => `${count} ${count === 1 ? 'etapa' : 'etapas'}`,
         askOnce: { title: 'Perguntar uma vez', description: 'Um passo: pergunte algo a um agente e receba a resposta.' },
         reviewPullRequest: { title: 'Revisar um pull request', description: 'Dois revisores em paralelo, depois um resumo com todos os achados.' },
         workThroughEachFile: { title: 'Trabalhar em cada arquivo', description: 'Para cada arquivo de uma lista, um por vez: analisar e revisar a mudança.' },
@@ -11412,7 +11533,7 @@ const workflowRunCompositionTranslations = {...Domain_workflowRunCompositionTran
 
 const en = Shared_workflowStartTranslations.en;
 
-const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "pt"> = { pt: { ...workflowRunRoleTranslations.pt, ...workflowRunCompositionTranslations.pt, neededNamed: ({ name }) => `Entradas · falta ${name}`, addToStart: ({ name }) => `Adicione ${name} para iniciar`, workflow: 'Fluxo de trabalho', inputs: 'Entradas', start: 'Iniciar', starting: 'Iniciando…', stillStarting: 'Ainda iniciando…', needed: ({ count }) => `Entradas · faltam ${count}`, required: 'Necessário para iniciar', preview: 'O que será feito', unsaved: 'Inclui alterações não salvas', remove: 'Voltar a uma sessão normal', search: 'Encontrar um fluxo', builtin: 'Integrados', library: 'Sua biblioteca', noInputs: 'Nenhuma entrada necessária', asksFor: ({ names }) => `Solicita ${names}`, optional: 'Opcional — deixado vazio', defaultValue: ({ value }) => `Padrão: ${value}` } };
+const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "pt"> = { pt: { ...workflowRunRoleTranslations.pt, ...workflowRunCompositionTranslations.pt, shortcutStarts: 'inicia', neededNamed: ({ name }) => `Entradas · falta ${name}`, addToStart: ({ name }) => `Adicione ${name} para iniciar`, workflow: 'Fluxo de trabalho', inputs: 'Entradas', start: 'Iniciar', starting: 'Iniciando…', stillStarting: 'Ainda iniciando…', needed: ({ count }) => `Entradas · faltam ${count}`, required: 'Necessário para iniciar', preview: 'O que será feito', unsaved: 'Inclui alterações não salvas', remove: 'Voltar a uma sessão normal', search: 'Encontrar um fluxo', builtin: 'Integrados', library: 'Sua biblioteca', noInputs: 'Nenhuma entrada necessária', asksFor: ({ names }) => `Solicita ${names}`, optional: 'Opcional — deixado vazio', defaultValue: ({ value }) => `Padrão: ${value}` } };
 
 return { workflowStartTranslations };
 })();
@@ -11488,7 +11609,6 @@ const pt: WorkflowsDestinationTranslations = {
         share: 'Compartilhar…',
     },
     deleteTitle: 'Excluir este fluxo de trabalho?',
-    deleteBody: 'As execuções anteriores ficam no Histórico.',
     deleteFailedTitle: 'Não foi possível excluir o fluxo de trabalho',
     exportFailedTitle: 'Não foi possível exportar o fluxo de trabalho',
     gate: {
@@ -11518,6 +11638,15 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const pt: WorkflowTriggersCopy = {
+    activity: {
+        create: "Criar um gatilho a partir deste evento",
+        test: "Testar este gatilho",
+        matched: "Este evento corresponde",
+        noMatch: "Este evento não corresponde",
+        sourceMismatch: "Este evento veio de outra fonte",
+        tooOld: "Este evento é antigo demais para a observação",
+        invalid: "Configure o evento antes de testar",
+    },
     pullRequest: {
         label: "Pull request",
         description: "Adicionar este gatilho vincula a pull request a esta sessão.",
@@ -11537,6 +11666,7 @@ const pt: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · mais ${count}`,
     },
     kind: {
+        pluginEvent: "Evento de plugin",
         sessionStarts: 'Quando a sessão começa',
         sessionArchived: 'Quando a sessão é arquivada',
         schedule: 'Em um horário',
@@ -11556,6 +11686,9 @@ const pt: WorkflowTriggersCopy = {
         templateDecryptionFailed: 'Não foi possível descriptografar o gatilho',
         machines: ({ count }: Count) => `${count} máquinas`,
         nextRun: ({ time }: { time: string }) => `Próxima execução: ${time}`,
+        nextMinutes: ({ count }: Count) => `em ${count} min`,
+        nextHours: ({ count }: Count) => `em ${count} h`,
+        nextDays: ({ count }: Count) => count === 1 ? 'amanhã' : `em ${count} dias`,
         steps: ({ count }) => (count === 1 ? `${count} passo` : `${count} passos`),
         off: 'Desligado',
         running: 'Em execução',
@@ -11573,6 +11706,7 @@ const pt: WorkflowTriggersCopy = {
         info: 'O que é executado nesta sessão quando algo acontece. Eles ficam com esta sessão e não aparecem na sua biblioteca.',
         saveFailed: 'Não foi possível salvar este gatilho. Suas alterações ainda estão aqui.',
     },    kindDescription: {
+        pluginEvent: "Executar quando um plugin observar um evento.",
         turnEnds: 'Depois de um turno seu ou de um agente com quem você trabalha.',
         needsYou: 'Sempre que esta sessão espera por você, inclusive enquanto um fluxo ou Continuar até terminar a conduz.',
         sessionArchived: 'Executa uma vez, quando você arquiva esta sessão.',
@@ -11607,6 +11741,8 @@ const pt: WorkflowTriggersCopy = {
         choose: 'Escolher…',
     },
     popover: {
+        configureEvent: "Configurar evento",
+        editEvent: "Editar evento",
         saveAsWorkflow: 'Salvar como fluxo',
         saveAsWorkflowDescription: 'Abre estes passos como um novo fluxo para revisar. Este gatilho mantém os próprios passos.',
         when: 'Quando',
@@ -11650,6 +11786,8 @@ const pt: WorkflowTriggersCopy = {
 const legacyTranslations = { pt: {
         editNotice: 'Criado no Happier 0.2. Abrir não altera nada.',
         conversionBoundary: 'Após esta alteração, ela só funciona em máquinas com Happier 0.3 ou posterior.',
+        reviewRequired: 'Precisa da sua revisão',
+        reviewConversionNotice: 'Ao salvar, o workflow é armazenado sem criptografia de ponta a ponta e seus gatilhos habilitados são retomados. A sessão continua criptografada de ponta a ponta.',
         channelReplyRefusal: 'Esta automação tem um vínculo de resposta a um canal que não pode ser transferido. Não foi convertida; suas configurações e suas alterações continuam intactas.',
         notAvailable: 'Esta automação não está mais disponível.',
     } };
@@ -11664,7 +11802,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { pt: {
         checkoutRoot: 'Pasta raiz do checkout',
-        unavailableValue: 'Valor indisponível', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Contexto da sessão' : `Últimos ${turns} turnos da sessão`,
+        unavailableValue: 'Valor indisponível', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Contexto da sessão' : turns === 1 ? 'Último turno da sessão' : `Últimos ${turns} turnos da sessão`,
         tokensUsed: 'Tokens utilizados', goalTokenBudget: 'Orçamento de tokens do objetivo',
         trailingCount: ({ source, value }: { source: string; value: string }) => `${source} consecutivos correspondentes a ${value}`,
         stopCondition: 'Condição de paragem cumprida', stopConditionArm: ({ arm }: { arm: number }) => `Condição de paragem ${arm} cumprida`,
@@ -11712,6 +11850,23 @@ const pluralPl = Shared_workflowTranslations.pluralPl;
 const pluralRu = Shared_workflowTranslations.pluralRu;
 
 const pt = translated(workflowValueReferenceTranslations.pt, {
+    testRun: {
+        title: "Execução de teste",
+        savedNotice: "Executa a versão salva de verdade. As alterações não salvas ficam aqui.",
+        resultsNotice: "Resultados da versão salva · última execução. As alterações não salvas não foram executadas.",
+        recordedDuration: ({ seconds }) => `Tempo decorrido registrado · ${seconds} s`,
+        loading: "Carregando os resultados do teste…",
+    },
+    runWhen: {
+        title: "Executar quando",
+        success: "Sucesso",
+        failure: "Falha",
+        always: "Sempre",
+        ifSuccess: "Se tiver sucesso",
+        ifFailure: "Se falhar",
+        regardless: "Em qualquer caso",
+        previousStep: "Em relação à etapa anterior",
+    },
     title: 'Fluxos de trabalho',
     newWorkflow: 'Novo fluxo de trabalho',
     copyName: ({ name }: { name: string }) => `${name} cópia`,
@@ -11817,6 +11972,17 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
     loadFailedBody: 'Seu trabalho não foi afetado. Tente de novo quando quiser.',
     retry: 'Tentar de novo',
     contentUnavailable: 'O conteúdo privado não está disponível neste dispositivo.',
+    readState: {
+        historyTitle: 'Não é possível ler o histórico',
+        historyBody: 'Esta execução foi registada numa versão de desenvolvimento anterior do Happier, por isso não é possível abrir o histórico. Inicie uma nova execução para continuar.',
+        encryptionTitle: 'É necessário configurar a encriptação',
+        encryptionBody: 'Este conteúdo está encriptado de ponta a ponta. Configure a encriptação desta conta para o abrir.',
+        keysTitle: 'À espera das chaves',
+        keysBody: 'Este dispositivo ainda não tem as chaves de encriptação desta execução. Tente novamente quando estiverem disponíveis.',
+        storageTitle: 'O armazenamento de execuções está indisponível',
+        storageBody: 'O Happier não conseguiu aceder ao armazenamento de execuções. Verifique a ligação e tente novamente.',
+        openSettings: 'Abrir definições',
+    },
     contentReasons: {
         invalidHeader: 'As informações salvas deste fluxo de trabalho são inválidas.',
         revisionMismatch: 'Este fluxo de trabalho não corresponde à revisão salva.',
@@ -11875,7 +12041,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         undo: 'Desfazer',
         redo: 'Refazer',
         historyRestoreRequiresSetup: 'Este evento precisa ser configurado novamente. A configuração privada salva não pode ser restaurada após a exclusão.',
-        history: { edited: 'Editar workflow', agent: 'Alteração do agente', description: 'Editar descrição', where: 'Alterar local de execução', target: 'Alterar execução das etapas', triggers: 'Editar gatilhos', example: 'Inserir exemplo', document: 'Editar prompt' },
+        history: { edited: 'Editar workflow', agent: 'Alteração do agente', description: 'Editar descrição', where: 'Alterar local de execução', target: 'Alterar execução das etapas', triggers: 'Editar gatilhos', example: 'Inserir exemplo', document: 'Editar prompt', renameWorkflow: 'Renomear workflow', renameStep: 'Renomear etapa', renameLane: 'Renomear ramo' },
         undoAction: ({ change }: { change: string }) => `Desfazer: ${change}`,
         redoAction: ({ change }: { change: string }) => `Refazer: ${change}`,
         removedBlock: ({ block }) => `${block} removido`,
@@ -11886,8 +12052,8 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         unnamedLoop: 'Laço',
         unnamedIf: 'Condição',
         branch: 'Ramo',
-        addBranch: 'Adicionar um ramo',
-        ifTrue: 'Se verdadeiro',
+        addBranch: 'Adicionar uma faixa',
+        ifTrue: 'Então',
         otherwise: 'Caso contrário',
         addOtherwise: 'Adicionar um ramo “caso contrário”',
         evaluator: 'Decidir se continua',
@@ -11949,7 +12115,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         change: 'Alterar',
         clear: 'Limpar a seleção',
         fieldPath: 'Caminho do campo',
-        explain: 'O resultado final é o que este fluxo de trabalho devolve quando termina. A ordem de conclusão nunca altera isso.',
+        explain: 'O que este fluxo de trabalho devolve quando termina.',
     },
 
     conversation: {
@@ -12003,7 +12169,13 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         operatorLte: 'é no máximo',
         operatorGt: 'é maior que',
         operatorGte: 'é pelo menos',
+        notFirstRound: 'não é a primeira rodada',
+        trailingCountAtLeast: ({ source, value, count }) => `${source} é ${value} ${count} vezes seguidas`,
+        loopRanOutOfRounds: ({ loop }) => `${loop} ficou sem rodadas`,
+        loopEnded: ({ loop, outcome }) => `${loop} terminou: ${outcome}`,
+        loopStoppedBecause: ({ loop, condition }) => `${loop} parou porque ${condition}`,
         valuePlaceholder: 'Valor',
+        literalPlaceholder: 'Digite um valor',
         skippedReason: ({ block }) => `Ignorado porque a condição de ${block} era falsa.`,
     },
 
@@ -12227,6 +12399,10 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         unsupported_persisted_attachment: 'As mídias anexadas precisam de uma referência durável antes de salvar.',
         conversation_workspace_mismatch: 'Esta conversa e este espaço de trabalho não podem continuar juntos.',
         target_unavailable: 'Escolha um Agente para este fluxo de trabalho antes de executá-lo.',
+        emptyPrompt: 'Escreva o que esta etapa deve fazer.',
+        emptyWaitPrompt: 'Escreva o que você deve verificar ou decidir aqui.',
+        fieldMissing: ({ field }) => `${field} é obrigatório.`,
+        fieldInvalid: ({ field }) => `${field} precisa de um valor válido.`,
     },
 
     problem: {
@@ -12414,7 +12590,7 @@ const pt = completeWorkspaceSyncTranslation({
         targetMachineOffline: 'Esse computador não está disponível agora. Volta a ligá-lo e tenta novamente.',
         relationshipUnavailable: 'Esta relação de sincronização já não abrange estas duas pastas. Escolhe outra opção para o espaço de trabalho.',
         sourceFolder: 'A pasta desta sessão não pode ser sincronizada com segurança. Escolhe “Não mover ficheiros” para transferir apenas a sessão.',
-        destinationFolder: 'Escolhe uma pasta de destino que possa ser sincronizada com segurança.',
+        destinationFolder: 'Escolhe uma pasta de destino válida.',
         workspaceOptions: 'Revê as opções do espaço de trabalho antes de começar.',
     } },
     engine: { checking: 'A verificar a sincronização neste computador…' },

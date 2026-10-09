@@ -7,6 +7,7 @@ import type { createEphemeralServerSocketClient as createEphemeralServerSocketCl
 import type { resolveServerScopedContext as resolveServerScopedContextFn } from './resolveServerScopedContext';
 import type { ScopedRpcEncryptionContext } from './serverScopedRpcTypes';
 import { resolveServerScopedMachineLiveStreamRelaySocket } from './serverScopedMachineLiveStreamRelaySocket';
+import { Encryption } from '@/sync/encryption/encryption';
 
 const state = vi.hoisted(() => ({
     profileId: 'user-1',
@@ -16,11 +17,7 @@ const apiSocketSendSpy = vi.hoisted(() => vi.fn<(payload: MachineLiveStreamRelay
 const apiSocketOnSpy = vi.hoisted(() => vi.fn<(listener: (payload: MachineLiveStreamRelayEnvelopeV1) => void) => () => void>(() => () => {}));
 const createEphemeralServerSocketClientSpy = vi.hoisted(() => vi.fn<typeof createEphemeralServerSocketClientFn>());
 const resolveServerScopedContextSpy = vi.hoisted(() => vi.fn<typeof resolveServerScopedContextFn>());
-const scopedRpcEncryptionStub: ScopedRpcEncryptionContext = {
-    decryptEncryptionKey: async () => null,
-    initializeMachines: async () => {},
-    getMachineEncryption: () => null,
-};
+let scopedRpcEncryptionStub: ScopedRpcEncryptionContext;
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -72,7 +69,8 @@ function makeStartEnvelope(): MachineLiveStreamRelayEnvelopeV1 {
 }
 
 describe('resolveServerScopedMachineLiveStreamRelaySocket', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        scopedRpcEncryptionStub = await Encryption.create(new Uint8Array(32).fill(17));
         state.profileId = 'user-1';
         apiSocketSendSpy.mockReset();
         apiSocketOnSpy.mockReset();

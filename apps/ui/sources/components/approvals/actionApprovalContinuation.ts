@@ -4,7 +4,7 @@ import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/ap
 import { resolveApprovalPresentationInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ApprovalExecutionOriginV1, ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { HomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
@@ -131,6 +131,7 @@ function inspectActionApprovalRequest<TActionId extends ActionId>(input: Readonl
     scope: ServerAccountScope;
     expectedInputCanonical?: string | null;
     expectedRequestId?: string;
+    expectedExecutionOriginCanonical?: string | null;
 }>): ApprovalRequestInspection {
     if (input.artifact.id !== input.artifactId) return { kind: 'different_artifact' };
     if (typeof input.artifact.body !== 'string') return { kind: 'invalid_artifact' };
@@ -140,10 +141,16 @@ function inspectActionApprovalRequest<TActionId extends ActionId>(input: Readonl
     if (
         request.actionId !== input.actionId
         || request.executionOriginV1.actionId !== input.actionId
-        || request.executionOriginV1.authority !== 'present_user'
-        || request.executionOriginV1.surface !== 'ui'
-        || request.requestedSurface !== 'ui'
-        || request.executionOriginV1.caller.kind !== 'host'
+        || (input.expectedExecutionOriginCanonical === undefined && (
+            request.executionOriginV1.authority !== 'present_user'
+            || request.executionOriginV1.surface !== 'ui'
+            || request.requestedSurface !== 'ui'
+            || request.executionOriginV1.caller.kind !== 'host'
+        ))
+        || (input.expectedExecutionOriginCanonical !== undefined && (
+            input.expectedExecutionOriginCanonical === null
+            || canonicalApprovalInputIdentity(request.executionOriginV1) !== input.expectedExecutionOriginCanonical
+        ))
         || request.executionOriginV1.accountId !== input.scope.accountId
         || (
             input.expectedRequestId !== undefined
@@ -179,6 +186,8 @@ type CreateActionApprovalContinuationInput<TValue, TActionId extends ActionId> =
     signal?: AbortSignal;
     /** Bind settlement to the originating invocation when its caller received that identity. */
     expectedRequestId?: string;
+    /** Exact immutable origin obtained from an already validated Artifact, never reconstructed from a renderer caller. */
+    expectedExecutionOrigin?: ApprovalExecutionOriginV1;
     /**
      * The originating Action input. When present, settlement compares the
      * canonical JSON of its observation projection against the projection the
@@ -208,6 +217,9 @@ export function createActionApprovalContinuation(
     const expectedInputCanonical = Object.prototype.hasOwnProperty.call(input, 'expectedInput')
         ? canonicalObservedApprovalInput(input.actionId, input.expectedInput)
         : undefined;
+    const expectedExecutionOriginCanonical = Object.prototype.hasOwnProperty.call(input, 'expectedExecutionOrigin')
+        ? canonicalApprovalInputIdentity(input.expectedExecutionOrigin)
+        : undefined;
     return Object.freeze({
         artifactId: input.artifactId,
         ...(input.signal ? { signal: input.signal } : {}),
@@ -219,6 +231,7 @@ export function createActionApprovalContinuation(
                 scope: input.scope,
                 ...(expectedInputCanonical !== undefined ? { expectedInputCanonical } : {}),
                 ...(input.expectedRequestId !== undefined ? { expectedRequestId: input.expectedRequestId } : {}),
+                ...(expectedExecutionOriginCanonical !== undefined ? { expectedExecutionOriginCanonical } : {}),
             });
             if (inspection.kind === 'different_artifact') return 'ignored';
             if (inspection.kind === 'invalid_artifact') {
@@ -259,6 +272,7 @@ export function createActionApprovalContinuation(
                 scope: input.scope,
                 ...(expectedInputCanonical !== undefined ? { expectedInputCanonical } : {}),
                 ...(input.expectedRequestId !== undefined ? { expectedRequestId: input.expectedRequestId } : {}),
+                ...(expectedExecutionOriginCanonical !== undefined ? { expectedExecutionOriginCanonical } : {}),
             });
             if (inspection.kind === 'different_artifact') return;
             if (inspection.kind === 'invalid_artifact') {

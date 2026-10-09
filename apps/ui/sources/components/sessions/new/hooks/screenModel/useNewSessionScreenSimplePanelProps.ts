@@ -3,6 +3,7 @@ import { useNewSessionSimplePanelProps } from '@/components/sessions/new/hooks/u
 import type { MachinePoolSelectionOriginV1, SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { describeExecutionTargetDestination } from '@/components/sessions/new/hooks/temporaryComputerTargetPresentation';
+import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { t } from '@/text';
 
 type ModelOptionsProbe = NonNullable<NewSessionSimplePanelProps['modelOptionsProbe']>;
@@ -105,8 +106,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'resumePopover'
         | 'isResumeSupportChecking'
     > & Readonly<{
-        machineDisplayName?: string;
-        machineHost?: string;
+        selectedMachine: Pick<MachineDisplayRenderable, 'id' | 'metadata' | 'availability'> | null;
         /**
          * The draft's committed target. A Temporary computer has no Machine to
          * name, so the composer chip must read it from here or keep telling the
@@ -130,17 +130,13 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     const { modelOptionsProbeState, ...modelProps } = params.model;
     const { acpSessionModeProbeState, acpConfigOptionsProbeState, ...acpProps } = params.acp;
     const {
-        machineDisplayName,
-        machineHost,
+        selectedMachine,
         destination,
         executionTarget,
         ...machineAndResumeProps
     } = params.machineAndResume;
     const temporaryComputerName = describeExecutionTargetDestination(executionTarget);
-    const machineName = temporaryComputerName ?? getMachineDisplayName({
-        id: params.profile.selectedMachineId,
-        metadata: { displayName: machineDisplayName, host: machineHost },
-    });
+    const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine);
     const destinationParts = machineName ? [machineName] : [];
     const serverId = params.targetServerId;
     // Pool provenance and the Home prefix describe an exact Machine choice; a

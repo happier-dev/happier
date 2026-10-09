@@ -53,6 +53,7 @@ import { SessionMessageAccountByline } from '@/components/sessions/transcript/Se
 import { useSessionMessageAuthorshipScope } from '@/components/sessions/transcript/useSessionMessageAuthorshipScope';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
+import type { PendingMessageWithdrawRecoveryResult } from '@/components/sessions/composer/pendingMessageComposerDocumentOwner';
 
 function getPendingText(message: PendingMessage | DiscardedPendingMessage): string {
     const raw = (message.displayText ?? message.text) ?? '';
@@ -162,7 +163,13 @@ export type PendingMessageEditRequest = Readonly<{
     text: string;
     displayText?: string;
     message: PendingMessage;
+    /** Ordinary editing retains queue custody; withdrawal requires confirmed owner removal. */
+    mode?: 'edit' | 'withdraw';
+    /** Host-only receipt from the direct UI confirmation, never an Action input. */
+    withdrawalConfirmed?: true;
 }>;
+
+export type PendingMessageEditHandler = (request: PendingMessageEditRequest) => void | Promise<void | PendingMessageWithdrawRecoveryResult>;
 
 export function PendingMessagesTranscriptBlock(props: Readonly<{
     sessionId: string;
@@ -177,7 +184,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     recipient?: PendingMessage['recipient'];
     pendingMessages: readonly PendingMessage[];
     discardedMessages: readonly DiscardedPendingMessage[];
-    onEditPendingMessage?: (request: PendingMessageEditRequest) => void | Promise<void>;
+    onEditPendingMessage?: PendingMessageEditHandler;
     /**
      * The painted height of one queued utterance's message bubble, reported on every layout of the
      * HEAD's bubble. The transcript carries it to the committed row that replaces this one so the

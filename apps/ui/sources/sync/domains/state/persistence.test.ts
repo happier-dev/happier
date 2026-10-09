@@ -3,6 +3,7 @@ import { settingsDefaults, settingsParse } from '../settings/settings';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ServerAccountScope } from '../scope/serverAccountScope';
 import { sessionDraftValuesStorageKey } from './sessionLocalStateKeys';
+import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -847,6 +848,124 @@ describe('persistence', () => {
     });
 
     describe('new session draft', () => {
+        const managedReceipt = {
+            launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1,
+                name: 'Reviewed guest', choices: { cores: 2 } },
+            controller: { machineId: 'controller-a', installationId: 'installation-a' },
+            optionStatus: 'current',
+            billing: { location: 'local', stoppedBilling: 'not-billed' },
+            prerequisites: [],
+            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+            retention: { kind: 'until-delete' },
+            wakeOnAcceptedMessage: false,
+            preset: { id: 'preset-a', revision: 7, name: 'Reviewed preset' },
+        } satisfies ManagedConfigurationFactsV1;
+        const ordinaryDraft = {
+            input: 'Keep this reviewed request', selectedMachineId: null, selectedPath: null,
+            selectedProfileId: null, selectedSecretId: null, agentType: 'codex' as const,
+            permissionMode: 'default' as const, acpSessionModeId: null, updatedAt: 42,
+        };
+
+        it.each([
+            { kind: 'preset' as const, homeId: 'home-a', id: 'preset-a', revision: 7 },
+            { kind: 'one-off' as const, homeId: 'home-a', launch: managedReceipt.launch,
+                controller: managedReceipt.controller, retention: managedReceipt.retention,
+                wakeOnAcceptedMessage: managedReceipt.wakeOnAcceptedMessage },
+        ])('roundtrips the exact reviewed $kind managed selection in its account-scoped draft', (selection) => {
+            const managedMachineSelection = { selection, receipt: managedReceipt, archiveEffect: 'stop' as const };
+            const managedMachineAcquisition = { requestId: 'reviewed-request', selection, managedId: 'paid-resource' };
+            saveNewSessionDraft({ ...ordinaryDraft, managedMachineSelection, managedMachineAcquisition }, sessionLocalScopeA);
+
+            expect(loadNewSessionDraft(sessionLocalScopeA)).toMatchObject({
+                input: ordinaryDraft.input, managedMachineSelection, managedMachineAcquisition,
+            });
+            expect(loadNewSessionDraft(sessionLocalScopeB)).toBeNull();
+            clearNewSessionDraft(sessionLocalScopeA);
+            expect(loadNewSessionDraft(sessionLocalScopeA)).toBeNull();
+        });
+
+        it('normalizes stored managed extras and rewrites only the canonical reviewed selection and receipt', () => {
+            const managedMachineSelection = {
+                selection: { kind: 'preset' as const, homeId: 'home-a', id: 'preset-a', revision: 7 },
+                receipt: managedReceipt, archiveEffect: 'keep' as const,
+            };
+            const managedMachineAcquisition = {
+                requestId: 'reviewed-request', selection: managedMachineSelection.selection, managedId: 'paid-resource',
+            };
+            store.set('new-session-draft-v1', JSON.stringify({ ...ordinaryDraft,
+                managedMachineSelection: { ...managedMachineSelection, future: true,
+                    selection: { ...managedMachineSelection.selection, future: true },
+                    receipt: { ...managedReceipt, future: true,
+                        controller: { ...managedReceipt.controller, future: true },
+                        launch: { ...managedReceipt.launch, provider: { ...managedReceipt.launch.provider, future: true } },
+                        billing: { ...managedReceipt.billing, future: true },
+                        preset: { ...managedReceipt.preset, future: true } },
+                },
+                managedMachineAcquisition: { ...managedMachineAcquisition, future: true,
+                    selection: { ...managedMachineAcquisition.selection, future: true } },
+            }));
+
+            const reopened = loadNewSessionDraft();
+            expect(reopened).toMatchObject({ managedMachineSelection, managedMachineAcquisition });
+            if (!reopened) throw new Error('Expected the reviewed managed draft');
+            saveNewSessionDraft(reopened);
+            expect(JSON.parse(store.get('new-session-draft-v1')!).managedMachineSelection).toEqual(managedMachineSelection);
+            expect(JSON.parse(store.get('new-session-draft-v1')!).managedMachineAcquisition).toEqual(managedMachineAcquisition);
+        });
+
+        it('drops malformed managed identities without losing ordinary draft content and preserves explicit clearing', () => {
+            store.set('new-session-draft-v1', JSON.stringify({ ...ordinaryDraft,
+                managedMachineSelection: { selection: { kind: 'preset', homeId: 'home-a', id: 'preset-a', revision: -1 },
+                    receipt: managedReceipt, archiveEffect: 'keep' },
+                managedMachineAcquisition: { requestId: '', selection: { kind: 'preset', homeId: 'home-a', id: 'preset-a', revision: 7 } },
+            }));
+            const reopened = loadNewSessionDraft();
+            expect(reopened?.input).toBe(ordinaryDraft.input);
+            expect(reopened).not.toHaveProperty('managedMachineSelection');
+            expect(reopened).not.toHaveProperty('managedMachineAcquisition');
+
+            saveNewSessionDraft({ ...ordinaryDraft, managedMachineSelection: null, managedMachineAcquisition: null });
+            expect(loadNewSessionDraft()).toMatchObject({ managedMachineSelection: null, managedMachineAcquisition: null });
+
+            // The inspected 0.2 writer has no managed selection field.
+            store.set('new-session-draft-v1', JSON.stringify(ordinaryDraft));
+            expect(loadNewSessionDraft()).toMatchObject({ input: ordinaryDraft.input, selectedMachineId: null });
+            expect(loadNewSessionDraft()).not.toHaveProperty('managedMachineSelection');
+        });
+
+        it('rejects noncanonical managed writes before replacing the retained draft', () => {
+            saveNewSessionDraft(ordinaryDraft);
+            const original = store.get('new-session-draft-v1');
+            const malformed = { ...ordinaryDraft, managedMachineSelection: {
+                selection: { kind: 'preset' as const, homeId: 'home-a', id: 'preset-a', revision: 7 },
+                receipt: managedReceipt, archiveEffect: 'keep' as const, foreign: true,
+            } };
+            expect(() => saveNewSessionDraft(malformed)).toThrow();
+            expect(store.get('new-session-draft-v1')).toBe(original);
+            const malformedAcquisition = { ...ordinaryDraft, managedMachineAcquisition: {
+                requestId: 'reviewed-request', selection: malformed.managedMachineSelection.selection, foreign: true,
+            } };
+            expect(() => saveNewSessionDraft(malformedAcquisition)).toThrow();
+            expect(store.get('new-session-draft-v1')).toBe(original);
+        });
+
+        it('normalizes stored origin extras and writes the original destination after launch target edits', () => {
+            const authoringOrigin = { kind: 'project', accountId: 'account-a', page: 'scripts',
+                workspace: { serverId: 'server-a', workspaceId: 'workspace-a', machineId: 'machine-a', rootPath: '/original' } };
+            store.set('new-session-draft-v1', JSON.stringify({
+                input: 'Set up this checkout', selectedMachineId: 'machine-a', selectedPath: '/original',
+                selectedProfileId: null, selectedSecretId: null, agentType: 'codex', permissionMode: 'default',
+                modelMode: 'default', acpSessionModeId: null, updatedAt: 42,
+                authoringOrigin: { ...authoringOrigin, future: true, workspace: { ...authoringOrigin.workspace, future: true } },
+            }));
+            const reopened = loadNewSessionDraft();
+            expect(reopened?.authoringOrigin).toEqual(authoringOrigin);
+            if (!reopened) throw new Error('Expected an ordinary draft with stored origin');
+            saveNewSessionDraft({ ...reopened, selectedMachineId: 'machine-b', selectedPath: '/edited' });
+            expect(loadNewSessionDraft()).toMatchObject({ selectedMachineId: 'machine-b', selectedPath: '/edited', authoringOrigin });
+            expect(JSON.parse(store.get('new-session-draft-v1')!).authoringOrigin).toEqual(authoringOrigin);
+        });
+
         it('roundtrips contentless plugin composer attachments in the account-scoped new-session draft', () => {
             saveNewSessionDraft({
                 input: 'Review issue 42',

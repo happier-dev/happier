@@ -1,0 +1,21 @@
+import { createMachineSharingTranslations } from '../machineSharingTranslations.shared';
+export const machineSharing = createMachineSharingTranslations({
+    terminals: { projectEmpty: 'Open a terminal in this Project.', opening: 'Opening terminal.', sharedOs: 'This terminal runs as the operating-system user on {machine}. That user can read local credentials and encryption keys. Use a dedicated team machine for shared work.', denied: 'You no longer have access to this terminal.', rootDenied: 'This workspace is not available for a terminal.', offline: 'This machine is offline. Last-known output is shown.', openUnknown: 'The terminal may have opened. Check existing terminals before trying again.', unavailable: 'Terminals are not available on this machine.', failed: 'Could not open this terminal.' },
+    revoked: '{owner} stopped sharing {machine}. Your running work here is being stopped. Your sessions stay in your history; you cannot start new work here.',
+    recipientEncryptionIncompatible: 'This end-to-end encrypted machine requires an end-to-end encrypted Account.',
+    destinations: { yours: 'Your machines', created: 'Created by Happier', shared: 'Shared with you · {team}', owner: "{owner}'s · {platform}", pendingKey: 'Waiting for secure access', sharedPurposeUnsupported: 'This work requires one of your machines.' },
+    title: 'Sharing', description: 'People and Teams you add can start sessions, run scripts and open terminals in workspaces on {machine}.',
+    trustedOs: 'People with terminal or agent access to {machine} run as your operating-system user and can obtain your local credentials and Account encryption key, if present. No Happier API reads or exports owner credentials or keys; anything a shared shell prints can contain them. We recommend sharing a dedicated team machine.',
+    manageHelp: 'People who can manage {machine} can also share it with others, giving them the same access.',
+    empty: 'Share {machine} so teammates can work here.', loading: 'Loading access to {machine}.', readError: 'Could not load access to {machine}.',
+    offline: '{machine} is offline. Access changes are saved here.', denied: 'Only people who can manage {machine} can change sharing.',
+    use: 'Can use', manage: 'Can manage', allMembers: 'All current members, including people who join later',
+    pending: 'Waiting for an authorized key holder to prepare access to {machine}.',
+    incompatible: "{machine} is end-to-end encrypted and {person}'s account is not, so {person} cannot open it.",
+    incompatibleHelp: 'Share a machine that is not encrypted, or ask {person} to turn on end-to-end encryption in Account settings.',
+    plain: 'Its data is not end-to-end encrypted, so the Home can read it.', saved: 'Sharing updated', yourAccess: 'Your access',
+    ownHistory: "Sessions you start here stay yours in Happier. People signed in to {machine}'s operating system can see their files and output there.",
+    leave: 'Leave this share', inherited: 'You still have access through {audience}. Ask its manager to change your access.', unavailable: 'Access to {machine} could not be checked.',
+    effectiveLoss: 'People losing their last access will have their running sessions, scripts and runs, queued and preparing work, terminals and services stopped. Their Happier history stays theirs; already obtained data cannot be retracted.',
+    overlap: 'Other valid access remains. Their work will keep running.', custodianProtected: 'The original machine owner cannot be removed or replaced here.',
+});

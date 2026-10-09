@@ -41,7 +41,7 @@ export interface SelectionTile<T extends string> {
     disabled?: boolean;
     badge?: string;
     /**
-     * A small rendering of what this option looks like (visual variant). Pass the real component at
+     * A small rendering of what this option looks like (visual tiles or compact card rows). Pass the real component at
      * static props — not a drawn replica — so the preview cannot drift from the product.
      */
     preview?: React.ReactNode;
@@ -108,6 +108,8 @@ type ActionSelectionTilesProps<T extends string> = {
     /** The group's accessible name. */
     accessibilityLabel?: string;
     testIdPrefix?: string;
+    /** A tile that carries its own state and operation (a provisioner card): status and its button. */
+    renderOptionFooter?: SelectionTileFooterRenderer<T>;
 };
 
 export type SelectionTilesProps<T extends string> =
@@ -129,9 +131,10 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         actionBorderHovered: theme.colors.border.strong,
     }), [theme]);
 
-    const renderText = React.useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines }) => (
+    const renderText = React.useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines, alignment }) => (
         <Text style={[
             textStyle(styles, role, selected, compact),
+            alignment ? { textAlign: alignment } : null,
             Platform.OS === 'web' && (role === 'visualLabel' || role === 'visualSublabel') ? WEB_VISUAL_TEXT_WRAPPING : null,
         ]} numberOfLines={numberOfLines}>{text}</Text>
     ), [styles]);
@@ -140,14 +143,14 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
     const renderGlyph = React.useCallback<HappierSelectionTilesGlyphRenderer<IconName>>(({ glyph, size, color }) => (
         <Icon name={glyph.kind === 'icon' ? glyph.name : 'check'} size={size} color={color} />
     ), []);
-    const footer = props.variant === 'action' ? undefined : props.renderOptionFooter;
+    const footer = props.renderOptionFooter;
     const renderOptionFooter = React.useCallback<HappierSelectionTileFooterRenderer<T, IconName>>((params) => {
         const option = props.options.find((candidate) => candidate.id === params.option.id);
         return option && footer ? footer({ ...params, option }) : null;
     }, [props.options, footer]);
 
     if (props.variant === 'action') {
-        return <HappierSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph} />;
+        return <HappierSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph} renderOptionFooter={footer ? renderOptionFooter : undefined} />;
     }
     return <HappierSelectionTiles {...props} options={options} colors={colors} renderText={renderText} renderGlyph={renderGlyph} renderOptionFooter={footer ? renderOptionFooter : undefined} />;
 }

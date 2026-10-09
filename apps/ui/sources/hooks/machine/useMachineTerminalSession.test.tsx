@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { Terminal } from '@xterm/xterm';
+import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 // Recipient-envelope HTTP is outside this controller journey and must remain unused.
 vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
@@ -27,6 +34,8 @@ import {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// Response fixtures belong to the external encrypted daemon RPC boundary. The real
+// Action admission, policy, machineTerminal codecs and stream carrier all stay live.
 const terminalOps = vi.hoisted(() => ({
     ensure: vi.fn(),
     restart: vi.fn(),
@@ -39,7 +48,9 @@ const terminalOps = vi.hoisted(() => ({
     resize: vi.fn(),
 }));
 
-const useFeatureEnabledMock = vi.hoisted(() => vi.fn((_featureId: string, _scope?: unknown) => true));
+let servedHomes: Awaited<ReturnType<typeof serveActionHomes>>;
+let homeIds: Readonly<{ primary: string; cancel: string; attach: string }>;
+let byteStreamEnabled = true;
 const queuedWriteResult = { status: 'queued' } satisfies EmbeddedTerminalWriteBytesResult;
 const clipboardState = vi.hoisted(() => ({
     setClipboardStringSafe: vi.fn(async () => true),
@@ -62,24 +73,31 @@ function readWriteGeneration(value: unknown): number | null {
         : null;
 }
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string, scope?: unknown) => useFeatureEnabledMock(featureId, scope),
-}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const responses = new Map<string, typeof terminalOps.ensure>([
+        [RPC_METHODS.DAEMON_TERMINAL_ENSURE, terminalOps.ensure],
+        [RPC_METHODS.DAEMON_TERMINAL_RESTART, terminalOps.restart],
+        [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ, terminalOps.streamRead],
+        [RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, terminalOps.streamReadBytes],
+        [RPC_METHODS.DAEMON_TERMINAL_STREAM_ACK, terminalOps.streamAcknowledge],
+        [RPC_METHODS.DAEMON_TERMINAL_STREAM_INPUT, terminalOps.streamSendInput],
+        [RPC_METHODS.DAEMON_TERMINAL_CLOSE, terminalOps.close],
+        [RPC_METHODS.DAEMON_TERMINAL_INPUT, terminalOps.input],
+        [RPC_METHODS.DAEMON_TERMINAL_RESIZE, terminalOps.resize],
+    ]);
+    return {
+        machineRpcWithServerScope: (request: Readonly<{ method: string; machineId: string; serverId?: string | null; accountId?: string | null; payload: unknown }>) => {
+            const response = responses.get(request.method);
+            if (!response) throw new Error(`Unexpected terminal RPC: ${request.method}`);
+            return response(request.machineId, request.payload, { serverId: request.serverId, ...(request.accountId ? { accountId: request.accountId } : {}) });
+        },
+    };
+});
 
-vi.mock('@/sync/ops/machineTerminal', () => ({
-    machineTerminalEnsure: (...args: unknown[]) => terminalOps.ensure(...args),
-    machineTerminalRestart: (...args: unknown[]) => terminalOps.restart(...args),
-    machineTerminalStreamRead: (...args: unknown[]) => terminalOps.streamRead(...args),
-    machineTerminalStreamReadBytes: (...args: unknown[]) => terminalOps.streamReadBytes(...args),
-    machineTerminalStreamAcknowledge: (...args: unknown[]) => terminalOps.streamAcknowledge(...args),
-    machineTerminalStreamSendInput: (...args: unknown[]) => terminalOps.streamSendInput(...args),
-    machineTerminalClose: (...args: unknown[]) => terminalOps.close(...args),
-    machineTerminalInput: (...args: unknown[]) => terminalOps.input(...args),
-    machineTerminalResize: (...args: unknown[]) => terminalOps.resize(...args),
-}));
-
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: clipboardState.setClipboardStringSafe,
+// The OS clipboard is external; keep the app's safe-write adapter and selection policy real.
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: clipboardState.setClipboardStringSafe,
 }));
 
 // This native rendering package is unavailable in the source runner and never
@@ -92,9 +110,43 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 // not consume the lifecycle test's fake-clock phase.
 await import('./useMachineTerminalSession');
 
+async function refreshTerminalFeatures(): Promise<void> {
+    for (const serverId of Object.values(homeIds)) {
+        await getServerFeaturesSnapshot({ serverId, force: true });
+    }
+}
+
 describe('useMachineTerminalSession', () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
+    beforeEach(async () => {
+        byteStreamEnabled = true;
+        const settings = {
+            featureToggles: { 'terminal.embeddedPty': true },
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: {
+                'machines.terminal.open': ['ui'], 'machines.terminal.restart': ['ui'],
+            } },
+        };
+        servedHomes = await serveActionHomes({
+            homes: [
+                { key: 'cancel', serverUrl: 'https://terminal-cancel.test', accountId: 'terminal-account', settings },
+                { key: 'attach', serverUrl: 'https://terminal-attach.test', accountId: 'terminal-account', settings },
+                { key: 'primary', serverUrl: 'https://terminal-primary.test', accountId: 'terminal-account', settings },
+            ],
+            route: request => request.path === '/v1/machines'
+                ? Response.json(['machine', 'machine-cancel', 'machine-1'].map(id => ExternalActionMachineBootstrapV1Schema.parse({
+                    id, kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                    installationId: `${id}-installation`, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                    runnerContentKeyBinding: null,
+                    access: { custodian: { accountId: 'terminal-account', displayName: 'Terminal owner' },
+                        role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+                })))
+                : request.path === '/v1/features' || request.path === '/v1/features/authenticated'
+                ? Response.json(createRootLayoutFeaturesResponse({ features: { terminal: {
+                    embeddedPty: { enabled: true }, transport: { byteStream: { enabled: byteStreamEnabled } },
+                } } })) : undefined,
+        });
+        homeIds = { primary: servedHomes.homes.primary!.id, cancel: servedHomes.homes.cancel!.id, attach: servedHomes.homes.attach!.id };
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        await refreshTerminalFeatures();
         terminalOps.ensure.mockReset();
         terminalOps.restart.mockReset();
         terminalOps.streamRead.mockReset();
@@ -104,14 +156,19 @@ describe('useMachineTerminalSession', () => {
         terminalOps.close.mockReset();
         terminalOps.input.mockReset();
         terminalOps.resize.mockReset();
-        useFeatureEnabledMock.mockReset();
-        useFeatureEnabledMock.mockReturnValue(true);
+        terminalOps.streamAcknowledge.mockResolvedValue({ ok: true });
+        terminalOps.streamSendInput.mockResolvedValue({ ok: true });
+        terminalOps.close.mockResolvedValue({ ok: true });
+        terminalOps.input.mockResolvedValue({ ok: true });
+        terminalOps.resize.mockResolvedValue({ ok: true });
         clipboardState.setClipboardStringSafe.mockReset();
+        vi.useFakeTimers();
     });
 
-    afterEach(() => {
-        standardCleanup();
+    afterEach(async () => {
+        await standardCleanup();
         vi.useRealTimers();
+        servedHomes.dispose();
     });
 
     it('reads borrowed output with independent credit identities while refusing all process mutations', async () => {
@@ -125,7 +182,7 @@ describe('useMachineTerminalSession', () => {
         const createView = (terminalKey: string) => {
             const terminalRef = { current: renderer };
             return renderHook(() => useMachineTerminalSession({
-                machineId: 'machine', serverId: 'home', cwd: '/repo', terminalKey,
+                machineId: 'machine', serverId: homeIds.primary, cwd: '/repo', terminalKey,
                 terminalRef, attachedTerminalId: 'borrowed', readOnly: true, closeOnUnmount: true,
             }), { flushOptions: { cycles: 1, turns: 1 } });
         };
@@ -140,7 +197,7 @@ describe('useMachineTerminalSession', () => {
         });
         await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
         expect(renderer.writeBytes).toHaveBeenCalledWith(expect.objectContaining({ terminalId: 'borrowed', byteOffset: 0 }));
-        expect(terminalOps.streamReadBytes).toHaveBeenCalledWith('machine', expect.objectContaining({ terminalId: 'borrowed' }), expect.objectContaining({ serverId: 'home' }));
+        expect(terminalOps.streamReadBytes).toHaveBeenCalledWith('machine', expect.objectContaining({ terminalId: 'borrowed' }), expect.objectContaining({ serverId: homeIds.primary }));
         const rendererIds = new Set(terminalOps.streamReadBytes.mock.calls.map((call) => (call[1] as { rendererId?: string }).rendererId));
         expect(rendererIds.size).toBe(2);
         expect(rendererIds.has('embedded-terminal')).toBe(false);
@@ -174,7 +231,7 @@ describe('useMachineTerminalSession', () => {
         const launch = { kind: 'agent_login', agentId: 'codex' } as const;
         const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
         const hook = await renderHook(() => useMachineTerminalSession({
-            machineId: 'machine-cancel', serverId: 'home-cancel', cwd: null, launch,
+            machineId: 'machine-cancel', serverId: homeIds.cancel, cwd: null, launch,
             terminalKey: 'provider-login:machine-cancel:codex', terminalRef, closeOnUnmount: true,
         }));
         await act(async () => { hook.getCurrent().onReady(80, 24); });
@@ -183,7 +240,8 @@ describe('useMachineTerminalSession', () => {
         await act(async () => {
             ensured.resolve({ ok: true, terminalId: 'late-cancel-terminal', reused: false });
         });
-        expect(terminalOps.close).toHaveBeenCalledWith('machine-cancel', { terminalId: 'late-cancel-terminal' }, { serverId: 'home-cancel' });
+        await vi.waitFor(() => expect(terminalOps.close).toHaveBeenCalledWith('machine-cancel', { terminalId: 'late-cancel-terminal' },
+            { serverId: homeIds.cancel, accountId: 'terminal-account' }));
         expect(terminalOps.streamReadBytes).not.toHaveBeenCalled();
         expect(readTerminalSurfaceState('provider-login:machine-cancel:codex')?.terminalId ?? null).toBeNull();
     });
@@ -213,7 +271,7 @@ describe('useMachineTerminalSession', () => {
         const hook = await renderHook(
             () => useMachineTerminalSession({
                 machineId: 'machine-1',
-                serverId: 'home-a',
+                serverId: homeIds.attach,
                 sessionId: 'session-1',
                 closeOnUnmount: true,
                 cwd: null,
@@ -229,12 +287,11 @@ describe('useMachineTerminalSession', () => {
         });
         await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
 
-        expect(useFeatureEnabledMock).toHaveBeenCalledWith('terminal.transport.byteStream', { scopeKind: 'spawn', serverId: 'home-a' });
         expect(terminalOps.ensure).toHaveBeenCalledWith('machine-1', expect.objectContaining({
             terminalKey: 'session:session-1:attached',
             launch: { kind: 'session_attach', sessionId: 'session-1' },
-        }), { serverId: 'home-a' });
-        expect(terminalOps.streamReadBytes).toHaveBeenCalledWith('machine-1', expect.any(Object), expect.objectContaining({ serverId: 'home-a' }));
+        }), { serverId: homeIds.attach, accountId: 'terminal-account' });
+        expect(terminalOps.streamReadBytes).toHaveBeenCalledWith('machine-1', expect.any(Object), expect.objectContaining({ serverId: homeIds.attach }));
 
         terminalOps.streamSendInput.mockResolvedValue({ ok: true });
         await act(async () => {
@@ -244,7 +301,7 @@ describe('useMachineTerminalSession', () => {
         expect(terminalOps.streamSendInput).toHaveBeenCalledWith(
             'machine-1',
             { terminalId: 'term-attach', event: { t: 'text', text: 'pwd\r' } },
-            expect.objectContaining({ serverId: 'home-a' }),
+            expect.objectContaining({ serverId: homeIds.attach }),
         );
 
         terminalOps.restart.mockResolvedValue({ ok: true, terminalId: 'term-restarted', reused: false });
@@ -254,10 +311,10 @@ describe('useMachineTerminalSession', () => {
         });
         await act(async () => hook.getCurrent().requestRestart());
         await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
-        expect(terminalOps.restart).toHaveBeenCalledWith('machine-1', expect.objectContaining({ sessionId: 'session-1' }), { serverId: 'home-a' });
+        expect(terminalOps.restart).toHaveBeenCalledWith('machine-1', expect.objectContaining({ sessionId: 'session-1' }), { serverId: homeIds.attach, accountId: 'terminal-account' });
 
         await hook.unmount();
-        expect(terminalOps.close).toHaveBeenCalledWith('machine-1', { terminalId: 'term-restarted' }, { serverId: 'home-a' });
+        expect(terminalOps.close).toHaveBeenCalledWith('machine-1', { terminalId: 'term-restarted' }, { serverId: homeIds.attach, accountId: 'terminal-account' });
     });
 
     it('owns bounded title, bell, and user-selection copy policy at the session controller', async () => {
@@ -1029,7 +1086,8 @@ describe('useMachineTerminalSession', () => {
 
     it('resets a cached byte cursor when disabled terminal streaming selects legacy replay', async () => {
         const terminalKey = 'session:s-legacy-cursor-mismatch:terminal';
-        useFeatureEnabledMock.mockImplementation((featureId: string) => featureId !== 'terminal.transport.byteStream');
+        byteStreamEnabled = false;
+        await refreshTerminalFeatures();
         replaceTerminalSurfaceState(terminalKey, {
             terminalId: 'term-legacy-cursor-mismatch',
             cursor: 42,
@@ -1126,10 +1184,12 @@ describe('useMachineTerminalSession', () => {
     });
 
     it('aborts a partial OSC at a stream gap so the marker and next prompt remain visible', async () => {
-        useFeatureEnabledMock.mockReturnValue(false);
+        byteStreamEnabled = false;
+        await refreshTerminalFeatures();
         terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-osc-gap', reused: false });
         terminalOps.streamRead.mockResolvedValueOnce({
             ok: true,
+            terminalId: 'term-osc-gap',
             events: [
                 { t: 'data', data: '\u001b]0;unfinished title' },
                 { t: 'gap', droppedBefore: 2 },
@@ -1584,7 +1644,8 @@ describe('useMachineTerminalSession', () => {
     });
 
     it('uses legacy event-cursor reads when terminal.transport.byteStream is disabled', async () => {
-        useFeatureEnabledMock.mockImplementation((featureId: string) => featureId !== 'terminal.transport.byteStream');
+        byteStreamEnabled = false;
+        await refreshTerminalFeatures();
         terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-legacy-feature', reused: false });
         terminalOps.streamRead.mockResolvedValueOnce({
             ok: true,

@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
 import { canCreateNewSession } from '@/components/sessions/new/modules/canCreateNewSession';
+import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 describe('canCreateNewSession', () => {
+    it('admits a reviewed managed recipe without a Machine projection, but not unresolved provider choices', () => {
+        const managedMachineSelection = createManagedMachineSelectionDraft({
+            selection: { kind: 'preset', homeId: 'srv_home', id: 'preset', revision: 1 },
+            receipt: {
+                launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                controller: { machineId: 'controller', installationId: 'installation' }, optionStatus: 'current',
+                prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+                retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            },
+        });
+        const params = { selectedMachineId: null, selectedMachine: null, selectedPath: '/authored', managedMachineSelection };
+        expect(canCreateNewSession(params)).toBe(true);
+        expect(canCreateNewSession({ ...params, selectedPath: ' ' })).toBe(false);
+        expect(canCreateNewSession({ ...params, selectedPath: '', directoryKind: 'managed' })).toBe(true);
+        expect(canCreateNewSession({ ...params, managedMachineSelection: { ...managedMachineSelection,
+            receipt: { ...managedMachineSelection.receipt, optionStatus: 'loading' } } })).toBe(false);
+    });
     it('admits the matching grant-bound managed machine without an Account machine projection', () => {
         expect(canCreateNewSession({
             selectedMachineId: 'bound-machine',

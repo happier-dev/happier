@@ -166,6 +166,132 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
+    it('keeps managed recipe selection separate from published artifacts and exact machines', async () => {
+        const fixture = createFixture();
+        const handlers = makeHandlers();
+        const selection = { kind: 'preset', homeId: 'server-a', id: 'recipe', revision: 3 } as const;
+        const receipt = {
+            launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1,
+                name: 'Guest', choices: { cores: 2 } },
+            controller: { machineId: 'host', installationId: 'installation' }, optionStatus: 'current' as const,
+            prerequisites: [], billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const },
+            retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] as ('start' | 'stop' | 'delete')[] },
+            retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
+            price: { amount: '1.25', currency: 'USD', unit: 'hour', source: 'provider', observedAt: 1 },
+            preset: { id: 'recipe', revision: 3, name: 'Guest' },
+        };
+        const draft = { selection, receipt, archiveEffect: 'keep' as const };
+        const onSelectManagedMachine = vi.fn();
+        const onConfigure = vi.fn();
+        const artifactSelect = vi.fn();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams(fixture, handlers),
+            temporaryComputers: [{ serverId: 'server-a', artifactTarget: 'darwin-arm64', selected: false,
+                workspace: null, packageExpiresAt: 12345, onSelect: artifactSelect }],
+            managedMachines: [{ id: 'managed-machine:server-a:preset:recipe:3', homeId: 'server-a',
+                title: 'Guest', subtitle: 'host · Keep', draft }, { id: 'managed-machine:server-a:one-off', homeId: 'server-a',
+                title: 'One-off', onSelect: onConfigure }],
+            selectedManagedMachine: draft,
+            onSelectManagedMachine,
+        }));
+        const model = rendered.getCurrent();
+        const managed = model.rootStep.sections.find((section) => section.id === 'managed-machines');
+        const published = model.rootStep.sections.find((section) => section.id === 'temporary-computer');
+        expect(managed?.kind).toBe('static');
+        expect(published?.title).toBe('newSession.temporaryComputer.publishedTitle');
+        if (managed?.kind !== 'static') throw new Error('expected a managed recipe section');
+        expect(managed.options.map((row) => row.id)).toEqual([
+            'managed-machine:server-a:preset:recipe:3', 'managed-machine:server-a:one-off',
+        ]);
+        expect(model.selectedOptionId).toBe('managed-machine:server-a:preset:recipe:3');
+        expect(managed.options[0]?.rightAccessory).toBeUndefined();
+        expect(managed.options[0]?.subtitle).not.toContain('1.25');
+        managed.options[0]?.onSelect?.();
+        expect(onSelectManagedMachine).toHaveBeenCalledWith(draft);
+        managed.options[1]?.onSelect?.();
+        expect(onConfigure).toHaveBeenCalledOnce();
+        expect(artifactSelect).not.toHaveBeenCalled();
+        expect(handlers.selectSpy).not.toHaveBeenCalled();
+        await rendered.unmount();
+    });
+
+    it('does not expose managed recipes for purposes that require an existing destination', async () => {
+        const fixture = createFixture();
+        const handlers = makeHandlers();
+        const onSelect = vi.fn();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams(fixture, handlers), purpose: 'trigger',
+            managedMachines: [{ id: 'managed-machine:server-a:one-off', homeId: 'server-a', title: 'One-off', onSelect }],
+        }));
+        expect(rendered.getCurrent().rootStep.sections.some((section) => section.id === 'managed-machines')).toBe(false);
+        expect(onSelect).not.toHaveBeenCalled();
+        await rendered.unmount();
+    });
+
+    it('retires an old managed row activation when its purpose or Home offer is replaced or unavailable', async () => {
+        const fixture = createFixture();
+        const handlers = makeHandlers();
+        const onSelect = vi.fn();
+        const offer = { id: 'managed-machine:server-a:one-off', homeId: 'server-a', title: 'One-off', onSelect };
+        const base = buildParams(fixture, handlers);
+        const rendered = await renderHook(
+            (props: BuildMachineSelectionListModelParams) => useMachineSelectionListModel(props),
+            { initialProps: { ...base, managedMachines: [offer] } },
+        );
+        const section = rendered.getCurrent().rootStep.sections.find((candidate) => candidate.id === 'managed-machines');
+        if (section?.kind !== 'static') throw new Error('expected a managed recipe section');
+        const oldOption = section.options[0]!;
+        await rendered.rerender({ ...base, purpose: 'trigger', managedMachines: [offer] });
+        oldOption.onSelect?.();
+        expect(onSelect).not.toHaveBeenCalled();
+        await rendered.rerender({ ...base, managedMachines: [{ ...offer, disabled: true, unavailableText: 'offline' }] });
+        oldOption.onSelect?.();
+        expect(onSelect).not.toHaveBeenCalled();
+        await rendered.rerender({ ...base, managedMachines: [{ ...offer, id: 'managed-machine:server-b:one-off', homeId: 'server-b' }] });
+        oldOption.onSelect?.();
+        expect(onSelect).not.toHaveBeenCalled();
+        await rendered.unmount();
+    });
+
+    it('keeps exact shared Home targets grouped and prevents a presentation override widening readiness or purpose', async () => {
+        const ready: Machine = { ...createMachine('shared'), isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready',
+        } };
+        const pending: Machine = { ...ready, id: 'pending', metadata: null,
+            access: { ...ready.access!, accessState: 'key_pending' },
+            availability: { kind: 'locked', reason: 'recipient_key_pending' } };
+        const own = createMachine('own');
+        const group = { serverId: 'server-a', serverName: 'Server A', loading: false, signedOut: false,
+            machines: [own, ready, pending].map(createScopedMachine) };
+        const scopedSelect = vi.fn();
+        const params = (purpose: 'session' | 'trigger'): BuildMachineSelectionListModelParams => ({
+            groups: [group, { ...group, serverId: 'server-b', serverName: 'Server B', machines: [] }],
+            selectedMachine: pending, selectedServerId: 'server-a', recentMachines: [], favoriteMachines: [],
+            showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,
+            onSelectMachine: vi.fn(), onSelectScopedMachine: scopedSelect, purpose,
+            resolveMachineAvailability: () => ({ selectable: true }),
+        });
+        const model = await renderHook(() => useMachineSelectionListModel(params('session')));
+        const shared = model.getCurrent().rootStep.sections.find((section) => section.id === 'server:server-a:shared:alice');
+        if (shared?.kind !== 'static') throw new Error('expected a scoped shared ownership section');
+        expect(shared.options.map((option) => option.id)).toEqual(['server-a::shared', 'server-a::pending']);
+        expect(shared.options[0]?.subtitle).toContain('machines.destinations.owner');
+        expect(model.getCurrent().selectedOptionId).toBe('server-a::pending');
+        expect(shared.options[1]?.disabled).toBe(true);
+        shared.options[1]?.onSelect?.();
+        expect(scopedSelect).not.toHaveBeenCalled();
+        shared.options[0]?.onSelect?.();
+        expect(scopedSelect).toHaveBeenCalledWith(group.machines[1]);
+        await model.unmount();
+        scopedSelect.mockClear();
+        const trigger = await renderHook(() => useMachineSelectionListModel(params('trigger')));
+        const triggerShared = trigger.getCurrent().rootStep.sections.find((section) => section.id === 'server:server-a:shared:alice');
+        if (triggerShared?.kind !== 'static') throw new Error('expected retained shared section');
+        expect(triggerShared.options.every((option) => option.disabled)).toBe(true);
+        triggerShared.options[0]?.onSelect?.();
+        expect(scopedSelect).not.toHaveBeenCalled();
+        await trigger.unmount();
+    });
     it('keeps the selected unavailable machine visible without allowing activation', async () => {
         const machine = { ...createMachine('retired'), revokedAt: Date.now() };
         const onSelectMachine = vi.fn();

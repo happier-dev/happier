@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachineDataKeyCacheEntry } from './syncMachines';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { Encryption } from '@/sync/encryption/encryption';
 
 vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -10,7 +11,9 @@ vi.mock('@/log', () => ({
 import { fetchAndApplyMachines } from './syncMachines';
 
 describe('fetchAndApplyMachines error propagation', () => {
-    beforeEach(() => {
+    let contextOwner: Encryption;
+    beforeEach(async () => {
+        contextOwner = await Encryption.create(new Uint8Array(32).fill(17));
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         vi.spyOn(console, 'error').mockImplementation(() => {});
     });
@@ -28,6 +31,8 @@ describe('fetchAndApplyMachines error propagation', () => {
             fetchAndApplyMachines({
                 credentials,
                 encryption: {
+                    captureMachineEncryptionContext: contextOwner.captureMachineEncryptionContext.bind(contextOwner),
+                    captureMachineEncryptionContextRead: contextOwner.captureMachineEncryptionContextRead.bind(contextOwner),
                     decryptEncryptionKeys: vi.fn(async (values: readonly string[]) => values.map(() => null)),
                     initializeMachines: vi.fn(async () => {}),
                     getMachineEncryption: vi.fn(() => null),
@@ -51,6 +56,8 @@ describe('fetchAndApplyMachines error propagation', () => {
         await fetchAndApplyMachines({
             credentials,
             encryption: {
+                captureMachineEncryptionContext: contextOwner.captureMachineEncryptionContext.bind(contextOwner),
+                captureMachineEncryptionContextRead: contextOwner.captureMachineEncryptionContextRead.bind(contextOwner),
                 decryptEncryptionKeys: vi.fn(async (values: readonly string[]) => values.map(() => null)),
                 initializeMachines: vi.fn(async () => {}),
                 getMachineEncryption: vi.fn(() => null),
@@ -168,6 +175,8 @@ describe('fetchAndApplyMachines error propagation', () => {
         await fetchAndApplyMachines({
             credentials,
             encryption: {
+                captureMachineEncryptionContext: contextOwner.captureMachineEncryptionContext.bind(contextOwner),
+                captureMachineEncryptionContextRead: contextOwner.captureMachineEncryptionContextRead.bind(contextOwner),
                 decryptEncryptionKeys: vi.fn(async (values: readonly string[]) => values.map(() => new Uint8Array([1, 2, 3]))),
                 initializeMachines: vi.fn(async () => {}),
                 getMachineEncryption: vi.fn(() => ({
@@ -209,6 +218,8 @@ describe('fetchAndApplyMachines error propagation', () => {
         await fetchAndApplyMachines({
             credentials,
             encryption: {
+                captureMachineEncryptionContext: contextOwner.captureMachineEncryptionContext.bind(contextOwner),
+                captureMachineEncryptionContextRead: contextOwner.captureMachineEncryptionContextRead.bind(contextOwner),
                 decryptEncryptionKeys: vi.fn(async (values: readonly string[]) => values.map(() => null)),
                 initializeMachines: vi.fn(async () => {
                     throw new Error('Failed to initialize machines');

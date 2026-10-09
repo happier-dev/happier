@@ -7,12 +7,84 @@ import { resolveSessionTerminalIdentity } from './sessionTerminalMode';
 import { machineTerminalEnsure, machineTerminalRestart } from '@/sync/ops/machineTerminal';
 import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
 import { createSessionTerminalLeafHandles } from './strip/sessionTerminalLeafHandles';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { storage } from '@/sync/domains/state/storage';
+import { buildProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
+import { buildProjectTerminalKey } from '@/components/projects/detail/projectTerminalScope';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 // Machine transport is outside the deterministic pane/Action ownership boundary.
 const machineRpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
 
 describe('mounted terminal Actions', () => {
+    it('closes only the actual Session and cwd even when another process copies its terminal key', async () => {
+        const scopeId = 'session:address:home-identity:session-a';
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId, command: { type: 'open', terminal: {
+            id: 'owned', target: { kind: 'machine_shell', machineId: 'machine', cwd: '/repo' },
+        } } });
+        const retire = registerSessionTerminalWorkspaceOwner({ getState: () => state, dispatch: action => { state = appPaneReduce(state, action); } });
+        const terminalKey = `${scopeId}:terminal:owned`;
+        const processes = [
+            { terminalId: 'other-session', terminalKey, sessionId: 'session-b', cwd: '/repo', ended: false, exit: null },
+            { terminalId: 'other-root', terminalKey, sessionId: 'session-a', cwd: '/other', ended: false, exit: null },
+            { terminalId: 'owned-process', terminalKey, sessionId: 'session-a', cwd: '/repo', ended: false, exit: null },
+        ];
+        const running = new Set(processes.map(process => process.terminalId));
+        machineRpc.mockImplementation(async ({ method, payload }: { method: string; payload: { terminalId?: string } }) => {
+            if (method === 'daemon.terminal.list') return { ok: true, terminals: processes.filter(process => running.has(process.terminalId)) };
+            if (payload.terminalId) running.delete(payload.terminalId);
+            return { ok: true };
+        });
+        try {
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.close', input: { scopeId, terminalId: 'owned' } })).toEqual({ ok: true });
+            expect([...running]).toEqual(['other-session', 'other-root']);
+        } finally { retire(); machineRpc.mockReset(); }
+    });
+    it('opens and closes requester-owned Project members at their exact accepted roots without a Session', async () => {
+        const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-actions.test', accountId: 'bob' }], route: () => undefined });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const serverId = home.homes.project!.id;
+        const first = { id: 'accepted', serverId, machineId: 'machine', rootPath: '/accepted', projectKey: 'project', createdAtMs: 1 };
+        const second = { ...first, id: 'worktree', rootPath: '/worktree' };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [first, second] });
+        const scopeId = buildProjectPaneScopeId(first.id, serverId, 'destination');
+        const workspace = { serverId, workspaceId: first.id, machineId: first.machineId, rootPath: first.rootPath };
+        const nextWorkspace = { ...workspace, workspaceId: second.id, rootPath: second.rootPath };
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
+        const retire = registerSessionTerminalWorkspaceOwner({ getState: () => state, dispatch: action => { state = appPaneReduce(state, action); } });
+        const retireMeasurement = registerSessionTerminalSplitMeasurements(scopeId, () => ({ availableWidthPx: 1000, minimumTerminalWidthPx: 320 }));
+        try {
+            const unchanged = state;
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.list', input: { scopeId } }))
+                .toMatchObject({ ok: true, workspace: { tabs: [], activeTabId: null } });
+            expect(state).toBe(unchanged);
+            const opened = await invokeSessionTerminalAction({ actionId: 'session.terminals.open', input: { scopeId, target: { kind: 'workspace_shell', workspace } } });
+            if (!('terminalId' in opened) || !opened.terminalId) throw new Error('Project shell did not open');
+            const split = await invokeSessionTerminalAction({ actionId: 'session.terminals.split', input: { scopeId, target: { kind: 'workspace_shell', workspace: nextWorkspace } } });
+            expect(split).toMatchObject({ ok: true });
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.list', input: { scopeId } }))
+                .toMatchObject({ workspace: { tabs: [{ terminals: [{ target: { workspace } }, { target: { workspace: nextWorkspace } }] }] } });
+            const terminalKey = buildProjectTerminalKey({ serverId, accountId: 'bob' }, workspace, opened.terminalId);
+            let running = true;
+            machineRpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
+                if (request.method === 'daemon.terminal.list') return { ok: true, terminals: [{ terminalId: 'project-pty', terminalKey, cwd: workspace.rootPath, ended: false, exit: null }] };
+                expect(request.payload).toEqual({ terminalId: 'project-pty' });
+                running = false;
+                return { ok: true };
+            });
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.close', input: { scopeId, terminalId: opened.terminalId } })).toEqual({ ok: true });
+            expect(running).toBe(false);
+            const beforeRetirement = state;
+            storage.getState().activateProfileScope({ serverId, accountId: 'cara' });
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.list', input: { scopeId } }))
+                .toMatchObject({ ok: false, errorCode: 'terminal_scope_unavailable' });
+            expect(state).toBe(beforeRetirement);
+        } finally { retireMeasurement(); retire(); machineRpc.mockReset(); home.dispose(); }
+    });
     it('opens the exact retained member in pinned Details through the same Action owner', async () => {
         const scopeId = 'session:address:home-details:session-details';
         let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openBottom', scopeId, tabId: 'terminal' });
@@ -62,7 +134,7 @@ describe('mounted terminal Actions', () => {
             if (request.method === `daemon.terminal.${operation}`) return await new Promise((resolve) => {
                 setTimeout(() => { running = true; resolve({ ok: true, terminalId: 'connecting-pty', reused: false }); }, 25);
             });
-            if (request.method === 'daemon.terminal.list') return { ok: true, terminals: running ? [{ terminalId: 'connecting-pty', terminalKey, cwd: '/repo', ended: false, exit: null }] : [] };
+            if (request.method === 'daemon.terminal.list') return { ok: true, terminals: running ? [{ terminalId: 'connecting-pty', terminalKey, sessionId: `session-connect-${operation}`, cwd: '/repo', ended: false, exit: null }] : [] };
             running = false;
             return { ok: true };
         });
@@ -110,7 +182,7 @@ describe('mounted terminal Actions', () => {
         let closeStarted: (() => void) | undefined;
         const started = new Promise<void>((resolve) => { closeStarted = resolve; });
         machineRpc.mockImplementation(async (request: { method: string }) => {
-            if (request.method === 'daemon.terminal.list') return { ok: true, terminals: [{ terminalId: 'pty-stop', terminalKey: `${scopeId}:terminal:stop`, cwd: '/repo', ended: false, exit: null }] };
+            if (request.method === 'daemon.terminal.list') return { ok: true, terminals: [{ terminalId: 'pty-stop', terminalKey: `${scopeId}:terminal:stop`, sessionId: 'session-race', cwd: '/repo', ended: false, exit: null }] };
             return await new Promise<{ ok: true }>((resolve) => { completeClose = () => resolve({ ok: true }); closeStarted?.(); });
         });
         try {
@@ -130,7 +202,7 @@ describe('mounted terminal Actions', () => {
             id: 'owned-shell', target: { kind: 'machine_shell', machineId: 'machine-close', cwd: '/repo' },
         } } });
         const retire = registerSessionTerminalWorkspaceOwner({ getState: () => state, dispatch: (action) => { state = appPaneReduce(state, action); } });
-        const process = { terminalId: 'pty-owned', terminalKey: `${scopeId}:terminal:owned-shell`, cwd: '/repo', ended: false, exit: null };
+        const process = { terminalId: 'pty-owned', terminalKey: `${scopeId}:terminal:owned-shell`, sessionId: 'session-close', cwd: '/repo', ended: false, exit: null };
         let deny = true;
         machineRpc.mockImplementation(async (request: { method: string }) => {
             if (request.method === 'daemon.terminal.list') return { ok: true, terminals: [process] };

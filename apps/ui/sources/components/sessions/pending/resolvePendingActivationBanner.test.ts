@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolvePendingActivationBanner } from './resolvePendingActivationBanner';
+import { deriveManagedWakeProjection } from '@/sync/domains/pending/managedWakeProjection';
 
 const waiting = { requestId: 'p2', requestedAt: 200, status: 'waiting' as const };
 const failed = { requestId: 'p2', requestedAt: 200, status: 'failed' as const, failureCode: 'runtime_start_failed' as const };
@@ -48,5 +49,27 @@ describe('resolvePendingActivationBanner', () => {
 
     it('hides the activation banner while the session is already resuming', () => {
         expect(resolvePendingActivationBanner({ authorization: null, activeAt: 100, active: false, machineReachable: true, canWrite: true, resumingAt: 300, pendingMessages: rows })).toBeNull();
+    });
+
+    it('does not offer Agent retry before native prerequisites or label ambiguous delivery as safely queued', () => {
+        const managed = {
+            id: 'managed-a', homeId: 'home-a', creationState: 'active' as const, allocation: 'bound' as const,
+            enrolledMachineId: 'guest-a', controller: { machineId: 'controller-a', installationId: 'installation-a' },
+            observation: { observedAt: 10, availability: 'present' as const, power: 'stopped' as const, storage: 'retained' as const, daemon: 'disconnected' as const },
+        };
+        const managedWakeProjection = deriveManagedWakeProjection({
+            managed, activation: failed, pending: { ...rows[1], source: 'server_pending' }, runtimeResuming: false,
+        });
+        expect(resolvePendingActivationBanner({
+            authorization: failed, activeAt: 100, active: false, machineReachable: false, canWrite: true, pendingMessages: rows,
+            ...{ managedWakeProjection },
+        })).toMatchObject({ kind: 'failed', primaryAction: null, managedWakeProjection: { kind: 'agentStartFailed' } });
+        const unknown = deriveManagedWakeProjection({
+            managed, activation: failed, pending: { ...rows[1], source: 'server_pending', pendingDeliveryStatus: 'server_delivering' }, runtimeResuming: false,
+        });
+        expect(resolvePendingActivationBanner({
+            authorization: failed, activeAt: 100, active: false, machineReachable: false, canWrite: true, pendingMessages: [],
+            ...{ managedWakeProjection: unknown },
+        })).toBeNull();
     });
 });

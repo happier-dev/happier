@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { appPaneReduce, createAppPaneState } from './appPaneReducer';
 import { buildDetailsWorkspaceStateView } from '../details/workspace/detailsWorkspaceSelectors';
+import { SessionTerminalWorkspaceV1Schema } from '@happier-dev/protocol/terminal';
+import { readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 
 function createFileTab(path: string) {
     return { key: `file:${path}`, kind: 'file', title: path.split('/').at(-1) ?? path, resource: { path } };
@@ -31,6 +33,51 @@ function getDetailsView(state: ReturnType<typeof createAppPaneState>, scopeId: s
 }
 
 describe('appPaneReduce', () => {
+    it('reads additive persisted terminal fields without losing Project approval custody or layout', () => {
+        const canonical = SessionTerminalWorkspaceV1Schema.parse({
+            v: 1,
+            ownerScope: { serverId: 'home', accountId: 'bob' },
+            activeTabId: 'project-shell',
+            showList: true,
+            tabs: [{
+                id: 'project-shell',
+                focusedTerminalId: 'pending-shell',
+                terminals: [{
+                    id: 'project-shell',
+                    target: { kind: 'workspace_shell', workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: '/accepted' } },
+                }, {
+                    id: 'pending-shell',
+                    title: 'Pending checkout shell',
+                    target: { kind: 'workspace_shell', workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'checkout', rootPath: '/checkout' } },
+                    pendingActionApproval: { scope: { serverId: 'home', accountId: 'bob' }, artifactId: 'approval', actionId: 'machines.terminal.open' },
+                }],
+                root: { kind: 'split', id: 'split', ratio: 0.4,
+                    first: { kind: 'leaf', terminalId: 'project-shell' },
+                    second: { kind: 'leaf', terminalId: 'pending-shell' } },
+            }],
+        });
+        const persisted = {
+            ...canonical,
+            futureWorkspacePresentation: { expanded: true },
+            tabs: canonical.tabs.map(tab => ({
+                ...tab,
+                futureTabPresentation: 'retained by a newer client',
+                terminals: tab.terminals.map(member => ({
+                    ...member,
+                    futureMemberPresentation: true,
+                    target: { ...member.target, futureTargetPresentation: 'shell detail' },
+                })),
+            })),
+        };
+
+        expect(readSessionTerminalWorkspace(persisted)).toEqual(canonical);
+        expect(readSessionTerminalWorkspace(canonical)).toBe(canonical);
+        expect(SessionTerminalWorkspaceV1Schema.safeParse(persisted).success).toBe(false);
+        // Tolerance must not turn malformed known layout references into accepted state.
+        expect(readSessionTerminalWorkspace({ ...persisted, activeTabId: 'missing-tab' }))
+            .toBe(readSessionTerminalWorkspace(undefined));
+    });
+
     it('removes only Details references to closed terminal members, including hidden Details', () => {
         const scopeId = 'session:terminal-details-close';
         let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openBottom', scopeId, tabId: 'terminal' });

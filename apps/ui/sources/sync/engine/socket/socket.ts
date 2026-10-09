@@ -9,13 +9,17 @@ import {
 } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import type { ApiEphemeralActivityUpdate, ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Encryption } from '@/sync/encryption/encryption';
+import { readMachineEncryptionContextInput } from '@/sync/encryption/machineEncryption';
+import { AccessibleMachineAccessStoredReadV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineKeyBasisStoredReadV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { parseToken } from '@/utils/auth/parseToken';
 import {
     createRawMessageNormalizationSequenceState,
     type NormalizedMessage,
     type RawMessageNormalizationSequenceState,
 } from "@happier-dev/session-core/raw";
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
-import type { ActionOperationSnapshotEphemeralV1 } from '@happier-dev/protocol';
+import type { ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol';
 import {
     isPlainMachineDataKeyMarker,
     resolvePublishedMachineDataEncryptionKeyV1,
@@ -993,6 +997,8 @@ function shouldApplyCacheOnlySessionUpdateProjectionPatchImmediately(params: Rea
         || patchNullableFieldChanged(renderable, patch, 'archivedAt')
         || patchNullableFieldChanged(renderable, patch, 'lastRuntimeIssue')
         || patchNumberFieldChanged(renderable, patch, 'runtimeActivityActiveCount')
+        || patchNullableFieldChanged(renderable, patch, 'runtimeActivityState')
+        || patchNullableFieldChanged(renderable, patch, 'latestTurnStatus')
         || patchBooleanFieldChanged(renderable, patch, 'hasUnreadMessages')
         || patchBooleanFieldChanged(renderable, patch, 'hasPendingPermissionRequests')
         || patchBooleanFieldChanged(renderable, patch, 'hasPendingUserActionRequests');
@@ -1115,6 +1121,7 @@ export async function handleSocketUpdate(params: {
      * accepted.
      */
     credentials?: AuthCredentials | null;
+    readAccountMode?: () => Promise<'plain' | 'e2ee'>;
     settingsSecretsKey?: Uint8Array | null;
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
     settingsScope?: AccountSettingsScope | null;
@@ -1204,6 +1211,7 @@ export async function handleSocketUpdate(params: {
         updateData,
         encryption,
         credentials: params.credentials ?? null,
+        readAccountMode: params.readAccountMode,
         settingsSecretsKey: params.settingsSecretsKey,
         settingsSecretsReadKeys: params.settingsSecretsReadKeys,
         settingsScope,
@@ -1249,6 +1257,7 @@ export async function handleUpdateContainer(params: {
     updateData: ApiUpdateContainer;
     encryption: Encryption | null;
     credentials?: AuthCredentials | null;
+    readAccountMode?: () => Promise<'plain' | 'e2ee'>;
     settingsSecretsKey?: Uint8Array | null;
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
     settingsScope?: AccountSettingsScope | null;
@@ -1945,6 +1954,12 @@ export async function handleUpdateContainer(params: {
         log.log('🖥️ New machine update received');
         const machineUpdate = updateData.body;
         const machineId = machineUpdate.machineId;
+        const existingMachine = storage.getState().machines[machineId];
+        if (existingMachine && (machineUpdate.metadataVersion < existingMachine.metadataVersion
+            || machineUpdate.daemonStateVersion < existingMachine.daemonStateVersion)) {
+            invalidateMachines();
+            return;
+        }
 
         // Initialize machine encryption immediately when possible so the subsequent
         // update-machine event (emitted for backward compatibility) can be decrypted
@@ -1953,6 +1968,10 @@ export async function handleUpdateContainer(params: {
         // NOTE: When the dataEncryptionKey is null, we still initialize with null so
         // the machine has a fallback encryptor available (legacy path).
         const publishedDataEncryptionKey = machineUpdate.dataEncryptionKey;
+        let viewerAccountId: string | null = null;
+        try { if (params.credentials) viewerAccountId = parseToken(params.credentials.token); } catch { /* No owner fallback without a verified Account identity. */ }
+        const machineContext = encryption?.captureMachineEncryptionContext(machineId, readMachineEncryptionContextInput(machineUpdate, viewerAccountId));
+        const isMachineCurrent = () => shouldContinue() && machineContext?.isCurrent() !== false;
         let decryptedDataKey: Uint8Array | null = null;
         if (
             encryption
@@ -1976,7 +1995,17 @@ export async function handleUpdateContainer(params: {
                 machineId,
             })
             : null;
-        const keyResolution = !runnerTrust && params.credentials && !isTokenOnlyAuthCredentials(params.credentials)
+        let expectedAccountMode: 'plain' | 'e2ee' | undefined;
+        if (machineUpdate.access === undefined) {
+            try {
+                expectedAccountMode = params.readAccountMode
+                    ? await params.readAccountMode()
+                    : machineUpdate.storageMode === 'plain' || machineUpdate.storageMode === 'e2ee'
+                        ? machineUpdate.storageMode : undefined;
+            } catch { /* Refuse the hint; the canonical refresh can recover unavailable Account facts. */ }
+        }
+        const keyResolution = (machineUpdate.access === undefined && expectedAccountMode === undefined)
+            || (!runnerTrust && encryption && !isPlainMachineDataKeyMarker(publishedDataEncryptionKey))
             ? { status: 'unavailable' as const }
             : resolvePublishedMachineDataEncryptionKeyV1({
             machine: {
@@ -1987,24 +2016,29 @@ export async function handleUpdateContainer(params: {
                 installationId: typeof machineUpdate.installationId === 'string' ? machineUpdate.installationId : null,
                 dataEncryptionKey: publishedDataEncryptionKey,
                 runnerContentKeyBinding: machineUpdate.runnerContentKeyBinding,
+                access: machineUpdate.access,
             },
             openedDataEncryptionKey: decryptedDataKey,
+            viewerAccountId: viewerAccountId ?? undefined,
+            ...(expectedAccountMode ? { expectedAccountMode } : {}),
             ...(runnerTrust ? { expectedRunnerBinding: runnerTrust.expectedRunnerBinding } : {}),
             ...(runnerTrust?.trustedMachineKind ? { trustedMachineKind: runnerTrust.trustedMachineKind } : {}),
         });
-        if (!shouldContinue()) return;
+        if (!isMachineCurrent()) return;
         if (encryption) {
             const machineKeys = new Map<string, Uint8Array | null>();
             const unavailableMachineIds = new Set<string>();
             if (keyResolution.status === 'legacy') machineKeys.set(machineId, null);
             if (keyResolution.status === 'e2ee') machineKeys.set(machineId, keyResolution.dataKey);
-            if (keyResolution.status === 'unavailable') unavailableMachineIds.add(machineId);
-            await encryption.initializeMachines(machineKeys, unavailableMachineIds);
+            if (keyResolution.status === 'unavailable' || keyResolution.status === 'plain') unavailableMachineIds.add(machineId);
+            await encryption.initializeMachines(machineKeys, unavailableMachineIds, { isMachineCurrent });
         }
-        if (!shouldContinue()) return;
+        if (!isMachineCurrent()) return;
 
         // Apply a placeholder immediately so UI state (e.g. onboarding) can react
         // even if machine-activity ephemerals arrive before a full machines refresh.
+        const access = AccessibleMachineAccessStoredReadV1Schema.safeParse(machineUpdate.access);
+        const keyBasis = MachineKeyBasisStoredReadV1Schema.safeParse(machineUpdate.keyBasis);
         storage.getState().applyMachines([{
             id: machineId,
             kind: machineUpdate.kind,
@@ -2018,6 +2052,13 @@ export async function handleUpdateContainer(params: {
             metadataVersion: machineUpdate.metadataVersion,
             daemonState: null,
             daemonStateVersion: machineUpdate.daemonStateVersion,
+            dataEncryptionKey: typeof publishedDataEncryptionKey === 'string' ? publishedDataEncryptionKey : null,
+            ...(access.success ? { access: access.data, isShared: access.data.custodian.accountId !== viewerAccountId } : {}),
+            ...(keyBasis.success ? { keyBasis: keyBasis.data } : {}),
+            storageMode: keyResolution.status === 'plain' ? 'plain' : 'e2ee',
+            availability: keyResolution.status === 'unavailable'
+                ? { kind: 'locked', reason: 'encryption_material_unavailable' }
+                : { kind: 'available' },
         }], false, { sourceServerId });
 
         // Hydrate machine details + encryption keys via the existing machines sync pipeline.
@@ -2026,6 +2067,38 @@ export async function handleUpdateContainer(params: {
         const machineUpdate = updateData.body;
         const machineId = machineUpdate.machineId; // Changed from .id to .machineId
         const machine = storage.getState().machines[machineId];
+
+        const hintBasis = MachineKeyBasisStoredReadV1Schema.safeParse(machineUpdate.keyBasis);
+        const metadataVersion = hintBasis.success ? hintBasis.data.metadataVersion : machineUpdate.metadata?.version;
+        const daemonStateVersion = hintBasis.success ? hintBasis.data.daemonStateVersion : machineUpdate.daemonState?.version;
+        if (machine && ('dataEncryptionKey' in machineUpdate || 'keyBasis' in machineUpdate || 'access' in machineUpdate)
+            && ((metadataVersion !== undefined && metadataVersion < machine.metadataVersion)
+            || (daemonStateVersion !== undefined && daemonStateVersion < machine.daemonStateVersion))) {
+            invalidateMachines();
+            return;
+        }
+
+        if ('dataEncryptionKey' in machineUpdate || 'keyBasis' in machineUpdate || 'access' in machineUpdate) {
+            let viewerAccountId: string | null = null;
+            try { if (params.credentials) viewerAccountId = parseToken(params.credentials.token); } catch { /* No owner fallback without identity. */ }
+            const published = { ...machine, ...machineUpdate };
+            const input = readMachineEncryptionContextInput(published, viewerAccountId);
+            const previous = machine ? readMachineEncryptionContextInput(machine, viewerAccountId) : null;
+            const access = AccessibleMachineAccessStoredReadV1Schema.safeParse(published.access);
+            encryption?.captureMachineEncryptionContext(machineId, input);
+            if (!previous || previous.dataEncryptionKey !== input.dataEncryptionKey
+                || previous.expectedDataEncryptionKey !== input.expectedDataEncryptionKey
+                || previous.resourceMode !== input.resourceMode || previous.accessState !== input.accessState
+                || ('access' in machineUpdate && (!access.success || access.data.accessState !== 'ready'))) {
+                encryption?.removeMachineEncryption(machineId);
+                if (machine) storage.getState().applyMachines([{
+                    ...machine, metadata: null, daemonState: null,
+                    availability: { kind: 'locked', reason: 'encryption_material_unavailable' },
+                }], false, { sourceServerId });
+                invalidateMachines();
+                return;
+            }
+        }
 
         const updatedMachine = await buildUpdatedMachineFromSocketUpdate({
             machineUpdate,
@@ -2039,10 +2112,21 @@ export async function handleUpdateContainer(params: {
             return;
         }
         if (!shouldContinue()) return;
+        // A neighboring socket update or snapshot may have committed during decryption.
+        if (storage.getState().machines[machineId] !== machine) {
+            invalidateMachines();
+            return;
+        }
 
         // Update storage via applyMachines, which may rebuild the active-server session list index if
         // the machine update affects project-group headers (but should stay stable for activity-only changes).
-        storage.getState().applyMachines([updatedMachine], false, { sourceServerId });
+        const access = AccessibleMachineAccessStoredReadV1Schema.safeParse(machineUpdate.access);
+        const keyBasis = MachineKeyBasisStoredReadV1Schema.safeParse(machineUpdate.keyBasis);
+        storage.getState().applyMachines([{
+            ...updatedMachine,
+            ...(access.success ? { access: access.data } : {}),
+            ...(keyBasis.success ? { keyBasis: keyBasis.data } : {}),
+        }], false, { sourceServerId });
         if (!encryption?.getMachineEncryption(machineId)) {
             invalidateMachines();
         }
@@ -2403,7 +2487,7 @@ export function handleEphemeralSocketUpdate(params: {
     getSession: (sessionId: string) => Session | undefined;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     updateExternalSessionTranscript?: (update: ExternalSessionTranscriptUpdatedEphemeralUpdate) => Promise<void> | void;
-    updateActionOperationSnapshot?: (update: ActionOperationSnapshotEphemeralV1) => Promise<void> | void;
+    updateActionOperationSnapshot?: (update: ActionOperationRevisionEphemeralV1) => Promise<void> | void;
 }): Promise<void> {
     const {
         update,

@@ -29,6 +29,7 @@ const MachineCollectionLanding = React.memo(function MachineCollectionLanding() 
         collection: buildMachineCollection({
             groups: viewModel.visibleMachineGroups,
             groupedByHome: viewModel.showMachinesGroupedByServer,
+            managedByServerId: viewModel.managedByServerId,
         }),
         lastVisited: readLastVisitedMachine(),
         isDesktop: isDesktopHost(),

@@ -231,6 +231,7 @@ export interface NewSessionWizardFooterProps {
     connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
     composerTopContent?: React.ReactNode;
+    composerBottomContent?: React.ReactNode;
     statusTrailingActions?: React.ComponentProps<typeof AgentInput>['statusTrailingActions'];
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
@@ -547,6 +548,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     // rows the picker shows. Callers that have not resolved Home groups yet still describe the
     // single-Home list they render, so adaptive presentation never counts a different set.
     const destinationRowCount = React.useMemo(() => buildMachineDestinationModel({
+        purpose: 'session',
         groups: machineGroups ?? [{
             serverId: serverId ?? '',
             machines,
@@ -773,6 +775,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             onEnvVarsClick: undefined,
                                         } : {})}
                                         />
+                                        {props.footer.composerBottomContent}
                                         {props.footer.composerDocument?.afterComposer}
                                     </PluginContextualResourceStoreProvider>
                                 </View>

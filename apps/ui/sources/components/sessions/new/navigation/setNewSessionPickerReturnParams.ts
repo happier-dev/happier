@@ -6,6 +6,7 @@ import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import { peekTempData, storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 type RouteLike = Readonly<{
     key?: string;
@@ -198,6 +199,8 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
      * NewSessionData channel; route params remain routing/compatibility fields.
      */
     authoringExecutionTarget?: SessionAuthoringExecutionTargetV2;
+    /** Reviewed composer intent, never an acquisition. */
+    managedMachineSelection?: ManagedMachineSelectionDraft | null;
 }>): 'dispatch' | 'replace' {
     const currentDataId = isNonEmptyString(params.currentParams?.dataId)
         ? params.currentParams.dataId
@@ -205,11 +208,14 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
     const currentTempData = currentDataId === null
         ? null
         : peekTempData<NewSessionData>(currentDataId);
-    const authoringDataId = params.authoringExecutionTarget === undefined
+    const authoringDataId = params.authoringExecutionTarget === undefined && params.managedMachineSelection === undefined
         ? null
         : storeTempData({
             ...(currentTempData ?? {}),
-            executionTarget: params.authoringExecutionTarget,
+            machineId: undefined,
+            executionTarget: params.managedMachineSelection ? null : params.authoringExecutionTarget,
+            managedMachineSelection: params.managedMachineSelection ?? null,
+            temporaryComputerActivationRef: null,
         } satisfies NewSessionData);
     const routeParams = authoringDataId === null
         ? params.routeParams

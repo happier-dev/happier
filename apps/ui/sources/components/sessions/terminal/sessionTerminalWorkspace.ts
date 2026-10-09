@@ -1,4 +1,5 @@
 import { SessionTerminalWorkspaceV1Schema, type SessionTerminalLayoutV1, type SessionTerminalMemberV1, type SessionTerminalTabV1, type SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { splitCanvasReduce } from '@/components/appShell/splitCanvas/model/splitCanvasReducer';
 import type { SplitCanvasLeafNode, SplitCanvasNode, SplitCanvasState } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
 import { collectSplitCanvasLeaves } from '@/components/appShell/splitCanvas/model/splitCanvasTree';
@@ -13,17 +14,23 @@ export type SessionTerminalWorkspaceCommand =
     | { type: 'detach'; terminalId: string; newTabId: string }
     | { type: 'reorder'; tabId: string; index: number }
     | { type: 'rename'; terminalId: string; title: string | null }
+    | { type: 'pendingActionApproval'; terminalId: string; pending: SessionTerminalMemberV1['pendingActionApproval'] | null; expectedArtifactId?: string }
     | { type: 'showList'; showList: boolean }
     | { type: 'resize'; tabId: string; splitId: string; ratio: number; availableWidthPx: number; minimumTerminalWidthPx: number; minimumFirstWidthPx?: number; minimumSecondWidthPx?: number };
 
 const initialWorkspace: SessionTerminalWorkspaceV1 = {
     v: 1, tabs: [{ id: 'embedded', terminals: [{ id: 'embedded', target: { kind: 'workspace_shell' } }], focusedTerminalId: 'embedded', root: { kind: 'leaf', terminalId: 'embedded' } }], activeTabId: 'embedded', showList: false,
 };
+/** New non-Session hosts begin with an invitation, not an implicitly spawned shell. */
+export const EMPTY_TERMINAL_WORKSPACE: SessionTerminalWorkspaceV1 = { v: 1, tabs: [], activeTabId: null, showList: false };
+const storedWorkspaceSchema = createStoredReadSchema(SessionTerminalWorkspaceV1Schema);
 
 export function readSessionTerminalWorkspace(value: unknown): SessionTerminalWorkspaceV1 {
     // Missing predecessor state gets its original shell. An explicitly empty workspace stays empty.
     const parsed = SessionTerminalWorkspaceV1Schema.safeParse(value);
-    return parsed.success ? value as SessionTerminalWorkspaceV1 : initialWorkspace;
+    if (parsed.success) return value as SessionTerminalWorkspaceV1;
+    const stored = storedWorkspaceSchema.safeParse(value);
+    return stored.success ? stored.data : initialWorkspace;
 }
 
 function leaf(terminal: SessionTerminalMemberV1): SplitCanvasLeafNode<SessionTerminalMemberV1> {
@@ -114,6 +121,16 @@ export function reduceSessionTerminalWorkspace(state: SessionTerminalWorkspaceV1
                 if (terminal.id !== command.terminalId) return terminal;
                 const { title: previousTitle, ...rest } = terminal;
                 return title ? { ...rest, title } : rest;
+            }) });
+        }
+        case 'pendingActionApproval': {
+            const tab = state.tabs.find(tab => tab.terminals.some(member => member.id === command.terminalId));
+            const member = tab?.terminals.find(member => member.id === command.terminalId);
+            if (!tab || !member || (command.expectedArtifactId !== undefined && member.pendingActionApproval?.artifactId !== command.expectedArtifactId)) return state;
+            return replace({ ...tab, terminals: tab.terminals.map(member => {
+                if (member.id !== command.terminalId) return member;
+                const { pendingActionApproval: previous, ...rest } = member;
+                return command.pending ? { ...rest, pendingActionApproval: command.pending } : rest;
             }) });
         }
         case 'showList': return state.showList === command.showList ? state : { ...state, showList: command.showList };

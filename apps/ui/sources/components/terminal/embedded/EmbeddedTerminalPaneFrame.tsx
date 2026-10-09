@@ -51,6 +51,10 @@ type TerminalFrameState =
  */
 function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): TerminalFrameState {
     const { controller } = props;
+    if (controller.approvalPending && controller.onOpenApproval && (controller.status === 'idle' || controller.status === 'connecting')) {
+        return { kind: 'line', reason: t('approvals.status.open'),
+            action: { label: t('approvals.title'), onPress: controller.onOpenApproval } };
+    }
     switch (controller.status) {
         case 'connected': return { kind: 'live' };
         case 'idle':
@@ -58,7 +62,7 @@ function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): Termi
         case 'exited': return {
             kind: 'line',
             reason: t('terminalWorkspace.states.exited', { title: props.title }),
-            action: { label: t('terminalWorkspace.states.restart'), onPress: controller.requestRestart },
+            action: { label: t('terminalWorkspace.states.restart'), onPress: () => controller.requestRestart() },
         };
         case 'error': {
             if (controller.error === MACHINE_UNREACHABLE_ERROR) {
@@ -174,7 +178,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                         variant="plain"
                         size={28}
                         iconSize={18}
-                        onPress={props.controller.requestRestart}
+                        onPress={() => props.controller.requestRestart()}
                     />
                     {props.onRequestClose ? (
                         <IconButton

@@ -9,9 +9,11 @@ import {
     isTokenOnlyAuthCredentials,
     subscribeHomeCredentialMutations,
 } from '@/auth/storage/tokenStorage';
-import { Encryption } from '@/sync/encryption/encryption';
+import { Encryption, captureEncryptionGenerationCurrentness } from '@/sync/encryption/encryption';
+import { getActionOperation } from '@/sync/ops/actionOperations';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { fetchAndApplyMachines, type MachineDataKeyCacheEntry } from '@/sync/engine/machines/syncMachines';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
 import { resolveUiClientEncryptionRequirementForScope } from '@/sync/domains/settings/clientEncryptionRequirement';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -186,6 +188,14 @@ function readRefreshIntervalMs(): number {
 
 const managedServers = new Map<string, ManagedConcurrentServer>();
 
+/** Pending acquisitions and focused transfers can retain a projection without a transport. */
+function readConcurrentHomeIds(): ReadonlySet<string> {
+    return new Set([
+        ...managedServers.keys(),
+        ...Object.keys(storage.getState().concurrentSessionListCacheByServerId ?? {}),
+    ]);
+}
+
 function readCredentialAccountId(credentials: AuthCredentials): string | null {
     try {
         return parseToken(credentials.token);
@@ -220,6 +230,7 @@ function retireReplacedSessionListAccount(serverId: string, accountId: string | 
     // This also fences a late HTTP/hydration completion from the previous Account.
     if (entry) stopManagedServer(serverId);
     storage.getState().clearSessionListRowsForServerScope(serverId);
+    clearConcurrentMachineListCache(serverId, { retireAccount: true });
     updateConcurrentSessionListCache({ serverId, entry: null });
     return entry !== undefined;
 }
@@ -630,17 +641,26 @@ function updateConcurrentMachineListCache(input: {
     });
 }
 
-function clearConcurrentSessionListCache(serverIdRaw: string): void {
-    const serverId = normalizeServerId(serverIdRaw);
-    if (!serverId) return;
+function isFocusedHomeProjectionRetained(serverId: string): boolean {
     const activeServerId = normalizeServerId(getAppliedActiveServerId());
-    // The active ordinary Sync publishes its observation through this existing shared map. A
-    // concurrent-runtime reconciliation stops managing that Home, but must not erase the active
-    // owner's currentness fact while doing so.
-    if (
+    const stagedServerId = normalizeServerId(getActiveServerSnapshot().serverId);
+    // A profile notification can reconcile the staged destination before the
+    // focused owner publishes "applying". Stop its secondary transport, but
+    // retain its proven corpus for that transfer. Account replacement still
+    // withdraws rows directly through retireReplacedSessionListAccount.
+    if (areServerProfileIdentifiersEquivalent(serverId, applyingActiveServerId)) return true;
+    if (stagedServerId
+        && !areServerProfileIdentifiersEquivalent(stagedServerId, activeServerId)
+        && areServerProfileIdentifiersEquivalent(serverId, stagedServerId)) return true;
+    return (
         isAppliedActiveServerRuntimeAvailable()
         && areServerProfileIdentifiersEquivalent(serverId, activeServerId)
-    ) return;
+    );
+}
+
+function clearConcurrentSessionListCache(serverIdRaw: string): void {
+    const serverId = normalizeServerId(serverIdRaw);
+    if (!serverId || isFocusedHomeProjectionRetained(serverId)) return;
     storage.setState((state) => {
         const current = state.concurrentSessionListCacheByServerId ?? {};
         if (!(serverId in current)) return state;
@@ -656,9 +676,9 @@ function clearConcurrentSessionListCache(serverIdRaw: string): void {
     storage.getState().clearSessionListRowsForServerScope(serverId);
 }
 
-function clearConcurrentMachineListCache(serverIdRaw: string): void {
+function clearConcurrentMachineListCache(serverIdRaw: string, options?: Readonly<{ retireAccount: true }>): void {
     const serverId = normalizeServerId(serverIdRaw);
-    if (!serverId) return;
+    if (!serverId || !options?.retireAccount && isFocusedHomeProjectionRetained(serverId)) return;
     storage.setState((state) => {
         if (!(serverId in state.machineListByServerId) && !(serverId in state.machineListStatusByServerId)) {
             return state;
@@ -754,13 +774,20 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer, signal: Abo
 
         await fetchAndApplyMachines({
             credentials: entry.credentials,
+            readAccountMode: async () => (await fetchAccountEncryptionMode(entry.credentials, { request })).mode,
             encryption,
             machineDataKeys: entry.machineDataKeys,
             request,
+            shouldContinue,
             throwOnError: true,
             sourceServerId: entry.id,
-            applyMachines: (nextMachines) => {
-                machines = nextMachines;
+            replace: true,
+            getMachineSnapshot: () => Object.fromEntries((storage.getState().machineListByServerId[entry.id] ?? []).map((machine) => [machine.id, machine])),
+            applyMachines: (nextMachines, replace) => {
+                if (replace !== false) { machines = nextMachines; return; }
+                const current = new Map((storage.getState().machineListByServerId[entry.id] ?? []).map((machine) => [machine.id, machine]));
+                for (const machine of nextMachines) current.set(machine.id, machine);
+                machines = [...current.values()];
             },
         });
 
@@ -1266,16 +1293,28 @@ async function connectManagedServer(
                 }
                 const update = normalizeActionOperationEphemeralIngress(raw);
                 const encryption = entry.encryption;
-                if (!update || !ingressAccountId || !encryption) return;
+                if (!update || !ingressAccountId) return;
                 const accountId = ingressAccountId;
-                fireAndForget(consumeActionOperationSnapshotPush({
-                    update,
-                    accountId,
-                    sourceServerId: entry.id,
-                    openSnapshot: (ciphertext) => encryption.openActionOperationSnapshotRaw(ciphertext),
-                    shouldContinue: () => isManagedServerActive(entry),
-                    onSnapshot: (operation) => actionOperationPresentationCoordinator.observe(operation),
-                }), { tag: 'concurrentSessionCache.actionOperationEphemeral' });
+                const carrier = entry.irohLease;
+                const cipherLifetime = captureEncryptionGenerationCurrentness(encryption, { accountId, serverId: entry.id });
+                const isCurrent = () => isManagedServerActive(entry) && entry.credentials === credentials
+                    && entry.encryption === encryption && entry.irohLease === carrier && cipherLifetime.isCurrent();
+                const request = createServerFetchAtEndpoint({ endpointUrl: entry.serverUrl, serverId: entry.id, credentials,
+                    ...(carrier ? { runtimeOrigin: carrier.runtimeOrigin } : {}),
+                    ...(carrier?.homeCarrier ? { homeCarrier: carrier.homeCarrier } : {}),
+                });
+                fireAndForget((async () => {
+                    const mode = (await fetchAccountEncryptionMode(credentials, { request })).mode;
+                    if (!isCurrent()) return;
+                    await consumeActionOperationSnapshotPush({ update, accountId, accountEncryptionMode: mode,
+                        sourceServerId: entry.id,
+                        ...(encryption ? { openSnapshot: (ciphertext: string) => encryption.openActionOperationSnapshotRaw(ciphertext) } : {}),
+                        readSnapshot: operationId => getActionOperation({ operationId, machineId: update.machineId,
+                            serverId: entry.id, accountId, requireCurrentDomainFacts: true }),
+                        shouldContinue: isCurrent,
+                        onSnapshot: operation => actionOperationPresentationCoordinator.observe(operation),
+                    });
+                })(), { tag: 'concurrentSessionCache.actionOperationEphemeral' });
             });
 
             entry.detachSocketTransportListeners = [
@@ -1400,7 +1439,7 @@ async function reconcileConcurrentServers(requestRevision: number): Promise<void
 
     const desiredById = new Map(targets.map((target) => [target.id, target]));
 
-    for (const existingId of Array.from(managedServers.keys())) {
+    for (const existingId of readConcurrentHomeIds()) {
         if (!desiredById.has(existingId)) {
             stopManagedServer(existingId);
             clearConcurrentSessionListCache(existingId);
@@ -1619,7 +1658,16 @@ export function startConcurrentSessionCacheSync(): void {
     homeViewStateUnsubscribe = subscribeEffectiveHomeViewState(() => {
         scheduleReconcile();
     });
-    homeCredentialMutationsUnsubscribe = subscribeHomeCredentialMutations(() => {
+    homeCredentialMutationsUnsubscribe = subscribeHomeCredentialMutations((event) => {
+        // Withdraw a changed Account synchronously before its queued replacement.
+        // Same-Account credential rotation keeps the canonical retained-corpus proof.
+        const accountId = event.kind === 'credentials_set' && event.credentials
+            ? readCredentialAccountId(event.credentials) : null;
+        for (const serverId of readConcurrentHomeIds()) {
+            if (areServerProfileIdentifiersEquivalent(serverId, event.serverId)) {
+                retireReplacedSessionListAccount(serverId, accountId);
+            }
+        }
         scheduleReconcile();
         schedulePushTokenReconciliation();
     });

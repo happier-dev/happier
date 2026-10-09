@@ -10,6 +10,7 @@ import { resolvePublicShareApplicationBaseUrl } from '@/components/sessions/shar
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { buildShareSheetSelectionStep, ShareHelp, ShareHandoffIcon, shareSheetStepId } from './buildShareSheetSelectionStep';
 import type {
     ShareDirectoryKind,
@@ -36,6 +37,8 @@ export type ShareSheetProps<TRow extends ShareGrantRowModel> = Readonly<{
     adapter: ShareSheetAdapter<TRow>;
     presentation: ShareSheetPresentation;
     onRequestClose?: () => void;
+    /** A host's explicit navigation intent opens a row without replacing the sheet or its state. */
+    openRowRequest?: Readonly<{ key: string }>;
     testID: string;
 }>;
 
@@ -46,7 +49,11 @@ export type ShareSheetProps<TRow extends ShareGrantRowModel> = Readonly<{
  */
 export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetProps<TRow>): React.ReactElement {
     const { model, actions, adapter, presentation, onRequestClose, testID } = props;
-    const [expanded, setExpanded] = React.useState<string | null>(null);
+    const footerButtonSize = useDeviceType() === 'phone' ? 'normal' : 'small';
+    const [expanded, setExpanded] = React.useState<string | null>(props.openRowRequest?.key ?? null);
+    React.useEffect(() => {
+        if (props.openRowRequest) setExpanded(props.openRowRequest.key);
+    }, [props.openRowRequest]);
     const [directoryKind, setDirectoryKind] = React.useState<ShareDirectoryKind | undefined>();
     const [copiedPath, setCopiedPath] = React.useState<string | null>(null);
     // Private candidate rows and action closures must not enter the primitive's process-wide default cache.
@@ -90,7 +97,7 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
     const source = directoryKind && model.directory.sections.find((section) => section.kind === directoryKind);
     const activeStep = directoryKind ? buildShareSheetSelectionStep({ ...input, directoryKind }) : null;
     return <View testID={testID} style={presentation === 'full' ? styles.full : styles.compact}>
-        <SelectionList rootStep={rootStep} syncActiveStep={activeStep}
+        <SelectionList rootStep={rootStep} syncActiveStep={activeStep ?? undefined}
             onActiveStepChange={(step) => {
                 setDirectoryKind(model.directory.sections.find((section) => step.id === shareSheetStepId(adapter.namespace, section.kind))?.kind);
             }}
@@ -100,7 +107,8 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
             listAccessibilityLabel={adapter.title} testID={`${testID}:list`}
             inputTestID={idPrefix ? `${testID}:${adapter.namespace}-search` : `${adapter.namespace}-search`}
             autoFocusInputOnWeb={presentation === 'compact'} autoFocusInputOnNative={false}
-            bodyFooter={presentation === 'full' && !directoryKind ? <ShareHelp adapter={adapter} testID={`${idPrefix}${adapter.namespace}-help`} /> : undefined}
+            surface={presentation === 'inline' ? 'none' : undefined}
+            bodyFooter={presentation !== 'compact' && !directoryKind ? <ShareHelp adapter={adapter} testID={`${idPrefix}${adapter.namespace}-help`} /> : undefined}
             fillAvailableSpace={presentation === 'full'} heightBehavior={presentation === 'compact' ? 'stabilizedContentHeight' : 'content'}
             pagination={source ? { hasMore: source.hasMore, loadingMore: source.loadingMore, requestKey: source.cursor,
                 error: source.error?.message, onEndReached: () => actions.loadMore(source.kind), onRetry: () => actions.retryDirectory(source.kind),
@@ -108,15 +116,15 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
                 endReachedLabel: t('shareSheet.allLoaded') } : undefined} />
         {presentation === 'full' && (copyLink || adapter.sendCopy || onRequestClose) ? <View style={styles.footer}>
             <View style={styles.handoffs}>
-                {copyLink ? <RoundButton size="small" display="inverted" style={styles.action}
+                {copyLink ? <RoundButton size={footerButtonSize} display="inverted" style={styles.action}
                     testID={`${idPrefix}${adapter.namespace}-copy-link`}
                     title={t(copyLink.copied ? 'shareSheet.linkCopied' : 'shareSheet.copyLink')}
                     leading={<ShareHandoffIcon name="link" />} onPress={copyLink.onCopy} /> : null}
-                {adapter.sendCopy ? <RoundButton size="small" display="inverted" style={styles.action}
+                {adapter.sendCopy ? <RoundButton size={footerButtonSize} display="inverted" style={styles.action}
                     testID={`${idPrefix}${adapter.namespace}-send-copy`} title={t('shareSheet.sendCopy')}
                     leading={<ShareHandoffIcon name="copy" />} onPress={adapter.sendCopy} /> : null}
             </View>
-            {onRequestClose ? <RoundButton size="small" style={styles.action} testID={`${idPrefix}${adapter.namespace}-done`}
+            {onRequestClose ? <RoundButton size={footerButtonSize} style={styles.action} testID={`${idPrefix}${adapter.namespace}-done`}
                 title={t('common.done')} onPress={onRequestClose} /> : null}
         </View> : null}
     </View>;

@@ -4,10 +4,13 @@ export interface MachineDisplayMetadata {
     displayName?: string | null;
     host?: string | null;
     homeDir?: string | null;
+    platform?: string | null;
 }
 
 export interface MachineDisplayRenderable {
     id: string;
+    isShared?: Machine['isShared'];
+    access?: Machine['access'];
     kind?: Machine['kind'];
     updatedAt: number;
     active: boolean;
@@ -29,12 +32,15 @@ export function buildMachineDisplayMetadata(metadata: MachineMetadata | null | u
         displayName: typeof metadata.displayName === 'string' ? metadata.displayName : null,
         host: typeof metadata.host === 'string' ? metadata.host : null,
         homeDir: typeof metadata.homeDir === 'string' ? metadata.homeDir : null,
+        platform: typeof metadata.platform === 'string' ? metadata.platform : null,
     };
 }
 
 export function buildMachineDisplayRenderableFromMachine(machine: Machine): MachineDisplayRenderable {
     return {
         id: machine.id,
+        ...(machine.isShared !== undefined ? { isShared: machine.isShared } : {}),
+        ...(machine.access ? { access: machine.access } : {}),
         kind: machine.kind,
         updatedAt: machine.updatedAt,
         active: machine.active,
@@ -58,6 +64,12 @@ export function areMachineDisplayRenderablesEqual(
     if (previous === next) return true;
     if (!previous || !next) return previous === next;
     return previous.id === next.id
+        && previous.isShared === next.isShared
+        && previous.access?.custodian.accountId === next.access?.custodian.accountId
+        && previous.access?.custodian.displayName === next.access?.custodian.displayName
+        && previous.access?.role === next.access?.role
+        && previous.access?.resourceMode === next.access?.resourceMode
+        && previous.access?.accessState === next.access?.accessState
         && previous.kind === next.kind
         && previous.updatedAt === next.updatedAt
         && previous.active === next.active
@@ -74,7 +86,8 @@ export function areMachineDisplayRenderablesEqual(
             === (next.availability?.kind === 'locked' ? next.availability.reason : null)
         && (previous.metadata?.displayName ?? null) === (next.metadata?.displayName ?? null)
         && (previous.metadata?.host ?? null) === (next.metadata?.host ?? null)
-        && (previous.metadata?.homeDir ?? null) === (next.metadata?.homeDir ?? null);
+        && (previous.metadata?.homeDir ?? null) === (next.metadata?.homeDir ?? null)
+        && (previous.metadata?.platform ?? null) === (next.metadata?.platform ?? null);
 }
 
 export function getMachineDisplaySubtitle(machine: MachineDisplayRenderable | undefined, machineId: string): string {

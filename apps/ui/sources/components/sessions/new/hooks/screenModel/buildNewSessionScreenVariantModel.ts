@@ -14,13 +14,20 @@ import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSe
 import type {
     NewSessionScreenModel,
     NewSessionSimpleScreenProps,
+    NewSessionManagedMachineDraftModel,
+    NewSessionBotCreationModel,
+    NewSessionInstructionsCreationModel,
 } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
+import { buildNewSessionManagedProgressBadge } from './newSessionManagedProgressBadge';
 
 export function buildNewSessionScreenVariantModel(params: Readonly<{
     useEnhancedSessionWizard: boolean;
     popoverBoundaryRef: React.RefObject<View>;
     launchOverlay: React.ReactNode | null;
     temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
+    managedMachineDraft?: NewSessionManagedMachineDraftModel;
+    botCreation?: NewSessionBotCreationModel;
+    instructionsCreation?: NewSessionInstructionsCreationModel;
     launchOnRequestClose?: () => void;
     overlayPresentation?: 'card' | 'screen';
     overlayFocusReturnRef?: React.RefObject<View | null>;
@@ -36,9 +43,12 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
     wizardMachineProps: NewSessionWizardMachineProps;
     wizardFooterProps: NewSessionWizardFooterProps;
 }>): NewSessionScreenModel {
-    if (!params.useEnhancedSessionWizard) {
+    const managedProgressBadge = buildNewSessionManagedProgressBadge(params.managedMachineDraft);
+    // A Bot is an ordinary composer and an ordinary first turn (lab `b-new`): never the wizard.
+    if (!params.useEnhancedSessionWizard || params.botCreation) {
         const simpleProps: NewSessionSimpleScreenProps = {
             ...params.simplePanelProps,
+            ...(managedProgressBadge ? { statusBadges: [...(params.simplePanelProps.statusBadges ?? []), managedProgressBadge] } : {}),
             checkoutCreationDraft: params.checkoutCreationDraft,
             setCheckoutCreationDraft: params.setCheckoutCreationDraft,
         };
@@ -48,6 +58,9 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
             popoverBoundaryRef: params.popoverBoundaryRef,
             launchOverlay: params.launchOverlay,
             temporaryComputerLaunch: params.temporaryComputerLaunch,
+            managedMachineDraft: params.managedMachineDraft,
+            botCreation: params.botCreation,
+            instructionsCreation: params.instructionsCreation,
             launchOnRequestClose: params.launchOnRequestClose ?? (() => undefined),
             overlayPresentation: params.overlayPresentation,
             overlayFocusReturnRef: params.overlayFocusReturnRef,
@@ -61,6 +74,9 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
         popoverBoundaryRef: params.popoverBoundaryRef,
         launchOverlay: params.launchOverlay,
         temporaryComputerLaunch: params.temporaryComputerLaunch,
+        managedMachineDraft: params.managedMachineDraft,
+        botCreation: params.botCreation,
+        instructionsCreation: params.instructionsCreation,
         launchOnRequestClose: params.launchOnRequestClose ?? (() => undefined),
         overlayPresentation: params.overlayPresentation,
         overlayFocusReturnRef: params.overlayFocusReturnRef,
@@ -72,7 +88,9 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
             profiles: params.wizardProfilesProps,
             agent: params.wizardAgentProps,
             machine: params.wizardMachineProps,
-            footer: params.wizardFooterProps,
+            footer: managedProgressBadge
+                ? { ...params.wizardFooterProps, statusBadges: [...(params.wizardFooterProps.statusBadges ?? []), managedProgressBadge] }
+                : params.wizardFooterProps,
         },
     };
 }

@@ -3,6 +3,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { MachineDataKeyCacheEntry } from './syncMachines';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { Encryption } from '@/sync/encryption/encryption';
 import { buildMachineDisplayRenderableFromMachine, type MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 
 const legacyCredentials = {
@@ -41,7 +42,8 @@ function jsonResponse(body: unknown, status = 200): Response {
     });
 }
 
-function createEncryptionHarness() {
+async function createEncryptionHarness() {
+    const contextOwner = await Encryption.create(new Uint8Array(32).fill(17));
     const decryptEncryptionKeys = vi.fn(async (values: readonly string[]): Promise<Array<Uint8Array | null>> =>
         values.map(() => new Uint8Array([1, 2, 3])));
     const initialized = new Set<string>();
@@ -55,14 +57,17 @@ function createEncryptionHarness() {
         if (!value) return null;
         return { decrypted: value };
     });
+    const machineEncryption = { decryptMetadata, decryptDaemonState };
     return {
+        captureMachineEncryptionContext: contextOwner.captureMachineEncryptionContext.bind(contextOwner),
+        captureMachineEncryptionContextRead: contextOwner.captureMachineEncryptionContextRead.bind(contextOwner),
         decryptEncryptionKeys,
         initializeMachines,
         decryptMetadata,
         decryptDaemonState,
         getMachineEncryption: (machineId: string) => {
             if (!initialized.has(machineId)) return null;
-            return { decryptMetadata, decryptDaemonState };
+            return machineEncryption;
         },
     };
 }
@@ -87,13 +92,13 @@ describe('fetchAndApplyMachines request override', () => {
         const existing = createMachineFixture({
             id: 'm_unchanged',
             kind: 'persistent',
-            daemonState: { healthy: true },
+            daemonState: { status: 'running' },
             daemonStateVersion: 7,
             storageMode: 'e2ee',
             availability: { kind: 'available' },
         });
         // Crypto and HTTP are external boundaries; fetch/hydration logic remains real.
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const applied: Machine[][] = [];
         const displayed: MachineDisplayRenderable[][] = [];
         await fetchAndApplyMachines({
@@ -123,7 +128,7 @@ describe('fetchAndApplyMachines request override', () => {
         const existing = createMachineFixture({
             id: 'm_rotated', storageMode: 'e2ee', availability: { kind: 'available' },
         });
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         let current = existing;
         await fetchAndApplyMachines({
             credentials: legacyCredentials,
@@ -153,7 +158,7 @@ describe('fetchAndApplyMachines request override', () => {
         const nextMetadata = { ...existing.metadata!, daemonTerminalSessionAttachSupported: false };
         let finishHydration!: (metadata: typeof nextMetadata) => void;
         const pendingMetadata = new Promise<typeof nextMetadata>((resolve) => { finishHydration = resolve; });
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         encryption.decryptMetadata.mockImplementation(async () => pendingMetadata);
         let current: Machine = existing;
 
@@ -201,7 +206,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
         const applied: unknown[][] = [];
 
@@ -244,7 +249,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
         const applyMachineDisplayEntries = vi.fn();
 
@@ -313,7 +318,7 @@ describe('fetchAndApplyMachines request override', () => {
             updatedAt: 10 + index,
         } satisfies RawMachine));
         const requestSpy = vi.fn(async () => jsonResponse(rows));
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
         const applyMachineDisplayEntries = vi.fn();
         const cachedMachineDisplayEntries = Object.fromEntries(rows.map((row) => [
@@ -379,7 +384,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
         const applyMachineDisplayEntries = vi.fn();
 
@@ -440,7 +445,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
         const applyMachineDisplayEntries = vi.fn();
 
@@ -484,6 +489,10 @@ describe('fetchAndApplyMachines request override', () => {
 
     it('preserves existing daemonState while cache-hit machine hydration is still pending', async () => {
         const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        // Match the store's stable row identity so the real read-currentness guard stays active.
+        const existing = createMachineFixture({ id: 'm_cached', metadataVersion: 5,
+            daemonState: { status: 'running' }, daemonStateVersion: 7,
+            storageMode: 'e2ee', availability: { kind: 'available' } });
         const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
             jsonResponse([
                 {
@@ -503,7 +512,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         encryption.decryptMetadata.mockImplementation(async () => new Promise<never>(() => {}));
         encryption.decryptDaemonState.mockImplementation(async () => new Promise<never>(() => {}));
         const applyMachines = vi.fn();
@@ -517,19 +526,7 @@ describe('fetchAndApplyMachines request override', () => {
             request: requestSpy,
             applyMachines,
             getExistingMachine: (machineId: string) => machineId === 'm_cached'
-                ? ({
-                    id: 'm_cached',
-                    seq: 1,
-                    createdAt: 1,
-                    updatedAt: 9,
-                    active: true,
-                    activeAt: 9,
-                    revokedAt: null,
-                    metadata: { displayName: 'Existing machine', host: 'mbp', homeDir: '/home/u' },
-                    metadataVersion: 5,
-                    daemonState: { healthy: true },
-                    daemonStateVersion: 7,
-                } as any)
+                ? existing
                 : null,
             ...( {
                 cachedMachineDisplayEntries: {
@@ -560,13 +557,17 @@ describe('fetchAndApplyMachines request override', () => {
                 id: 'm_cached',
                 metadataVersion: 5,
                 daemonStateVersion: 7,
-                daemonState: { healthy: true },
+                daemonState: { status: 'running' },
             }),
         ], false);
     });
 
     it('clears existing daemonState immediately when the fetched row no longer carries daemonState', async () => {
         const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        // Match the store's stable row identity so the real read-currentness guard stays active.
+        const existing = createMachineFixture({ id: 'm_cached', metadataVersion: 5,
+            daemonState: { status: 'running' }, daemonStateVersion: 7,
+            storageMode: 'e2ee', availability: { kind: 'available' } });
         const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
             jsonResponse([
                 {
@@ -574,7 +575,7 @@ describe('fetchAndApplyMachines request override', () => {
                     metadata: 'encrypted-meta',
                     metadataVersion: 5,
                     daemonState: null,
-                    daemonStateVersion: 0,
+                    daemonStateVersion: 8,
                     dataEncryptionKey: 'key-1',
                     seq: 1,
                     active: true,
@@ -586,7 +587,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
         const applyMachineDisplayEntries = vi.fn();
 
@@ -598,19 +599,7 @@ describe('fetchAndApplyMachines request override', () => {
             request: requestSpy,
             applyMachines,
             getExistingMachine: (machineId: string) => machineId === 'm_cached'
-                ? ({
-                    id: 'm_cached',
-                    seq: 1,
-                    createdAt: 1,
-                    updatedAt: 9,
-                    active: true,
-                    activeAt: 9,
-                    revokedAt: null,
-                    metadata: { displayName: 'Existing machine', host: 'mbp', homeDir: '/home/u' },
-                    metadataVersion: 5,
-                    daemonState: { healthy: true },
-                    daemonStateVersion: 7,
-                } as any)
+                ? existing
                 : null,
             ...( {
                 cachedMachineDisplayEntries: {
@@ -634,7 +623,7 @@ describe('fetchAndApplyMachines request override', () => {
             expect.objectContaining({
                 id: 'm_cached',
                 daemonState: null,
-                daemonStateVersion: 0,
+                daemonStateVersion: 8,
             }),
         ], false);
     });
@@ -660,7 +649,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         encryption.decryptMetadata.mockImplementation(async () => new Promise<never>(() => {}));
         encryption.decryptDaemonState.mockImplementation(async () => new Promise<never>(() => {}));
         const applyMachines = vi.fn();
@@ -707,7 +696,7 @@ describe('fetchAndApplyMachines request override', () => {
                 throw new TypeError('Failed to fetch');
             });
 
-            const encryption = createEncryptionHarness();
+            const encryption = await createEncryptionHarness();
             const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
             const applyMachines = vi.fn();
 
@@ -741,7 +730,7 @@ describe('fetchAndApplyMachines request override', () => {
             await fetchAndApplyMachines({
                 credentials: legacyCredentials,
                 sourceServerId: 'home-1',
-                encryption: createEncryptionHarness(),
+                encryption: await createEncryptionHarness(),
                 machineDataKeys: new Map<string, MachineDataKeyCacheEntry>(),
                 request: vi.fn(request),
                 applyMachines,
@@ -777,7 +766,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         encryption.decryptEncryptionKeys.mockResolvedValueOnce([null]);
 
         const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
@@ -825,7 +814,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         encryption.decryptEncryptionKeys.mockResolvedValue([null]);
 
         const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
@@ -874,7 +863,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const machineDataKeys = new Map<string, MachineDataKeyCacheEntry>();
 
         const machineStateById: Record<string, any> = {
@@ -923,7 +912,7 @@ describe('fetchAndApplyMachines request override', () => {
             ]),
         );
 
-        const encryption = createEncryptionHarness();
+        const encryption = await createEncryptionHarness();
         const applyMachines = vi.fn();
         const applyMachineDisplayEntries = vi.fn();
 

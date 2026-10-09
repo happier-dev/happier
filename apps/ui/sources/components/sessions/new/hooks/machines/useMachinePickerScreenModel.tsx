@@ -45,6 +45,7 @@ import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCred
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ManagedMachineDestinationProjection, ManagedMachineSelectionDraft } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 
 function useMachinePickerScreenOptions(params: Readonly<{
     title: string;
@@ -128,11 +129,22 @@ export function useMachinePickerScreenModel() {
 
     const [isRefreshing, setIsRefreshing] = React.useState(false);
     const [refreshToken, setRefreshToken] = React.useState(0);
+    const [managedProjection, setManagedProjection] = React.useState<Readonly<{
+        serverId: string; projection: ManagedMachineDestinationProjection;
+    }> | null>(null);
+    const receiveManagedProjection = React.useCallback((serverId: string, projection: ManagedMachineDestinationProjection) => {
+        setManagedProjection(current => current?.serverId === serverId && current.projection.state === projection.state
+            && current.projection.rowCount === projection.rowCount ? current : { serverId, projection });
+    }, []);
     const autoSelectedSingleMachineRef = React.useRef(false);
     const requestedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const restoredExecutionTarget = React.useMemo(() => {
         const dataId = typeof params.dataId === 'string' ? params.dataId.trim() : '';
         return dataId ? peekTempData<NewSessionData>(dataId)?.executionTarget ?? null : null;
+    }, [params.dataId]);
+    const restoredManagedMachine = React.useMemo(() => {
+        const dataId = typeof params.dataId === 'string' ? params.dataId.trim() : '';
+        return dataId ? peekTempData<NewSessionData>(dataId)?.managedMachineSelection ?? null : null;
     }, [params.dataId]);
     const requestedServerId = typeof params.spawnServerId === 'string' ? params.spawnServerId.trim() : null;
     const activeServerId = activeServerSource.activeServerId;
@@ -247,13 +259,15 @@ export function useMachinePickerScreenModel() {
         ? temporaryComputerAvailability.artifacts.length
         : 0;
     const machineDestinationModel = React.useMemo(() => buildMachineDestinationModel({
+        purpose: 'session',
         groups: serverScopedMachineGroups,
         poolGroups: machinePoolGroups,
         temporaryComputerProjection: {
             state: temporaryComputerProjectionState,
             rowCount: temporaryComputerRowCount,
         },
-    }), [machinePoolGroups, serverScopedMachineGroups, temporaryComputerProjectionState, temporaryComputerRowCount]);
+        managedMachineProjection: managedProjection?.serverId === selectedServerId ? managedProjection.projection : undefined,
+    }), [machinePoolGroups, serverScopedMachineGroups, temporaryComputerProjectionState, temporaryComputerRowCount, managedProjection, selectedServerId]);
     const machinesForSelectedServer = React.useMemo(() => {
         return serverScopedMachineGroups.find((group) => group.serverId === selectedServerId)?.machines ?? [];
     }, [selectedServerId, serverScopedMachineGroups]);
@@ -320,6 +334,7 @@ export function useMachinePickerScreenModel() {
         const returnMode = setNewSessionPickerReturnParams({
             navigation,
             router,
+            managedMachineSelection: null,
             routeParams: {
                 machineId,
                 machinePoolId,
@@ -396,6 +411,17 @@ export function useMachinePickerScreenModel() {
         commitExactMachine(machine.id, machineServerId || selectedServerId || activeServerId);
     }, [activeServerId, commitExactMachine, poolSelection.cancelPendingSelection, selectedServerId]);
 
+    const handleSelectManagedMachine = React.useCallback((draft: ManagedMachineSelectionDraft) => {
+        if (!selectedServerId || draft.selection.homeId !== targetServerProfile?.serverIdentityId) return;
+        poolSelection.cancelPendingSelection();
+        const returnMode = setNewSessionPickerReturnParams({ navigation, router, managedMachineSelection: draft,
+            routeParams: { machineId: undefined, machinePoolId: undefined, spawnServerId: selectedServerId },
+            currentParams: currentRouteParams,
+            replaceParams: { machineId: undefined, machinePoolId: undefined, spawnServerId: selectedServerId },
+        });
+        if (returnMode === 'dispatch') safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [currentRouteParams, navigation, pickerFallbackHref, poolSelection.cancelPendingSelection, router, selectedServerId, targetServerProfile]);
+
     const handleBack = React.useCallback(() => {
         poolSelection.cancelPendingSelection();
         safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
@@ -417,13 +443,14 @@ export function useMachinePickerScreenModel() {
         if (autoSelectedSingleMachineRef.current) return;
         if (rejectedRequestedServerId) return;
         if (selectedMachineId) return;
+        if (restoredManagedMachine) return;
         if (!selectedServerId) return;
         // Completeness and exact row counting stay with the list's canonical destination owner.
         const onlyMachine = machineDestinationModel.soleSelectableDestination;
         if (!onlyMachine || onlyMachine.serverId !== selectedServerId) return;
         autoSelectedSingleMachineRef.current = true;
         void handleSelectMachine(onlyMachine.machine);
-    }, [handleSelectMachine, machineDestinationModel, rejectedRequestedServerId, selectedMachineId, selectedServerId]);
+    }, [handleSelectMachine, machineDestinationModel, rejectedRequestedServerId, restoredManagedMachine, selectedMachineId, selectedServerId]);
 
     const recentMachines = React.useMemo(() => {
         return getRecentMachinesFromSessions({ machines: machinesForSelectedServer, sessions });
@@ -474,6 +501,9 @@ export function useMachinePickerScreenModel() {
             onSelectScopedMachine={handleSelectMachine}
             onSelectPool={poolSelection.selectPool}
             temporaryComputers={temporaryComputerSelections}
+            selectedManagedMachine={restoredManagedMachine}
+            onSelectManagedMachine={handleSelectManagedMachine}
+            onManagedMachineProjection={receiveManagedProjection}
             poolSelectionStatus={poolSelection.status}
             onRefreshMachines={handleRefreshMachinesPress}
             onRefreshPools={handleRefreshPools}
@@ -487,11 +517,14 @@ export function useMachinePickerScreenModel() {
     ), [
         favoriteMachineItems,
         handleSelectMachine,
+        handleSelectManagedMachine,
+        receiveManagedProjection,
         handleSelectTemporaryComputer,
         machinePoolGroups,
         onToggleFavorite,
         recentMachines,
         restoredExecutionTarget,
+        restoredManagedMachine,
         selectedMachine,
         selectedMachineId,
         selectedServerId,

@@ -14,8 +14,12 @@ const MACHINE_DETAIL_MIN_WIDTH_PX = 480;
 function resolveMachinesChildRoute(pathname: string): string {
     if (pathname === MACHINES_COLLECTION_ROOT) return 'index';
     const rest = pathname.slice(MACHINES_COLLECTION_ROOT.length + 1);
-    if (rest === 'add' || rest === 'this-computer' || rest === 'pools/new') return rest;
+    if (rest === 'add' || rest === 'this-computer' || rest === 'defaults' || rest === 'pools/new') return rest;
+    if (rest.startsWith('add/')) return 'add/[provisioner]';
+    if (rest === 'presets/new') return 'presets/new';
+    if (rest.startsWith('presets/')) return 'presets/[presetId]';
     if (rest.startsWith('pools/')) return 'pools/[poolId]';
+    if (rest.startsWith('managed/')) return 'managed/[id]';
     return '[id]';
 }
 

@@ -57,10 +57,6 @@ vi.mock('@/utils/url/openExternalUrl', () => ({
     openExternalUrl: vi.fn(),
 }));
 
-vi.mock('@/components/sessions/terminal/terminalErrorCopy', () => ({
-    resolveTerminalErrorCopy: () => null,
-}));
-
 import { EmbeddedTerminalPaneFrame } from './EmbeddedTerminalPaneFrame';
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';
@@ -94,6 +90,16 @@ function makeController(overrides: Partial<EmbeddedTerminalPaneController>): Emb
 }
 
 describe('EmbeddedTerminalPaneFrame states (terminal lab ST)', () => {
+    it('offers the shared pending-approval continuation while retaining the terminal surface', async () => {
+        const onOpenApproval = vi.fn();
+        const controller = { ...makeController({ status: 'connecting' }), approvalPending: true, onOpenApproval };
+        const screen = await renderScreen(<EmbeddedTerminalPaneFrame title="shell" controller={controller}
+            chrome="none" surface={React.createElement('TerminalSurface')} testIdPrefix="pending" platformOS="web" />);
+        expect(screen.findByTestId('pending-surface')).toBeTruthy();
+        expect(screen.findByTestId('pending-overlay')).toBeFalsy();
+        screen.findByTestId('pending-state-line-action')?.props.onPress();
+        expect(onOpenApproval).toHaveBeenCalledOnce();
+    });
     it('without its own chrome, leaves the toolbar and the address to the owning strip', async () => {
         const screen = await renderScreen(React.createElement(EmbeddedTerminalPaneFrame, {
             title: 'zsh',
