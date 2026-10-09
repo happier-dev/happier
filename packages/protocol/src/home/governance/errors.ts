@@ -1,4 +1,6 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { ManagedResourceDependencyV1Schema } from '../../machines/managed/managedDependencyV1.js';
 
 /**
  * Typed Home-governance denials and conflicts.
@@ -7,7 +9,7 @@ import { z } from 'zod';
  * capability, so a client that raced a role or lifecycle change receives an
  * actionable outcome instead of a generic failure.
  */
-export const HomeGovernanceErrorCodeV1Schema = z.enum([
+export const HomeGovernanceErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   /** The actor's current role/status does not permit this operation. */
   'home_governance_forbidden',
   /** The Home has no active owner and requires deployment-local recovery. */
@@ -53,13 +55,17 @@ export const HomeGovernanceErrorCodeV1Schema = z.enum([
   'account_erasure_incomplete',
   /** Transition cleanup made progress; retry before Account retirement. */
   'account_erasure_transition_cleanup_pending',
-]);
+  'account_erasure_managed_resources_review_required',
+]));
 
 export type HomeGovernanceErrorCodeV1 = z.infer<typeof HomeGovernanceErrorCodeV1Schema>;
 
-export const HomeGovernanceErrorV1Schema = z.object({
-  error: HomeGovernanceErrorCodeV1Schema,
-}).strict();
+export const HomeGovernanceErrorV1Schema = lazyZodSchema(() => z.union([z.object({
+  error: HomeGovernanceErrorCodeV1Schema.exclude(['account_erasure_managed_resources_review_required']),
+}).strict(), z.object({
+  error: z.literal('account_erasure_managed_resources_review_required'),
+  resources: z.array(ManagedResourceDependencyV1Schema),
+}).strict()]));
 
 export type HomeGovernanceErrorV1 = z.infer<typeof HomeGovernanceErrorV1Schema>;
 
@@ -96,6 +102,7 @@ export function homeGovernanceErrorHttpStatusV1(
     case 'team_membership_transfer_conflict':
     case 'account_erasure_incomplete':
     case 'account_erasure_transition_cleanup_pending':
+    case 'account_erasure_managed_resources_review_required':
       return 409;
   }
 }

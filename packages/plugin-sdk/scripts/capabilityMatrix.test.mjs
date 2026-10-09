@@ -98,6 +98,7 @@ const HOST_BINDING_OWNER_EVIDENCE = Object.freeze({
   'apps/cli/src/plugins/projection/registry/browser.ts': 'export const pluginBrowserProjectionFamily',
   'apps/cli/src/plugins/projection/registry/composer.ts': 'export const composerControlsProjectionFamily',
   'apps/cli/src/plugins/projection/registry/managedDependencies.ts': 'export const managedDependenciesProjectionFamily',
+  'apps/cli/src/plugins/projection/registry/machineProvisioners.ts': 'export const machineProvisionersProjectionFamily',
   'apps/cli/src/plugins/projection/registry/accountCollections.ts': 'export const accountCollectionsProjectionFamily',
   'apps/cli/src/plugins/projection/registry/voiceDeclarations.ts': 'export const voiceModelPackProjectionFamily',
   'apps/cli/src/plugins/projection/registry/roles.ts': 'export const rolesProjectionFamily',
@@ -526,6 +527,41 @@ test('derives declarative workflow availability from its projection and occurren
   });
 });
 
+test('publishes provisioner capability through cold projection and its consumed author subpaths', () => {
+  const entry = PLUGIN_CONTRIBUTION_CATALOG_V2.find(candidate => candidate.manifestKey === 'machineProvisioners');
+  assert.ok(entry);
+  assert.equal(entry.allowedRuntimeRegistration, null);
+  const metadata = deriveCapabilityMatrixMetadata({
+    contributionCatalog: [entry], hostAccessCatalog: [], services: [],
+    apiInventory: { symbols: [], entrypoints: [
+      { specifier: './machine-provisioners', sourceModule: 'src/machine-provisioners/index.ts', visibility: 'author', realm: 'any' },
+      { specifier: './machine-provisioners/ssh', sourceModule: 'src/machine-provisioners/ssh/index.ts', visibility: 'author', realm: 'daemon' },
+    ] },
+    declarations: CAPABILITY_MATRIX_DECLARATIONS_V1,
+  });
+  assert.deepEqual(metadata.manifestFamilies.machineProvisioners, {
+    producer: 'packages/protocol/src/plugins/contributions/catalog.ts#machineProvisioners',
+    specialistOwner: 'apps/cli/src/plugins/projection/registry/machineProvisioners.ts',
+    lifecycleOwner: 'apps/cli/src/plugins/runtime/lifecycle/manager.ts',
+    predecessorRemoval: `catalog-disposition:${entry.disposition}`,
+    availabilityDisposition: 'available', provingConsumer: 'packages/plugins/machine-lima/src/manifest.ts',
+    sourceApiAvailability: 'present', sourceConsumer: null,
+    loadedPlatformProof: 'not-recorded', releaseAvailability: 'not-published',
+  });
+  for (const [specifier, consumer] of [
+    ['./machine-provisioners', 'packages/plugins/machine-lima/src/manifest.ts'],
+    ['./machine-provisioners/ssh', 'packages/plugins/machine-hetzner/src/manifest.ts'],
+  ]) {
+    const row = metadata.subpaths[specifier];
+    assert.equal(row?.availabilityDisposition, 'available');
+    assert.equal(row.specialistOwner, 'packages/plugin-sdk/package.json');
+    assert.equal(row.lifecycleOwner, 'apps/cli/src/plugins/runtime/loadPluginModule.ts');
+    assert.equal(row.provingConsumer, consumer);
+    assert.equal(row.loadedPlatformProof, 'not-recorded');
+    assert.equal(row.releaseAvailability, 'not-published');
+  }
+});
+
 test('names the real realm binder for every catalogued manifest family', () => {
   // Registration, client projection and direct host consumption are different
   // host mechanisms. A catalog registration/projection label selects none of
@@ -541,6 +577,7 @@ test('names the real realm binder for every catalogued manifest family', () => {
 
   const expectedBinders = {
     actions: 'apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts',
+    machineProvisioners: 'apps/cli/src/plugins/projection/registry/machineProvisioners.ts',
     // Voice providers ship on web/iOS/Android only, so the daemon registry
     // never binds them; the client executable registration index does.
     voiceProviders: 'apps/ui/sources/components/plugins/reactNative/clientExecutableContributions.ts',

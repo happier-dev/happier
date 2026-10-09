@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import * as ProtocolPublic from '../../index.js';
 
@@ -43,6 +44,34 @@ function deepSortObjectKeys(value: unknown): unknown {
 }
 
 describe('plugin JSON Schema validation policy', () => {
+  it('admits primitive and array native roots while projecting only stored object extras', () => {
+    const scalar = protocolComposableKernel.createPluginJsonSchemaZodValueAdapter({ type: 'string', enum: ['linux', 'darwin'] });
+    expect(scalar.parse('linux')).toBe('linux');
+    expect(scalar.safeParse('win32').success).toBe(false);
+    expect(createStoredReadSchema(scalar).parse('darwin')).toBe('darwin');
+    const array = protocolComposableKernel.createPluginJsonSchemaZodValueAdapter({ type: 'array', items: {
+      type: 'object', properties: { image: { type: 'string' } }, required: ['image'], additionalProperties: false,
+    } });
+    const value = [{ image: 'linux', futureNativeFact: true }];
+    expect(array.safeParse(value).success).toBe(false);
+    expect(createStoredReadSchema(array).parse(value)).toEqual([{ image: 'linux' }]);
+    expect(createStoredReadSchema(array).safeParse([{ image: 7 }]).success).toBe(false);
+    expect(value[0]?.futureNativeFact).toBe(true);
+    expect(zodSchemaToJsonSchemaObject(array).type).toBe('array');
+  });
+  it('drops stored native extras without weakening strict declared ingress or union identity', () => {
+    const schema = createPluginJsonSchemaZodObjectAdapter({ type: 'object', properties: {
+      native: { oneOf: [
+        { type: 'object', properties: { kind: { const: 'a' }, id: { type: 'string' } }, required: ['kind', 'id'], additionalProperties: false },
+        { type: 'object', properties: { kind: { const: 'b' }, name: { type: 'string' } }, required: ['kind', 'name'], additionalProperties: false },
+      ] },
+    }, required: ['native'], additionalProperties: false });
+    const value = { native: { kind: 'b', name: 'retained', extra: true }, extra: true };
+    expect(schema.safeParse(value).success).toBe(false);
+    expect(createStoredReadSchema(schema).parse(value)).toEqual({ native: { kind: 'b', name: 'retained' } });
+    expect(value.native.extra).toBe(true);
+    expect(createStoredReadSchema(schema).safeParse({ native: { kind: 'b', name: 3, extra: true } }).success).toBe(false);
+  });
   it('validates the real trigger-removal output against its frozen recursive Action projection', () => {
     const outputSchema = WorkflowActionOutputSchemasV1['session.trigger.remove'];
     const result = outputSchema.parse({ set: {
@@ -101,6 +130,20 @@ describe('plugin JSON Schema validation policy', () => {
   it('validates Action-projected exclusive numeric boundaries without weakening them', () => {
     const validate = compilePluginJsonSchema({ type: 'number', exclusiveMinimum: 0, exclusiveMaximum: 2 });
     expect([0, 1, 2].map((value) => validate(value))).toEqual([false, true, false]);
+  });
+  it('preserves native whole-second duration constraints through warm, cold and compiled admission', () => {
+    const options = { integer: true, minimum: 1000, maximum: 86400000, multipleOf: 1000 };
+    const duration = defineProtocolNumber(options);
+    expect(duration.safeParse(1001).success).toBe(false);
+    const cold = rehydrateCanonicalProtocolComposableSchema(duration.jsonSchema);
+    const compiled = compilePluginJsonSchema(duration.jsonSchema);
+    for (const value of [1000, 86400000]) {
+      expect(duration.parse(value)).toBe(value);
+      expect(cold?.parse(value)).toBe(value);
+      expect(compiled(value)).toBe(true);
+    }
+    expect(cold?.safeParse(1001).success).toBe(false);
+    expect(compiled(1001)).toBe(false);
   });
   it('validates Action-projected record key constraints without permitting another key', () => {
     const validate = compilePluginJsonSchema({ type: 'object', propertyNames: { enum: ['one'] }, additionalProperties: { type: 'string' } });

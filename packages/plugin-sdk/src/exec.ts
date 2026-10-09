@@ -55,7 +55,13 @@ export interface ExecService {
     readonly systemTools: SystemToolsService;
     run(
         request: PluginExecSpawnRequest & { timeoutMs?: number },
-        options?: { signal?: AbortSignal },
+        options?: {
+            signal?: AbortSignal;
+            /** Select the process carrying an admitted invocation's live output.
+             * Without a host-private observer this remains ordinary captured output.
+             */
+            outputDelivery?: 'captured' | 'invocation';
+        },
     ): Promise<PluginProcessResult>;
     spawn(
         request: PluginExecSpawnRequest,

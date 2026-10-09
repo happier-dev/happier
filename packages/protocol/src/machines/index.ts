@@ -6,12 +6,14 @@ export {
     MachineInstallationProofV1Schema,
     MachineInstallationPrivateKeySchema,
     MachineInstallationPublicKeySchema,
+    MachineInstallationPublicIdentityV1Schema,
     buildMachineInstallationProofPayloadBytes,
     computeContentPublicKeyFingerprint,
     signMachineInstallationProof,
     verifyMachineInstallationProof,
     type ContentPublicKeyFingerprint,
     type MachineInstallationIdentityV1,
+    type MachineInstallationPublicIdentityV1,
     type MachineInstallationProofPayloadV1,
     type MachineInstallationProofV1,
 } from './identity/installationIdentity.js';
@@ -38,6 +40,7 @@ export {
 
 export {
     MACHINE_PLAIN_DATA_KEY_MARKER,
+    MachineStoredMetadataPolicyFieldsV1Schema,
     decodePlainMachineStoredContent,
     encodePlainMachineStoredContent,
     isPlainMachineDataKeyMarker,
@@ -48,6 +51,9 @@ export {
     type PublishedMachineDataEncryptionKeyResolutionV1,
     type PublishedMachineDataEncryptionKeyV1,
 } from './machineStoredContent.js';
+
+export * from './machineFinitePolicyV1.js';
+export * from './machineContentKeyTransitionV1.js';
 
 export {
     arePluginMachineMaterializationRefsEqual,
@@ -60,6 +66,7 @@ export {
     MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
     MachineOperationProtocolCapabilityV1Schema,
     MachineOperationProtocolCapabilitiesV1Schema,
+    MachineOperationProtocolCapabilitiesV1StoredReadSchema,
     MachineOperationProtocolVersionsV1Schema,
     MachineIrohEndpointCapabilityV1Schema,
     MachineUpdateOperationProtocolCapabilitiesRequestV1Schema,
@@ -78,6 +85,10 @@ export {
     type MachineUpdateOperationProtocolCapabilitiesResponseV1,
 } from './operationProtocolCapabilitiesV1.js';
 export {
+    MachineDestinationPurposeV1Schema,
+    MachinePoolPlacementPurposeV1Schema,
+    type MachineDestinationPurposeV1,
+    type MachinePoolPlacementPurposeV1,
     MachinePoolIdV1Schema,
     MachinePoolSelectionOriginV1Schema,
     MachinePoolNameV1Schema,
@@ -144,3 +155,13 @@ export {
     type CliUpdateLastResult,
     type CliUpdateOutcome,
 } from './cliUpdateFacts.js';
+export * from './machineAccessV1.js';
+export { MachineWorkSummaryV1Schema, type MachineWorkSummaryV1 } from './machineWorkSummaryV1.js';
+export { computeMachineOwnerEnvelopeFingerprintV1 } from './machineOwnerEnvelopeFingerprintV1.js';
+export * from './managed/providerFactsV1.js';
+export * from './managed/devcontainerV1.js';
+export * from './managed/managedMachineV1.js';
+export * from './managed/actionsV1.js';
+export * from './managed/managedMachinePresetV1.js';
+export * from './managed/machinePresetActionsV1.js';
+export * from './managed/managedConfigurationV1.js';

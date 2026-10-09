@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
@@ -17,8 +18,10 @@ import {
 } from './qualifiedConnectedAccountProjectionsV4.js';
 import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from './connectedServiceBindings.js';
+import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
+import { ManagedResourceDependencyV1Schema, ManagedResourceDispositionV1Schema } from '../machines/managed/managedDependencyV1.js';
 
 type ReadonlyArrayProperties<T> = T extends object
   ? {
@@ -42,9 +45,9 @@ export const CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD =
 export const CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD =
   'daemon.connectedAccounts.control.command';
 
-const BoundedIdentitySchema = z.string().trim().min(1).max(256);
+const BoundedIdentitySchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 const ExpectedConfigurationRevisionSchema =
-  z.string().trim().min(1).max(256);
+  lazyZodSchema(() => z.string().trim().min(1).max(256));
 const BuiltInLegacyConnectedAccountOperations = new Set<string>(
   Object.values(
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
@@ -54,12 +57,12 @@ const BuiltInLegacyConnectedAccountOperations = new Set<string>(
   ]),
 );
 const BuiltInLegacyConnectedAccountOperationSchema =
-  BoundedIdentitySchema.refine(
+  lazyZodSchema(() => BoundedIdentitySchema.refine(
     (operation): operation is BuiltInLegacyConnectedAccountOperation =>
       BuiltInLegacyConnectedAccountOperations.has(operation),
     'Unknown built-in legacy Connected Account operation',
-  );
-const ManualFieldsSchema = z.record(
+  ));
+const ManualFieldsSchema = lazyZodSchema(() => z.record(
   z.string().trim().min(1).max(128),
   z.string().max(64 * 1024),
 ).superRefine((fields, context) => {
@@ -70,8 +73,8 @@ const ManualFieldsSchema = z.record(
         'Connected-account manual fields exceed the bounded field count',
     });
   }
-});
-const ConfigurationValuesSchema = z.record(
+}));
+const ConfigurationValuesSchema = lazyZodSchema(() => z.record(
   z.string().trim().min(1).max(128),
   PluginJsonValueV2Schema,
 ).superRefine((values, context) => {
@@ -82,8 +85,8 @@ const ConfigurationValuesSchema = z.record(
         'Connected-account configuration values exceed the bounded field count',
     });
   }
-});
-const SecretValuesSchema = z.record(
+}));
+const SecretValuesSchema = lazyZodSchema(() => z.record(
   z.string().trim().min(1).max(128),
   z.string().min(1).max(64 * 1024),
 ).superRefine((values, context) => {
@@ -94,10 +97,10 @@ const SecretValuesSchema = z.record(
         'Connected-account secret replacements exceed the bounded field count',
     });
   }
-});
+}));
 
 export const ConnectedAccountDaemonCommandSchema =
-  z.discriminatedUnion('operation', [
+  lazyZodSchema(() => z.discriminatedUnion('operation', [
     z.object({
       operation: z.literal('beginConnect'),
       service: asProtocolZod(PluginContributionIdentityV1Schema),
@@ -152,25 +155,25 @@ export const ConnectedAccountDaemonCommandSchema =
       attemptId: BoundedIdentitySchema,
       restoreKind: z.literal('oauth').optional(),
     }).strict(),
-  ]);
+  ]));
 export type ConnectedAccountDaemonCommand =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountDaemonCommandSchema>
   >;
 
 export const ConnectedAccountAuthenticationCommandRequestSchema =
-  z.object({
+  lazyZodSchema(() => z.object({
     v: z.literal(1),
     machineId: BoundedIdentitySchema,
     command: ConnectedAccountDaemonCommandSchema,
-  }).strict();
+  }).strict());
 export type ConnectedAccountAuthenticationCommandRequest =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountAuthenticationCommandRequestSchema>
   >;
 
 export const ConnectedAccountControlTargetSchema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('service'),
       service: asProtocolZod(PluginContributionIdentityV1Schema),
@@ -184,14 +187,14 @@ export const ConnectedAccountControlTargetSchema =
       kind: z.literal('attempt'),
       attemptId: BoundedIdentitySchema,
     }).strict(),
-  ]);
+  ]));
 export type ConnectedAccountControlTarget =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountControlTargetSchema>
   >;
 
 export const ConnectedAccountPeerOperationTransportSchema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('v4'),
     }).strict(),
@@ -200,14 +203,23 @@ export const ConnectedAccountPeerOperationTransportSchema =
       peerClass: z.enum(['exact_v0_2_1', 'revisioned_v2_v3']),
       serviceId: ConnectedServiceIdSchema,
     }).strict(),
-  ]);
+  ]));
 export type ConnectedAccountPeerOperationTransport =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountPeerOperationTransportSchema>
   >;
 
+export const ConnectedAccountRevokeCommandV1Schema = lazyZodSchema(() => z.object({
+  operation: z.literal('revokeAccount'),
+  account: asProtocolZod(QualifiedConnectedAccountRefSchema),
+  expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema.optional(),
+  cleanupGroupReferences: z.boolean(),
+  emergencyRevoke: z.boolean().optional(),
+  managedResourceDispositions: z.array(ManagedResourceDispositionV1Schema).optional(),
+}).strict());
+
 export const ConnectedAccountDaemonControlCommandSchema =
-  z.discriminatedUnion('operation', [
+  lazyZodSchema(() => z.discriminatedUnion('operation', [
     z.object({
       operation: z.literal('listPendingAttempts'),
       service: asProtocolZod(PluginContributionIdentityV1Schema),
@@ -229,30 +241,26 @@ export const ConnectedAccountDaemonControlCommandSchema =
       values: ConfigurationValuesSchema,
       secretValues: SecretValuesSchema,
     }).strict(),
-    z.object({
-      operation: z.literal('revokeAccount'),
-      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
-      cleanupGroupReferences: z.boolean(),
-    }).strict(),
-  ]);
+    ConnectedAccountRevokeCommandV1Schema,
+  ]));
 export type ConnectedAccountDaemonControlCommand =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountDaemonControlCommandSchema>
   >;
 
 export const ConnectedAccountControlCommandRequestSchema =
-  z.object({
+  lazyZodSchema(() => z.object({
     v: z.literal(1),
     machineId: BoundedIdentitySchema,
     command: ConnectedAccountDaemonControlCommandSchema,
-  }).strict();
+  }).strict());
 export type ConnectedAccountControlCommandRequest =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountControlCommandRequestSchema>
   >;
 
 export const ConnectedAccountConfigurationTargetSchema =
-  z.discriminatedUnion('kind', [
+  lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({
       kind: z.literal('service'),
       service: asProtocolZod(PluginContributionIdentityV1Schema),
@@ -269,14 +277,14 @@ export const ConnectedAccountConfigurationTargetSchema =
       service: asProtocolZod(PluginContributionIdentityV1Schema),
       modeId: BoundedIdentitySchema,
     }).strict(),
-  ]);
+  ]));
 export type ConnectedAccountConfigurationTarget =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountConfigurationTargetSchema>
   >;
 
 export const ConnectedAccountAttemptResponseSchema =
-  z.discriminatedUnion('status', [
+  lazyZodSchema(() => z.discriminatedUnion('status', [
     z.object({
       status: z.literal('starting'),
       attemptId: BoundedIdentitySchema,
@@ -369,22 +377,41 @@ export const ConnectedAccountAttemptResponseSchema =
         message: 'retryNotBeforeMs requires rate-limit failure evidence',
       });
     }
-  });
+  }));
 export type ConnectedAccountAttemptResponse =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountAttemptResponseSchema>
   >;
 
-const ConnectedAccountConfigurationControlViewSchema = z.object({
+const ConnectedAccountConfigurationControlViewSchema = lazyZodSchema(() => z.object({
   status: z.enum(['ready', 'configurationRequired']),
   revision: ExpectedConfigurationRevisionSchema.nullable(),
   values: ConfigurationValuesSchema,
   configuredSecretFieldIds: z.array(BoundedIdentitySchema).max(64),
   missingFieldIds: z.array(BoundedIdentitySchema).max(64),
-}).strict();
+}).strict());
+
+export const ConnectedAccountRevokeResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.object({ status: z.literal('conflict'), code: BoundedIdentitySchema }).strict(),
+  z.object({ status: z.literal('unavailable'), code: BoundedIdentitySchema }).strict(),
+  z.object({
+    status: z.literal('revoked'),
+    account: asProtocolZod(QualifiedConnectedAccountRefSchema),
+    remoteStatus: z.enum(['remoteRevoked', 'remoteUnsupported', 'remoteNotAttempted']),
+  }).strict(),
+  z.object({
+    status: z.literal('removalReviewRequired'),
+    account: asProtocolZod(QualifiedConnectedAccountRefSchema),
+    resources: z.array(ManagedResourceDependencyV1Schema),
+  }).strict(),
+  z.object({
+    status: z.literal('outcomeUnknown'),
+    account: asProtocolZod(QualifiedConnectedAccountRefSchema),
+  }).strict(),
+]));
 
 export const ConnectedAccountDaemonControlResponseSchema =
-  z.discriminatedUnion('status', [
+  lazyZodSchema(() => z.discriminatedUnion('status', [
     z.object({
       status: z.literal('pendingAttempts'),
       attempts: z.array(z.object({
@@ -425,27 +452,8 @@ export const ConnectedAccountDaemonControlResponseSchema =
       sourceCustody: PluginSourceCustodyV1Schema,
       configuration: ConnectedAccountConfigurationControlViewSchema,
     }).strict(),
-    z.object({
-      status: z.literal('conflict'),
-      code: BoundedIdentitySchema,
-    }).strict(),
-    z.object({
-      status: z.literal('unavailable'),
-      code: BoundedIdentitySchema,
-    }).strict(),
-    z.object({
-      status: z.literal('revoked'),
-      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
-      remoteStatus: z.enum([
-        'remoteRevoked',
-        'remoteUnsupported',
-      ]),
-    }).strict(),
-    z.object({
-      status: z.literal('outcomeUnknown'),
-      account: asProtocolZod(QualifiedConnectedAccountRefSchema),
-    }).strict(),
-  ]);
+    ...ConnectedAccountRevokeResponseV1Schema.options,
+  ]));
 export type ConnectedAccountDaemonControlResponse =
   ReadonlyControlResponse<
     z.infer<typeof ConnectedAccountDaemonControlResponseSchema>

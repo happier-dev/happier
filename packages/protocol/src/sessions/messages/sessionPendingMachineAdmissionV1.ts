@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionIdSchema } from '../idsV1.js';
@@ -14,7 +15,7 @@ import { ExternalActionMachineRpcExecutionV1Schema } from '../../actions/externa
 export const SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 =
   'session-pending-enqueue-by-machine-v1' as const;
 
-const SessionPendingTargetMachineIdV1Schema = z.string().trim().min(1).max(256);
+const SessionPendingTargetMachineIdV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
 export const SessionPendingEnqueueByMachineFieldsV1 = {
   v: z.literal(1),
@@ -26,7 +27,7 @@ export const SessionPendingEnqueueByMachineFieldsV1 = {
   requestedAction: PendingRequestedActionV1Schema,
   requestEqualityEvidenceV1: SessionInputRequestEqualityEvidenceV1Schema.optional(),
   /** Existing invocation authorization plus exact Machine-signed payload; never raw caller constraints. */
-  externalAction: ExternalActionMachineRpcExecutionV1Schema.optional(),
+  externalAction: z.lazy(() => ExternalActionMachineRpcExecutionV1Schema).optional(),
 };
 
 /** Shared host-equality boundary for each closed Machine admission epoch. */
@@ -54,16 +55,16 @@ export function refineSessionPendingMachineEqualityEvidenceV1(
   }
 }
 
-export const SessionPendingEnqueueByMachineRequestV1Schema = z.object(SessionPendingEnqueueByMachineFieldsV1)
-  .strict().superRefine(refineSessionPendingMachineEqualityEvidenceV1);
+export const SessionPendingEnqueueByMachineRequestV1Schema = lazyZodSchema(() => z.object(SessionPendingEnqueueByMachineFieldsV1)
+  .strict().superRefine(refineSessionPendingMachineEqualityEvidenceV1));
 export type SessionPendingEnqueueByMachineRequestV1 = z.infer<
   typeof SessionPendingEnqueueByMachineRequestV1Schema
 >;
 
-export const SessionPendingEnqueueByMachineResponseV1Schema = z.object({
+export const SessionPendingEnqueueByMachineResponseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   result: SessionInputAdmissionResultV1Schema,
-}).strict();
+}).strict());
 export type SessionPendingEnqueueByMachineResponseV1 = z.infer<
   typeof SessionPendingEnqueueByMachineResponseV1Schema
 >;

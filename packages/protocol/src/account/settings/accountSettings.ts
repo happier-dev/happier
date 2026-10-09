@@ -3,6 +3,7 @@ import * as z from 'zod/mini';
 import { z as classicZ } from 'zod';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { GlassSurfaceMaterialsSchema } from './glassSurfaceMaterials.js';
+import { DEFAULT_MACHINE_RETENTION_DEFAULTS_V1, MachineRetentionDefaultsV1Schema } from './machineRetentionDefaultsV1.js';
 
 import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
@@ -71,6 +72,7 @@ import { PromptRegistrySourcesV1Schema } from '../../prompts/library/promptRegis
 import { PromptStacksV1Schema } from '../../prompts/library/promptStacksV1.js';
 import {
   BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema,
+  BuiltInLegacyAdditionalConnectedServicesDefaultAuthByAgentIdV1IngressSchema,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
   DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1,
   DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
@@ -79,13 +81,6 @@ import {
   type ConnectedServicesProviderStateSharingSettingsV1,
 } from './connectedServicesSettings.js';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
-import { WorkspaceRefV1Schema } from '../../workspaces/workspaceRefV1.js';
-import { deriveWorkspaceSyncTopology } from '../../workspaces/workspaceSyncTopology.js';
-import {
-  WorkspaceSyncRelationshipV1Schema,
-  areWorkspaceSyncRelationshipDefinitionsEqual,
-} from '../../sessions/control/handoff/workspaceSyncSchemas.js';
-import { normalizeSessionHandoffWorkspaceRootPath } from '../../sessions/control/handoff/workspaceTransferSourcePathSafety.js';
 import {
   AttentionDeliveryPolicyV1Schema,
   DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
@@ -138,6 +133,7 @@ import {
   ProviderSettingsLegacySubtreeV1Schema,
 } from './catalog/legacyJson.js';
 import { ClientEncryptionRequirementSchema } from '../../encryption/clientEncryptionRequirement.js';
+import { ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema } from '../../providers/selection/v1.js';
 export { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
 export type { AccountSettingsPersistedObject } from './accountSettingsPersistedObject.js';
 export {
@@ -575,6 +571,8 @@ type AccountCatalogDefinitionOptions = Readonly<{
   compatibility?: Readonly<{ provenance: string; removalCondition: string }>;
   /** Present malformed authority-bearing values must fail instead of recovering to a default. */
   recoverMalformed?: boolean;
+  /** Use the canonical additive stored projection while mutation admission stays strict. */
+  storedRead?: boolean;
 }>;
 
 /**
@@ -620,7 +618,7 @@ export function accountCatalogDefinition<TSchema extends z.core.$ZodType>(schema
     const prepared = lazyDefinition(() => {
         // Legacy stored objects tolerate additive fields; compatibility carriers
         // declare their size-tolerant projection at the schema owner below.
-        const storedSchema = options.classification === 'legacy'
+        const storedSchema = options.classification === 'legacy' || options.storedRead === true
             ? createStoredReadSchema(schema)
             : schema;
         const parsedDefault = classicZ.parse(storedSchema, defaultValue);
@@ -814,6 +812,9 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     crashReportsOptOut: accountPreference(z.boolean(), false, 'privacy'),
     experiments: accountPreference(z.boolean(), false, 'feature choices'),
     useEnhancedSessionWizard: accountPreference(z.boolean(), false, 'session authoring'),
+    memoryUseInNewSessions: accountPreference(z.boolean(), false, 'memory creation defaults'),
+    memoryUpkeepInNewBots: accountPreference(z.boolean(), true, 'memory creation defaults'),
+    memoryUseInNewBots: accountPreference(z.boolean(), true, 'memory creation defaults'),
     // Default ON. Replay is the only fork strategy available to an Agent whose
     // provider declares `sessionFork: unsupported` (Claude Code, among others),
     // and the fork gate is `native || replay` — so defaulting this off removed
@@ -931,6 +932,7 @@ const ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS = {
     secretBindingsByProfileId: accountLegacy(BoundedLegacyRecordSchema, {}, 'profile secret bindings', 32 * 1024),
     connectedAccountServiceConfigurationsV1: accountLegacy(ConnectedAccountServiceConfigurationsV1Schema, { v: 1, entries: [] }, 'connected account service configurations', 256 * 1024),
     mcpServersSettingsV1: accountLegacy(BoundedLegacyJsonValueSchema, { v: 1, strictMode: false, servers: [], bindings: [] }, 'MCP server entities and bindings', 128 * 1024),
+    mcpServersStrictMode: accountPreference(z.boolean(), false, 'MCP server enforcement policy'),
     promptStacksV1: accountLegacy(PromptStacksV1Schema, PromptStacksV1Schema.parse({}), 'prompt stack entities', 128 * 1024),
     rolesV1: accountLegacy(RolesV1Schema, { overrides: {} }, 'role overrides', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     promptFoldersV1: accountLegacy(PromptFoldersV1Schema, PromptFoldersV1Schema.parse({ v: 1 }), 'prompt folder entities', 64 * 1024),
@@ -941,9 +943,6 @@ const ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS = {
     remoteHostsV1: accountLegacy(BoundedLegacyArraySchema, [], 'remote host entities', 128 * 1024),
     acpCatalogSettingsV1: accountLegacy(z._default(z.catch(AcpCatalogSettingsV1Schema, { v: 2, backends: [] }), { v: 2, backends: [] }), { v: 2, backends: [] }, 'configured ACP backends', 128 * 1024),
     executionRunsGuidanceEntries: accountLegacy(BoundedLegacyArraySchema, [], 'execution guidance records', 128 * 1024),
-    workspaceRefsV1: accountLegacy(z._default(z.array(WorkspaceRefV1Schema), []), [], 'workspace references', 64 * 1024, false),
-    workspaceSyncRelationshipsV1: accountLegacy(z._default(z.array(WorkspaceSyncRelationshipV1Schema), []), [], 'workspace sync relationships', 128 * 1024, false),
-    pinnedWorkspaceRefIdsV1: accountLegacy(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], 'workspace pins', 32 * 1024),
     pinnedSessionKeysV1: accountLegacy(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], 'session organization pins', 32 * 1024),
     workspaceLabelsV1: accountLegacy(BoundedLegacyRecordSchema, {}, 'workspace labels', 32 * 1024),
     sessionTagsV1: accountLegacy(BoundedLegacyRecordSchema, {}, 'session tags', 64 * 1024),
@@ -968,7 +967,13 @@ const ACCOUNT_CONNECTED_SERVICES_CATALOG_DEFINITIONS = {
 const ACCOUNT_SIMPLE_COLLECTION_CATALOG_DEFINITIONS = {
     favoriteDirectories: accountPreference(z.array(z.string().check(z.maxLength(16 * 1024))).check(z.maxLength(256)), [], 'favorite directories', 128 * 1024),
     favoriteMachines: accountPreference(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], 'favorite machines', 32 * 1024),
-    favoriteProfiles: accountPreference(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], 'favorite profiles', 32 * 1024),
+    // Retained Profile identities and collection size come from the predecessor
+    // favorite writer, not new Profile authoring. The Account document owns bytes.
+    favoriteProfiles: accountCatalogDefinition(z.array(z.string()), [], {
+        semanticDomain: 'favorite profiles', classification: 'preference',
+        maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES,
+        structuralBoundsOwner: 'domainOwned',
+    }),
     // Preferences keep the bound, not the legacy carrier's size-tolerant read projection.
     favoriteModelSelectionsV1: accountPreference(z.core.clone(BoundedLegacyArraySchema), [], 'favorite model selections', 64 * 1024),
     favoriteBackendTargetKeysV1: accountPreference(z.array(z.string().check(z.maxLength(1024))).check(z.maxLength(256)), [], 'favorite backend targets', 32 * 1024),
@@ -1167,6 +1172,7 @@ const ACCOUNT_TRANSCRIPT_AND_TOOL_CATALOG_DEFINITIONS = {
     toolViewDetailLevelByToolName: accountPreference(z._default(z.record(accountBoundedString(1024), z.enum(['title', 'compact', 'summary', 'full'])), {}), {}, 'tool presentation', 32 * 1024),
     toolViewExpandedDetailLevelByToolName: accountPreference(z._default(z.record(accountBoundedString(1024), z.enum(['summary', 'full'])), {}), {}, 'tool presentation', 32 * 1024),
     transcriptGroupingMode: accountPreference(z.enum(['linear', 'turns']), 'turns', 'transcript presentation'),
+    transcriptShowToolCalls: accountPreference(z.boolean(), true, 'transcript presentation'),
     transcriptGroupToolCalls: accountPreference(z.boolean(), true, 'transcript presentation'),
     transcriptTurnToolCallsGroupStrategy: accountPreference(z.enum(['consecutive_tools', 'all_tools_in_turn']), 'consecutive_tools', 'transcript presentation'),
     transcriptToolCallsCollapsedPreviewCount: accountPreference(z.pipe(z.transform((value): unknown => typeof value === 'number' && Number.isFinite(value)
@@ -1280,6 +1286,7 @@ const ACCOUNT_SETTING_CANDIDATES = {
     approvalReviewerEnabled: accountCatalogDefinition(z.catch(z._default(z.boolean(), false), false), false, { semanticDomain: 'approval reviewer', classification: 'policy', maximumSerializedValueBytes: 64 }),
     workDepthLimit: accountCatalogDefinition(z.catch(z._default(z.number().check(z.int(), z.nonnegative()), 4), 4), 4, { semanticDomain: 'agent delegation depth', classification: 'policy', maximumSerializedValueBytes: 64 }),
     connectedServicesDefaultAuthByAgentIdV1: accountCatalogDefinition(z._default(BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema, DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1), DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1, { semanticDomain: 'connected service defaults', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }),
+    connectedServicesAdditionalDefaultAuthByAgentIdV1: accountCatalogDefinition(z._default(BuiltInLegacyAdditionalConnectedServicesDefaultAuthByAgentIdV1IngressSchema, DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1), DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1, { semanticDomain: 'predecessor connected account defaults ingress', classification: 'legacy', maximumSerializedValueBytes: 16 * 1024, compatibility: LEGACY_COMPATIBILITY, recoverMalformed: false }),
     connectedAccountPurposeBindingsV1: accountCatalogDefinition(z._default(QualifiedConnectedAccountPurposeBindingsV1Schema, DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1), DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1, {
         semanticDomain: 'connected account purpose bindings',
         classification: 'legacy',
@@ -1287,6 +1294,10 @@ const ACCOUNT_SETTING_CANDIDATES = {
         compatibility: LEGACY_COMPATIBILITY,
     }),
     connectedServicesProviderStateSharingSettingsV1: accountCatalogDefinition(z._default(ConnectedServicesProviderStateSharingSettingsV1Schema, DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1), DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1, { semanticDomain: 'connected service state sharing', classification: 'policy', maximumSerializedValueBytes: 16 * 1024 }),
+    providerDefaultModelSelectionsByAgentTargetKeyV1: accountCatalogDefinition(z._default(z.catch(ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema, {}), {}), {}, {
+        semanticDomain: 'provider default model selections', classification: 'preference',
+        maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_PROVIDER_SUBTREE_BYTES, structuralBoundsOwner: 'domainOwned',
+    }),
     providerSettingsV1: accountCatalogDefinition(ProviderSettingsLegacySubtreeV1Schema, undefined, {
         semanticDomain: 'provider connection state',
         classification: 'legacy',
@@ -1299,6 +1310,8 @@ const ACCOUNT_SETTING_CANDIDATES = {
         compatibility: LEGACY_COMPATIBILITY,
     }),
     machineAdministrationSelectionsV1: accountCatalogDefinition(z._default(MachineAdministrationSelectionsV1Schema, DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1), DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1, { semanticDomain: 'machine administration selections', classification: 'preference', maximumSerializedValueBytes: 64 * 1024 }),
+    machineRetentionDefaultsV1: accountCatalogDefinition(MachineRetentionDefaultsV1Schema, DEFAULT_MACHINE_RETENTION_DEFAULTS_V1, { semanticDomain: 'managed machine category defaults', classification: 'preference', maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES, storedRead: true }),
+    managedMachineCreationEnabled: accountCatalogDefinition(z._default(z.boolean(), true), true, { semanticDomain: 'managed machine acquisition', classification: 'policy', maximumSerializedValueBytes: 5 }),
     workspaceFileViewerPreferencesV1: accountCatalogDefinition(z._default(z.catch(WorkspaceFileViewerPreferencesV1Schema, DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1, { semanticDomain: 'workspace file viewing', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }),
 } as const;
 
@@ -1318,46 +1331,7 @@ export const AccountSettingsSchema = lazyZodSchema(() => classicZ.pipe(z.transfo
     for (const key of LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS)
         delete effective[key];
     return effective;
-}), z.looseObject(ACCOUNT_SETTING_ARTIFACTS.shape).check(z.superRefine((settings, context) => {
-    const refsById = new Map<string, (typeof settings.workspaceRefsV1)[number]>();
-    const refScopes = new Set<string>();
-    for (const [index, ref] of settings.workspaceRefsV1.entries()) {
-        if (refsById.has(ref.id)) {
-            context.addIssue({ code: "custom", path: ['workspaceRefsV1', index, 'id'], message: 'workspace reference id must be unique' });
-        }
-        else {
-            refsById.set(ref.id, ref);
-        }
-        const scope = JSON.stringify([
-            ref.serverId.trim(),
-            ref.machineId.trim(),
-            normalizeSessionHandoffWorkspaceRootPath(ref.rootPath) ?? ref.rootPath.trim(),
-        ]);
-        if (refScopes.has(scope)) {
-            context.addIssue({ code: "custom", path: ['workspaceRefsV1', index], message: 'workspace reference scope must be unique' });
-        }
-        else {
-            refScopes.add(scope);
-        }
-    }
-    const relationshipIds = new Set<string>();
-    for (const [index, relationship] of settings.workspaceSyncRelationshipsV1.entries()) {
-        if (relationshipIds.has(relationship.relationshipId)) {
-            context.addIssue({ code: "custom", path: ['workspaceSyncRelationshipsV1', index, 'relationshipId'], message: 'workspace relationship id must be unique' });
-        }
-        else {
-            relationshipIds.add(relationship.relationshipId);
-        }
-        const alpha = refsById.get(relationship.alphaWorkspaceRefId);
-        const beta = refsById.get(relationship.betaWorkspaceRefId);
-        if (!alpha) {
-            context.addIssue({ code: "custom", path: ['workspaceSyncRelationshipsV1', index, 'alphaWorkspaceRefId'], message: 'workspace relationship reference must exist' });
-        }
-        if (!beta) {
-            context.addIssue({ code: "custom", path: ['workspaceSyncRelationshipsV1', index, 'betaWorkspaceRefId'], message: 'workspace relationship reference must exist' });
-        }
-    }
-}))));
+}), z.looseObject(ACCOUNT_SETTING_ARTIFACTS.shape)));
 
 export type AccountSettings = z.infer<typeof AccountSettingsSchema>;
 
@@ -1365,86 +1339,6 @@ export function accountSettingsParse(raw: unknown): AccountSettings {
   return AccountSettingsSchema.parse(raw);
 }
 
-/**
- * Enforces the immutable workspace identities at the Account Settings write
- * boundary. Snapshot validation proves internal integrity; this transition
- * check additionally prevents an existing id from being rebound in place.
- */
-export function assertAccountWorkspaceSettingsTransition(
-  previousRaw: unknown,
-  nextRaw: unknown,
-): void {
-  const previous = accountSettingsParse(previousRaw);
-  const next = accountSettingsParse(nextRaw);
-  const nextRefs = new Map(next.workspaceRefsV1.map((ref) => [ref.id, ref] as const));
-
-  for (const previousRef of previous.workspaceRefsV1) {
-    const nextRef = nextRefs.get(previousRef.id);
-    if (nextRef && (
-      nextRef.serverId !== previousRef.serverId
-      || nextRef.machineId !== previousRef.machineId
-      || nextRef.rootPath !== previousRef.rootPath
-    )) {
-      throw Object.assign(new Error('Workspace identity cannot be rebound'), {
-        code: 'workspace_ref_in_use',
-      });
-    }
-  }
-
-  const previousRelationships = new Map(
-    previous.workspaceSyncRelationshipsV1.map((relationship) => [relationship.relationshipId, relationship] as const),
-  );
-  for (const relationship of next.workspaceSyncRelationshipsV1) {
-    const prior = previousRelationships.get(relationship.relationshipId);
-    if (prior && !areWorkspaceSyncRelationshipDefinitionsEqual(prior, relationship)) {
-      throw Object.assign(new Error('Workspace relationship immutable definition cannot change'), {
-        code: 'relationship_definition_conflict',
-      });
-    }
-  }
-
-  const relationshipsRequiringAdmission = new Set(next.workspaceSyncRelationshipsV1.flatMap((relationship) => {
-    const prior = previousRelationships.get(relationship.relationshipId);
-    return !prior || (!prior.enabled && relationship.enabled)
-      ? [relationship.relationshipId]
-      : [];
-  }));
-  if (relationshipsRequiringAdmission.size > 0) {
-    const topology = deriveWorkspaceSyncTopology({
-      workspaceRefs: next.workspaceRefsV1,
-      relationships: next.workspaceSyncRelationshipsV1,
-    });
-    const nextByRef = new Map<string, Set<string>>();
-    for (const relationship of next.workspaceSyncRelationshipsV1) {
-      for (const refId of [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId]) {
-        const ids = nextByRef.get(refId) ?? new Set<string>();
-        ids.add(relationship.relationshipId);
-        nextByRef.set(refId, ids);
-      }
-    }
-    const affected = new Set(relationshipsRequiringAdmission);
-    const pending = [...relationshipsRequiringAdmission];
-    while (pending.length > 0) {
-      const id = pending.shift()!;
-      const relationship = next.workspaceSyncRelationshipsV1.find((candidate) => candidate.relationshipId === id);
-      if (!relationship) continue;
-      for (const refId of [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId]) {
-        for (const adjacentId of nextByRef.get(refId) ?? []) {
-          if (affected.has(adjacentId)) continue;
-          affected.add(adjacentId);
-          pending.push(adjacentId);
-        }
-      }
-    }
-    const issues = topology.issues.filter((issue) => issue.relationshipIds.some((id) => affected.has(id)));
-    if (issues.length > 0) {
-      throw Object.assign(new Error('Workspace sync topology is unsupported'), {
-        code: 'workspace_sync_topology_invalid',
-        issues,
-      });
-    }
-  }
-}
 
 function readAccountSettingTargetKey(target: BackendTargetRefV2Input): string {
   // Preferences address identities, not executable routes. An external Agent

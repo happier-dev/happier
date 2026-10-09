@@ -37,7 +37,7 @@ export type HappierSelectionTileOption<T extends string, I extends string = stri
   disabled?: boolean;
   badge?: string;
   /**
-   * A small rendering of what this option looks like (visual variant). Pass the real component at
+   * A small rendering of what this option looks like (visual tiles or compact card rows). Pass the real component at
    * static props — not a drawn replica — so the preview cannot drift from the product.
    */
   preview?: ReactNode;
@@ -101,6 +101,8 @@ export type HappierSelectionTilesTextRenderer = (input: Readonly<{
   /** The card group is `density="compact"`. */
   compact: boolean;
   numberOfLines: number;
+  /** Detailed visual captions align together; short standalone choice captions stay centered. */
+  alignment?: 'left' | 'center';
 }>) => ReactNode;
 
 /**
@@ -197,6 +199,13 @@ export type HappierActionSelectionTilesProps<T extends string, I extends string 
     /** The group's accessible name. */
     accessibilityLabel?: string;
     testIdPrefix?: string;
+    /**
+     * A tile whose operation depends on its own state (a provisioner that is ready, needs setup or
+     * needs an account) carries that state and its operation in a footer instead of being one
+     * button: the tile becomes a named group, the footer owns the controls, and `onPress` is unused
+     * for it. Its badge names the option's kind beside the title.
+     */
+    renderOptionFooter?: HappierSelectionTileFooterRenderer<T, I>;
   }>;
 
 export type HappierSelectionTilesProps<T extends string, I extends string = string> =
@@ -316,6 +325,8 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
       {props.options.map((option, index) => {
         const selected = isSelected(props, option.id);
         const disabled = option.disabled === true;
+        const alignment = option.subtitle || option.badge ? 'left' : 'center';
+        const label = props.renderText({ role: 'visualLabel', text: option.title, selected, compact: false, numberOfLines: 2, alignment });
         return (
           <Pressable
             key={option.id}
@@ -347,9 +358,16 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
                 {option.preview ?? null}
               </View>
             </View>
-            {props.renderText({ role: 'visualLabel', text: option.title, selected, compact: false, numberOfLines: 2 })}
+            {option.badge ? (
+              <View style={styles.visualLabelRow}>
+                {label}
+                <View style={styles.badge}>
+                  {props.renderText({ role: 'badge', text: option.badge, selected, compact: false, numberOfLines: 1 })}
+                </View>
+              </View>
+            ) : label}
             {option.subtitle
-              ? props.renderText({ role: 'visualSublabel', text: option.subtitle, selected, compact: false, numberOfLines: 2 })
+              ? props.renderText({ role: 'visualSublabel', text: option.subtitle, selected, compact: false, numberOfLines: 2, alignment })
               : null}
           </Pressable>
         );
@@ -378,6 +396,35 @@ function ActionSelectionTiles<T extends string, I extends string>(props: Happier
     >
       {props.options.map((option) => {
         const disabled = option.disabled === true;
+        const footer = props.renderOptionFooter?.({ option, selected: false, disabled });
+        if (footer != null && footer !== false) {
+          return (
+            <View
+              key={option.id}
+              testID={option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined)}
+              role="group"
+              accessibilityLabel={option.title}
+              aria-label={Platform.OS === 'web' ? option.title : undefined}
+              style={[styles.actionTile, styles.actionTileWithFooter]}
+            >
+              <View style={styles.actionHead}>
+                {option.mark ?? (option.icon
+                  ? props.renderGlyph({ glyph: { kind: 'icon', name: option.icon }, size: 20, color: props.colors.glyph })
+                  : null)}
+                <View style={styles.actionHeadTitle}>
+                  {props.renderText({ role: 'actionTitle', text: option.title, selected: false, compact: false, numberOfLines: 1 })}
+                </View>
+                {option.badge
+                  ? props.renderText({ role: 'badge', text: option.badge, selected: false, compact: false, numberOfLines: 1 })
+                  : null}
+              </View>
+              {option.subtitle
+                ? props.renderText({ role: 'actionSubtitle', text: option.subtitle, selected: false, compact: false, numberOfLines: 3 })
+                : null}
+              <View style={styles.actionFooter}>{footer}</View>
+            </View>
+          );
+        }
         return (
           <Pressable
             key={option.id}
@@ -518,6 +565,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         const glyphColor = props.colors.glyph;
         const glyphSize = compact ? 16 : 29;
         const hasSubtitle = typeof option.subtitle === 'string' && option.subtitle.trim().length > 0;
+        const hasPreview = compact && option.preview != null;
         const footer = props.renderOptionFooter?.({ option, selected, disabled });
 
         return (
@@ -554,8 +602,9 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 { opacity: pressOpacity(disabled, pressed) },
               ]}
             >
-              <View style={[styles.headerRow, compact && !hasSubtitle ? styles.headerRowCentered : null]}>
-                <View style={[styles.titleRow, compact && !hasSubtitle ? styles.titleRowCentered : null]}>
+              <View style={[styles.headerRow, compact && (!hasSubtitle || hasPreview) ? styles.headerRowCentered : null]}>
+                {hasPreview ? <View style={styles.cardPreview} pointerEvents="none" aria-hidden>{option.preview}</View> : null}
+                <View style={[styles.titleRow, compact && (!hasSubtitle || hasPreview) ? styles.titleRowCentered : null]}>
                   {option.mark || glyph ? <View style={[styles.iconSlot, compact ? styles.iconSlotCompact : null]}>
                     {option.mark ?? (glyph ? props.renderGlyph({ glyph, size: glyphSize, color: glyphColor }) : null)}
                   </View> : null}
@@ -634,6 +683,23 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     actionText: {
       gap: 2,
     },
+    actionTileWithFooter: {
+      gap: 6,
+    },
+    actionHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    actionHeadTitle: {
+      flex: 1,
+      minWidth: 0,
+    },
+    // The footer sits on the tile's floor, so a row of tiles keeps its status lines aligned.
+    actionFooter: {
+      marginTop: 'auto',
+      paddingTop: 6,
+    },
     visualGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -653,6 +719,12 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       flexBasis: 0,
       minWidth: 0,
       maxWidth: '100%',
+    },
+    visualLabelRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 6,
     },
     visualRing: {
       // Concentric: ring radius = preview radius + gap + ring width.
@@ -676,6 +748,14 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       height: 'auto',
       minHeight: VISUAL_PREVIEW_HEIGHT_PX,
       aspectRatio: VISUAL_FILL_PREVIEW_ASPECT_RATIO,
+    },
+    cardPreview: {
+      width: VISUAL_TILE_WIDTH_PX,
+      height: VISUAL_PREVIEW_HEIGHT_PX,
+      flexShrink: 0,
+      borderRadius: VISUAL_PREVIEW_RADIUS_PX,
+      overflow: 'hidden',
+      backgroundColor: colors.previewBackground,
     },
     grid: {
       width: '100%',

@@ -25,6 +25,9 @@ import type {
 } from './resources.js';
 import type { SessionsService } from './sessions.js';
 import type { TargetedContributionsService } from './targetedContributions.js';
+import type { MachineProvisionersService } from './machineProvisioners.js';
+
+export type { MachineProvisionersService, MachineProvisionerBootstrapCredentialLeaseV1 } from './machineProvisioners.js';
 
 export type {
     ApprovalQueueListItem,
@@ -329,6 +332,7 @@ export type PluginServiceId =
     | 'exec'
     | 'providers'
     | 'managedServices'
+    | 'machineProvisioners'
     | 'sessions'
     | 'resources'
     | 'mcp'
@@ -351,6 +355,7 @@ export interface PluginServices {
     readonly exec: ExecService;
     readonly providers: ProvidersService;
     readonly managedServices: ManagedServices;
+    readonly machineProvisioners: MachineProvisionersService;
     readonly sessions: SessionsService;
     readonly resources: ResourcesService;
     readonly mcp: McpService;

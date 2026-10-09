@@ -33,6 +33,8 @@ export const CAPABILITY_HOST_BINDING_OWNERS_V1 = Object.freeze({
   composerFamilyProjection: 'apps/cli/src/plugins/projection/registry/composer.ts',
   /** Projects declared managed dependencies into the client projection. */
   managedDependencyFamilyProjection: 'apps/cli/src/plugins/projection/registry/managedDependencies.ts',
+  /** Projects cold machine-provisioner descriptors; executable roles remain ordinary Actions. */
+  machineProvisionerFamilyProjection: 'apps/cli/src/plugins/projection/registry/machineProvisioners.ts',
   /** Projects declared Account collections into the client projection. */
   accountCollectionFamilyProjection: 'apps/cli/src/plugins/projection/registry/accountCollections.ts',
   /** Projects declared Voice model packs into the client projection. */
@@ -127,6 +129,7 @@ export const MANIFEST_FAMILY_REALM_OWNERS_V1 = Object.freeze({
   requestInterceptors: DAEMON_REGISTRATION_OWNERS,
   backgroundServices: DAEMON_REGISTRATION_OWNERS,
   captureSources: DAEMON_REGISTRATION_OWNERS,
+  projectNativeAdapters: DAEMON_REGISTRATION_OWNERS,
   composerReferences: DAEMON_REGISTRATION_OWNERS,
   composerAttachments: DAEMON_REGISTRATION_OWNERS,
   'mcp.servers': DAEMON_REGISTRATION_OWNERS,
@@ -163,6 +166,9 @@ export const MANIFEST_FAMILY_REALM_OWNERS_V1 = Object.freeze({
   composerRegions: declarativeFamilyOwners(CAPABILITY_HOST_BINDING_OWNERS_V1.composerFamilyProjection),
   managedDependencies: declarativeFamilyOwners(
     CAPABILITY_HOST_BINDING_OWNERS_V1.managedDependencyFamilyProjection,
+  ),
+  machineProvisioners: declarativeFamilyOwners(
+    CAPABILITY_HOST_BINDING_OWNERS_V1.machineProvisionerFamilyProjection,
   ),
   accountCollections: declarativeFamilyOwners(
     CAPABILITY_HOST_BINDING_OWNERS_V1.accountCollectionFamilyProjection,
@@ -234,6 +240,7 @@ export const PLUGIN_SERVICE_REALM_OWNERS_V1 = Object.freeze({
   actions: HOST_OWNED_SERVICE_OWNERS,
   targetedContributions: HOST_OWNED_SERVICE_OWNERS,
   composerContent: HOST_OWNED_SERVICE_OWNERS,
+  machineProvisioners: HOST_OWNED_SERVICE_OWNERS,
   interactions: HOST_OWNED_SERVICE_OWNERS,
 });
 

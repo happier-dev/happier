@@ -3,7 +3,8 @@ import { computeCanonicalDomainSeparatedDigest, encodeCanonicalLengthDelimited }
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { signEd25519Message, verifyEd25519Signature } from '../crypto/ed25519.js';
 import { MachineInstallationPrivateKeySchema, MachineInstallationPublicKeySchema } from '../machines/identity/installationIdentity.js';
-import { SOCKET_RPC_EVENTS } from '../rpc/socket.js';
+import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
+  type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '../rpc/socket.js';
 import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 } from '../sessions/messages/sessionPendingMachineAdmissionV1.js';
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2 } from '../sessions/messages/sessionPendingExecutionRunMachineAdmissionV2.js';
 
@@ -79,6 +80,8 @@ type MachineRpcRequest = Readonly<{
   method: string;
   requestId: string;
   params?: unknown;
+  workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+  workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
 }>;
 
 function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
@@ -97,6 +100,14 @@ function machineRpcRequestBytes(request: MachineRpcRequest): Uint8Array {
     computeCanonicalDomainSeparatedDigest('happier-external-action-rpc-payload-v1', [
       createCanonicalJsonSigningInput(request.params === undefined ? null : request.params),
     ]),
+    ...(request.workspaceSyncSourceWriterTargetRouting !== undefined ? [
+      'workspace-sync-source-writer-target-v1',
+      createCanonicalJsonSigningInput(WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(request.workspaceSyncSourceWriterTargetRouting)),
+    ] : []),
+    ...(request.workspaceSyncSourceRouting !== undefined ? [
+      'workspace-sync-source-routing-v1',
+      createCanonicalJsonSigningInput(WorkspaceSyncSourceRoutingV1Schema.parse(request.workspaceSyncSourceRouting)),
+    ] : []),
   ]);
 }
 

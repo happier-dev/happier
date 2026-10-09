@@ -1,14 +1,21 @@
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../actions/externalActionApi.js';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/v1.js';
 import { HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD } from '../../../../marketplace/pluginInstallDecisionV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
 import { MachineLiveStreamRelayCapsV1Schema, type MachineLiveStreamRelayCaps } from '../stream/v1.js';
 import { resolveMachineRpcGovernance, type MachineRpcGovernanceClassification } from './governanceV1.js';
+import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/managedIntentV1.js';
+import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
+import type { ExternalActionExecutionAuthorizationV1 } from '../../../../actions/externalActionApi.js';
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectActionFamily.js';
 
 export type { MachineRpcGovernanceClassification } from './governanceV1.js';
 
 export type MachineRpcMethod =
   | (typeof RPC_METHODS)[keyof typeof RPC_METHODS]
-  | (typeof SESSION_RPC_METHODS)[keyof typeof SESSION_RPC_METHODS];
+  | (typeof SESSION_RPC_METHODS)[keyof typeof SESSION_RPC_METHODS]
+  | (typeof ACTION_OPERATION_RPC_METHODS_V1)[keyof typeof ACTION_OPERATION_RPC_METHODS_V1]
+  | (typeof ACTION_OPERATION_RPC_METHODS_V2)[keyof typeof ACTION_OPERATION_RPC_METHODS_V2];
 
 export type EphemeralRunnerMachineRpcAuthority =
   | 'readTranscript'
@@ -63,6 +70,8 @@ export type MachineRpcRoutePolicyV1 = Readonly<{
   ownerPacket: 'PMS-5';
   rpcClassification: MachineRpcGovernanceClassification;
   actionSpecId?: string;
+  /** Machine permission only; Session, Source, root and work custody remain additional checks. */
+  sharedMachineAccess: 'use' | 'manage' | 'custodian_only';
   commandReceiptRequired: boolean;
   scope: MachineRpcRoutePolicyScopeV1;
   serverRequiredReason?: MachineRpcServerRequiredReason;
@@ -134,6 +143,7 @@ function directEphemeral(
     ownerPacket: 'PMS-5',
     ...resolveMachineRpcGovernance(method),
     commandReceiptRequired: false,
+    sharedMachineAccess: 'use',
     scope: DIRECT_EPHEMERAL_SCOPE,
     ...(ephemeralRunnerAuthority ? { ephemeralRunnerAuthority } : {}),
   };
@@ -152,6 +162,7 @@ function directMediumRiskReceipted(
     ownerPacket: 'PMS-5',
     ...resolveMachineRpcGovernance(method),
     commandReceiptRequired: true,
+    sharedMachineAccess: 'use',
     scope: DIRECT_EPHEMERAL_SCOPE,
     ...(relayFallback ? { relayFallback } : {}),
     ...(ephemeralRunnerAuthority ? { ephemeralRunnerAuthority } : {}),
@@ -172,6 +183,7 @@ function serverRequired(
     ownerPacket: 'PMS-5',
     ...resolveMachineRpcGovernance(method),
     commandReceiptRequired: false,
+    sharedMachineAccess: 'use',
     scope,
     serverRequiredReason,
     ...(ephemeralRunnerAuthority ? { ephemeralRunnerAuthority } : {}),
@@ -211,6 +223,7 @@ const HOST_PRIVATE_PLUGIN_INSTALL_DECISION_ROUTE_POLICY: MachineRpcRoutePolicyV1
   ownerPacket: 'PMS-5',
   rpcClassification: 'internal_only',
   commandReceiptRequired: true,
+  sharedMachineAccess: 'manage',
   scope: DIRECT_EPHEMERAL_SCOPE,
 });
 
@@ -227,6 +240,7 @@ const EXTERNAL_ACTION_DAEMON_DISPATCH_ROUTE_POLICY: MachineRpcRoutePolicyV1 = Ob
   ownerPacket: 'PMS-5',
   rpcClassification: 'internal_only',
   commandReceiptRequired: false,
+  sharedMachineAccess: 'use',
   scope: SERVER_REQUIRED_SCOPE,
   serverRequiredReason: 'auth',
   ephemeralRunnerAuthority: 'externalActionDispatch',
@@ -236,6 +250,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, 'Daemon-local execution run registry read; no server persistence, transcript write, or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE, 'Nonce- and Home-bound exact-Machine Run currentness read for broker admission; no credential or durable proof.'),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_STATUS, 'Daemon-local memory worker status read with no mutation or server persistence.'),
+  directEphemeral(RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE, 'Private human continuation consumes exact approval custody; ephemeral input is never receipted or replayed. Normal authenticated relay remains available.'),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET, 'Daemon-local memory settings read with no account mutation.'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS, 'Daemon-local voice inference worker status read.'),
   directEphemeral(RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST, 'Daemon-local installed/available model list read.'),
@@ -315,6 +330,13 @@ const DIRECT_MEDIUM_RISK_RECEIPTED_POLICIES = Object.freeze([
   directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SECRET_SET, 'Daemon-local declared plugin-secret creation or replacement mutates the selected machine custody through its current generation-bound service; direct routing requires command receipt coverage.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_SECRET_DELETE, 'Daemon-local declared plugin-secret deletion mutates the selected machine custody through its current generation-bound service; direct routing requires command receipt coverage.'),
   HOST_PRIVATE_PLUGIN_INSTALL_DECISION_ROUTE_POLICY,
+  { ...serverRequired(RPC_METHODS.MACHINES_WORK_SUMMARY_GET, 'sharing',
+    'Content-free Machine work summary requires current custodian or Manage admission at the Home.'), sharedMachineAccess: 'manage' },
+  ...[MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD].map((method): MachineRpcRoutePolicyV1 => ({
+    method, routeClass: 'server_required', rationale: 'Managed retention reads exact private guest activity and reversible drain through current Manage admission.',
+    ownerPacket: 'PMS-5', rpcClassification: 'internal_only', commandReceiptRequired: false,
+    sharedMachineAccess: 'manage', scope: SERVER_REQUIRED_SCOPE, serverRequiredReason: 'server_persistence',
+  })),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, 'Daemon-local structured-message action execution enters the canonical plugin action executor; direct routing requires command receipt coverage.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_CONFIGURE, 'Exact-machine Voice diagnostics configuration mutates private local retention policy; direct routing requires command receipt coverage.'),
   directMediumRiskReceipted(RPC_METHODS.DAEMON_VOICE_DIAGNOSTICS_DELETE_ALL, 'Exact-machine Voice diagnostics delete-all destroys private retained artifacts and active export sessions; direct routing requires command receipt coverage.'),
@@ -484,6 +506,7 @@ const LOCAL_MUTATION_AGENT_INPUT_METHODS = [
   RPC_METHODS.CREATE_DIRECTORY,
   RPC_METHODS.RENAME_PATH,
   RPC_METHODS.DELETE_PATH,
+  RPC_METHODS.COPY_PATH,
 ] as const;
 
 const LOCAL_MUTATION_METHODS = [
@@ -507,6 +530,7 @@ const LOCAL_MUTATION_METHODS = [
   RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE,
   RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE,
   RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM,
+  RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREPARE_SOURCE,
   RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM,
   RPC_METHODS.DAEMON_EXTENSIONS_RELOAD,
   RPC_METHODS.DAEMON_PROMPT_ASSETS_DELETE,
@@ -519,6 +543,7 @@ const LOCAL_MUTATION_METHODS = [
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_RESUME,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE,
+  RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_STAGE,
   RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_APPLY,
@@ -627,6 +652,7 @@ const AMBIGUOUS_READ_OR_EXTERNAL_METHODS = [
   RPC_METHODS.SCM_DIFF_FILE,
   RPC_METHODS.SCM_DIFF_COMMIT,
   RPC_METHODS.SCM_LOG_LIST,
+  RPC_METHODS.SCM_HISTORY_ENTRIES,
   RPC_METHODS.SCM_BRANCH_LIST,
   RPC_METHODS.SCM_STASH_LIST,
   RPC_METHODS.SCM_STASH_SHOW,
@@ -634,6 +660,7 @@ const AMBIGUOUS_READ_OR_EXTERNAL_METHODS = [
   RPC_METHODS.SCM_PULL_REQUEST_LIST,
   RPC_METHODS.SCM_PULL_REQUEST_GET,
   RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+  RPC_METHODS.SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS,
   RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
   RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE,
   RPC_METHODS.CAPABILITIES_DETECT,
@@ -689,10 +716,97 @@ const VOICE_CLIENT_CREDENTIAL_METHODS = [
   RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_REQUEST,
 ] as const;
 
+const MACHINE_MANAGEMENT_METHODS = new Set<string>([
+  RPC_METHODS.STOP_DAEMON,
+  RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET,
+  RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD,
+  RPC_METHODS.DAEMON_EXTENSIONS_RELOAD,
+  RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET,
+  RPC_METHODS.DAEMON_PLUGIN_SECRET_SET,
+  RPC_METHODS.DAEMON_PLUGIN_SECRET_DELETE,
+  RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_INSTALL,
+  RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_DISABLE,
+  RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_ENABLE,
+  RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_UNINSTALL,
+  RPC_METHODS.DAEMON_MARKETPLACE_SOURCE_REGISTRY_MUTATE,
+  RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_MUTATE,
+  RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+  RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT,
+  RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
+  RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL,
+  HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD,
+]);
+
+const MACHINE_CUSTODIAN_ONLY_METHODS = new Set<string>([
+  ...VOICE_CLIENT_CREDENTIAL_METHODS,
+  ACTION_OPERATION_RPC_METHODS_V1.cancel,
+  RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS,
+  RPC_METHODS.SPAWN_HAPPY_SESSION,
+  RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+  RPC_METHODS.SESSION_SPAWN_NEW,
+  RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
+  RPC_METHODS.SESSION_FORK,
+  RPC_METHODS.SESSION_FORK_PROVIDER_SAFE,
+  RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST,
+  RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
+  RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE,
+  RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREVIEW,
+  RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM,
+  RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM,
+  RPC_METHODS.DAEMON_MARKETPLACE_SOURCE_REGISTRY_GET,
+  RPC_METHODS.DAEMON_NPM_REGISTRY_PROFILES_GET,
+  RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET,
+  RPC_METHODS.DAEMON_MEMORY_SEARCH,
+  RPC_METHODS.DAEMON_MEMORY_GET_WINDOW,
+  RPC_METHODS.DAEMON_MEMORY_ENSURE_UP_TO_DATE,
+]);
+
+function withSharedMachineAccess(policy: MachineRpcRoutePolicyV1): MachineRpcRoutePolicyV1 {
+  // Private relationship and work inventories keep their custodian authority.
+  // Machine admission alone does not establish terminal requester attribution.
+  const custodianOnly = MACHINE_CUSTODIAN_ONLY_METHODS.has(policy.method)
+    || policy.method.startsWith('daemon.workspaceSync.')
+    || policy.method.startsWith('daemon.terminal.')
+    || policy.method.startsWith('daemon.spawnSession.')
+    || policy.method.startsWith('daemon.sessionCreation.')
+    || policy.method.startsWith('daemon.sessionHandoff.')
+    || policy.method.startsWith('daemon.externalSessions.')
+    || policy.method.startsWith('daemon.directSessions.');
+  return {
+    ...policy,
+    sharedMachineAccess: custodianOnly ? 'custodian_only'
+      : MACHINE_MANAGEMENT_METHODS.has(policy.method) ? 'manage' : policy.sharedMachineAccess,
+  };
+}
+
 export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
+  ...serverRequiredRows([
+    ACTION_OPERATION_RPC_METHODS_V1.list, ACTION_OPERATION_RPC_METHODS_V1.get,
+    ACTION_OPERATION_RPC_METHODS_V2.list, ACTION_OPERATION_RPC_METHODS_V2.get,
+  ], 'auth', 'Operation observation requires current exact-Machine admission and reads only the verified requester Account scope; V1 and V2 share the same custody owner.'),
+  serverRequired(ACTION_OPERATION_RPC_METHODS_V1.cancel, 'auth', 'Operation cancellation retains custodian-only Machine admission and the existing exact operation custody checks; observation access does not admit Stop.'),
+  ...MANAGED_MACHINE_ACTION_IDS_V1.map((method): MachineRpcRoutePolicyV1 => ({
+    method, routeClass: 'server_required', rationale: 'Managed-resource Actions require current Manage, exact installation and row admission before reviewed native effects.',
+    ownerPacket: 'PMS-5', rpcClassification: 'action_spec_bound', actionSpecId: method,
+    sharedMachineAccess: 'manage', commandReceiptRequired: false, scope: SERVER_REQUIRED_SCOPE, serverRequiredReason: 'auth',
+  })),
+  ...serverRequiredRows([
+    RPC_METHODS.DAEMON_FILESYSTEM_CREATE_DIRECTORY, RPC_METHODS.DAEMON_FILESYSTEM_RENAME,
+    RPC_METHODS.DAEMON_FILESYSTEM_DELETE, RPC_METHODS.DAEMON_FILESYSTEM_COPY,
+  ], 'auth', 'Semantic filesystem mutations reuse the Runner filesystem service with current Session input authority; canonical Action approval and root admission remain required before effects.', undefined, 'submitAgentInput'),
+  ...serverRequiredRows([
+    RPC_METHODS.DAEMON_FILESYSTEM_UPLOAD, RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD,
+    RPC_METHODS.DAEMON_FILESYSTEM_TRANSFER_CANCEL,
+  ], 'auth', 'Semantic filesystem Actions require verified requester Account and exact Machine ingress before their canonical approval, root and prepared-transfer owners admit effects.'),
   ...DIRECT_EPHEMERAL_POLICIES,
   ...DIRECT_MEDIUM_RISK_RECEIPTED_POLICIES,
   ...DAEMON_VOICE_AUDIO_DIRECT_POLICIES,
+  actionSpecServerRequired(RPC_METHODS.PROJECTS_OPEN, 'auth', 'Project Open requires current requester Account and exact Machine admission before SCM/Sync realization and Account ref acceptance.', 'projects.open'),
+  ...Object.entries(PROJECT_FINITE_ACTION_RPC_METHODS_V1).map(([actionId, method]) => actionSpecServerRequired(method, 'auth',
+    'Finite Project execution requires its original admitted Action and exact Machine authority before the incumbent finite operation accepts work.', actionId)),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN, 'auth', 'Source-host materialization is the same admitted Project Open effect under the incumbent Sync controller custody; target acceptance remains at Open.', 'projects.open'),
+  serverRequired(RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS, 'auth', 'Machine access-loss cleanup is a server-origin notification to the current custodian installation; the body subject is never caller authority and this method has no direct or peer route.'),
+  serverRequired(RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION, 'auth', 'The Home reads or retires disclosure for one selected service through the current custodian installation and Machine admission; this method has no client or direct route.'),
   serverRequired(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED, 'auth', 'Exact-daemon replay can consume input-sensitive human consent, so it requires verified caller authority from authenticated server ingress; an approved Artifact alone is not decision authority.'),
   serverRequired(
     RPC_METHODS.DAEMON_SESSION_FOLLOW_SOURCE_KEY_PREPARE,
@@ -786,7 +900,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   serverRequired(RPC_METHODS.KILL_SESSION, 'durable_session_write', 'Session kill is a durable/destructive lifecycle mutation and must stay server-routed.', SESSION_SERVER_REQUIRED_SCOPE),
   serverRequired(RPC_METHODS.BASH, 'ambiguous', 'Shell execution has broad side-effect and access-policy ambiguity and must stay server-routed.'),
   EXTERNAL_ACTION_DAEMON_DISPATCH_ROUTE_POLICY,
-] satisfies readonly MachineRpcRoutePolicyV1[]);
+].map(withSharedMachineAccess) satisfies readonly MachineRpcRoutePolicyV1[]);
 
 const POLICY_BY_METHOD = new Map<string, MachineRpcRoutePolicyV1>();
 for (const policy of MACHINE_RPC_ROUTE_POLICIES) {
@@ -813,6 +927,8 @@ function collectRegisteredMachineRpcMethods(): readonly string[] {
     ...Object.values(SESSION_RPC_METHODS),
     HOST_PRIVATE_PLUGIN_INSTALL_DECISION_RPC_METHOD,
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+    ...Object.values(ACTION_OPERATION_RPC_METHODS_V1), ...Object.values(ACTION_OPERATION_RPC_METHODS_V2),
+    MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, ...MANAGED_MACHINE_ACTION_IDS_V1,
   ]);
 }
 
@@ -824,9 +940,54 @@ export function resolveMachineRpcRoutePolicy(method: string): MachineRpcRoutePol
     ownerPacket: 'PMS-5',
     rpcClassification: 'advisory_unclassified',
     commandReceiptRequired: false,
+    sharedMachineAccess: 'custodian_only',
     scope: SERVER_REQUIRED_SCOPE,
     serverRequiredReason: 'unclassified',
   };
+}
+
+/** Proof-aware effect projection; raw resume never becomes public fresh-spawn input. */
+export function resolveMachineRpcExternalActionEffectV1(method: string,
+  binding?: ExternalActionExecutionAuthorizationV1['binding'],
+  selectedTarget?: Readonly<{ machineId: string; installationId: string }>): string | null {
+  const declared = resolveMachineRpcRoutePolicy(method).actionSpecId;
+  if (declared) return declared;
+  if (method === MANAGED_ACTIVITY_READ_RPC_METHOD || method === MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD) {
+    // Private phases consume an accepted retained control root. Home proves
+    // the exact guest/current row; this projection grants no guest authority.
+    return binding?.actionId === 'machines.managed.power.set' || binding?.actionId === 'machines.managed.delete'
+      ? binding.actionId : null;
+  }
+  if (method === RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED) {
+    // This is the fresh reviewer's decision authority, not the Artifact's
+    // immutable native execution origin (checked by the replay owner).
+    if (!binding || binding.actionId !== 'approval.request.decide'
+      || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
+      || binding.sessionActionOrigin || binding.sessionActionSource || binding.workflowActionOrigin
+      || binding.managedContinuation || binding.handoffAdmission || binding.handoffContinuation) return null;
+    const reviewer = 'authentication' in binding && binding.authentication?.kind === 'account'
+      || 'principalId' in binding && Boolean(binding.principalId && binding.credentialId && binding.grant);
+    return reviewer ? 'approval.request.decide' : null;
+  }
+  if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
+    || method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
+    || method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE) {
+    const admission = binding?.handoffAdmission;
+    return binding?.actionId === 'session.handoff.prepare_target' && binding.handoffContinuation
+      && admission && binding.machineId === admission.targetMachineId
+      && binding.installationId === admission.targetInstallationId
+      && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      ? 'session.handoff.prepare_target' : null;
+  }
+  if (method !== RPC_METHODS.SPAWN_HAPPY_SESSION && method !== RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE) return null;
+  const admission = binding?.handoffAdmission;
+  const target = selectedTarget ?? binding;
+  const isAcceptedRoot = selectedTarget && binding?.actionId === 'session.handoff' && !binding.handoffContinuation
+    && binding.machineId === admission?.sourceMachineId && binding.installationId === admission?.sourceInstallationId;
+  const isChild = binding?.handoffContinuation && binding.actionId === 'session.spawn_new';
+  if (!admission || !target || !isAcceptedRoot && !isChild
+    || target.machineId !== admission.targetMachineId || target.installationId !== admission.targetInstallationId) return null;
+  return 'session.spawn_new';
 }
 
 /**

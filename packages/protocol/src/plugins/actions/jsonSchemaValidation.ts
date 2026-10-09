@@ -11,6 +11,7 @@
 import Ajv, { type ErrorObject } from 'ajv';
 import addFormats, { type FormatName } from 'ajv-formats';
 import { z } from 'zod';
+import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 
 import {
   containsEquivalentPluginJsonValue,
@@ -29,7 +30,9 @@ import {
   HAPPIER_MAX_UTF8_BYTES_KEYWORD,
   isValidPluginJsonSchemaValue,
   normalizePluginJsonSchema,
+  cloneStrictPluginJsonValue,
   type PluginJsonSchemaValidator,
+  type ProtocolJsonValue,
 } from './protocolComposableSchema.js';
 
 // The composable-schema surface is re-exported name-for-name so this module's
@@ -232,9 +235,20 @@ export function describePluginJsonSchemaValueIssues(
  * require an object schema, without making Zod a second schema-semantics owner.
  */
 export function createPluginJsonSchemaZodObjectAdapter(schema: object) {
+  return createPluginJsonSchemaZodAdapter(schema, z.object({}).passthrough(), true);
+}
+
+/** Native contributions may declare any ordinary JSON root, not only an object. */
+export function createPluginJsonSchemaZodValueAdapter(schema: object) {
+  // AJV admits the strict JSON value at this boundary. An unknown base keeps
+  // Zod's exporter representable before the canonical projection hook runs.
+  return createPluginJsonSchemaZodAdapter(schema, z.unknown(), false) as z.ZodType<ProtocolJsonValue>;
+}
+
+function createPluginJsonSchemaZodAdapter<Schema extends z.ZodType>(schema: object, root: Schema, objectRoot: boolean) {
   const prepared = preparePluginJsonSchema(schema);
   const { jsonSchema: normalized, validate } = prepared;
-  const adapter = z.object({}).passthrough().superRefine((value, ctx) => {
+  const adapter = root.superRefine((value, ctx) => {
     if (!isValidPluginJsonSchemaValue(validate, value)) {
       ctx.addIssue({
         code: 'custom',
@@ -248,7 +262,71 @@ export function createPluginJsonSchemaZodObjectAdapter(schema: object) {
   // destination while adding the selected draft marker.
   adapter._zod.processJSONSchema = (_ctx, json) => {
     Object.assign(json, normalized);
-    json.type = 'object';
+    if (objectRoot) json.type = 'object';
   };
-  return adapter;
+  return defineStoredReadProjection(adapter, () => {
+    const branchValidators = new WeakMap<object, PluginJsonSchemaValidator>();
+    const matches = (branch: PluginJsonSchemaV2, value: unknown): boolean => {
+      let validator = branchValidators.get(branch);
+      if (!validator) {
+        validator = compilePluginJsonSchema({ ...branch,
+          ...(normalized.definitions ? { definitions: normalized.definitions } : {}),
+          ...(normalized.$defs ? { $defs: normalized.$defs } : {}),
+        });
+        branchValidators.set(branch, validator);
+      }
+      return isValidPluginJsonSchemaValue(validator, value);
+    };
+    const reference = (pointer: string): PluginJsonSchemaV2 => {
+      let node: unknown = normalized;
+      for (const segment of pointer.slice(2).split('/').filter(() => pointer !== '#')) {
+        if (!node || typeof node !== 'object' || Array.isArray(node)) throw new Error('Invalid stored schema reference');
+        node = (node as Record<string, unknown>)[segment.replace(/~1/g, '/').replace(/~0/g, '~')];
+      }
+      if (!node || typeof node !== 'object' || Array.isArray(node)) throw new Error('Invalid stored schema reference');
+      return node as PluginJsonSchemaV2;
+    };
+    // Projection changes only unknown-field handling. Every projected value
+    // is re-admitted by the original portable compiler, including refinements.
+    const project = (definition: PluginJsonSchemaV2, value: unknown): unknown => {
+      const members: PluginJsonSchemaV2[] = [];
+      const visited = new Set<PluginJsonSchemaV2>();
+      const collect = (node: PluginJsonSchemaV2): void => {
+        if (visited.has(node)) return;
+        visited.add(node);
+        members.push(node);
+        if (node.$ref) collect(reference(node.$ref));
+        node.allOf?.forEach(collect);
+        for (const choices of [node.anyOf, node.oneOf]) {
+          if (!choices) continue;
+          const branch = choices.find((choice) => matches(choice, project(choice, value)));
+          if (branch) collect(branch);
+        }
+      };
+      collect(definition);
+      if (Array.isArray(value)) {
+        const items = members.flatMap((member) => member.items ? [member.items] : []);
+        return items.length ? value.map((item) => project({ allOf: items }, item)) : value;
+      }
+      if (!value || typeof value !== 'object') return value;
+      const objectMembers = members.filter((member) => member.type === 'object' || member.properties);
+      if (!objectMembers.length) return value;
+      const output: Record<string, unknown> = {};
+      for (const [key, child] of Object.entries(value)) {
+        const declared = objectMembers.flatMap((member) => member.properties?.[key] ? [member.properties[key]!] : []);
+        const catchalls = objectMembers.flatMap((member) => typeof member.additionalProperties === 'object' ? [member.additionalProperties] : []);
+        const definitions = declared.length ? declared : catchalls;
+        if (definitions.length) output[key] = project({ allOf: definitions }, child);
+      }
+      return output;
+    };
+    return z.unknown().transform((value, context) => {
+      let projected: unknown;
+      try { projected = project(normalized, cloneStrictPluginJsonValue(value, 'stored value')); }
+      catch { context.addIssue({ code: 'custom', message: 'Stored value is not valid JSON' }); return z.NEVER; }
+      const parsed = adapter.safeParse(projected);
+      if (!parsed.success) { context.addIssue({ code: 'custom', message: 'Stored value does not match the declared plugin JSON Schema' }); return z.NEVER; }
+      return parsed.data;
+    });
+  });
 }

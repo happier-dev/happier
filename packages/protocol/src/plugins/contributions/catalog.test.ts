@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { PluginManifestV2Schema } from '../manifest/v2.js';
+import { defineProtocolObject, defineProtocolString } from '../actions/protocolComposableSchema.js';
+import * as provisioners from './machineProvisioners.js';
+import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema } from './machineProvisioners.js';
 
 import {
   assertPluginProjectionFamilyIdsV2,
@@ -17,6 +20,63 @@ import {
 } from './v2.js';
 
 describe('plugin contribution catalog', () => {
+  it('admits one machine provisioner declaration and references its same-plugin daemon roles', () => {
+    const roles = ['check', 'acquire', 'bootstrap', 'inspect', 'destroy', 'exec', 'put-file'];
+    const native = defineProtocolObject({}, { policy: 'closed' });
+    const schemas = defineMachineProvisionerSchemas({ launch: native, resource: native });
+    const declaration = {
+      id: 'guest', title: 'Guest', icon: 'machine', resourceKind: 'vm', schemaVersion: 1,
+      launchSchema: native.jsonSchema,
+      resourceSchema: native.jsonSchema,
+      platforms: ['darwin'], prerequisites: [],
+      billing: { location: 'local', stoppedBilling: 'not-billed' },
+      retention: { supportedIntents: ['delete'] },
+      actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },
+      bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
+    };
+    const actions = roles.map((id) => ({ id, title: id, execution: { target: 'daemon' },
+      surfaces: ['plugin'], scopes: ['global'], dangerLevel: 'safe',
+      inputSchema: (id === 'check' ? schemas.checkInput : id === 'acquire' ? schemas.acquireInput : id === 'bootstrap' ? schemas.bootstrapInput : id === 'exec' ? schemas.execInput : id === 'put-file' ? schemas.putFileInput : schemas.resourceInput).jsonSchema,
+      resultSchema: (id === 'check' ? MachineProvisionerCheckResultProtocolV1Schema : id === 'acquire' ? schemas.acquireResult : id === 'bootstrap' ? MachineProvisionerBootstrapCarrierV1Schema : id === 'inspect' ? MachineProvisionerObservationV1Schema : id === 'exec' ? MachineProvisionerNativeExecResultV1Schema : id === 'put-file' ? MachineProvisionerPutFileResultV1Schema : MachineProvisionerPowerResultV1Schema).jsonSchema,
+    }));
+    const parsed = PluginContributesV2Schema.safeParse({ machineProvisioners: [declaration], actions });
+    expect(parsed.success).toBe(true);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [{ ...declaration, retention: { supportedIntents: ['start'] } }], actions }).success).toBe(false);
+    const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find((entry) => entry.manifestKey === 'machineProvisioners');
+    expect(family?.extractReferences(declaration).map((reference) => reference.reference)).toEqual(roles);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [{ ...declaration,
+      actions: { ...declaration.actions, acquire: { pluginId: 'other.plugin', localId: 'acquire' } },
+    }], actions }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [declaration],
+      actions: actions.filter((action) => action.id !== 'acquire'),
+    }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [declaration],
+      actions: actions.map(action => action.id === 'acquire' ? { ...action, inputSchema: { type: 'object', additionalProperties: false } } : action),
+    }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [declaration],
+      actions: actions.map(action => action.id === 'acquire' ? { ...action, resultSchema: { type: 'object', additionalProperties: false } } : action),
+    }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [declaration], actions: actions.map(action => action.id === 'bootstrap' ? {
+      ...action, inputSchema: { ...action.inputSchema, properties: { ...action.inputSchema.properties, credentialRef: { type: 'string' } } },
+    } : action) }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [declaration], actions: actions.map(action => action.id === 'acquire' ? {
+      ...action, inputSchema: { ...action.inputSchema, properties: { ...action.inputSchema.properties, unused: { type: 'string' } } },
+    } : action) }).success).toBe(false);
+    const handle = defineProtocolObject({ claimId: defineProtocolString() }, { policy: 'closed' });
+    const reconciliation = provisioners.defineMachineProvisionerReconciliationSchemas({ launch: native, resource: native, nativeOperation: handle });
+    const pendingDeclaration = { ...declaration, reconciliation: { nativeOperationSchema: handle.jsonSchema, action: 'reconcile' } };
+    const pendingActions = [...actions.map(action => action.id === 'acquire' ? { ...action, resultSchema: reconciliation.result.jsonSchema }
+      : action.id === 'destroy' ? { ...action, inputSchema: reconciliation.destroyInput.jsonSchema } : action),
+      { ...actions[0], id: 'reconcile', inputSchema: reconciliation.input.jsonSchema, resultSchema: reconciliation.result.jsonSchema }];
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [pendingDeclaration], actions: pendingActions }).success).toBe(true);
+    expect(family?.extractReferences(pendingDeclaration).map(reference => reference.reference)).toContain('reconcile');
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [pendingDeclaration], actions: actions }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [pendingDeclaration], actions: pendingActions.map(action => action.id === 'reconcile'
+      ? { ...action, dangerLevel: 'writesRemote', confirmation: { title: 'Apply native change?' } } : action) }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [pendingDeclaration], actions: pendingActions.map(action => action.id === 'reconcile'
+      ? { ...action, inputSchema: schemas.resourceInput.jsonSchema } : action) }).success).toBe(false);
+    expect(PluginContributesV2Schema.safeParse({ machineProvisioners: [declaration], actions: pendingActions }).success).toBe(false);
+  });
   it('treats a page column renderer as a declared renderer reference', () => {
     const entry = PLUGIN_CONTRIBUTION_CATALOG_V2.find((candidate) => candidate.manifestKey === 'ui.views')!;
     expect(entry.extractReferences({
@@ -109,12 +169,12 @@ describe('plugin contribution catalog', () => {
 
   it('accounts for every schema family with executable semantic metadata', () => {
     expect(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family)).toEqual([
-      'agents', 'providers', 'actions', 'commands', 'tools', 'resources', 'inputTypes', 'dragSources', 'dropTargets', 'transcriptActivities', 'sessionInfoSections',
+      'agents', 'providers', 'machineProvisioners', 'actions', 'commands', 'tools', 'resources', 'inputTypes', 'dragSources', 'dropTargets', 'transcriptActivities', 'sessionInfoSections',
       'sessionHeaderActions', 'browserTargets', 'browserActions', 'settings', 'events',
       'executionRunProfiles', 'roles', 'workflows', 'notifications', 'notificationChannels', 'scmHostingProviders',
       'scmBackends', 'connectedAccountDescriptors', 'managedDependencies', 'systemTools',
       'promptAssets', 'hooks', 'requestInterceptors', 'voiceModelPacks', 'voiceProviders',
-      'backgroundServices', 'captureSources', 'daemonDatabases', 'composerReferences', 'searchProviders',
+      'backgroundServices', 'captureSources', 'projectNativeAdapters', 'daemonDatabases', 'composerReferences', 'searchProviders',
       'composerAttachments', 'composerControls',
       'composerRegions', 'openableContentViewers',
       'accountCollections', 'webhooks', 'pluginContributionPoints', 'targetedPluginContributions',
@@ -159,6 +219,7 @@ describe('plugin contribution catalog', () => {
     const projectionFamilyIds = listPluginProjectionFamilyIdsV2();
     expect(projectionFamilyIds).toEqual([
       'providers',
+      'machineProvisioners',
       'inputTypes',
       'dragSources',
       'dropTargets',

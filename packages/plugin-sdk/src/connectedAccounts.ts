@@ -1,3 +1,4 @@
+import { AGY_OAUTH_ALLOW_RAW_AUTHORIZATION_CODE, AGY_OAUTH_AUTHORIZE_URL, AGY_OAUTH_CALLBACK_URL, AGY_OAUTH_CLIENT_ID, AGY_OAUTH_CLIENT_SECRET, AGY_OAUTH_SCOPES, AGY_OAUTH_TOKEN_URL, AGY_OAUTH_USERINFO_URL } from '@happier-dev/protocol/providers/agy/oauth';
 /**
  * Connected Account authoring, binding, materialization, usage, and runtime
  * contracts. This module is a projection only: canonical Protocol-owned
@@ -64,6 +65,7 @@ import type {
     PluginConnectedAccountReadContext,
 } from './services/connectedAccounts.js';
 import type { JsonValue, PluginContributionRef } from './identity.js';
+import type { AgentAccountUsageMeter } from './agentRuntime/accountUsage.js';
 import type { Disposable } from './lifecycle.js';
 
 /** Nonsecret native-home facts shared by the bundled Codex declaration and materialization. */
@@ -85,6 +87,27 @@ export const CLAUDE_SUBSCRIPTION_OAUTH_PROFILE: Readonly<{
     callbackUrl: CLAUDE_OAUTH_CALLBACK_URL,
     clientId: CLAUDE_OAUTH_CLIENT_ID,
     tokenUrl: CLAUDE_OAUTH_TOKEN_URL,
+});
+
+/** Registered installed-app facts shared by Antigravity personal OAuth and native materialization. */
+export const ANTIGRAVITY_OAUTH_PROFILE: Readonly<{
+    allowRawAuthorizationCode: true;
+    authorizeUrl: string;
+    callbackUrl: string;
+    clientId: string;
+    clientSecret: string;
+    tokenUrl: string;
+    userinfoUrl: string;
+    scopes: readonly string[];
+}> = Object.freeze({
+    allowRawAuthorizationCode: AGY_OAUTH_ALLOW_RAW_AUTHORIZATION_CODE,
+    authorizeUrl: AGY_OAUTH_AUTHORIZE_URL,
+    callbackUrl: AGY_OAUTH_CALLBACK_URL,
+    clientId: AGY_OAUTH_CLIENT_ID,
+    clientSecret: AGY_OAUTH_CLIENT_SECRET,
+    tokenUrl: AGY_OAUTH_TOKEN_URL,
+    userinfoUrl: AGY_OAUTH_USERINFO_URL,
+    scopes: AGY_OAUTH_SCOPES,
 });
 
 export type ClaudeSubscriptionMaterializationContractV1 = Readonly<{
@@ -499,14 +522,14 @@ export interface ConnectedAccountRuntime {
         /** Provider-declared plan fact; absence never infers a plan from allowances. */
         planLabel?: string | null;
         subscription?: ProviderAccountSubscriptionV1;
-        limits: readonly Readonly<{
+        limits: readonly (Readonly<{
             id: string;
             /** Provider allowance family, distinct from the window identified by id. */
             providerLimitId?: string;
-            used?: number;
-            remaining?: number;
-            resetsAtMs?: number;
-        }> [];
+            used?: number | null;
+            remaining?: number | null;
+            resetsAtMs?: number | null;
+        }> & Partial<Pick<AgentAccountUsageMeter, 'label' | 'limit' | 'remainingPct' | 'utilizationPct' | 'unit' | 'status' | 'isExhausted' | 'details' | 'confidence'>>)[];
     }>>;
     materialize(
         request: ConnectedAccountMaterializationRequest,

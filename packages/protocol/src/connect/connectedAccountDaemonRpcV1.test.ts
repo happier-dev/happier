@@ -10,6 +10,29 @@ import {
 } from './connectedAccountDaemonRpcV1.js';
 
 describe('Connected Account daemon RPC v1', () => {
+  it('carries exact reviewed native responsibility through the existing revoke command and response', () => {
+    const account = { service: { pluginId: 'acme.accounts', localId: 'work' }, accountId: 'account-1' };
+    const recovery = { reference: 'native-resource', reason: 'manual_recovery' };
+    const disposition = { managedId: 'retained-machine', expectedIntentRevision: 1, expectedAllocation: 'may-exist',
+      expectedRecovery: recovery, responsibility: 'manual' };
+    const command = { operation: 'revokeAccount', account, cleanupGroupReferences: false, managedResourceDispositions: [disposition] };
+    expect(ConnectedAccountControlCommandRequestSchema.parse({ v: 1, machineId: 'machine-1', command })).toMatchObject({ command });
+    const resources = [{ managedId: 'retained-machine', homeId: 'home-1', custodianAccountId: 'owner-1', intentRevision: 1,
+      controller: { machineId: 'controller-1', installationId: 'installation-1' }, provider: { pluginId: 'acme.compute', localId: 'cloud' },
+      allocation: 'may-exist', recovery }];
+    expect(ConnectedAccountDaemonControlResponseSchema.parse({ status: 'removalReviewRequired', account, resources }))
+      .toMatchObject({ status: 'removalReviewRequired', account, resources });
+  });
+
+  it('distinguishes emergency local revocation from a claimed provider revoke', () => {
+    const account = { service: { pluginId: 'acme.accounts', localId: 'work' }, accountId: 'account-1' };
+    expect(ConnectedAccountControlCommandRequestSchema.parse({ v: 1, machineId: 'machine-1', command: {
+      operation: 'revokeAccount', account, cleanupGroupReferences: false, emergencyRevoke: true,
+    } })).toMatchObject({ command: { emergencyRevoke: true } });
+    expect(ConnectedAccountDaemonControlResponseSchema.parse({ status: 'revoked', account, remoteStatus: 'remoteNotAttempted' }))
+      .toMatchObject({ status: 'revoked', remoteStatus: 'remoteNotAttempted' });
+  });
+
   it('owns the exact stable method names', () => {
     expect(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD)
       .toBe('daemon.connectedAccounts.authentication.command');

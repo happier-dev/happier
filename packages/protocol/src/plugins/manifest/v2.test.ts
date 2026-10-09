@@ -8,6 +8,7 @@ import {
 } from '../../index.js';
 import { MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1 } from '../contributions/composerAttachments.js';
 import { PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1 } from '../ui/targetedContributions.js';
+import { resolvePluginActionConnectedAccountUseRequestsV2 } from './v2.js';
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -22,6 +23,22 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
 }
 
 describe('plugin manifest v2 root contract', () => {
+  it('projects credential use from only the selected Action HostAccess requests', () => {
+    const accountRequest = (id: string, operations: readonly string[]) => ({ id, capability: 'connectedAccounts', reason: id,
+      scope: { serviceRefs: ['account'], operations } });
+    const parsed = PluginManifestV2Schema.parse(manifest({ hostAccess: {
+      required: [accountRequest('acquire-account', ['use']), accountRequest('other-account', ['use']), accountRequest('select-only', ['select'])],
+      optional: [accountRequest('optional-account', ['use'])],
+    }, contributes: { actions: [{ id: 'acquire', title: 'Acquire', scopes: ['global'], surfaces: ['plugin'], dangerLevel: 'safe',
+      execution: { target: 'daemon' }, inputSchema: { type: 'object', additionalProperties: false }, resultSchema: { type: 'object', additionalProperties: false },
+      hostAccess: ['select-only', 'acquire-account', 'optional-account'] }] } }));
+    expect(resolvePluginActionConnectedAccountUseRequestsV2(parsed, 'acquire')).toEqual([
+      { request: parsed.hostAccess.required[0], required: true }, { request: parsed.hostAccess.optional[0], required: false },
+    ]);
+    expect(resolvePluginActionConnectedAccountUseRequestsV2(parsed, 'missing')).toBeNull();
+    const dangling = { ...parsed, contributes: { ...parsed.contributes, actions: [{ ...parsed.contributes.actions[0]!, hostAccess: ['missing'] }] } };
+    expect(resolvePluginActionConnectedAccountUseRequestsV2(dangling, 'acquire')).toBeNull();
+  });
   it('admits Widget refresh dependencies only for its own declared Resources', () => {
     const resources = [{ id: 'live-status', source: 'dynamic', kind: 'config', contentType: 'text/plain' }];
     const renderer = { id: 'native', kind: 'hostedHtml', source: { kind: 'html', html: '<p>Status</p>' } };
