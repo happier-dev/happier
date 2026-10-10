@@ -2,6 +2,8 @@
 
 export type VoicePresenceTranslation = Readonly<{
     welcomeText: string;
+    customVoice: string;
+    boundWelcomeText: (params: Readonly<{ name: string }>) => string;
     greetingLiteralUnavailable: string;
     title: string;
     howYouTalk: string;
@@ -40,6 +42,8 @@ export type VoicePresenceTranslation = Readonly<{
 
 export const voicePresenceTranslationsEnglish = { en: {
         welcomeText: "Hi, I'm listening — what would you like to do?",
+        customVoice: 'Custom voice',
+        boundWelcomeText: ({ name }) => `Hi, you're talking to ${name} — what would you like to do?`,
         greetingLiteralUnavailable: "For this Reply in language, the service waits until you speak.",
         title: 'Voice',
         howYouTalk: "How you talk",

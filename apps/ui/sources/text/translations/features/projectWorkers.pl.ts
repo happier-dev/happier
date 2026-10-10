@@ -121,6 +121,8 @@ export const projectWorkers: ProjectWorkersTranslations = {
     copyMissingFact: 'Najpierw potrzebna kopia',
     setUpCopy: ({ machine }: { machine: string }) => `Skonfiguruj kopię na ${machine}`,
     removeFilesUnknown: 'Ta kopia mogła już zniknąć, ale nie wiadomo, czy jej pliki zostały usunięte. Sprawdź folder przed ponowną próbą.',
+    copyDefinitionRetired: 'Ta kopia nie jest już utrzymywana w Sync.',
+    removeFilesRemain: 'Pliki nadal są na tej maszynie.',
     checkAgain: 'Sprawdź ponownie',
     openWork: 'Otwórz',
     dependencyOther: 'Inna praca',

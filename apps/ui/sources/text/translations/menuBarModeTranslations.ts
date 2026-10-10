@@ -11,7 +11,7 @@ import { menuBarModeTranslations as pt } from './features/pt';
 import { menuBarModeTranslations as ru } from './features/ru';
 import { menuBarModeTranslations as zh_Hans } from './features/zh-Hans';
 import { menuBarModeTranslations as zh_Hant } from './features/zh-Hant';
-export { DesktopTrayTranslation, DesktopLoginStartTranslation } from './menuBarModeTranslations.shared';
+export type { DesktopTrayTranslation, DesktopLoginStartTranslation } from './menuBarModeTranslations.shared';
 
 export const menuBarModeTranslations = {
     ...en.menuBarModeTranslations,

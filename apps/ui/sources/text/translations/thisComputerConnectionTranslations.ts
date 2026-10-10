@@ -11,7 +11,7 @@ import { thisComputerConnectionTranslations as pt } from './features/pt';
 import { thisComputerConnectionTranslations as ru } from './features/ru';
 import { thisComputerConnectionTranslations as zh_Hans } from './features/zh-Hans';
 import { thisComputerConnectionTranslations as zh_Hant } from './features/zh-Hant';
-export { ThisComputerConnectionTranslation } from './thisComputerConnectionTranslations.shared';
+export type { ThisComputerConnectionTranslation } from './thisComputerConnectionTranslations.shared';
 
 export const thisComputerConnectionTranslations = {
     ...en.thisComputerConnectionTranslations,

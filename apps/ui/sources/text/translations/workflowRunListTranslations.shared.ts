@@ -6,6 +6,7 @@ export type Progress = Readonly<{ completed: number; total: number }>;
 
 export const en = {
     definitions: 'Definitions',
+    observedProgress: ({ status }: { status: string }) => `Observed: ${status}`,
     stepsProgress: ({ completed, total }: Progress) => `${completed} of ${total} steps`,
     loopProgress: ({ completed, total }: Progress) => `${completed} of ${total} items`,
     startedByAgent: 'Started by an agent',

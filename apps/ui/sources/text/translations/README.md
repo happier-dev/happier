@@ -8,6 +8,13 @@ are typechecked and whose bodies interpolate `${...}`. `i18n.integrity.test.ts` 
 locale to have identical key structure to `en.ts`, and requires sampled functions to still be
 functions. That is why nobody hand-edits these files in bulk.
 
+Traditional Chinese is composed from Simplified Chinese plus the editable copy in
+`zh-HantOverrides.ts`. `zh-Hant.ts` preserves synchronous native/offline lookup; the web locale
+loader requests the base and overrides independently before composing them. Keep that adapter
+and web loader aligned when applying a full retranslation preview from `newLocale.ts`; replacing
+only the adapter would leave web using the old overrides. This layout is current 0.3 source,
+not a claim about released builds.
+
 ## Copy lives in TWO places — read this before adding a language
 
 Several domains were moved out of the per-locale files into **shared modules**

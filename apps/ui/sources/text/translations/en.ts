@@ -18877,6 +18877,10 @@ const enUsage = {
       notRecordedWhatIfReason: "Replaying your usage on a different plan isn't supported.",
       notRecordedStrategy: "Multi-account setups",
       notRecordedStrategyReason: "Comparing setups needs the same replay, so none is shown.",
+      earlierCurve: ({ time }: { time: string | number }) => `Earlier window, ended ${time}`,
+      earlierShown: ({ count }: { count: string | number }) => `Grey lines: ${count} earlier comparable windows on the same span`,
+      earlierNone: ({ reason }: { reason: string | number }) => `No earlier window can be drawn beside this one: ${reason}`,
+      earlierSingleReading: "only one reading",
     },
     work: {
       // usage-board:work

@@ -3,6 +3,9 @@
  * and receipt, presets, the created machine's detail and its lifecycle states. English is the shape
  * every locale block (`features/managedMachines.<locale>.ts`) must match.
  */
+/** "Server" reads "server" mid-sentence; an acronym ("VM") keeps its capitals. */
+const lowerKind = (kind: string): string => (kind === kind.toLocaleUpperCase('en') ? kind : kind.toLocaleLowerCase('en'));
+
 export const managedMachinesEn = {
     managedRetention: {
         ends: "Ends",
@@ -139,7 +142,7 @@ export const managedMachinesEn = {
             image: "Image",
             location: "Location",
             managedFrom: "Managed from",
-            newKind: ({ provider, kind }: { provider: string; kind: string }) => `New ${provider} ${kind.toLocaleLowerCase('en')}`,
+            newKind: ({ provider, kind }: { provider: string; kind: string }) => `New ${provider} ${lowerKind(kind)}`,
             description: "Pick its size, system and place. What it costs stays on the right.",
             otherChoices: "Other choices",
             pricesChecked: ({ provider, time }: { provider: string; time: string }) => `Prices from ${provider}, checked ${time}.`,
@@ -176,7 +179,7 @@ export const managedMachinesEn = {
             saveAsPreset: "Save as a preset",
             saveAsPresetHelp: "Reuse it from the machine picker",
             create: "Create",
-            createKind: ({ kind }: { kind: string }) => `Create ${kind.toLocaleLowerCase('en')}`,
+            createKind: ({ kind }: { kind: string }) => `Create ${lowerKind(kind)}`,
             cloudFootnote: ({ provider, account }: { provider: string; account: string }) => `Happier doesn’t charge for machines. ${provider} bills your ${account} account directly.`,
             localFootnote: ({ provider, computer }: { provider: string; computer: string }) => `${provider} runs it on ${computer}. Nobody bills you for it.`,
             asCreated: "As it was created",
@@ -278,6 +281,7 @@ export const managedMachinesEn = {
             checkNow: "Check now",
         },
         actions: {
+            rebuild: "Rebuild",
             tryAgain: "Try again",
             openProvider: ({ provider }: { provider: string }) => `Open ${provider}`,
             openConsole: "Open console",
@@ -294,6 +298,11 @@ export const managedMachinesEn = {
             review: "Review",
             change: "Change",
             cancelCreation: "Cancel creation",
+        },
+        rebuildReview: {
+            host: "On the controller",
+            child: "In the child",
+            help: "Rebuilds this same Devcontainer using these effects. You’ll be asked before it runs.",
         },
         dependencies: {
             title: "References to this machine",
@@ -314,13 +323,14 @@ export const managedMachinesEn = {
             recipeDescription: "Set when it was created. Edit the preset for new machines; this machine keeps what it was made with.",
             madeFromPreset: ({ preset }: { preset: string }) => `Made from the ${preset} preset.`,
             createdOn: ({ provider }: { provider: string }) => `Created by Happier on ${provider}.`,
-            kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind.toLocaleLowerCase('en')}`,
+            kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${lowerKind(kind)}`,
             /** The provider's own id after its kind ("Hetzner server 58213904"). */
             kindFactWithId: ({ fact, id }: { fact: string; id: string }) => `${fact} ${id}`,
             runningFor: ({ duration }: { duration: string }) => `Running ${duration}`,
             power: { running: "Running", stopped: "Stopped", suspended: "Suspended" },
         },
         picker: {
+            createdOnRun: "Created when you press Run",
             newMachine: "New machine",
             presets: "Presets",
             oneOff: "One-off machine…",
@@ -347,6 +357,11 @@ export const managedMachinesEn = {
         accessLost: "You no longer have access to this preset.",
         offline: ({ time }: { time: string }) => `Last saved ${time}. Connect to save or create.`,
         audience: "Who can use it",
+        archivedShort: "Archived",
+        purposeTeam: ({ what, team }: { what: string; team: string }) => `Anyone in ${team} can create this ${what} from the machine picker.`,
+        purposePersonal: ({ what }: { what: string }) => `You can create this ${what} from the machine picker.`,
+        audienceTeamHelp: ({ team, provider }: { team: string; provider: string }) => `People create machines with ${team}’s ${provider} account without seeing its key.`,
+        audiencePersonalHelp: "It stays yours.",
         canUse: "Can use",
         canManage: "Can manage",
         limitNone: "No simultaneous limit",
@@ -354,6 +369,7 @@ export const managedMachinesEn = {
         fromRevision: ({ name, revision }: { name: string; revision: number }) => `Made from ${name} · revision ${revision}`,
         runningAtOnce: "Running at once",
         atMost: "At most",
+        controllerRow: "Machine",
         moreTeams: "More Teams…",
         otherLimit: "Another number…",
         saved: ({ name }: { name: string }) => `Saved ${name}`,
@@ -382,7 +398,7 @@ export const managedMachinesEn = {
             setupLines: ({ count }: { count: number }) => (count === 1 ? `1 line` : `${count} lines`),
             secrets: "Secrets for setup",
             secretsHelp: "Saved secrets are supplied to the setup process as environment variables. The script can read or save them.",
-            addSecret: "Add a secret…",
+            addSecret: "Add a secret",
             secretName: "Variable name",
             secretNameHelp: "The name the setup script reads it by.",
             secretNameInvalid: "Use capital letters, digits and underscores.",

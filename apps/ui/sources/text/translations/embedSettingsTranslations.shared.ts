@@ -25,6 +25,7 @@ export const english = {
             sites: ({ count }: { count: number }) => count === 1 ? '1 site' : `${count} sites`,
             send: "Can send",
             sendAndApprove: "Can send and approve",
+            approve: "Can approve",
             viewOnly: "View only",
             modelOnly: ({ name }: { name: string }) => `${name} only`,
             models: ({ count }: { count: number }) => count === 1 ? '1 model' : `${count} models`,

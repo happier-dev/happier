@@ -15,6 +15,13 @@ export type Words = Readonly<{
     title: string;
     subtitle: string;
     homeConnections: string;
+    homeWorkosAdd: string;
+    homeWorkosCompanyName: string;
+    homeWorkosChooseDetail: string;
+    homeWorkosPurpose: string;
+    homeWorkosEnableDetail: string;
+    homeWorkosOffboarding: string;
+    homeWorkosPlatformRequired: string;
     add: string;
     empty: string;
     unreadable: string;
@@ -92,6 +99,51 @@ export type Words = Readonly<{
     recoveryTeamAuthentication: string;
     callbackUrl: string;
     callbackUrlHint: string;
+    workosSetupSso: string;
+    workosSetupDirectory: string;
+    workosCheckSetup: string;
+    workosChooseConnection: string;
+    workosPortalConfirmBody: string;
+    workosDirectoryPortalConfirmBody: string;
+    workosSetupSection: string;
+    workosSetupFooter: string;
+    workosStepPortalDetail: string;
+    workosStepPortalDone: string;
+    workosStepPortalDoneDetail: string;
+    workosOpenPortal: string;
+    workosOpenPortalAgain: string;
+    workosStepChooseDetail: string;
+    workosStepChooseDone: string;
+    workosFindConnections: string;
+    workosUseConnection: (params: { name: string }) => string;
+    workosCandidateDraft: string;
+    workosStepTestDetail: string;
+    workosTestPassed: string;
+    workosTestAgain: string;
+    workosStepEnable: string;
+    workosStepEnableDetail: string;
+    workosTurnOn: string;
+    workosConnectionSection: string;
+    workosConnectionRow: string;
+    workosConnectionNotChosen: string;
+    workosChange: string;
+    errorWorkosPlatformUnavailable: string;
+    errorSetupRequired: string;
+    removeTitle: (params: { name: string }) => string;
+    removeBody: (params: { name: string }) => string;
+    removeBlocked: (params: { accounts: number; connections: number }) => string;
+    disableTitle: (params: { name: string }) => string;
+    disableBody: (params: { name: string }) => string;
+    githubRemoveInstallationTitle: (params: { name: string }) => string;
+    githubRemoveInstallationBody: (params: { name: string }) => string;
+    removeBlockedTitle: (params: { name: string }) => string;
+    removeImpactPeople: (params: { count: number }) => string;
+    removeImpactNobody: string;
+    removeImpactKept: string;
+    removeBlockedAlternateLogins: (params: { count: number }) => string;
+    removeBlockedDirectories: (params: { count: number }) => string;
+    removeBlockedGroups: (params: { count: number }) => string;
+    removeBlockedMemberships: (params: { count: number }) => string;
 }>;
 
 
@@ -130,10 +182,6 @@ export function build(w: Words, github: typeof githubAccessWords[keyof typeof gi
             ...github,
             ...oidc,
             workos: 'WorkOS',
-            workosSetupSso: `${w.add}: WorkOS SSO`,
-            workosSetupDirectory: `${w.add}: WorkOS Directory Sync`,
-            workosCheckSetup: `${w.configuration}: WorkOS`,
-            workosChooseConnection: `${w.configuration}: WorkOS SSO`,
             providerOidc: 'OpenID Connect',
             providerWorkosSso: 'WorkOS SSO',
             providerGitHub: 'GitHub',
@@ -141,10 +189,6 @@ export function build(w: Words, github: typeof githubAccessWords[keyof typeof gi
             workosStrategyOidc: 'OpenID Connect',
             workosStrategyOther: 'Other sign-in strategy',
             workosStatusUnknown: 'Status unavailable',
-            teamRemoveImpact: ({ accounts, alternateLogins, directories, groups, memberships }: { accounts: number; alternateLogins: number; directories: number; groups: number; memberships: number }) => `${w.accounts}: ${accounts}. ${w.alternateLogins}: ${alternateLogins}. Directory: ${directories}. Groups: ${groups}. Managed memberships: ${memberships}.`,
-            removeTitle: ({ name }: { name: string }) => `${w.remove}: ${name}?`,
-            removeBody: ({ name }: { name: string }) => `${name}: ${w.remove}.`,
-            removeBlocked: ({ accounts, connections }: { accounts: number; connections: number }) => `${w.accounts}: ${accounts}. ${w.connections}: ${connections}.`,
             githubApps: 'GitHub Apps',
             githubAppsSubtitle: 'Home-owned GitHub Apps and their verified organization installations.',
             githubAppsEmpty: 'No GitHub Apps configured',
@@ -186,8 +230,6 @@ export function build(w: Words, github: typeof githubAccessWords[keyof typeof gi
             githubOrganizationId: 'GitHub organization ID',
             githubOpeningVerification: 'Opening GitHub verification…',
             githubRemoveInstallation: 'Remove installation',
-            githubRemoveInstallationTitle: ({ name }: { name: string }) => `${w.remove}: ${name}?`,
-            githubRemoveInstallationBody: ({ name }: { name: string }) => `${name}: ${w.remove}.`,
             githubInstallationInUse: 'This installation is still used by an identity connection or directory source.',
             githubDraft: 'Draft',
             githubVerified: 'Verified',
@@ -211,8 +253,6 @@ export function build(w: Words, github: typeof githubAccessWords[keyof typeof gi
             settingsChangedElsewhere: 'This connection changed on the Home while you were editing. Your changes are kept — review them, then save again.',
             groupsAny: 'Any of these Groups',
             groupsAll: 'All of these Groups',
-            disableTitle: ({ name }: { name: string }) => `${w.disable}: ${name}?`,
-            disableBody: ({ name }: { name: string }) => `${name}: ${w.disabled}.`,
             diagnosticsTitle: 'Last test result',
             diagnosticsSubject: 'Subject',
             diagnosticsPresent: 'Present',
@@ -245,7 +285,59 @@ export function build(w: Words, github: typeof githubAccessWords[keyof typeof gi
 
 
 export const en: Words = {
+    homeWorkosAdd: "Company sign-in via WorkOS",
+    homeWorkosCompanyName: "Company name",
+    homeWorkosChooseDetail: "Choose the WorkOS connection people sign in to this Home with.",
+    homeWorkosPurpose: "People in your company can sign in to this Home with their work account.",
+    homeWorkosEnableDetail: "People can then sign in to this Home with their company account.",
+    homeWorkosOffboarding: "SSO alone does not remove people who leave your company.",
+    homeWorkosPlatformRequired: "Set up WorkOS in Sign-in platforms first.",
     title: 'Identity providers', subtitle: 'Home-owned sign-in connections available to Teams.', homeConnections: 'Home sign-in connections', add: 'Add connection', empty: 'No Home sign-in connections', unreadable: 'Some provider records could not be read.', active: 'Active', disabled: 'Disabled', needsTest: 'Test required', tested: 'Tested', staleTest: 'Retest required', configuration: 'Configuration', issuer: 'Issuer URL', clientId: 'Client ID', clientSecret: 'Client secret', secretSet: 'Set', secretNotSet: 'Not set', secretNeedsAttention: 'Needs attention', secretRepair: 'Replace the client secret to repair this connection.', secretRetain: 'Leave blank to keep the current secret.', scopes: 'Scopes', loginClaim: 'Login claim', emailClaim: 'Email claim', groupsClaim: 'Groups claim', fetchUserInfo: 'Fetch UserInfo', advanced: 'Show advanced settings', hideAdvanced: 'Hide advanced settings', actions: 'Actions', test: 'Test sign-in', testing: 'Opening sign-in test…', validate: 'Validate configuration', validating: 'Validating configuration…', validated: 'Configuration valid', edit: 'Edit connection', save: 'Save connection', saving: 'Saving…', enable: 'Enable connection', disable: 'Disable connection', remove: 'Remove connection', createTitle: 'Add identity provider', editTitle: 'Edit identity provider', displayName: 'Name', required: 'Complete the required fields.', invalidIssuer: 'Enter a valid HTTPS issuer URL.', secretRequired: 'Enter a client secret.', error: 'That did not go through. Nothing was changed.', errorForbidden: 'You no longer have permission for this. Nothing was changed.', errorConflict: 'Someone else changed this first. Your edits are kept — reload, then try again.', errorMissing: 'This no longer exists. Someone else may have removed it.', errorInUse: 'Something still depends on this. Remove those first.', errorProviderUnavailable: 'The identity service did not respond. Nothing was changed.', errorRateLimited: 'The provider asked us to wait before trying again.', errorInvalid: 'The Home rejected these values. Check the configuration and try again.', errorImmutable: 'This value is fixed once the record is in use. Create a new one instead.', accounts: 'Affected Accounts', connections: 'Team connections', directoryGroups: 'Directory Groups', searchGroups: 'Search directory Groups', mapCreate: 'Create and manage a Team Group', mapExisting: 'Map to an existing Team Group', mappedTo: 'Mapped to', unmapped: 'Not mapped', chooseGroup: 'Choose a Team Group', loadMore: 'Load more Groups', removeMapping: 'Remove Group mapping', errorAuthenticationRequired: 'Sign in to this Team again, then retry. Nothing was changed.', errorPolicyUnavailable: 'The Team\u2019s authentication policy cannot be evaluated right now. Nothing was changed.', errorPolicyInUse: 'The Team\u2019s authentication policy still depends on this connection.', errorNotAllowed: 'This Home does not let Teams configure this. Nothing was changed.', errorNeedsAttention: 'Directory sync needs attention. Run a full sync.', errorSyncPaused: 'This source is paused. Resume sync to start a fresh full sync.', alternateLogins: 'Accounts needing another way to sign in', recoveryAuthenticationPolicy: 'Open Team authentication', recoveryAlternateLogin: 'Give those Accounts another way to sign in first', recoveryDirectory: 'Open Directory', recoveryGroupMappings: 'Open Group mappings', recoveryTeamAuthentication: 'Sign in again', callbackUrl: 'Callback URL', callbackUrlHint: 'Register this URL with your identity provider.',
+    workosSetupSso: 'Open the WorkOS Admin Portal',
+    workosSetupDirectory: 'Set up WorkOS Directory Sync',
+    workosCheckSetup: 'Check WorkOS setup',
+    workosChooseConnection: 'Choose the connection',
+    workosPortalConfirmBody: 'You\u2019ll finish setup in WorkOS, then come back here to choose the connection.',
+    workosDirectoryPortalConfirmBody: 'You\u2019ll finish setup in WorkOS, then come back here to choose the directory.',
+    workosSetupSection: 'Set up',
+    workosSetupFooter: 'You can leave and come back: setup continues from the step it reached.',
+    workosStepPortalDetail: 'Connect your identity provider there. When you come back, setup continues here.',
+    workosStepPortalDone: 'Admin Portal',
+    workosStepPortalDoneDetail: 'Your organization is linked.',
+    workosOpenPortal: 'Open portal',
+    workosOpenPortalAgain: 'Open again',
+    workosStepChooseDetail: 'Pick which WorkOS connection signs members in.',
+    workosStepChooseDone: 'Connection',
+    workosFindConnections: 'Find connections',
+    workosUseConnection: ({ name }: { name: string }) => `Use ${name}`,
+    workosCandidateDraft: 'A draft in WorkOS. Finish it there first.',
+    workosStepTestDetail: 'Sign in once yourself. Nothing is saved to anyone\u2019s account.',
+    workosTestPassed: 'Your test sign-in worked.',
+    workosTestAgain: 'Test again',
+    workosStepEnable: 'Turn it on',
+    workosStepEnableDetail: 'Members can then sign in with it. To require it, choose it under How members sign in.',
+    workosTurnOn: 'Turn on',
+    workosConnectionSection: 'Connection',
+    workosConnectionRow: 'WorkOS connection',
+    workosConnectionNotChosen: 'Not chosen yet',
+    workosChange: 'Change',
+    errorWorkosPlatformUnavailable: 'WorkOS isn\u2019t set up on this Home yet.',
+    errorSetupRequired: 'This needs to be set up before it can be used.',
+    removeTitle: ({ name }: { name: string }) => `Remove ${name}?`,
+    removeBody: ({ name }: { name: string }) => `${name} stops being offered for sign-in. Accounts that used it are kept.`,
+    removeBlocked: ({ accounts, connections }: { accounts: number; connections: number }) => `Still used by ${connections === 1 ? '1 Team connection' : `${connections} Team connections`} and ${accounts === 1 ? '1 account' : `${accounts} accounts`}. Remove those first.`,
+    disableTitle: ({ name }: { name: string }) => `Turn off ${name}?`,
+    disableBody: ({ name }: { name: string }) => `People can\u2019t sign in with ${name} until it\u2019s turned back on. Nothing is deleted.`,
+    githubRemoveInstallationTitle: ({ name }: { name: string }) => `Remove the installation on ${name}?`,
+    githubRemoveInstallationBody: ({ name }: { name: string }) => `This Home stops using the App on ${name}. Nothing changes on GitHub; uninstall it there if you no longer need it.`,
+    removeBlockedTitle: ({ name }: { name: string }) => `${name} can\u2019t be removed yet`,
+    removeImpactPeople: ({ count }: { count: number }) => count === 1 ? '1 person signs in to this Team with it.' : `${count} people sign in to this Team with it.`,
+    removeImpactNobody: 'No one signs in to this Team with it yet.',
+    removeImpactKept: 'Their accounts and Team memberships are kept.',
+    removeBlockedAlternateLogins: ({ count }: { count: number }) => count === 1 ? '1 person has no other way to sign in.' : `${count} people have no other way to sign in.`,
+    removeBlockedDirectories: ({ count }: { count: number }) => count === 1 ? 'A directory source still uses it.' : `${count} directory sources still use it.`,
+    removeBlockedGroups: ({ count }: { count: number }) => count === 1 ? 'A Group mapping still uses it.' : `${count} Group mappings still use it.`,
+    removeBlockedMemberships: ({ count }: { count: number }) => count === 1 ? '1 membership is still managed by it.' : `${count} memberships are still managed by it.`,
 };
 
 

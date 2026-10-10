@@ -121,6 +121,8 @@ export const projectWorkers: ProjectWorkersTranslations = {
     copyMissingFact: '需要先設定副本',
     setUpCopy: ({ machine }: { machine: string }) => `在 ${machine} 上設定副本`,
     removeFilesUnknown: '此副本可能已不存在，但不確定其檔案是否已移除。重試前請檢查該資料夾。',
+    copyDefinitionRetired: 'Sync 不再維護此副本。',
+    removeFilesRemain: '檔案仍在這台機器上。',
     checkAgain: '再次檢查',
     openWork: '開啟',
     dependencyOther: '其他工作',

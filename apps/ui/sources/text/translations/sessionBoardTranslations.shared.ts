@@ -38,7 +38,6 @@ export type SessionBoardTranslation = Readonly<{
         offline: string;
         unavailable: string;
         updateRequired: string;
-        hostedHtmlSourceTooLarge: string;
         noteTooLarge: string;
         invalid: string;
         notFound: string;
@@ -87,6 +86,7 @@ export type SessionBoardTranslation = Readonly<{
         unopenable: SessionBoardStateTranslation;
         unsupported: SessionBoardStateTranslation;
         missing: SessionBoardStateTranslation;
+        notCopied: SessionBoardStateTranslation;
         removed: SessionBoardStateTranslation;
         pluginUnavailable: SessionBoardStateTranslation;
         rendererUnavailable: SessionBoardStateTranslation;
@@ -340,6 +340,7 @@ export const sessionBoardTranslationsEnglish = { en: {
                 title: 'This widget needs a newer Happier',
                 reason: 'Its content is preserved. Open it on a supported device or update Happier.',
             },
+            notCopied: { title: 'Visual not copied', reason: 'This visual could not be copied into this fork.' },
             missing: {
                 title: 'This widget is missing',
                 reason: 'The board still points at it, but its content is not on this Home.',
@@ -414,7 +415,6 @@ export const sessionBoardTranslationsEnglish = { en: {
             offline: 'Changing the board needs a connection to this Home.',
             unavailable: 'This Home cannot change the board yet.',
             updateRequired: 'Update Happier to make this board change.',
-            hostedHtmlSourceTooLarge: 'This interactive view is too large to save. Your draft is still here.',
             noteTooLarge: 'This note is too large to save. Your text is still here.',
             invalid: 'That board change is not valid. Review it and try again.',
             notFound: 'That board item is no longer available. Refresh to see the latest board.',

@@ -31,6 +31,9 @@ const LOCALES = Object.keys(workflowTranslations) as Array<keyof typeof workflow
  */
 const NON_UNION_RUN_STATE_KEYS = ['pending', 'cancel_requested', 'completed', 'completed_with_failures'] as const;
 
+/** The canonical issue presenter names specific repairs without inventing wire issue codes. */
+const ISSUE_PRESENTATION_KEYS = ['emptyPrompt', 'emptyWaitPrompt', 'fieldMissing', 'fieldInvalid'] as const;
+
 type DuplicateKey = Readonly<{ scope: string; key: string; lines: readonly number[] }>;
 
 /**
@@ -112,9 +115,9 @@ describe('workflow translations shape', () => {
                     .toEqual(new Set(WORKFLOW_INVOCATION_LIFECYCLES_V1));
             });
 
-            it('labels every closed validation issue code', () => {
+            it('labels every closed validation issue code and the issue presenter’s specific repairs', () => {
                 expect(new Set(Object.keys(group.issue)))
-                    .toEqual(new Set(WORKFLOW_VALIDATION_ISSUE_CODES));
+                    .toEqual(new Set([...WORKFLOW_VALIDATION_ISSUE_CODES, ...ISSUE_PRESENTATION_KEYS]));
             });
 
             it('gives runState and invocationState their own wording for shared member names', () => {

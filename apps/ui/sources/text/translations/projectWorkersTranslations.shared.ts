@@ -135,6 +135,8 @@ export const projectWorkersEn = {
     copyMissingFact: 'Needs a copy first',
     setUpCopy: ({ machine }: { machine: string }) => `Set up a copy on ${machine}`,
     removeFilesUnknown: 'This copy may already be gone, but whether its files were removed is unknown. Check the folder before trying again.',
+    copyDefinitionRetired: 'This copy is no longer kept in Sync.',
+    removeFilesRemain: 'The files are still on this machine.',
     checkAgain: 'Check again',
     openWork: 'Open',
     dependencyOther: 'Other work',

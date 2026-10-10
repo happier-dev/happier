@@ -5,6 +5,7 @@ export type SavedCopy = { [K in keyof typeof en]: string };
 
 
 export const en = {
+    discuss: 'Discuss', message: 'Message',
     edit: 'Edit walkthrough', title: 'Walkthrough title', stopTitle: 'Stop title', prose: 'Explanation',
     refine: 'Refine', instructions: 'What should change?', moveUp: 'Move up', moveDown: 'Move down', mergeNext: 'Merge with next stop',
     addSummary: 'Add summary', addCommitPlan: 'Propose commits', updated: 'Saved result updated',

@@ -1977,7 +1977,18 @@ describe('i18n integrity', () => {
         ];
         const missingOrInherited = locales.flatMap(({ code, root }) => keys.flatMap((key) => {
             const value = readTranslationLeaf(root, key);
-            return typeof value === 'string' && value.length > 0 && value !== readTranslationLeaf(en, key)
+            const englishValue = readTranslationLeaf(en, key);
+            if (typeof englishValue === 'function') {
+                const args = [{ matches: 37, files: 13 }];
+                const sample = callSampledTranslation(value, args);
+                const englishSample = callSampledTranslation(englishValue, args);
+                return typeof value === 'function' && value !== englishValue
+                    && sample && sample !== englishSample
+                    && sample.includes('37') && sample.includes('13')
+                    ? []
+                    : [`${code}: ${key}`];
+            }
+            return typeof value === 'string' && value.length > 0 && value !== englishValue
                 ? []
                 : [`${code}: ${key}`];
         }));

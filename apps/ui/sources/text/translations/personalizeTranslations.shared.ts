@@ -179,7 +179,7 @@ export const en: PersonalizeTranslation = {
     glassEverywhereDescription: 'One even glass everywhere',
     glassSolidDescription: 'Every surface opaque',
     glassCustomNote: 'You tuned glass in Appearance. Pick a preset to replace it, or keep yours.',
-    customizeInAppearance: 'Customize in Appearance…',
+    customizeInAppearance: 'Customize in Appearance',
     styleName: 'Style',
     styleTitle: 'Start from a style',
     styleDescription: 'Each style sets how sessions read and how the list looks. It only fills in the next steps: nothing is saved until you press Next on each one.',

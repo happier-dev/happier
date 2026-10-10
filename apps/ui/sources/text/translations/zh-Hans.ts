@@ -14830,6 +14830,10 @@ settingsSession: {
             notRecordedWhatIfReason: "不支持在其他套餐上重放你的用量。",
             notRecordedStrategy: "多账户组合",
             notRecordedStrategyReason: "比较组合需要同样的重放，因此不显示。",
+            earlierCurve: ({ time }: { time: string | number }) => `较早的窗口，于 ${time} 结束`,
+            earlierShown: ({ count }: { count: string | number }) => `灰色线：同一时段上 ${count} 个可比较的较早窗口`,
+            earlierNone: ({ reason }: { reason: string | number }) => `没有可与之并列显示的较早窗口：${reason}`,
+            earlierSingleReading: "只有一次读数",
           },
           work: {
       // usage-board:work

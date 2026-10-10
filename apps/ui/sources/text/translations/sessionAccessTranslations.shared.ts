@@ -7,6 +7,7 @@ export const sessionAccessTranslationsEnglish = { "en": {
         accessibleSummary: ({ title, label }: { title: string; label: string }) => `${title}: ${label}`,
         accessibleControl: ({ name, control, value }: { name: string; control: string; value: string }) => `${name}, ${control}, ${value}`,
         title: "Session access",
+        context: "Session context",
         search: "Search people, groups, or teams",
         hasAccess: "Has access",
         yourAccess: "Your access",
@@ -86,5 +87,7 @@ export const sessionAccessTranslationsEnglish = { "en": {
         removedAnnouncement: ({ name }: { name: string }) => `${name} removed from session access`,
         browseMore: "Browse all",
         allLoaded: "All results loaded",
+        levelHelp: { view: "read the session", edit: "steer the Agent within its configured tool permissions", admin: "manage Session access" },
+        steeringScopeNotice: "Steering is not an isolated chat: the working folder and byline do not restrict shell, filesystem, or network access.",
         help: "Can view allows reading. Can steer allows steering the Agent within its configured tool permissions. Admin also manages Session access. Steering is not an isolated chat: the working folder and byline do not restrict shell, filesystem, or network access."
     } } as const;

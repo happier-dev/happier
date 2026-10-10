@@ -40,7 +40,6 @@ export const en = {
         pendingNames: ({ names }: { names: string }) => `${names}.`,
         andMore: ({ count }: { count: number }) => (count === 1 ? '1 more' : `${count} more`),
         discard: 'Discard',
-        discardA11y: 'Discard the changes that apply after restart',
         discarded: 'Pending changes discarded',
         ignoredTitle: 'A setting was ignored at the last start',
         ignoredTitleMany: ({ count }: { count: number }) => `${count} settings were ignored at the last start`,

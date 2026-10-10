@@ -1,6 +1,7 @@
 
 
 export type SessionCompanionTranslations = Readonly<{
+    recap: Readonly<{ title: string }>;
     status: Readonly<{
         waitingForYou: string;
         pausedBeforeStep: (params: Readonly<{ agent: string; step: number; total: number }>) => string;
@@ -54,6 +55,7 @@ export type SessionCompanionTranslations = Readonly<{
 
 
 export const sessionCompanionTranslationsEnglish = { en: {
+        recap: { title: 'Recap' },
         status: {
             waitingForYou: 'Waiting for you',
             pausedBeforeStep: ({ agent, step, total }) => `${agent} paused before step ${step} of ${total}`,

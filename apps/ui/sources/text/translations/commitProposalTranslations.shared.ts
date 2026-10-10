@@ -116,6 +116,7 @@ export const en = {
     },
     none: {
         title: 'No commit proposal yet',
+        workingTreeOnly: 'Commit plans can only be applied to current local changes.',
         reason: 'A proposal groups your pending changes into commits you can edit, then creates them one at a time through the normal commit path.',
         propose: 'Propose commits',
         writing: 'Grouping your pending changes…',

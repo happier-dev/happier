@@ -452,7 +452,7 @@ const addFlowsTranslations = { ja: {
         pathThisComputerTask: 'ワンステップで設定',
         pathThisComputerCommand: 'ターミナルでコマンドを 1 つ',
         pathSshTitle: 'SSH 経由のサーバー',
-        pathSshChip: 'SSH サーバー',
+        pathSshChip: 'SSH 経由',
         pathSshSubtitle: '開発マシン、VM、クラウドサーバー',
         pathAnotherTitle: '別のコンピューター',
         pathAnotherSubtitle: 'そのコンピューターでHomeのリンクを開く',
@@ -883,6 +883,7 @@ const artifactsBrowserTranslations = { ja: {
         emptyHint: 'またはエージェントに「それをアーティファクトとして保存して」と頼んでください。',
         loadFailedTitle: 'アーティファクトを読み込めませんでした',
         loadFailedBody: '接続を確認してもう一度お試しください。何も失われていません。',
+        retainedBody: "更新できませんでした。最後に読み込んだアーティファクトを表示しています。",
         quota: {
             accountTitle: 'アーティファクトの保存容量がいっぱいです',
             documentTitle: '大きすぎて保存できません',
@@ -1243,6 +1244,7 @@ const browserPresenceTranslations = { ja: {
             stalled: '最後のフレームを表示中 · 再接続しています',
             endedTitle: ({ agent }) => `${agent} がこのブラウザを閉じました`,
             endedBody: 'このページはここには表示されなくなりました。',
+            openPageHere: "ここでページを開く",
             unavailableTitle: ({ agent }) => `${agent} のブラウザをここに表示できません`,
             unavailableBody: ({ agent }) => `${agent} はブラウズを続けています。操作は引き続きチャットに表示されます。`,
             tryAgain: '再試行',
@@ -1432,7 +1434,7 @@ const commitProposalTranslations: Pick<Readonly<Record<'en' | 'ca' | 'de' | 'es'
         applying: { title: ({ count }) => `${count} 件のコミットを作成中`, body: '通常のコミット経路で 1 件ずつ作成するため、フックと署名はいつも通り実行されます。完了まで編集は一時停止します。', bodyPhone: '完了まで編集は一時停止します。', created: ({ landed, total }) => `${total} 件中 ${landed} 件`, createdRest: '作成済み · 後のコミットが止まっても何も取り消されません', createdRestPhone: '作成済み', stopAfterThis: 'このコミットの後で停止', stopAfterThisShort: 'この後で停止', stopping: 'このコミットの後で停止します' },
         state: { waiting: '待機中', writing: 'フックを実行してコミットを作成中', landed: 'コミット済み', landedAt: ({ time }) => `${time} にコミット`, signed: '署名済み', pausedBy: ({ hook, count }) => `${hook} が ${count} ファイルを変更 · まだコミットされていません`, hookFailedBy: ({ hook }) => `${hook} が失敗 · 未コミット`, rewritten: 'フックがメッセージを書き換えました', notCreated: '未作成 · まだ編集できます', notCreatedShort: '未作成', unknown: '未確認', paused: ({ count }) => `フックが ${count} ファイルを変更 · まだコミットされていません`, failed: 'ここで停止 · 未コミット' },
         outcome: { signingTitle: '現在コミットに署名できません。', signingBody: 'このリポジトリはすべてのコミットに署名します。何もコミットされていません。', signingHint: '先に GPG または SSH エージェントのロックを解除してください', tryAgain: '再試行', cancel: 'キャンセル', hookChanged: ({ files }) => `フックが ${files} を変更しました。`, waitsAfterLanded: ({ count }) => `${count} 件のコミットが完了しました。このコミットはあなたを待っています。`, waits: 'このコミットはあなたを待っています。', include: 'フックの変更を含める', includePhone: '含めてコミット', cancelCommit: 'このコミットをキャンセル', hookFailed: 'フックがこのコミットを止めました。', hookChangedBy: ({ hook, files }) => `${hook} が ${files} を変更しました。`, hookFailedBy: ({ hook }) => `${hook} がこのコミットを止めました。`, hookFailedBody: '先のコミットは残ります。残りはまだ編集できます。', headMoved: ({ branch }) => `コミット中に ${branch} が移動しました。`, headMovedBody: '次のコミットは拒否され、何も取り消されていません。', proposeAgain: '残りを再提案', keepEditing: '編集を続ける', askSessionToFix: 'このセッションに修正を依頼', showInGit: 'Git で表示', unknownTitle: 'このコミットが完了したか確認できませんでした。', unknownBody: '確認できるまで再試行しません。ブランチを再確認してください。', checkAgain: '再確認', stoppedTitle: ({ landed, total }) => `${total} 件中 ${landed} 件のコミットを作成`, stoppedBody: ({ count }) => `${count} 件は作成されていません。その変更は以前のまま作業ツリーにあります。`, createRest: ({ count }) => `残り ${count} 件を作成`, completeTitle: ({ count }) => `${count} 件のコミットを作成しました`, completeBody: '何もプッシュされていません。', onBranch: ({ branch }) => `${branch} 上`, failed: { staging_conflict: '別の操作がステージ内容を変更しました。', selection_conflict: 'これらの変更はこのように分割できません。', source_changed: '提案後に保留中の変更が変わりました。', writer_failed: 'コミットを作成できませんでした。', publication_warning: 'コミットは完了しましたが、ステージ済みファイルは更新されませんでした。', cancelled: 'このコミットはキャンセルされました。' }, failedBody: '先のコミットは残ります。何も取り消されていません。' },
-        none: { title: 'コミットの提案はまだありません', reason: '提案は保留中の変更を編集可能なコミットにまとめ、通常のコミット経路で 1 件ずつ作成します。', propose: 'コミットを提案', writing: '保留中の変更をまとめています…' },
+        none: { title: 'コミットの提案はまだありません', workingTreeOnly: 'コミット計画は現在のローカルの変更にのみ適用できます。', reason: '提案は保留中の変更を編集可能なコミットにまとめ、通常のコミット経路で 1 件ずつ作成します。', propose: 'コミットを提案', writing: '保留中の変更をまとめています…' },
         gitPane: { title: '提案されたコミット', meta: ({ count, files }) => `${count} · ${files} ファイル`, inCommit: ({ count, number }) => `コミット ${number} に ${count}`, open: '開く', review: '確認', reviewInWalkthrough: 'ウォークスルーで確認', more: '破棄または再生成', selectedHint: '選択中。もう一度タップするとコミットで開きます', tapHint: 'タップして変更を表示' },
     } } };
 
@@ -2201,6 +2203,7 @@ const embedSettingsTranslations = { ja: translated({
                 sites: ({ count }: { count: number }) => `${count} サイト`,
                 send: "送信可",
                 sendAndApprove: "送信・承認可",
+                approve: "承認可",
                 viewOnly: "閲覧のみ",
                 modelOnly: ({ name }: { name: string }) => `${name} のみ`,
                 models: ({ count }: { count: number }) => `${count} モデル`,
@@ -4387,6 +4390,7 @@ const homeIndexTranslations = { ja: {
         sections: "セクション",
         newRow: "ここにドロップして新しい行を始める",
         newRowVerb: "新しい行に移動",
+        addWidget: "ウィジェットを追加",
         reset: 'リセット',
         alwaysShown: '常に表示',
         builtIn: '組み込み',
@@ -5055,7 +5059,7 @@ const oidcEditorWords: Pick<Readonly<Record<IdentityAdministrationLanguage, Oidc
         allowRulesHint: '1 行に 1 つの値を入力します。空欄の場合は制限しません。', brandingHint: '既定のサインイン表示を使う場合は空欄にします。', invalidScopes: '要求するスコープに openid を含めてください。', refreshFailed: 'この接続を更新できませんでした', refreshFailedHint: '編集内容は保持されています。Home の変更を確認するには再試行してください。',
     } };
 
-const identityAdministrationTranslations = { ja: build({ homeWorkosAdd: "WorkOSによる会社のサインイン", homeWorkosCompanyName: "会社名", homeWorkosPurpose: "会社のメンバーは仕事用アカウントでこのHomeにサインインできます。", homeWorkosEnableDetail: "会社のアカウントでこのHomeにサインインできるようになります。", homeWorkosOffboarding: "SSOだけでは退職した人は削除されません。", homeWorkosPlatformRequired: "まずサインインプラットフォームでWorkOSを設定してください。",  ...en, title: 'ID プロバイダー', subtitle: 'Team で利用できる Home 所有のサインイン接続です。', homeConnections: 'Home のサインイン接続', add: '接続を追加', empty: 'Home の接続はありません', active: '有効', disabled: '無効', configuration: '設定', issuer: '発行者 URL', clientSecret: 'クライアントシークレット', secretSet: '設定済み', secretNotSet: '未設定', secretRetain: '現在のシークレットを保持するには空欄にします。', advanced: '詳細設定を表示', hideAdvanced: '詳細設定を隠す', actions: '操作', test: 'サインインをテスト', testing: 'テストを開いています…', edit: '接続を編集', save: '接続を保存', saving: '保存中…', enable: '接続を有効化', disable: '接続を無効化', remove: '接続を削除', createTitle: 'ID プロバイダーを追加', editTitle: 'ID プロバイダーを編集', displayName: '名前', required: '必須項目を入力してください。', invalidIssuer: '有効な HTTPS URL を入力してください。', secretRequired: 'クライアントシークレットを入力してください。', error: '変更できませんでした。', accounts: '影響する Account', connections: 'Team 接続', errorForbidden: 'この操作の権限がなくなりました。何も変更されていません。', errorConflict: '先に別のユーザーが変更しました。入力内容は保持されています。再読み込みしてからもう一度お試しください。', errorMissing: 'これはすでに存在しません。削除された可能性があります。', errorInUse: 'まだ依存しているものがあります。先にそれを削除してください。', errorProviderUnavailable: 'ID サービスが応答しませんでした。何も変更されていません。', errorRateLimited: 'プロバイダーから、再試行前に待つよう求められました。', errorInvalid: 'Home がこれらの値を拒否しました。設定を確認してもう一度お試しください。', errorImmutable: 'この値は使用開始後は変更できません。新しく作成してください。', errorAuthenticationRequired: 'この Team にもう一度サインインしてから再試行してください。変更はありません。', errorPolicyUnavailable: 'Team の認証ポリシーを現在評価できません。変更はありません。', errorPolicyInUse: 'Team の認証ポリシーはまだこの接続に依存しています。', errorNotAllowed: 'この Home では Team がこれを設定することを許可していません。変更はありません。', errorNeedsAttention: 'ディレクトリ同期に確認が必要です。完全同期を実行してください。', errorSyncPaused: 'このソースは一時停止中です。「同期を再開」で新しい完全同期を開始します。', alternateLogins: '別のサインイン方法が必要な Account', recoveryAuthenticationPolicy: 'Team の認証を開く', recoveryAlternateLogin: '先にこれらの Account に別のサインイン方法を用意してください', recoveryDirectory: 'ディレクトリを開く', recoveryGroupMappings: 'グループの対応付けを開く', recoveryTeamAuthentication: 'もう一度サインイン', callbackUrl: 'コールバック URL', callbackUrlHint: 'この URL を ID プロバイダーに登録してください。' , workosSetupSso: 'WorkOS 管理ポータルを開く', workosSetupDirectory: 'WorkOS Directory Sync を設定', workosCheckSetup: 'WorkOS の設定を確認', workosChooseConnection: '接続を選択', workosPortalConfirmBody: 'WorkOS で設定を完了してから、ここに戻って接続を選択します。', workosDirectoryPortalConfirmBody: 'WorkOS で設定を完了してから、ここに戻ってディレクトリを選択します。', workosSetupSection: '設定', workosSetupFooter: '途中で離れても大丈夫です。設定は到達したステップから再開されます。', workosStepPortalDetail: 'そこで ID プロバイダーを接続します。戻ると、ここで設定が続きます。', workosStepPortalDone: '管理ポータル', workosStepPortalDoneDetail: '組織がリンクされています。', workosOpenPortal: 'ポータルを開く', workosOpenPortalAgain: 'もう一度開く', workosStepChooseDetail: 'メンバーのサインインに使う WorkOS 接続を選択します。', workosStepChooseDone: '接続', workosFindConnections: '接続を探す', workosUseConnection: ({ name }: { name: string }) => `${name} を使用`, workosCandidateDraft: 'WorkOS の下書きです。先にそちらで完了してください。', workosStepTestDetail: 'ご自身で一度サインインします。誰のアカウントにも何も保存されません。', workosTestPassed: 'テストサインインは成功しました。', workosTestAgain: 'もう一度テスト', workosStepEnable: 'オンにする', workosStepEnableDetail: 'オンにするとメンバーがサインインに使えます。必須にするには「メンバーのサインイン方法」で選択します。', workosTurnOn: 'オンにする', workosConnectionSection: '接続', workosConnectionRow: 'WorkOS 接続', workosConnectionNotChosen: '未選択', workosChange: '変更', errorWorkosPlatformUnavailable: 'この Home ではまだ WorkOS が設定されていません。', errorSetupRequired: '使う前に設定が必要です。', removeTitle: ({ name }: { name: string }) => `${name} を削除しますか？`, removeBody: ({ name }: { name: string }) => `${name} はサインイン方法として提供されなくなります。使用していたアカウントは保持されます。`, removeBlocked: ({ accounts, connections }: { accounts: number; connections: number }) => `まだ Team 接続 ${connections} 件とアカウント ${accounts} 件で使用されています。先にそれらを削除してください。`, disableTitle: ({ name }: { name: string }) => `${name} をオフにしますか？`, disableBody: ({ name }: { name: string }) => `再びオンにするまで ${name} でサインインできません。何も削除されません。`, githubRemoveInstallationTitle: ({ name }: { name: string }) => `${name} のインストールを削除しますか？`, githubRemoveInstallationBody: ({ name }: { name: string }) => `この Home は ${name} の App を使わなくなります。GitHub 側は変わりません。不要なら GitHub でアンインストールしてください。`, removeBlockedTitle: ({ name }: { name: string }) => `${name} はまだ削除できません`, removeImpactPeople: ({ count }: { count: number }) => `${count} 人がこれでこの Team にサインインしています。`, removeImpactNobody: 'まだ誰もこれでこの Team にサインインしていません。', removeImpactKept: 'アカウントと Team のメンバーシップは保持されます。', removeBlockedAlternateLogins: ({ count }: { count: number }) => `${count} 人には他のサインイン方法がありません。`, removeBlockedDirectories: ({ count }: { count: number }) => `${count} 件のディレクトリソースがまだ使用しています。`, removeBlockedGroups: ({ count }: { count: number }) => `${count} 件のグループ対応付けがまだ使用しています。`, removeBlockedMemberships: ({ count }: { count: number }) => `${count} 件のメンバーシップがまだこれで管理されています。` }, githubAccessWords.ja, oidcEditorWords.ja) };
+const identityAdministrationTranslations = { ja: build({ ...en, homeWorkosChooseDetail: "この Home へのサインインに使う WorkOS 接続を選んでください。", homeWorkosAdd: "WorkOSによる会社のサインイン", homeWorkosCompanyName: "会社名", homeWorkosPurpose: "会社のメンバーは仕事用アカウントでこのHomeにサインインできます。", homeWorkosEnableDetail: "会社のアカウントでこのHomeにサインインできるようになります。", homeWorkosOffboarding: "SSOだけでは退職した人は削除されません。", homeWorkosPlatformRequired: "まずサインインプラットフォームでWorkOSを設定してください。",  title: 'ID プロバイダー', subtitle: 'Team で利用できる Home 所有のサインイン接続です。', homeConnections: 'Home のサインイン接続', add: '接続を追加', empty: 'Home の接続はありません', active: '有効', disabled: '無効', configuration: '設定', issuer: '発行者 URL', clientSecret: 'クライアントシークレット', secretSet: '設定済み', secretNotSet: '未設定', secretRetain: '現在のシークレットを保持するには空欄にします。', advanced: '詳細設定を表示', hideAdvanced: '詳細設定を隠す', actions: '操作', test: 'サインインをテスト', testing: 'テストを開いています…', edit: '接続を編集', save: '接続を保存', saving: '保存中…', enable: '接続を有効化', disable: '接続を無効化', remove: '接続を削除', createTitle: 'ID プロバイダーを追加', editTitle: 'ID プロバイダーを編集', displayName: '名前', required: '必須項目を入力してください。', invalidIssuer: '有効な HTTPS URL を入力してください。', secretRequired: 'クライアントシークレットを入力してください。', error: '変更できませんでした。', accounts: '影響する Account', connections: 'Team 接続', errorForbidden: 'この操作の権限がなくなりました。何も変更されていません。', errorConflict: '先に別のユーザーが変更しました。入力内容は保持されています。再読み込みしてからもう一度お試しください。', errorMissing: 'これはすでに存在しません。削除された可能性があります。', errorInUse: 'まだ依存しているものがあります。先にそれを削除してください。', errorProviderUnavailable: 'ID サービスが応答しませんでした。何も変更されていません。', errorRateLimited: 'プロバイダーから、再試行前に待つよう求められました。', errorInvalid: 'Home がこれらの値を拒否しました。設定を確認してもう一度お試しください。', errorImmutable: 'この値は使用開始後は変更できません。新しく作成してください。', errorAuthenticationRequired: 'この Team にもう一度サインインしてから再試行してください。変更はありません。', errorPolicyUnavailable: 'Team の認証ポリシーを現在評価できません。変更はありません。', errorPolicyInUse: 'Team の認証ポリシーはまだこの接続に依存しています。', errorNotAllowed: 'この Home では Team がこれを設定することを許可していません。変更はありません。', errorNeedsAttention: 'ディレクトリ同期に確認が必要です。完全同期を実行してください。', errorSyncPaused: 'このソースは一時停止中です。「同期を再開」で新しい完全同期を開始します。', alternateLogins: '別のサインイン方法が必要な Account', recoveryAuthenticationPolicy: 'Team の認証を開く', recoveryAlternateLogin: '先にこれらの Account に別のサインイン方法を用意してください', recoveryDirectory: 'ディレクトリを開く', recoveryGroupMappings: 'グループの対応付けを開く', recoveryTeamAuthentication: 'もう一度サインイン', callbackUrl: 'コールバック URL', callbackUrlHint: 'この URL を ID プロバイダーに登録してください。' , workosSetupSso: 'WorkOS 管理ポータルを開く', workosSetupDirectory: 'WorkOS Directory Sync を設定', workosCheckSetup: 'WorkOS の設定を確認', workosChooseConnection: '接続を選択', workosPortalConfirmBody: 'WorkOS で設定を完了してから、ここに戻って接続を選択します。', workosDirectoryPortalConfirmBody: 'WorkOS で設定を完了してから、ここに戻ってディレクトリを選択します。', workosSetupSection: '設定', workosSetupFooter: '途中で離れても大丈夫です。設定は到達したステップから再開されます。', workosStepPortalDetail: 'そこで ID プロバイダーを接続します。戻ると、ここで設定が続きます。', workosStepPortalDone: '管理ポータル', workosStepPortalDoneDetail: '組織がリンクされています。', workosOpenPortal: 'ポータルを開く', workosOpenPortalAgain: 'もう一度開く', workosStepChooseDetail: 'メンバーのサインインに使う WorkOS 接続を選択します。', workosStepChooseDone: '接続', workosFindConnections: '接続を探す', workosUseConnection: ({ name }: { name: string }) => `${name} を使用`, workosCandidateDraft: 'WorkOS の下書きです。先にそちらで完了してください。', workosStepTestDetail: 'ご自身で一度サインインします。誰のアカウントにも何も保存されません。', workosTestPassed: 'テストサインインは成功しました。', workosTestAgain: 'もう一度テスト', workosStepEnable: 'オンにする', workosStepEnableDetail: 'オンにするとメンバーがサインインに使えます。必須にするには「メンバーのサインイン方法」で選択します。', workosTurnOn: 'オンにする', workosConnectionSection: '接続', workosConnectionRow: 'WorkOS 接続', workosConnectionNotChosen: '未選択', workosChange: '変更', errorWorkosPlatformUnavailable: 'この Home ではまだ WorkOS が設定されていません。', errorSetupRequired: '使う前に設定が必要です。', removeTitle: ({ name }: { name: string }) => `${name} を削除しますか？`, removeBody: ({ name }: { name: string }) => `${name} はサインイン方法として提供されなくなります。使用していたアカウントは保持されます。`, removeBlocked: ({ accounts, connections }: { accounts: number; connections: number }) => `まだ Team 接続 ${connections} 件とアカウント ${accounts} 件で使用されています。先にそれらを削除してください。`, disableTitle: ({ name }: { name: string }) => `${name} をオフにしますか？`, disableBody: ({ name }: { name: string }) => `再びオンにするまで ${name} でサインインできません。何も削除されません。`, githubRemoveInstallationTitle: ({ name }: { name: string }) => `${name} のインストールを削除しますか？`, githubRemoveInstallationBody: ({ name }: { name: string }) => `この Home は ${name} の App を使わなくなります。GitHub 側は変わりません。不要なら GitHub でアンインストールしてください。`, removeBlockedTitle: ({ name }: { name: string }) => `${name} はまだ削除できません`, removeImpactPeople: ({ count }: { count: number }) => `${count} 人がこれでこの Team にサインインしています。`, removeImpactNobody: 'まだ誰もこれでこの Team にサインインしていません。', removeImpactKept: 'アカウントと Team のメンバーシップは保持されます。', removeBlockedAlternateLogins: ({ count }: { count: number }) => `${count} 人には他のサインイン方法がありません。`, removeBlockedDirectories: ({ count }: { count: number }) => `${count} 件のディレクトリソースがまだ使用しています。`, removeBlockedGroups: ({ count }: { count: number }) => `${count} 件のグループ対応付けがまだ使用しています。`, removeBlockedMemberships: ({ count }: { count: number }) => `${count} 件のメンバーシップがまだこれで管理されています。` }, githubAccessWords.ja, oidcEditorWords.ja) };
 
 return { githubAccessWords, oidcEditorWords, identityAdministrationTranslations };
 })();
@@ -7388,7 +7392,6 @@ const sessionBoardTranslations = { ja: {
             offline: 'ボードの変更にはこの Home への接続が必要です。',
             unavailable: 'この Home ではまだボードを変更できません。',
             updateRequired: 'このボードの変更を行うには Happier を更新してください。',
-            hostedHtmlSourceTooLarge: 'このインタラクティブビューは大きすぎて保存できません。下書きはそのまま残っています。',
             noteTooLarge: 'このノートは大きすぎて保存できません。テキストはそのまま残っています。',
             invalid: 'このボードの変更は無効です。確認してからもう一度お試しください。',
             notFound: 'このボード項目は利用できなくなりました。ボードを再読み込みしてください。',
@@ -7580,6 +7583,7 @@ const Domain_sessionCompanionTranslations = (() => {
 type SessionCompanionTranslations = Shared_sessionCompanionTranslations.SessionCompanionTranslations;
 
 const sessionCompanionTranslations = { ja: {
+        recap: { title: '振り返り' },
         status: {
             waitingForYou: 'あなたの対応待ち',
             pausedBeforeStep: ({ agent, step, total }) => `${agent} はステップ ${step}/${total} の前で一時停止しています`,
@@ -8420,6 +8424,8 @@ const ja: typeof en = {
         expandMap: 'セッションの横にマップを開く',
     },
     map: {
+        folded: "完了した作業は折りたたまれます",
+        backgroundRuns: ({ count }) => (count === 1 ? "バックグラウンド実行 1 件" : `${count} 件のバックグラウンド実行`),
         positionUnder: ({ position, total, parent }) => `${parent} の下 ${position} / ${total}`,
     },
     actions: {
@@ -8484,6 +8490,9 @@ const ja: typeof en = {
         partOf: ({ run }) => `${run} の一部`,
         checkedByWorkflow: "このステップの結果はワークフローが確認するため、このセッションではトリガー、目標、セカンドオピニオンは実行されません。",
         nothingStarted: "このステップから開始されたものはありません。",
+    },
+    invite: {
+        orAskFor: "または依頼:",
     },
     peek: {
         reportsTo: ({ lead }) => `${lead} に報告`,
@@ -9197,6 +9206,14 @@ const english = Shared_teamsTranslations.english;
 
 const japanese: TeamsTranslationRoot = {
     teams: {
+        leave: {
+            action: 'チームを退出',
+            description: 'チームとグループへのアクセスが終了します。このHomeのアカウントは残ります。',
+            confirmTitle: ({ name }: { name: string }) => `${name}を退出しますか？`,
+            confirmBody: 'チームとグループへのアクセスが今すぐ終了します。グループへの所属とこのメンバー資格に紐づく権限が削除されます。投稿と既に閲覧した内容は残ります。後で再参加すると、新しいメンバー資格になります。',
+            auditLeft: ({ team }: { team: string }) => `${team}を退出しました`,
+            auditRemoved: ({ team, target }: { team: string; target: string }) => `${target}を${team}から削除しました`,
+        },
         overview: {
             sharedSessions: "共有セッション",
             allSharedSessions: "すべての共有セッション",
@@ -11925,6 +11942,7 @@ type Progress = Shared_workflowRunListTranslations.Progress;
 const en = Shared_workflowRunListTranslations.en;
 
 const workflowRunListTranslations = { ja: {
+        observedProgress: ({ status }: { status: string }) => `観測された状態: ${status}`,
         definitions: '定義',
         stepsProgress: ({ completed, total }: Progress) => `${total} ステップ中 ${completed} 完了`,
         loopProgress: ({ completed, total }: Progress) => `${total} 項目中 ${completed} 完了`,

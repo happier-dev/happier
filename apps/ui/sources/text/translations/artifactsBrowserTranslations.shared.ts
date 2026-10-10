@@ -5,10 +5,12 @@ export type ArtifactsBrowserTranslations = Readonly<{
     newDocument: string;
     searchPlaceholder: string;
     kindLabel: string;
+    sourceLabel: string;
     kinds: Readonly<{
         all: string;
         document: string;
         prompt: string;
+        memory: string;
         board: string;
         workflow: string;
         role: string;
@@ -17,6 +19,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
     kindOne: Readonly<{
         document: string;
         prompt: string;
+        memory: string;
         board: string;
         workflow: string;
         role: string;
@@ -32,6 +35,37 @@ export type ArtifactsBrowserTranslations = Readonly<{
         label: string;
         grid: string;
         list: string;
+        folders: string;
+    }>;
+    folders: Readonly<{
+        newFolder: string;
+        newFolderInside: string;
+        rename: string;
+        moveTo: string;
+        moveItemTo: (params: Readonly<{ name: string }>) => string;
+        newFolderEllipsis: string;
+        moveVerb: string;
+        topLevel: string;
+        moveToTopLevel: string;
+        deleteFolder: string;
+        deleteTitle: (params: Readonly<{ name: string }>) => string;
+        deleteBody: string;
+        nameHelp: string;
+        namePlaceholder: string;
+        create: string;
+        options: (params: Readonly<{ name: string }>) => string;
+        expand: (params: Readonly<{ name: string }>) => string;
+        collapse: (params: Readonly<{ name: string }>) => string;
+        columnName: string;
+        columnEdited: string;
+        emptyInvite: string;
+        unavailable: string;
+        saveFailed: string;
+        refusedCycle: string;
+        refusedUnavailable: string;
+        refusedOther: string;
+        showAllKinds: string;
+        promptSearch: string;
     }>;
     provenance: Readonly<{
         savedByYou: string;
@@ -44,6 +78,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
     emptyHint: string;
     loadFailedTitle: string;
     loadFailedBody: string;
+    retainedBody: string;
     quota: Readonly<{
         accountTitle: string;
         documentTitle: string;
@@ -53,6 +88,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
     open: Readonly<{
         document: string;
         prompt: string;
+        memory: string;
         board: string;
         workflow: string;
         role: string;
@@ -100,10 +136,12 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         newDocument: 'New document',
         searchPlaceholder: 'Search artifacts',
         kindLabel: 'Kind',
+        sourceLabel: 'Source',
         kinds: {
             all: 'All kinds',
             document: 'Documents',
             prompt: 'Prompts',
+            memory: 'Memory',
             board: 'Boards',
             workflow: 'Workflows',
             role: 'Roles',
@@ -112,6 +150,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         kindOne: {
             document: 'Document',
             prompt: 'Prompt',
+            memory: 'Memory',
             board: 'Board',
             workflow: 'Workflow',
             role: 'Role',
@@ -127,6 +166,37 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             label: 'View',
             grid: 'Grid',
             list: 'List',
+            folders: 'Folders',
+        },
+        folders: {
+            newFolder: 'New folder',
+            newFolderInside: 'New folder inside',
+            rename: 'Rename',
+            moveTo: 'Move to folder…',
+            moveItemTo: ({ name }) => `Move “${name}” to`,
+            newFolderEllipsis: 'New folder…',
+            moveVerb: 'Move to',
+            topLevel: 'Top level',
+            moveToTopLevel: 'Move to the top level',
+            deleteFolder: 'Delete folder',
+            deleteTitle: ({ name }) => `Delete “${name}”?`,
+            deleteBody: 'Its items and folders move up one level. Nothing is deleted.',
+            nameHelp: 'Folders are yours alone. Filing something never changes it for the people it’s shared with.',
+            namePlaceholder: 'Folder name',
+            create: 'Create',
+            options: ({ name }) => `${name} options`,
+            expand: ({ name }) => `Expand ${name}`,
+            collapse: ({ name }) => `Collapse ${name}`,
+            columnName: 'Name',
+            columnEdited: 'Edited',
+            emptyInvite: 'No folders yet. Group what belongs together; only you see how you file things.',
+            unavailable: 'Folders couldn’t be loaded from this Home. Everything is listed without them.',
+            saveFailed: 'That change didn’t save. Try again.',
+            refusedCycle: 'A folder can’t move into itself',
+            refusedUnavailable: 'Folders are unavailable right now',
+            refusedOther: 'It can’t move there',
+            showAllKinds: 'Show every kind in Artifacts',
+            promptSearch: 'Search prompts and skills',
         },
         provenance: {
             savedByYou: 'Saved by you',
@@ -139,6 +209,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         emptyHint: 'Or ask an agent to “save that as an artifact”.',
         loadFailedTitle: 'Couldn’t load your artifacts',
         loadFailedBody: 'Check your connection, then try again. Nothing was lost.',
+        retainedBody: "Couldn’t refresh. Showing the last loaded artifacts.",
         quota: {
             accountTitle: 'Artifact storage is full',
             documentTitle: 'Too large to save',
@@ -148,6 +219,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         open: {
             document: 'Open document',
             prompt: 'Open prompt',
+            memory: 'Open memory',
             board: 'Open board',
             workflow: 'Open workflow',
             role: 'Open role',

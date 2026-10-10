@@ -9,10 +9,20 @@ export type HomeIndexTranslation = Readonly<{
     greetingEveningAnonymous: string;
     sessionsWorking: (params: Readonly<{ count: number }>) => string;
     sessionsNeedYou: (params: Readonly<{ count: number }>) => string;
+    sessionsAwaitingResponse: (params: Readonly<{ count: number }>) => string;
     nothingRunning: string;
     customize: string;
     customizeTitle: string;
     customizeDescription: string;
+    /** Home while it is being customized: the bar under the greeting. */
+    customizing: string;
+    customizingHint: string;
+    /** Opens the list that shows, hides and orders Home's sections. */
+    sections: string;
+    /** The one drop target that ends the page while customizing. */
+    newRow: string;
+    newRowVerb: string;
+    addWidget: string;
     reset: string;
     alwaysShown: string;
     builtIn: string;
@@ -34,10 +44,17 @@ export const homeIndexTranslationsEnglish = { en: {
         greetingEveningAnonymous: 'Good evening',
         sessionsWorking: ({ count }) => (count === 1 ? '1 session working' : `${count} sessions working`),
         sessionsNeedYou: ({ count }) => `${count} needs you`,
+        sessionsAwaitingResponse: ({ count }) => count === 1 ? '1 session is waiting for your response' : `${count} sessions are waiting for your response`,
         nothingRunning: 'Nothing running yet',
         customize: 'Customize',
         customizeTitle: 'Customize Home',
         customizeDescription: 'Drag to reorder. Saved to your account, so every device shows the same Home.',
+        customizing: "Customizing Home",
+        customizingHint: "Drag widgets into, out of and between groups",
+        sections: "Sections",
+        newRow: "Drop here to start a new row",
+        newRowVerb: "Move to a new row",
+        addWidget: "Add widget",
         reset: 'Reset',
         alwaysShown: 'Always shown',
         builtIn: 'Built in',

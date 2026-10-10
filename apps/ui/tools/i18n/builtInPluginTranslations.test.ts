@@ -244,13 +244,14 @@ function assertComplete(file: string, bundles: readonly Bundle[]): void {
     expect(SUPPORTED_LANGUAGE_CODES.every((locale) => locales.includes(locale)), `${file}: missing supported host locale`).toBe(true);
     const english = bundles.find(({ locale }) => locale === 'en');
     expect(english, `${file}: missing English translation bundle`).toBeDefined();
+    const englishValuesByKey = new Map(english!.keys.map((key, index) => [key, english!.values[index]]));
     for (const bundle of bundles) {
         expect(new Set(bundle.keys).size, `${file}:${bundle.locale}: duplicate translation key`).toBe(bundle.keys.length);
-        expect(bundle.keys, `${file}:${bundle.locale}`).toEqual(english?.keys);
+        expect([...bundle.keys].sort(), `${file}:${bundle.locale}`).toEqual([...english!.keys].sort());
         expect(bundle.values.every((value) => value.trim().length > 0), `${file}:${bundle.locale}`).toBe(true);
         expect(bundle.values.every((value) => value === value.trim()), `${file}:${bundle.locale}: padded translation`).toBe(true);
         const placeholderDrift = bundle.values.flatMap((value, index) => (
-            JSON.stringify(placeholders(value)) === JSON.stringify(placeholders(english?.values[index] ?? ''))
+            JSON.stringify(placeholders(value)) === JSON.stringify(placeholders(englishValuesByKey.get(bundle.keys[index]!) ?? ''))
                 ? []
                 : [bundle.keys[index]]
         ));

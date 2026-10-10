@@ -49,6 +49,9 @@ export type WidgetAddTranslation = Readonly<{
     preview: string;
     previewLive: string;
     previewWaiting: (params: Readonly<{ field: string }>) => string;
+    /** What to type in a list input that declares no placeholder of its own. */
+    listOnePerLine: string;
+    listCommaSeparated: string;
     previewAfterAdd: string;
     needed: string;
     stillNeeded: (params: Readonly<{ field: string }>) => string;
@@ -173,6 +176,8 @@ export const widgetAddTranslationsEnglish = { en: {
         preview: 'Preview',
         previewLive: 'Preview · live',
         previewWaiting: ({ field }) => `Choose the ${inSentence(field)} to see it here`,
+        listOnePerLine: "One per line",
+        listCommaSeparated: "Separated by commas",
         previewAfterAdd: 'It shows here once it’s added',
         needed: 'Needed',
         stillNeeded: ({ field }) => `${field} is still needed`,

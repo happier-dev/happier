@@ -11,10 +11,10 @@ export function completeReleaseSelection(value: typeof localizedPluginAccountRel
 
 export const english = {
     accountReleaseSelection: {
-        groupTitle: 'Account release',
-        groupFooter: 'Select an exact release for this Account. This does not install, update, or trust the plugin on any machine.',
+        groupTitle: 'Version for this account',
+        groupFooter: 'Choose the plugin version this account uses. Installed versions and trust on your machines stay as they are.',
         entryTitle: 'Use for this Account',
-        entrySubtitle: ({ version }: { version: string }) => `Select version ${version} for the current Account without changing any machine installation.`,
+        entrySubtitle: ({ version }: { version: string }) => `Use version ${version}. Your machine installations won’t change.`,
         selectedTitle: 'Account release selected',
         selectedBody: 'The selected plugin release will now be used for this Account.',
         conflictTitle: 'Account release changed',

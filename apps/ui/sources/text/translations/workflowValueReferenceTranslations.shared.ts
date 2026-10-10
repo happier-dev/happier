@@ -16,7 +16,7 @@ export type WorkflowValueReferenceCopy = {
 
 export const workflowValueReferenceTranslationsEnglish = { en: {
         checkoutRoot: 'Checkout root folder',
-        unavailableValue: 'Unavailable value', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Session context' : `Last ${turns} session turns`,
+        unavailableValue: 'Unavailable value', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Session context' : turns === 1 ? 'Last session turn' : `Last ${turns} session turns`,
         tokensUsed: 'Tokens used', goalTokenBudget: 'Goal token budget',
         trailingCount: ({ source, value }: { source: string; value: string }) => `Consecutive ${source} matching ${value}`,
         stopCondition: 'Stop condition met', stopConditionArm: ({ arm }: { arm: number }) => `Stop condition ${arm} met`,

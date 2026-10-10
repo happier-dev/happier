@@ -25,6 +25,12 @@ export type RunPageTranslations = Readonly<{
         permissions: string;
         kind: string;
         finishesOnItsOwn: string;
+        selectionInherited: string;
+        selectionExplicit: string;
+        selectionIndependent: string;
+        selectionRetained: string;
+        selectionChoose: string;
+        selectionChooseDetail: string;
         staysOpen: string;
         started: string;
         run: string;
@@ -129,6 +135,12 @@ export const runPageTranslationsEnglish = { en: {
             permissions: 'Permissions',
             kind: 'Kind',
             finishesOnItsOwn: 'Finishes on its own',
+            selectionInherited: 'Inherit session',
+            selectionExplicit: 'Chosen for this run',
+            selectionIndependent: 'Account default',
+            selectionRetained: 'Kept from its start',
+            selectionChoose: 'Choose for this run',
+            selectionChooseDetail: 'Pick a model and where it runs through',
             staysOpen: 'Stays open',
             started: 'Started',
             run: 'Run',

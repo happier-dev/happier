@@ -70,6 +70,10 @@ export function withProviderSharedFields<T extends {
     translation: T,
     parts: Parts,
 ) {
+    const localTranslationFields: Parts['localTranslations'] = parts.localTranslations;
+    const providerLocalFields: Parts['providerSharedFieldTranslations']['local'] = parts.providerSharedFieldTranslations.local;
+    const managedDeploymentTranslations: Parts['providerManagedDeploymentTranslations'] = parts.providerManagedDeploymentTranslations;
+
     return {
         ...translation,
         ...parts.providerAvailabilityTranslations,
@@ -131,9 +135,9 @@ export function withProviderSharedFields<T extends {
             reservedEnvironmentValidationUnavailable: parts.providerReservedEnvironmentValidationUnavailableTranslations,
         },
         local: {
-            ...parts.localTranslations,
-            ...parts.providerSharedFieldTranslations.local,
-            ...parts.providerManagedDeploymentTranslations,
+            ...localTranslationFields,
+            ...providerLocalFields,
+            ...managedDeploymentTranslations,
         },
         detail: {
             ...translation.detail,

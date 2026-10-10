@@ -70,7 +70,6 @@ export const en = {
         share: 'Share…',
     },
     deleteTitle: 'Delete this workflow?',
-    deleteBody: 'Past runs stay in History.',
     deleteFailedTitle: 'Could not delete workflow',
     exportFailedTitle: 'Could not export workflow',
     gate: {

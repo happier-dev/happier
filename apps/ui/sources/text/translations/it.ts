@@ -15567,6 +15567,10 @@ settingsSession: {
             notRecordedWhatIfReason: "Riprodurre il tuo utilizzo su un piano diverso non è supportato.",
             notRecordedStrategy: "Configurazioni multi-account",
             notRecordedStrategyReason: "Confrontare le configurazioni richiede la stessa riproduzione, quindi non ne viene mostrata nessuna.",
+            earlierCurve: ({ time }: { time: string | number }) => `Finestra precedente, conclusa ${time}`,
+            earlierShown: ({ count }: { count: string | number }) => `Linee grigie: ${count} finestre precedenti confrontabili sullo stesso arco`,
+            earlierNone: ({ reason }: { reason: string | number }) => `Nessuna finestra precedente può essere mostrata accanto: ${reason}`,
+            earlierSingleReading: "una sola lettura",
           },
           work: {
       // usage-board:work

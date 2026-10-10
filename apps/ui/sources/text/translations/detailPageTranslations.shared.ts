@@ -8,6 +8,9 @@ export type DetailPageTranslations = Readonly<{
         homeUnavailableTitle: string;
         contextTitle: string;
         contextDescription: string;
+        sessionOnHome: (params: Readonly<{ home: string }>) => string;
+        sessionElsewhere: string;
+        origin: Readonly<Record<'voice' | 'agent' | 'mcp' | 'cli' | 'ui' | 'api' | 'plugin' | 'system', string>>;
         proposalsDescription: string;
     }>;
     runs: Readonly<{
@@ -44,6 +47,18 @@ export const detailPageTranslationsEnglish = { en: {
             homeUnavailableTitle: 'Home unavailable',
             contextTitle: 'Requested by',
             contextDescription: 'The session and agent that asked for this.',
+            sessionOnHome: ({ home }) => `A session on ${home}`,
+            sessionElsewhere: 'A session that isn’t on this device',
+            origin: {
+                voice: 'Asked by voice',
+                agent: 'Asked by an agent',
+                mcp: 'Asked through a connected tool',
+                cli: 'Asked from the command line',
+                ui: 'Asked in the app',
+                api: 'Asked through the API',
+                plugin: 'Asked by a plugin',
+                system: 'Asked by Happier',
+            },
             proposalsDescription: 'Posted to the review if you approve.',
         },
         runs: {

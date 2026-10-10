@@ -27,6 +27,7 @@ it('loads selected web copy before activation and keeps explicit voice demand in
                 active: text.getPreferredLanguage(),
                 spanishLoaded: text.getTranslationValue('tabs.inbox', 'es') !== undefined,
                 frenchLoaded: text.getTranslationValue('tabs.inbox', 'fr') !== undefined,
+                pluginKeyKnown: text.getAllTranslationKeys().includes('agentInput.connectedServiceLabel.gemini'),
             };
             text.setPreferredLanguageFromSettings('es');
             const pendingActive = text.getPreferredLanguage();
@@ -37,15 +38,19 @@ it('loads selected web copy before activation and keeps explicit voice demand in
             const selectedCopy = text.t('tabs.inbox');
             const frenchCopy = text.getTranslationValue('tabs.inbox', 'fr');
             await text.preloadTranslations('de');
+            await text.preloadTranslations('zh-Hant');
             console.log(JSON.stringify({ initial, pendingActive, selected, selectedCopy, frenchCopy,
                 afterVoice: text.getPreferredLanguage(),
                 voiceLoaded: text.getTranslationValue('voicePresence.welcomeText', 'de') !== undefined,
+                traditionalChineseLoaded: text.getTranslationValue('tabs.inbox', 'zh-Hant') !== undefined,
+                simplifiedChineseActivated: text.getTranslationValue('tabs.inbox', 'zh-Hans') !== undefined,
                 unrelatedJapaneseLoaded: text.getTranslationValue('tabs.inbox', 'ja') !== undefined,
                 fallback: text.t('agentInput.connectedServiceLabel.gemini') }));
         `], { encoding: 'utf8' }));
         expect(observation).toMatchObject({
-            initial: { active: 'en', spanishLoaded: false, frenchLoaded: false },
+            initial: { active: 'en', spanishLoaded: false, frenchLoaded: false, pluginKeyKnown: true },
             pendingActive: 'en', selected: 'fr', afterVoice: 'fr', voiceLoaded: true,
+            traditionalChineseLoaded: true, simplifiedChineseActivated: false,
             unrelatedJapaneseLoaded: false, fallback: 'Google Gemini',
         });
         expect(observation.selectedCopy).toBe(observation.frenchCopy);
@@ -61,8 +66,11 @@ it('loads selected web copy before activation and keeps explicit voice demand in
             }
         };
         visit(Object.entries(result.metafile.outputs).find(([, output]) => output === entry)![0]);
-        expect([...staticInputs].filter(input => /translations\/features\/(?!en\.ts)/.test(input))).toEqual([]);
+        console.info(JSON.stringify({ entry: 'web translation lookup', entryBytes: entry!.bytes,
+            staticModules: staticInputs.size, emittedChunks: Object.keys(result.metafile.outputs).length }));
+        expect([...staticInputs].filter(input => /translations\/features\/(?:[^/]*\.)?(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.ts$/.test(input))).toEqual([]);
         expect([...staticInputs].filter(input => /bundledPluginTranslations\.generated\.ts$/.test(input))).toEqual([]);
+        expect([...staticInputs].filter(input => /bundledPluginTranslations\/(?!en\.generated\.ts)/.test(input))).toEqual([]);
     } finally {
         await rm(directory, { recursive: true, force: true });
     }

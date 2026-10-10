@@ -7,7 +7,7 @@ export type Copy = typeof en;
 export const en = {
     title: 'Walkthroughs', description: 'An AI-written reading order, with an explanation beside the exact changes and optional commit proposals. Runs on the machine that has the code.',
     enabled: 'Explain changes', enabledDescription: 'Add a reading order and explanations to a comparison. Files remain available without a model.',
-    model: 'Summary model', modelDescription: 'Used for explanations, walkthroughs and commit proposals.', chooseModel: 'Choose a model',
+    model: 'Summary model', modelDescription: 'Used for explanations, walkthroughs and commit proposals.', chooseModel: 'Choose a model', searchModels: 'Search models',
     unsupported: 'Can’t write walkthroughs', unavailable: 'Model unavailable. Choose another.',
     prefetch: 'Prepare after each turn', prefetchDescription: 'Prepares a walkthrough when the agent finishes a turn.',
     saved: 'Saved walkthroughs', savedDescription: 'Saved on this machine, including your edits.', clear: 'Clear',

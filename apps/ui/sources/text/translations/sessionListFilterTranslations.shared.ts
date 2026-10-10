@@ -10,7 +10,7 @@ export const en = {
     filtersShowBothSummary: 'Sessions and runs', filtersStartedByNone: 'No starters selected',
     filtersStartedBy: 'Started by', filtersStartedByYou: 'You', filtersStartedByTriggers: 'Triggers', filtersStartedByAgents: 'Agents',
     filtersRunsNeedingYouAlwaysShow: 'Runs that need you always show',
-    filtersMyWork: 'My work', filtersLegacyOwnerDirect: 'Owned & shared directly', filtersAssignedToMe: 'Assigned to me', filtersFollowing: 'Following',
+    filtersMyWork: 'My work', filtersLegacyOwnerDirect: 'My work', filtersAssignedToMe: 'Assigned to me', filtersFollowing: 'Following',
     filtersInvolvingMe: 'Involving me', filtersAllAccessible: 'All accessible', filtersAttention: 'Attention',
     filtersAttentionAny: 'Any', filtersAttentionNeedsMe: 'Only sessions that need me', filtersScopeNeedsMe: 'Needs me',
     filtersInactive: 'Inactive sessions', filtersInactiveShow: 'Show', filtersInactiveHide: 'Hide',

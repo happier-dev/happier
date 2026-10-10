@@ -11,7 +11,7 @@ import { workflowTranslations as pt } from './features/pt';
 import { workflowTranslations as ru } from './features/ru';
 import { workflowTranslations as zh_Hans } from './features/zh-Hans';
 import { workflowTranslations as zh_Hant } from './features/zh-Hant';
-export { WorkflowTranslations } from './workflowTranslations.shared';
+export type { WorkflowTranslations } from './workflowTranslations.shared';
 
 export const workflowTranslations = {
     ...en.workflowTranslations,

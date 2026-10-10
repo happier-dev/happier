@@ -121,6 +121,8 @@ export const projectWorkers: ProjectWorkersTranslations = {
     copyMissingFact: '先にコピーが必要です',
     setUpCopy: ({ machine }: { machine: string }) => `${machine} にコピーを設定`,
     removeFilesUnknown: 'このコピーはすでに無い可能性がありますが、ファイルが削除されたかは不明です。もう一度試す前にフォルダを確認してください。',
+    copyDefinitionRetired: 'このコピーは Sync で維持されなくなりました。',
+    removeFilesRemain: 'ファイルはまだこのマシンにあります。',
     checkAgain: 'もう一度確認',
     openWork: '開く',
     dependencyOther: 'その他の作業',

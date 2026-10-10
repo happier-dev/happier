@@ -12,6 +12,7 @@ export type Copy = typeof en;
 export const en = {
     ...workflowRunRoleTranslations.en,
     ...workflowRunCompositionTranslations.en,
+    shortcutStarts: 'starts',
     workflow: 'Workflow', inputs: 'Inputs', start: 'Start', starting: 'Starting…', stillStarting: 'Still starting…',
     needed: ({ count }: { count: number }) => `Inputs · ${count} needed`,
     neededNamed: ({ name }: { name: string }) => `Inputs · ${name} needed`,

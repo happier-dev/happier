@@ -98,7 +98,7 @@ export const addFlowsTranslationsEnglish = { en: {
         pathThisComputerTask: 'Set it up in one step',
         pathThisComputerCommand: 'One command in your terminal',
         pathSshTitle: 'A server over SSH',
-        pathSshChip: 'Server over SSH',
+        pathSshChip: 'Over SSH',
         pathSshSubtitle: 'A dev box, VM or cloud server',
         pathAnotherTitle: 'Another computer',
         pathAnotherSubtitle: 'Open a Home link on that computer',

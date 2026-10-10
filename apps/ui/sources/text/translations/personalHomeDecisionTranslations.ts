@@ -11,7 +11,7 @@ import { personalHomeDecisionTranslations as pt } from './features/pt';
 import { personalHomeDecisionTranslations as ru } from './features/ru';
 import { personalHomeDecisionTranslations as zh_Hans } from './features/zh-Hans';
 import { personalHomeDecisionTranslations as zh_Hant } from './features/zh-Hant';
-export { PersonalHomeDecisionTranslation } from './personalHomeDecisionTranslations.shared';
+export type { PersonalHomeDecisionTranslation } from './personalHomeDecisionTranslations.shared';
 
 export const personalHomeDecisionTranslations = {
     ...en.personalHomeDecisionTranslations,

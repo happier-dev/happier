@@ -38,7 +38,7 @@ export const en = {
         teamLabel: ({ team, count }: { team: string; count: number }) => `Team ${team} · ${count} ${count === 1 ? 'agent' : 'agents'}`,
         teamActionsA11y: 'Team actions',
         openWork: 'Open',
-        needsYouCount: ({ count }: { count: number }) => `${count} needs you`,
+        needsYouCount: ({ count }: { count: number }) => count === 1 ? '1 needs you' : `${count} need you`,
         runningCount: ({ count }: { count: number }) => `${count} running`,
         nothingRunning: 'Nothing running.',
         startAgent: 'Start an agent',

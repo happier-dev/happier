@@ -6,12 +6,17 @@ export type RolesTranslations = Readonly<{
         title: string;
         searchPlaceholder: string;
         empty: string;
+        emptyWithManage: string;
         footer: string;
         manage: string;
         engineAppliesOnStart: string;
         defaultEngine: string;
         activeAccessibilityLabel: string;
+        chooseEngine: string;
+        unavailableRole: string;
     }>;
+    /** What each built-in role is for, in one line, for the person choosing it. */
+    builtIn: Readonly<Record<'orchestrator' | 'planner' | 'builder' | 'reviewer' | 'judge' | 'second_opinion' | 'scout' | 'approval_reviewer', string>>;
     settings: Readonly<{
         description: string;
         count: (params: Readonly<{ count: number }>) => string;
@@ -26,7 +31,14 @@ export type RolesTranslations = Readonly<{
         sourceShared: string;
         sourcePlugin: (params: Readonly<{ plugin: string }>) => string;
         migrated: string;
-        migratedNote: string;
+        migratedNote: (params: Readonly<{ names: readonly string[] }>) => string;
+        duplicate: string;
+        duplicateName: (params: Readonly<{ name: string }>) => string;
+        platformDefault: string;
+        runsAsThisSession: string;
+        runsAsOrchestratorDescription: string;
+        readOnly: string;
+        engineChooseMigrated: string;
         nameTitle: string;
         newRoleName: string;
         instructionsTitle: string;
@@ -81,7 +93,8 @@ export type RolesTranslations = Readonly<{
         ladderRoot: string;
         ladderRootDetail: string;
         ladderLevel: (params: Readonly<{ level: number }>) => string;
-        ladderLevelDetail: string;
+        /** Who starts work at this level: the level above it, so no two steps say the same. */
+        ladderLevelDetail: (params: Readonly<{ level: number }>) => string;
         ladderRefused: string;
         ladderRefusedDetail: (params: Readonly<{ level: number }>) => string;
     }>;
@@ -112,6 +125,14 @@ export type RolesTranslations = Readonly<{
         countChanged: (params: Readonly<{ count: number }>) => string;
         countAdded: (params: Readonly<{ count: number }>) => string;
         addNotes: string;
+        refusal: Readonly<{
+            unenforceableTitle: string;
+            unenforceableBody: string;
+            restartRequiredTitle: string;
+            restartRequiredBody: string;
+            roleUnavailableTitle: string;
+            roleUnavailableBody: string;
+        }>;
     }>;
     profiles: Readonly<{
         sharedWithYouTitle: string;
@@ -126,17 +147,37 @@ export type RolesTranslations = Readonly<{
 
 export const rolesTranslationsEnglish = { en: {
         rail: {
+            chooseEngine: 'Choose an engine',
+            unavailableRole: 'No longer available',
             label: 'Roles',
             title: 'Role',
             searchPlaceholder: 'Search roles…',
-            empty: 'No roles match.',
+            empty: 'No roles yet.',
+            emptyWithManage: 'No roles yet. Add one in Manage roles.',
             footer: 'A role brings its own instructions, engine and how it runs, so workflows stay portable.',
             manage: 'Manage roles',
             engineAppliesOnStart: 'Engine applies when starting this role',
             defaultEngine: 'Default agent',
             activeAccessibilityLabel: 'Roles, a role is in use',
         },
+        builtIn: {
+            orchestrator: "Leads a piece of work and hands parts of it to other agents",
+            planner: "Works out the plan before anything is built",
+            builder: "Makes the change and checks that it works",
+            reviewer: "Reviews a change and points to what to fix",
+            judge: "Settles disputed findings and says when a goal is met",
+            second_opinion: "An independent check before you go ahead",
+            scout: "Looks through the code and answers with where things are",
+            approval_reviewer: "Answers low-risk permission requests and asks you about the rest",
+        },
         settings: {
+            duplicate: 'Duplicate',
+            duplicateName: ({ name }) => `${name} copy`,
+            platformDefault: 'Platform default · follows updates',
+            runsAsThisSession: 'This session',
+            runsAsOrchestratorDescription: 'An orchestrator is the session you switch it on in.',
+            readOnly: 'Read-only',
+            engineChooseMigrated: 'No engine came over from 0.2. Choose one, or it follows your default agent.',
             description: 'Who does each kind of work. Workflows and orchestrators ask for a role; the role says how to run it.',
             count: ({ count }) => (count === 1 ? '1 role' : `${count} roles`),
             newRole: 'New role',
@@ -150,13 +191,13 @@ export const rolesTranslationsEnglish = { en: {
             sourceShared: 'Shared with you',
             sourcePlugin: ({ plugin }) => `From ${plugin}`,
             migrated: 'from 0.2 sub-agents',
-            migratedNote: 'Roles marked "from 0.2 sub-agents" came from your sub-agents guidance: its description is now the instructions, its agent and model the engine.',
+            migratedNote: ({ names }) => (names.length === 1 ? `${names[0]} came from your 0.2 sub-agents guidance: its description is now its instructions, its agent and model its engine.` : `${names.join(', ')} came from your 0.2 sub-agents guidance: each description is now the instructions, each agent and model the engine.`),
             nameTitle: 'Name',
             newRoleName: 'Untitled role',
             instructionsTitle: 'Instructions',
             instructionsDescription: 'What it does, when to use it and how to report. Agents read this when they hand out work.',
             resetToDefault: 'Reset to default',
-            readOnlyNote: 'Shared with you to view. Your engine and profile choices stay yours.',
+            readOnlyNote: 'The original role is read-only. Customize your instructions here; Reset restores the original.',
             howItRunsTitle: 'How it runs',
             engineTitle: 'Engine',
             engineDescription: 'Agent, model and effort.',
@@ -207,12 +248,20 @@ export const rolesTranslationsEnglish = { en: {
             ladderRoot: 'Work you start',
             ladderRootDetail: 'You started this · never limited',
             ladderLevel: ({ level }) => `Level ${level}`,
-            ladderLevelDetail: 'Started by an agent',
+            ladderLevelDetail: ({ level }) => (level === 1 ? 'Started by an agent in work you start' : `Started by an agent at level ${level - 1}`),
             ladderRefused: 'One more hand-off',
             ladderRefusedDetail: ({ level }) => `Level ${level} · refused; the agent does it itself`,
         },
         session: {
-            useDefaults: 'Use defaults',
+            refusal: {
+                unenforceableTitle: 'This agent can’t run hands-off',
+                unenforceableBody: 'The role is hands-off, and this session’s agent has no way to hold back its own file edits. Turn Hands-off off for the role, or start it in a new session on an agent that supports it.',
+                restartRequiredTitle: 'Restart the session to go hands-off',
+                restartRequiredBody: 'This agent applies hands-off only when the session starts. Restart the session, then choose the role again.',
+                roleUnavailableTitle: 'That role is no longer available',
+                roleUnavailableBody: 'It was removed, turned off or is no longer shared with you. Choose another role.',
+            },
+            useDefaults: 'Use default roles',
             crossOwnerNote: 'Roles were copied when it started.',
             addRole: 'Add a role for this session',
             addRoleConfirm: 'Add role',
@@ -220,7 +269,7 @@ export const rolesTranslationsEnglish = { en: {
             instructionsPlaceholder: 'What this role does and when to use it',
             notesTitle: 'Notes',
             notesPlaceholder: 'Anything every session under this one should know',
-            applyToReports: 'Apply to sessions under it',
+            applyToReports: 'Apply roles to sessions under it',
             handsOffTitle: 'Hands-off',
             handsOffDescription: 'Plans and delegates; doesn’t edit files.',
             saveFailed: 'Couldn’t save this change.',

@@ -26,6 +26,8 @@ export const en = {
         settle: 'Settle',
         snoozedUntil: ({ time }: { time: string }) => `Snoozed until ${time}`,
         more: 'More actions',
+        approvalNeeded: 'Needs your approval',
+        approvalUntitled: 'Approve an action',
     },
     popover: {
         moreInOther: ({ count }: { count: number }) => `${count} more in Other sessions`,
@@ -44,6 +46,10 @@ export const en = {
         retry: 'Try again',
     },
     settleFailed: "Couldn't settle this session",
+    detail: {
+        openApproval: 'Open request',
+        idle: 'Choose an item to see it here',
+    },
 };
 
 

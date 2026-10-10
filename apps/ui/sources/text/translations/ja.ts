@@ -15473,6 +15473,10 @@ settingsSession: {
             notRecordedWhatIfReason: "別プランでの使用状況の再現には対応していません。",
             notRecordedStrategy: "複数アカウント構成",
             notRecordedStrategyReason: "構成の比較には同じ再現が必要なため、表示していません。",
+            earlierCurve: ({ time }: { time: string | number }) => `以前のウィンドウ（${time} 終了）`,
+            earlierShown: ({ count }: { count: string | number }) => `灰色の線: 同じ期間に重ねた比較可能な以前のウィンドウ ${count} 件`,
+            earlierNone: ({ reason }: { reason: string | number }) => `比較できる以前のウィンドウがありません: ${reason}`,
+            earlierSingleReading: "読み取りが1回のみ",
           },
           work: {
       // usage-board:work

@@ -35,6 +35,7 @@ export type WidgetDefinitionTranslation = Readonly<{
     placedInASession: string;
     placedInAProject: string;
     placedOnAPluginPage: string;
+    placedOnACorePage: string;
     notPlacedYet: string;
     otherPlacesNotListed: string;
     editsChangeAll: (params: Readonly<{ count: number }>) => string;
@@ -108,6 +109,7 @@ export const widgetDefinitionTranslationsEnglish = { en: {
         placedInASession: "A session",
         placedInAProject: "A project",
         placedOnAPluginPage: "A plugin page",
+        placedOnACorePage: "An app page",
         notPlacedYet: "Not placed anywhere yet",
         otherPlacesNotListed: "Places on other devices or shared surfaces aren’t listed here.",
         editsChangeAll: ({ count }) => `Edits to the widget change all ${count}`,

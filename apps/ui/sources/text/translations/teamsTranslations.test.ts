@@ -12,6 +12,8 @@ import { teamsTranslations } from './teamsTranslations';
 const COINCIDENTAL_TRANSLATIONS: Readonly<Record<string, readonly string[]>> = {
     'teams.authentication.directory.actions.section': ['fr'],
     'teams.title': ['de'],
+    // "Team" is the German and Italian word for the Team section heading too.
+    'teams.overview.teamSection': ['de', 'it'],
     'teams.create.descriptionLabel': ['fr'],
     'teams.create.nameLabel': ['de'],
     'teams.groups.nameLabel': ['de'],
@@ -95,7 +97,8 @@ describe('teamsTranslations', () => {
         const { en } = teamsTranslations;
 
         // Archive copy must state retention and the conditional nature of restore.
-        expect(en.teams.archive.confirmBody({ name: 'Acme' })).toContain('retained');
+        expect(en.teams.archive.confirm.kept).toContain('kept');
+        expect(en.teams.archive.confirm.restore).toContain('where it still applies');
         expect(en.teams.archive.restoreBody()).toContain('Revoked invitation links');
 
         // A lost transferable bearer is never recoverable; only reissue is offered.

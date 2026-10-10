@@ -452,7 +452,7 @@ const addFlowsTranslations = { 'zh-Hans': {
         pathThisComputerTask: '一步完成设置',
         pathThisComputerCommand: '在终端里运行一条命令',
         pathSshTitle: '通过 SSH 的服务器',
-        pathSshChip: 'SSH 服务器',
+        pathSshChip: '通过 SSH',
         pathSshSubtitle: '开发机、虚拟机或云服务器',
         pathAnotherTitle: '另一台电脑',
         pathAnotherSubtitle: '在那台电脑上打开 Home 链接',
@@ -883,6 +883,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
         emptyHint: '或者让智能体“把它保存为工件”。',
         loadFailedTitle: '无法加载你的工件',
         loadFailedBody: '请检查网络连接后重试。没有任何内容丢失。',
+        retainedBody: "无法刷新。正在显示上次加载的工件。",
         quota: {
             accountTitle: '工件存储已满',
             documentTitle: '太大，无法保存',
@@ -1238,6 +1239,7 @@ const browserPresenceTranslations = { 'zh-Hans': {
             stalled: '显示最后一帧 · 正在重新连接',
             endedTitle: ({ agent }) => `${agent} 关闭了这个浏览器`,
             endedBody: '此页面不再在这里显示。',
+            openPageHere: "在此打开页面",
             unavailableTitle: ({ agent }) => `无法在这里显示 ${agent} 的浏览器`,
             unavailableBody: ({ agent }) => `${agent} 仍在浏览；它的操作仍会显示在聊天中。`,
             tryAgain: '重试',
@@ -1427,7 +1429,7 @@ const commitProposalTranslations: Pick<Readonly<Record<'en' | 'ca' | 'de' | 'es'
         applying: { title: ({ count }) => `正在创建 ${count} 个提交`, body: '通过常规提交流程逐个创建，钩子和签名照常运行。完成前暂停编辑。', bodyPhone: '完成前暂停编辑。', created: ({ landed, total }) => `${total} 个中的 ${landed} 个`, createdRest: '已创建 · 后续提交停止时不会回滚任何内容', createdRestPhone: '已创建', stopAfterThis: '此提交后停止', stopAfterThisShort: '此后停止', stopping: '将在此提交后停止' },
         state: { waiting: '等待中', writing: '正在运行钩子并创建提交', landed: '已提交', landedAt: ({ time }) => `已于 ${time} 提交`, signed: '已签名', pausedBy: ({ hook, count }) => `${hook} 更改了 ${count} 个文件 · 尚未提交`, hookFailedBy: ({ hook }) => `${hook} 失败 · 未提交`, rewritten: '钩子改写了消息', notCreated: '未创建 · 仍可编辑', notCreatedShort: '未创建', unknown: '尚未确认', paused: ({ count }) => `钩子更改了 ${count} 个文件 · 尚未提交`, failed: '在此停止 · 未提交' },
         outcome: { signingTitle: '目前无法为你的提交签名。', signingBody: '此仓库会为每个提交签名。尚未提交任何内容。', signingHint: '请先解锁 GPG 或 SSH 代理', tryAgain: '重试', cancel: '取消', hookChanged: ({ files }) => `钩子更改了 ${files}。`, waitsAfterLanded: ({ count }) => `已完成 ${count} 个提交；这个在等你。`, waits: '这个在等你。', include: '包含钩子的更改', includePhone: '包含并提交', cancelCommit: '取消此提交', hookFailed: '钩子阻止了此提交。', hookChangedBy: ({ hook, files }) => `${hook} 更改了 ${files}。`, hookFailedBy: ({ hook }) => `${hook} 阻止了此提交。`, hookFailedBody: '之前的提交保留。其余仍可编辑。', headMoved: ({ branch }) => `提交期间 ${branch} 发生了移动。`, headMovedBody: '下一个提交被拒绝，没有回滚任何内容。', proposeAgain: '为剩余内容重新提议', keepEditing: '继续编辑', askSessionToFix: '让此会话修复', showInGit: '在 Git 中显示', unknownTitle: '无法确认此提交是否已完成。', unknownBody: '确认之前不会重试。请再次检查分支。', checkAgain: '再次检查', stoppedTitle: ({ landed, total }) => `已创建 ${total} 个中的 ${landed} 个提交`, stoppedBody: ({ count }) => `${count} 个未创建。它们的更改仍和之前一样在你的工作树中。`, createRest: ({ count }) => `创建剩余 ${count} 个`, completeTitle: ({ count }) => `已创建 ${count} 个提交`, completeBody: '没有推送任何内容。', onBranch: ({ branch }) => `位于 ${branch}`, failed: { staging_conflict: '其他操作更改了暂存内容。', selection_conflict: '这些更改无法这样拆分。', source_changed: '提议之后待提交更改发生了变化。', writer_failed: '无法创建提交。', publication_warning: '提交已完成，但暂存文件未更新。', cancelled: '此提交已取消。' }, failedBody: '之前的提交保留。没有回滚任何内容。' },
-        none: { title: '还没有提交提议', reason: '提议会将你的待提交更改分组为可编辑的提交，然后通过常规提交流程逐个创建。', propose: '提议提交', writing: '正在分组你的待提交更改…' },
+        none: { title: '还没有提交提议', workingTreeOnly: '提交计划只能应用于当前本地更改。', reason: '提议会将你的待提交更改分组为可编辑的提交，然后通过常规提交流程逐个创建。', propose: '提议提交', writing: '正在分组你的待提交更改…' },
         gitPane: { title: '提议的提交', meta: ({ count, files }) => `${count} · ${files} 个文件`, inCommit: ({ count, number }) => `提交 ${number} 中 ${count} 个`, open: '打开', review: '查看', reviewInWalkthrough: '在导读中查看', more: '放弃或重新生成', selectedHint: '已选中。再次轻点可在提交中打开', tapHint: '轻点查看其更改' },
     } } };
 
@@ -2196,6 +2198,7 @@ const embedSettingsTranslations = { 'zh-Hans': translated({
                 sites: ({ count }: { count: number }) => `${count} 个网站`,
                 send: "可发送",
                 sendAndApprove: "可发送和批准",
+                approve: "可批准",
                 viewOnly: "仅查看",
                 modelOnly: ({ name }: { name: string }) => `仅 ${name}`,
                 models: ({ count }: { count: number }) => `${count} 个模型`,
@@ -4382,6 +4385,7 @@ const homeIndexTranslations = { 'zh-Hans': {
         sections: "版块",
         newRow: "拖到这里以开始新的一行",
         newRowVerb: "移到新的一行",
+        addWidget: "添加组件",
         reset: '重置',
         alwaysShown: '始终显示',
         builtIn: '内置',
@@ -5050,7 +5054,7 @@ const oidcEditorWords: Pick<Readonly<Record<IdentityAdministrationLanguage, Oidc
         allowRulesHint: '每行输入一个值。留空表示不限制。', brandingHint: '留空以使用默认登录外观。', invalidScopes: '请求的范围必须包含 openid。', refreshFailed: '无法刷新此连接', refreshFailedHint: '你的编辑已保留。重试以检查 Home 上的更改。',
     } };
 
-const identityAdministrationTranslations = { zhHans: build({ homeWorkosAdd: "通过 WorkOS 进行公司登录", homeWorkosCompanyName: "公司名称", homeWorkosPurpose: "公司成员可以使用工作账户登录此 Home。", homeWorkosEnableDetail: "成员随后即可使用公司账户登录此 Home。", homeWorkosOffboarding: "仅靠 SSO 不会移除离职人员。", homeWorkosPlatformRequired: "请先在登录平台中设置 WorkOS。",  ...en, title: '身份提供商', subtitle: '可供 Team 使用的 Home 登录连接。', homeConnections: 'Home 登录连接', add: '添加连接', empty: '没有 Home 登录连接', active: '已启用', disabled: '已停用', configuration: '配置', issuer: '签发者 URL', clientSecret: '客户端密钥', secretSet: '已设置', secretNotSet: '未设置', secretRetain: '留空以保留当前密钥。', advanced: '显示高级设置', hideAdvanced: '隐藏高级设置', actions: '操作', test: '测试登录', testing: '正在打开测试…', edit: '编辑连接', save: '保存连接', saving: '正在保存…', enable: '启用连接', disable: '停用连接', remove: '移除连接', createTitle: '添加身份提供商', editTitle: '编辑身份提供商', displayName: '名称', required: '请填写必填字段。', invalidIssuer: '请输入有效的 HTTPS URL。', secretRequired: '请输入客户端密钥。', error: '未能应用更改。', accounts: '受影响的 Account', connections: 'Team 连接', errorForbidden: '你已不再拥有此操作的权限。未更改任何内容。', errorConflict: '其他人先做了更改。你的编辑已保留：请重新加载后再试。', errorMissing: '该项已不存在，可能已被移除。', errorInUse: '仍有内容依赖它，请先移除这些内容。', errorProviderUnavailable: '身份服务未响应。未更改任何内容。', errorRateLimited: '提供商要求稍后再试。', errorInvalid: 'Home 拒绝了这些值。请检查配置后再试。', errorImmutable: '记录启用后此值即固定，请改为新建一条。', errorAuthenticationRequired: '请重新登录此 Team 后再试。未更改任何内容。', errorPolicyUnavailable: '目前无法评估 Team 的身份验证策略。未更改任何内容。', errorPolicyInUse: 'Team 的身份验证策略仍依赖此连接。', errorNotAllowed: '此 Home 不允许 Team 配置此项。未更改任何内容。', errorNeedsAttention: '目录同步需要处理。请运行一次完整同步。', errorSyncPaused: '该来源已暂停。“继续同步”会开始一次新的完整同步。', alternateLogins: '需要其他登录方式的 Account', recoveryAuthenticationPolicy: '打开 Team 身份验证', recoveryAlternateLogin: '请先为这些 Account 提供其他登录方式', recoveryDirectory: '打开目录', recoveryGroupMappings: '打开群组映射', recoveryTeamAuthentication: '重新登录', callbackUrl: '回调 URL', callbackUrlHint: '请在你的身份提供商处注册此 URL。' , workosSetupSso: '打开 WorkOS 管理门户', workosSetupDirectory: '设置 WorkOS Directory Sync', workosCheckSetup: '检查 WorkOS 设置', workosChooseConnection: '选择连接', workosPortalConfirmBody: '你将在 WorkOS 中完成设置，然后回到这里选择连接。', workosDirectoryPortalConfirmBody: '你将在 WorkOS 中完成设置，然后回到这里选择目录。', workosSetupSection: '设置', workosSetupFooter: '可以先离开再回来：设置会从已到达的步骤继续。', workosStepPortalDetail: '在那里连接你的身份提供商。回来后，设置会在这里继续。', workosStepPortalDone: '管理门户', workosStepPortalDoneDetail: '你的组织已关联。', workosOpenPortal: '打开门户', workosOpenPortalAgain: '再次打开', workosStepChooseDetail: '选择成员用于登录的 WorkOS 连接。', workosStepChooseDone: '连接', workosFindConnections: '查找连接', workosUseConnection: ({ name }: { name: string }) => `使用 ${name}`, workosCandidateDraft: '这是 WorkOS 中的草稿，请先在那里完成。', workosStepTestDetail: '你自己登录一次。不会向任何人的账户保存内容。', workosTestPassed: '你的测试登录成功了。', workosTestAgain: '再次测试', workosStepEnable: '开启', workosStepEnableDetail: '开启后成员即可用它登录。要设为必需，请在“成员如何登录”中选择它。', workosTurnOn: '开启', workosConnectionSection: '连接', workosConnectionRow: 'WorkOS 连接', workosConnectionNotChosen: '尚未选择', workosChange: '更改', errorWorkosPlatformUnavailable: '此 Home 尚未设置 WorkOS。', errorSetupRequired: '需要先完成设置才能使用。', removeTitle: ({ name }: { name: string }) => `移除 ${name}？`, removeBody: ({ name }: { name: string }) => `${name} 将不再作为登录方式提供。使用过它的账户会保留。`, removeBlocked: ({ accounts, connections }: { accounts: number; connections: number }) => `仍有 ${connections} 个 Team 连接和 ${accounts} 个账户在使用。请先移除它们。`, disableTitle: ({ name }: { name: string }) => `关闭 ${name}？`, disableBody: ({ name }: { name: string }) => `在重新开启之前，没有人能通过 ${name} 登录。不会删除任何内容。`, githubRemoveInstallationTitle: ({ name }: { name: string }) => `移除 ${name} 上的安装？`, githubRemoveInstallationBody: ({ name }: { name: string }) => `此 Home 将不再使用 ${name} 上的 App。GitHub 上不会有任何变化；如不再需要，请在那里卸载。`, removeBlockedTitle: ({ name }: { name: string }) => `暂时无法移除 ${name}`, removeImpactPeople: ({ count }: { count: number }) => `有 ${count} 人通过它登录此 Team。`, removeImpactNobody: '还没有人通过它登录此 Team。', removeImpactKept: '他们的账户和 Team 成员身份会保留。', removeBlockedAlternateLogins: ({ count }: { count: number }) => `有 ${count} 人没有其他登录方式。`, removeBlockedDirectories: ({ count }: { count: number }) => `仍有 ${count} 个目录源在使用它。`, removeBlockedGroups: ({ count }: { count: number }) => `仍有 ${count} 个群组映射在使用它。`, removeBlockedMemberships: ({ count }: { count: number }) => `仍有 ${count} 个成员身份由它管理。` }, githubAccessWords.zhHans, oidcEditorWords.zhHans) };
+const identityAdministrationTranslations = { zhHans: build({ ...en, homeWorkosChooseDetail: "选择用于登录此 Home 的 WorkOS 连接。", homeWorkosAdd: "通过 WorkOS 进行公司登录", homeWorkosCompanyName: "公司名称", homeWorkosPurpose: "公司成员可以使用工作账户登录此 Home。", homeWorkosEnableDetail: "成员随后即可使用公司账户登录此 Home。", homeWorkosOffboarding: "仅靠 SSO 不会移除离职人员。", homeWorkosPlatformRequired: "请先在登录平台中设置 WorkOS。",  title: '身份提供商', subtitle: '可供 Team 使用的 Home 登录连接。', homeConnections: 'Home 登录连接', add: '添加连接', empty: '没有 Home 登录连接', active: '已启用', disabled: '已停用', configuration: '配置', issuer: '签发者 URL', clientSecret: '客户端密钥', secretSet: '已设置', secretNotSet: '未设置', secretRetain: '留空以保留当前密钥。', advanced: '显示高级设置', hideAdvanced: '隐藏高级设置', actions: '操作', test: '测试登录', testing: '正在打开测试…', edit: '编辑连接', save: '保存连接', saving: '正在保存…', enable: '启用连接', disable: '停用连接', remove: '移除连接', createTitle: '添加身份提供商', editTitle: '编辑身份提供商', displayName: '名称', required: '请填写必填字段。', invalidIssuer: '请输入有效的 HTTPS URL。', secretRequired: '请输入客户端密钥。', error: '未能应用更改。', accounts: '受影响的 Account', connections: 'Team 连接', errorForbidden: '你已不再拥有此操作的权限。未更改任何内容。', errorConflict: '其他人先做了更改。你的编辑已保留：请重新加载后再试。', errorMissing: '该项已不存在，可能已被移除。', errorInUse: '仍有内容依赖它，请先移除这些内容。', errorProviderUnavailable: '身份服务未响应。未更改任何内容。', errorRateLimited: '提供商要求稍后再试。', errorInvalid: 'Home 拒绝了这些值。请检查配置后再试。', errorImmutable: '记录启用后此值即固定，请改为新建一条。', errorAuthenticationRequired: '请重新登录此 Team 后再试。未更改任何内容。', errorPolicyUnavailable: '目前无法评估 Team 的身份验证策略。未更改任何内容。', errorPolicyInUse: 'Team 的身份验证策略仍依赖此连接。', errorNotAllowed: '此 Home 不允许 Team 配置此项。未更改任何内容。', errorNeedsAttention: '目录同步需要处理。请运行一次完整同步。', errorSyncPaused: '该来源已暂停。“继续同步”会开始一次新的完整同步。', alternateLogins: '需要其他登录方式的 Account', recoveryAuthenticationPolicy: '打开 Team 身份验证', recoveryAlternateLogin: '请先为这些 Account 提供其他登录方式', recoveryDirectory: '打开目录', recoveryGroupMappings: '打开群组映射', recoveryTeamAuthentication: '重新登录', callbackUrl: '回调 URL', callbackUrlHint: '请在你的身份提供商处注册此 URL。' , workosSetupSso: '打开 WorkOS 管理门户', workosSetupDirectory: '设置 WorkOS Directory Sync', workosCheckSetup: '检查 WorkOS 设置', workosChooseConnection: '选择连接', workosPortalConfirmBody: '你将在 WorkOS 中完成设置，然后回到这里选择连接。', workosDirectoryPortalConfirmBody: '你将在 WorkOS 中完成设置，然后回到这里选择目录。', workosSetupSection: '设置', workosSetupFooter: '可以先离开再回来：设置会从已到达的步骤继续。', workosStepPortalDetail: '在那里连接你的身份提供商。回来后，设置会在这里继续。', workosStepPortalDone: '管理门户', workosStepPortalDoneDetail: '你的组织已关联。', workosOpenPortal: '打开门户', workosOpenPortalAgain: '再次打开', workosStepChooseDetail: '选择成员用于登录的 WorkOS 连接。', workosStepChooseDone: '连接', workosFindConnections: '查找连接', workosUseConnection: ({ name }: { name: string }) => `使用 ${name}`, workosCandidateDraft: '这是 WorkOS 中的草稿，请先在那里完成。', workosStepTestDetail: '你自己登录一次。不会向任何人的账户保存内容。', workosTestPassed: '你的测试登录成功了。', workosTestAgain: '再次测试', workosStepEnable: '开启', workosStepEnableDetail: '开启后成员即可用它登录。要设为必需，请在“成员如何登录”中选择它。', workosTurnOn: '开启', workosConnectionSection: '连接', workosConnectionRow: 'WorkOS 连接', workosConnectionNotChosen: '尚未选择', workosChange: '更改', errorWorkosPlatformUnavailable: '此 Home 尚未设置 WorkOS。', errorSetupRequired: '需要先完成设置才能使用。', removeTitle: ({ name }: { name: string }) => `移除 ${name}？`, removeBody: ({ name }: { name: string }) => `${name} 将不再作为登录方式提供。使用过它的账户会保留。`, removeBlocked: ({ accounts, connections }: { accounts: number; connections: number }) => `仍有 ${connections} 个 Team 连接和 ${accounts} 个账户在使用。请先移除它们。`, disableTitle: ({ name }: { name: string }) => `关闭 ${name}？`, disableBody: ({ name }: { name: string }) => `在重新开启之前，没有人能通过 ${name} 登录。不会删除任何内容。`, githubRemoveInstallationTitle: ({ name }: { name: string }) => `移除 ${name} 上的安装？`, githubRemoveInstallationBody: ({ name }: { name: string }) => `此 Home 将不再使用 ${name} 上的 App。GitHub 上不会有任何变化；如不再需要，请在那里卸载。`, removeBlockedTitle: ({ name }: { name: string }) => `暂时无法移除 ${name}`, removeImpactPeople: ({ count }: { count: number }) => `有 ${count} 人通过它登录此 Team。`, removeImpactNobody: '还没有人通过它登录此 Team。', removeImpactKept: '他们的账户和 Team 成员身份会保留。', removeBlockedAlternateLogins: ({ count }: { count: number }) => `有 ${count} 人没有其他登录方式。`, removeBlockedDirectories: ({ count }: { count: number }) => `仍有 ${count} 个目录源在使用它。`, removeBlockedGroups: ({ count }: { count: number }) => `仍有 ${count} 个群组映射在使用它。`, removeBlockedMemberships: ({ count }: { count: number }) => `仍有 ${count} 个成员身份由它管理。` }, githubAccessWords.zhHans, oidcEditorWords.zhHans) };
 
 return { githubAccessWords, oidcEditorWords, identityAdministrationTranslations };
 })();
@@ -7383,7 +7387,6 @@ const sessionBoardTranslations = { 'zh-Hans': {
             offline: '更改面板需要连接到此 Home。',
             unavailable: '此 Home 尚无法更改面板。',
             updateRequired: '请更新 Happier 以进行此面板更改。',
-            hostedHtmlSourceTooLarge: '此交互式视图太大，无法保存。你的草稿仍在这里。',
             noteTooLarge: '此笔记太大，无法保存。你的文本仍在这里。',
             invalid: '此面板更改无效。请检查后重试。',
             notFound: '此面板项目已不可用。请刷新面板。',
@@ -7575,6 +7578,7 @@ const Domain_sessionCompanionTranslations = (() => {
 type SessionCompanionTranslations = Shared_sessionCompanionTranslations.SessionCompanionTranslations;
 
 const sessionCompanionTranslations = { 'zh-Hans': {
+        recap: { title: '回顾' },
         status: {
             waitingForYou: '等你处理',
             pausedBeforeStep: ({ agent, step, total }) => `${agent} 在第 ${step}/${total} 步之前暂停`,
@@ -8416,6 +8420,8 @@ const zhHans: typeof en = {
         expandMap: '在会话旁打开地图',
     },
     map: {
+        folded: "已完成的工作已折叠",
+        backgroundRuns: ({ count }) => (count === 1 ? "1 个后台运行" : `${count} 个后台运行`),
         positionUnder: ({ position, total, parent }) => `${parent} 下的第 ${position}/${total} 项`,
     },
     actions: {
@@ -8480,6 +8486,9 @@ const zhHans: typeof en = {
         partOf: ({ run }) => `属于 ${run}`,
         checkedByWorkflow: "工作流会检查此步骤的结果，因此触发器、目标和第二意见不会在此会话中运行。",
         nothingStarted: "此步骤未启动任何内容。",
+    },
+    invite: {
+        orAskFor: "或请求",
     },
     peek: {
         reportsTo: ({ lead }) => `向 ${lead} 汇报`,
@@ -9193,6 +9202,14 @@ const english = Shared_teamsTranslations.english;
 
 const simplifiedChinese: TeamsTranslationRoot = {
     teams: {
+        leave: {
+            action: '退出团队',
+            description: '你对团队和群组的访问将结束。此 Home 中的账户会保留。',
+            confirmTitle: ({ name }: { name: string }) => `退出 ${name}？`,
+            confirmBody: '你对团队和群组的访问将立即结束。你的群组成员资格以及与此次团队成员资格关联的授权将被移除。你写过的内容和已看过的内容会保留。以后重新加入将获得新的成员资格。',
+            auditLeft: ({ team }: { team: string }) => `退出了 ${team}`,
+            auditRemoved: ({ team, target }: { team: string; target: string }) => `将 ${target} 移出了 ${team}`,
+        },
         overview: {
             sharedSessions: "共享的会话",
             allSharedSessions: "所有共享的会话",
@@ -11921,6 +11938,7 @@ type Progress = Shared_workflowRunListTranslations.Progress;
 const en = Shared_workflowRunListTranslations.en;
 
 const workflowRunListTranslations = { zhHans: {
+        observedProgress: ({ status }: { status: string }) => `已观察：${status}`,
         definitions: '定义',
         stepsProgress: ({ completed, total }: Progress) => `${total} 个步骤中已完成 ${completed} 个`,
         loopProgress: ({ completed, total }: Progress) => `${total} 项中已完成 ${completed} 项`,

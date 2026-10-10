@@ -53,6 +53,7 @@ export const english = {
         computer: 'Computer control',
         artifact_access: 'Artifact sharing',
         workflows: 'Workflows',
+        workflow_effects: 'Webhooks and commands',
         notifications: 'Notifications',
         machine_agent_install: 'Agent installs',
         machine_agent_sign_in: 'Agent sign-in',

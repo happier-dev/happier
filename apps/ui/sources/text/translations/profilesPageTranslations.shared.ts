@@ -8,12 +8,12 @@ export function translated(value: typeof english): typeof english {
 
 export const english = {
     profilesPage: {
-        searchPlaceholder: 'Search profiles',
-        emptyTitle: 'No profiles yet',
-        newProfileTitle: 'New profile',
+        searchPlaceholder: "Search launch profiles",
+        emptyTitle: "No launch profiles yet",
+        newProfileTitle: "New launch profile",
         notFoundTitle: 'This profile no longer exists',
         notFoundDescription: 'It may have been deleted on another device.',
-        backToProfiles: 'Back to profiles',
+        backToProfiles: "Back to launch profiles",
         discardDraft: 'Discard',
         detailDescription: 'Used when a new session starts with this profile.',
         builtInDetailDescription: 'A ready-made profile. Saving your changes creates your own copy.',
@@ -25,6 +25,7 @@ export const english = {
         environmentDescription: 'Environment variables set when a session starts with this profile. Values can refer to the machine\'s own variables.',
         descriptionTitle: 'Description',
         descriptionHint: 'Optional. Shown when you pick this profile.',
+        modelRequiresAgent: 'Choose a preferred agent first to choose its model.',
     },
 };
 

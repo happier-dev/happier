@@ -3,7 +3,7 @@ import type { Translations } from './_types';
 import { getDeviceLocales } from './deviceLocales';
 import { preloadLocaleBundle, readLocaleBundle } from './localeBundlesSync';
 import type { BundledPluginTranslationKey } from './bundledPluginTranslations.generated';
-import { BUNDLED_PLUGIN_TRANSLATIONS } from './bundledPluginTranslations.generated';
+import { BUNDLED_PLUGIN_TRANSLATION_KEYS } from './bundledPluginTranslationKeys.generated';
 
 export { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage };
 
@@ -179,7 +179,7 @@ function readAllTranslationKeys(): TranslationKey[] {
     if (!allTranslationKeysCache) {
         allTranslationKeysCache = [
             ...collectTranslationKeys(getTranslationTree(DEFAULT_LANGUAGE)),
-            ...Object.values(BUNDLED_PLUGIN_TRANSLATIONS).flatMap((bundle) => Object.keys(bundle)),
+            ...BUNDLED_PLUGIN_TRANSLATION_KEYS,
         ] as TranslationKey[];
     }
     return allTranslationKeysCache;

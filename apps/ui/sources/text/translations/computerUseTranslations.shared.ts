@@ -73,27 +73,36 @@ export type ComputerUseTranslations = Readonly<{
         accessValue: string;
         accessSee: string;
         displayUnavailable: string;
+        /** What sharing a whole display exposes, said before it is shared. */
+        wholeDisplayBody: (params: Readonly<{ display: string }>) => string;
         policyBoth: (params: Readonly<{ agent: string }>) => string;
         policyInput: (params: Readonly<{ agent: string }>) => string;
         policyCapture: (params: Readonly<{ agent: string }>) => string;
         policyNone: (params: Readonly<{ agent: string }>) => string;
         policyChange: string;
         suggests: (params: Readonly<{ agent: string }>) => string;
+        usingIt: string;
+        displayShared: string;
+        refresh: string;
+        footnote: string;
+        wholeDisplayTitle: string;
+        allowSee: string;
+        allowUse: string;
+        allowUseHint: (params: Readonly<{ agent: string }>) => string;
+        shareDisplay: string;
     }>;
     permission: Readonly<{
-        title: (params: Readonly<{ machine: string }>) => string;
-        body: string;
-        capture: string;
-        captureHint: string;
         input: string;
-        inputHint: string;
-        allowed: string;
         denied: string;
-        unknown: string;
-        open: (params: Readonly<{ machine: string }>) => string;
         opened: (params: Readonly<{ machine: string }>) => string;
         openFailed: string;
         checkAgain: string;
+        captureTitle: (params: Readonly<{ machine: string }>) => string;
+        inputTitle: (params: Readonly<{ machine: string }>) => string;
+        unknownTitle: (params: Readonly<{ machine: string }>) => string;
+        separateBody: (params: Readonly<{ machine: string }>) => string;
+        onMachineBody: (params: Readonly<{ machine: string }>) => string;
+        openPrivacy: (params: Readonly<{ machine: string }>) => string;
     }>;
     viewer: Readonly<{
         agentUsing: (params: Readonly<{ agent: string; target: string }>) => string;
@@ -101,7 +110,6 @@ export type ComputerUseTranslations = Readonly<{
         agentCanSee: (params: Readonly<{ agent: string; target: string }>) => string;
         onMachine: (params: Readonly<{ machine: string }>) => string;
         connectingTitle: (params: Readonly<{ target: string }>) => string;
-        connectingBody: (params: Readonly<{ machine: string }>) => string;
         unavailableTitle: string;
         unavailableBody: (params: Readonly<{ agent: string }>) => string;
         endedTitle: (params: Readonly<{ target: string }>) => string;
@@ -112,6 +120,33 @@ export type ComputerUseTranslations = Readonly<{
         notSharedBody: (params: Readonly<{ agent: string }>) => string;
         moreA11y: string;
         tabFallback: string;
+        sourceComputer: string;
+        sourceBrowser: string;
+        sourceA11y: string;
+        watchingA11y: (params: Readonly<{ source: string; machine: string }>) => string;
+        expandView: string;
+        restoreView: string;
+        dockView: string;
+        closeView: string;
+        moveView: string;
+        resizeView: string;
+        moveTopLeft: string;
+        moveTopRight: string;
+        moveBottomLeft: string;
+        moveBottomRight: string;
+        larger: string;
+        smaller: string;
+        viewOptions: string;
+        presentedElsewhereTitle: string;
+        presentedElsewhereBody: string;
+        closeHint: string;
+        agentWorkingOn: (params: Readonly<{ agent: string; machine: string }>) => string;
+        watchingSourceA11y: (params: Readonly<{ source: string }>) => string;
+        controlNotAllowed: string;
+        paused: (params: Readonly<{ time: string }>) => string;
+        offlineTitle: (params: Readonly<{ machine: string }>) => string;
+        offlineBody: string;
+        openingTitle: (params: Readonly<{ target: string; machine: string }>) => string;
     }>;
     strip: Readonly<{
         using: (params: Readonly<{ target: string }>) => string;
@@ -208,27 +243,35 @@ export const computerUseTranslationsEnglish = { en: {
             accessValue: 'See and use it',
             accessSee: 'See it',
             displayUnavailable: 'Whole-display sharing is unavailable on this machine.',
+            wholeDisplayBody: ({ display }) => `Everything visible on ${display} can be seen, including other apps and notifications.`,
             policyBoth: ({ agent }) => `${agent} asks before each screenshot, click and keystroke.`,
             policyInput: ({ agent }) => `${agent} asks before each click and keystroke.`,
             policyCapture: ({ agent }) => `${agent} asks before each screenshot.`,
             policyNone: ({ agent }) => `${agent} doesn’t ask before screenshots, clicks or keystrokes.`,
             policyChange: 'Change',
             suggests: ({ agent }) => `${agent} suggests`,
+            usingIt: 'the agent is using it',
+            displayShared: 'everything on it is shared',
+            refresh: 'Refresh sources',
+            footnote: 'Listing windows asks you first; sharing a whole display asks again.',
+            wholeDisplayTitle: 'Share the whole display?',
+            allowSee: 'Allow viewing',
+            allowUse: 'Allow mouse and keyboard',
+            allowUseHint: ({ agent }) => `${agent} can use this display. You can take control back any time.`,
+            shareDisplay: 'Share display',
         },
         permission: {
-            title: ({ machine }) => `${machine} needs your permission first`,
-            body: 'Happier can see and use windows only after you allow it in System Settings, on that computer.',
-            capture: 'Screen Recording',
-            captureHint: 'To see windows',
             input: 'Accessibility',
-            inputHint: 'To click and type',
-            allowed: 'Allowed',
             denied: 'Not allowed',
-            unknown: 'Not checked',
-            open: ({ machine }) => `Open System Settings on ${machine}`,
             opened: ({ machine }) => `Opened on ${machine}. Allow Happier there, then check again.`,
             openFailed: 'Couldn’t open System Settings there. Open it on that computer.',
             checkAgain: 'Check again',
+            captureTitle: ({ machine }) => `Allow Screen Recording on ${machine} to watch its windows or display.`,
+            inputTitle: ({ machine }) => `Allow Accessibility on ${machine} to use its mouse and keyboard.`,
+            unknownTitle: ({ machine }) => `Couldn’t check screen permissions on ${machine}. Check again before sharing.`,
+            separateBody: ({ machine }) => `Accessibility is separate: it lets you use the mouse and keyboard there. Each is granted on ${machine}, not on this device.`,
+            onMachineBody: ({ machine }) => `It is granted on ${machine}, not on this device.`,
+            openPrivacy: ({ machine }) => `Open privacy settings on ${machine}`,
         },
         viewer: {
             agentUsing: ({ agent, target }) => `${agent} is using ${target}`,
@@ -236,7 +279,6 @@ export const computerUseTranslationsEnglish = { en: {
             agentCanSee: ({ agent, target }) => `${agent} can see ${target}`,
             onMachine: ({ machine }) => `On ${machine}`,
             connectingTitle: ({ target }) => `Connecting to ${target}`,
-            connectingBody: ({ machine }) => `The window appears here as soon as the first picture arrives from ${machine}.`,
             unavailableTitle: 'Can’t show this window right now',
             unavailableBody: ({ agent }) => `You can still stop ${agent} here.`,
             endedTitle: ({ target }) => `${target} closed`,
@@ -247,6 +289,33 @@ export const computerUseTranslationsEnglish = { en: {
             notSharedBody: ({ agent }) => `Choose a window for ${agent} to use.`,
             moreA11y: 'Window options',
             tabFallback: 'Computer',
+            sourceComputer: 'Computer',
+            sourceBrowser: 'Browser',
+            sourceA11y: 'Source',
+            watchingA11y: ({ source, machine }) => `Watching ${source} on ${machine}`,
+            expandView: 'Expand view',
+            restoreView: 'Restore view',
+            dockView: 'Dock view',
+            closeView: 'Close view',
+            moveView: 'Move view',
+            resizeView: 'Resize view',
+            moveTopLeft: 'Move to top left',
+            moveTopRight: 'Move to top right',
+            moveBottomLeft: 'Move to bottom left',
+            moveBottomRight: 'Move to bottom right',
+            larger: 'Larger',
+            smaller: 'Smaller',
+            viewOptions: 'View options',
+            presentedElsewhereTitle: 'Showing in the floating view',
+            presentedElsewhereBody: 'Dock it here to keep it beside your work.',
+            closeHint: 'Closes this viewer. The session keeps running.',
+            agentWorkingOn: ({ agent, machine }) => `${agent} is working on ${machine}`,
+            watchingSourceA11y: ({ source }) => `Watching ${source}`,
+            controlNotAllowed: 'Mouse and keyboard control aren’t allowed',
+            paused: ({ time }) => `Stream paused · last frame ${time}`,
+            offlineTitle: ({ machine }) => `${machine} isn’t answering`,
+            offlineBody: 'Reconnect to watch it. Watching doesn’t start it.',
+            openingTitle: ({ target, machine }) => `Opening ${target} on ${machine}…`,
         },
         strip: {
             using: ({ target }) => `Using ${target}`,

@@ -15082,6 +15082,10 @@ settingsSession: {
             notRecordedWhatIfReason: "Rejouer votre usage sur une autre offre n'est pas pris en charge.",
             notRecordedStrategy: "Configurations multi-comptes",
             notRecordedStrategyReason: "Comparer des configurations exige ce même rejeu, aucune n'est donc affichée.",
+            earlierCurve: ({ time }: { time: string | number }) => `Fenêtre précédente, terminée ${time}`,
+            earlierShown: ({ count }: { count: string | number }) => `Lignes grises : ${count} fenêtres précédentes comparables sur la même durée`,
+            earlierNone: ({ reason }: { reason: string | number }) => `Aucune fenêtre précédente ne peut être affichée à côté : ${reason}`,
+            earlierSingleReading: "un seul relevé",
           },
           work: {
       // usage-board:work

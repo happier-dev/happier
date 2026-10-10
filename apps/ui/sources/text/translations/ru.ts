@@ -15141,6 +15141,10 @@ settingsSession: {
             notRecordedWhatIfReason: "Воспроизведение вашего использования на другом тарифе не поддерживается.",
             notRecordedStrategy: "Конфигурации с несколькими аккаунтами",
             notRecordedStrategyReason: "Сравнение конфигураций требует такого же воспроизведения, поэтому оно не показано.",
+            earlierCurve: ({ time }: { time: string | number }) => `Прошлое окно, завершилось ${time}`,
+            earlierShown: ({ count }: { count: string | number }) => `Серые линии: ${count} прошлых сопоставимых окон на том же отрезке`,
+            earlierNone: ({ reason }: { reason: string | number }) => `Нельзя показать рядом ни одно прошлое окно: ${reason}`,
+            earlierSingleReading: "только один замер",
           },
           work: {
       // usage-board:work

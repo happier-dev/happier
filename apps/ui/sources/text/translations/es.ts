@@ -15206,6 +15206,10 @@ settingsSession: {
             notRecordedWhatIfReason: "No se admite reproducir tu uso en un plan distinto.",
             notRecordedStrategy: "Configuraciones con varias cuentas",
             notRecordedStrategyReason: "Comparar configuraciones requiere esa misma reproducción, así que no se muestra ninguna.",
+            earlierCurve: ({ time }: { time: string | number }) => `Ventana anterior, terminó ${time}`,
+            earlierShown: ({ count }: { count: string | number }) => `Líneas grises: ${count} ventanas anteriores comparables en el mismo tramo`,
+            earlierNone: ({ reason }: { reason: string | number }) => `No se puede mostrar ninguna ventana anterior junto a esta: ${reason}`,
+            earlierSingleReading: "solo una lectura",
           },
           work: {
       // usage-board:work

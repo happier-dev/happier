@@ -5,7 +5,7 @@ export type SecretsSettingsCopy = { [K in keyof typeof en]: (typeof en)[K] };
 
 
 export const en = {
-    purpose: 'API keys and tokens your agents and MCP servers use. A value is never shown again after you save it.',
+    purpose: "API keys and tokens for agents and MCP servers. Saved values are never shown again.",
     yoursTitle: 'Your secrets',
     yoursDescription: 'Secrets you saved or own. Pick them wherever Happier asks for a key.',
     sharedWithYouTitle: 'Shared with you',

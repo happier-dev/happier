@@ -10,6 +10,11 @@ export const en = {
     surface: {
         scopeMismatch: 'It’s in another Home or account',
         widgetMoveUnavailable: 'This widget can’t move to this surface',
+        widgetReadOnly: 'You can view this layout but not change it. Ask its owner for edit access',
+        widgetAlreadyHere: 'It’s already on this surface. Reorder it there instead',
+        widgetCantLiveHere: 'This widget can’t live on this surface. Add it here from Add widget instead',
+        widgetNeedsInputs: 'Its inputs can’t be filled here. Add it here from Add widget and choose them',
+        widgetLayoutChanged: 'This layout just changed. Drop it again',
         readOnly: 'This Board is read-only',
         copyDetail: 'Keeps a reference · the Board stays unchanged',
     },

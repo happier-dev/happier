@@ -3,9 +3,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { es } from './translations/es';
 import { en } from './translations/en';
 import { fr } from './translations/fr';
+import { zhHans } from './translations/zh-Hans';
+import { zhHant } from './translations/zh-Hant';
 import * as i18n from './i18n';
 
 describe('text/i18n language state', () => {
+    it('retains synchronous native Chinese locale composition', () => {
+        i18n.setPreferredLanguageFromSettings('zh-Hant');
+        expect(i18n.t('tabs.inbox')).toBe(zhHant.tabs.inbox);
+        i18n.setPreferredLanguageFromSettings('zh-Hans');
+        expect(i18n.t('tabs.inbox')).toBe(zhHans.tabs.inbox);
+    });
     it('keeps the latest selected locale when settings change during readiness', async () => {
         i18n.setPreferredLanguageFromSettings('es');
         const ready = i18n.preloadTranslations();

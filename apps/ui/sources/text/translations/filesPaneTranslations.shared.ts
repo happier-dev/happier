@@ -12,6 +12,7 @@ export type FilesPaneTranslations = Readonly<{
     noChangedFilesReason: string;
     rootErrorTitle: (params: Readonly<{ machine: string }>) => string;
     rootErrorTitleUnnamed: string;
+    workspaceUnavailableReason: string;
 }>;
 
 
@@ -27,4 +28,5 @@ export const filesPaneTranslationsEnglish = { en: {
         noChangedFilesReason: 'The working copy matches the last commit.',
         rootErrorTitle: ({ machine }) => `Couldn’t list files on ${machine}`,
         rootErrorTitleUnnamed: 'Couldn’t list files',
+        workspaceUnavailableReason: 'Happier could not resolve a machine and folder for this session.',
     } } as const satisfies Pick<Record<string, FilesPaneTranslations>, "en">;

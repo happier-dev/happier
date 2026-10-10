@@ -1,10 +1,28 @@
 
 
 export const en = {
+    scheduled: {
+        title: "Scheduled",
+        writesHere: "Writes here",
+        empty: "No workflows are scheduled to write here.",
+        step: ({ ordinal, title } : { ordinal: number; title: string }) => `step ${ordinal} · ${title}`,
+        provenanceWorkflowStep: ({ source, step } : { source: string; step: string }) => `From ${source} · step ${step}`,
+        notifyOnlyReported: "Only if the agent reported something",
+        notifyOnlyReportedDescription: "Skip the notification when the agent returns no text.",
+        notifyOnlyReportedNeedsResult: "Use the text result from an earlier Agent step as the message.",
+    },
     workerUpdate: {
-        settled: "Settled",
-        stalled: "Stalled",
-        published: "Published",
+        state: {
+            settled: "finished its turn",
+            needsYou: "needs you",
+            stalled: "stalled",
+            published: "published",
+            failed: "failed",
+            stopped: "stopped",
+            timedOut: "timed out",
+            finished: "finished",
+        },
+        peek: "Peek",
         truncated: "Result shortened.",
         wokenBy: ({ count }: { count: number }) => (count === 1 ? 'Woken by an update' : `Woken by ${count} updates`),
         notFromYou: 'not a message from you',
@@ -25,9 +43,12 @@ export const en = {
         expandMap: 'Open the map beside the session',
     },
     map: {
+        folded: "Finished work folds away",
+        backgroundRuns: ({ count }: { count: number }) => (count === 1 ? "1 background run" : `${count} background runs`),
         positionUnder: ({ position, total, parent }: { position: number; total: number; parent: string }) => `${position} of ${total} under ${parent}`,
     },
     actions: {
+        showInTranscript: 'Show in transcript',
         makeOrchestrator: 'Make this an orchestrator',
         makeOrchestratorSubtitle: 'This session plans, delegates and reports back',
         makeOrchestratorFailed: "Couldn't make this session an orchestrator",
@@ -66,7 +87,7 @@ export const en = {
     strip: {
         openInSidebar: 'Open in sidebar',
         stillWorking: ({ count }: { count: number }) => `${count} still working`,
-        needsYou: ({ count }: { count: number }) => `${count} needs you`,
+        needsYou: ({ count }: { count: number }) => count === 1 ? '1 needs you' : `${count} need you`,
         a11y: ({ summary }: { summary: string }) => `Work: ${summary}`,
     },
     leadArchived: ({ count }: { count: number }) => `This session is archived · ${count} still working`,
@@ -74,12 +95,23 @@ export const en = {
     list: {
         level: ({ level }: { level: number }) => `Level ${level}`,
         subSessions: ({ count }: { count: number }) => (count === 1 ? '1 sub-session' : `${count} sub-sessions`),
+        showReports: ({ name, count }: { name: string; count: number }) => (count > 0 ? `Show ${count} sessions under ${name}` : `Show sessions under ${name}`),
+        hideReports: ({ name }: { name: string }) => `Hide sessions under ${name}`,
         reportsWorking: ({ count }: { count: number }) => `${count} working`,
         reportsNeedYou: ({ count }: { count: number }) => (count === 1 ? '1 sub-session needs you' : `${count} sub-sessions need you`),
     },
     archive: {
         alsoArchiveReports: ({ count }: { count: number }) => (count === 1 ? 'Also archive 1 sub-session' : `Also archive ${count} sub-sessions`),
         someNotArchivedTitle: ({ count }: { count: number }) => (count === 1 ? '1 sub-session was not archived' : `${count} sub-sessions were not archived`),
+    },
+    step: {
+        drivenBy: "Driven by a workflow",
+        partOf: ({ run }: { run: string }) => `Part of ${run}`,
+        checkedByWorkflow: "The workflow checks this step's result, so triggers, goals and second opinions don't run in this session.",
+        nothingStarted: "Nothing started from this step.",
+    },
+    invite: {
+        orAskFor: "Or ask for",
     },
     peek: {
         reportsTo: ({ lead }: { lead: string }) => `Reports to ${lead}`,

@@ -15325,6 +15325,10 @@ settingsSession: {
             notRecordedWhatIfReason: "Deine Nutzung auf einem anderen Tarif nachzuspielen, wird nicht unterstützt.",
             notRecordedStrategy: "Setups mit mehreren Konten",
             notRecordedStrategyReason: "Der Vergleich von Setups braucht dieselbe Wiedergabe, daher wird keiner gezeigt.",
+            earlierCurve: ({ time }: { time: string | number }) => `Früheres Zeitfenster, Ende ${time}`,
+            earlierShown: ({ count }: { count: string | number }) => `Graue Linien: ${count} frühere vergleichbare Zeitfenster auf derselben Spanne`,
+            earlierNone: ({ reason }: { reason: string | number }) => `Kein früheres Zeitfenster lässt sich daneben zeigen: ${reason}`,
+            earlierSingleReading: "nur ein Messwert",
           },
           work: {
       // usage-board:work

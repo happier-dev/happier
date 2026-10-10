@@ -48,8 +48,8 @@ export function pluralRu(count: number, one: string, few: string, many: string):
 
 
 export const en = {
-    standardOnlyTitle: 'Standard connection only',
-    standardOnlySubtitle: 'New connections from this device use standard routes. Transfers in progress finish first.',
+    standardOnlyTitle: 'Connect through Home addresses',
+    standardOnlySubtitle: 'On this device, use each Home’s address rather than a peer-to-peer connection.',
     defaultHomeLabel: 'Personal Home',
     homeTitle: 'Home',
     canonicalAddress: 'Home address',

@@ -15331,6 +15331,10 @@ settingsSession: {
             notRecordedWhatIfReason: "Reproduzir seu uso em um plano diferente não é compatível.",
             notRecordedStrategy: "Configurações com várias contas",
             notRecordedStrategyReason: "Comparar configurações exige a mesma reprodução, então nenhuma é mostrada.",
+            earlierCurve: ({ time }: { time: string | number }) => `Janela anterior, terminou ${time}`,
+            earlierShown: ({ count }: { count: string | number }) => `Linhas cinza: ${count} janelas anteriores comparáveis no mesmo período`,
+            earlierNone: ({ reason }: { reason: string | number }) => `Nenhuma janela anterior pode ser mostrada ao lado: ${reason}`,
+            earlierSingleReading: "apenas uma leitura",
           },
           work: {
       // usage-board:work

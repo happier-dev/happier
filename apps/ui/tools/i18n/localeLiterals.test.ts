@@ -3,17 +3,50 @@ import { join } from 'node:path';
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
+
+import { SUPPORTED_LANGUAGE_CODES } from '../../sources/text/_all';
 
 import { applyTranslations, extractLiterals, findRoundTripMismatches, isDoNotTranslate } from './localeLiterals';
 import { addLocaleBlock, findSatelliteReferences, replaceLocaleBlock } from './satelliteModules';
 
 const TRANSLATIONS_DIR = join(__dirname, '../../sources/text/translations');
 
-/** Locale files AND the shared modules — both get rewritten when a language is added. */
-function translationSources(): string[] {
-    return readdirSync(TRANSLATIONS_DIR)
-        .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+/** Include locale-owned payloads as well as shared modules and their tooling aggregates. */
+function translationSources(directory = TRANSLATIONS_DIR): string[] {
+    return readdirSync(directory, { withFileTypes: true })
+        .flatMap((entry) => entry.isDirectory()
+            ? translationSources(join(directory, entry.name)).map((name) => join(entry.name, name))
+            : entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts') ? [entry.name] : [])
         .sort();
+}
+
+/** Independent source witness: delegates/types have no runtime literal initializer to lose. */
+function firstInlinePayloadText(source: string, fileName: string): string | undefined {
+    const module = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+    let text: string | undefined;
+    const visit = (node: ts.Node): void => {
+        if (text !== undefined) return;
+        if (ts.isTypeNode(node) || ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
+        if ((ts.isPropertyAssignment(node) || ts.isVariableDeclaration(node))
+            && node.initializer && ts.isStringLiteralLike(node.initializer)) {
+            text = node.initializer.text;
+            return;
+        }
+        if (ts.isTemplateExpression(node)) {
+            text = node.head.text;
+            return;
+        }
+        ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(module, visit);
+    return text;
+}
+
+function containsTranslatableCopy(value: unknown): boolean {
+    if (typeof value === 'string') return !isDoNotTranslate(value);
+    if (!value || typeof value !== 'object') return false;
+    return Object.values(value).some(containsTranslatableCopy);
 }
 
 describe('locale literal extraction', () => {
@@ -31,8 +64,20 @@ describe('locale literal extraction', () => {
 
         const source = readFileSync(join(TRANSLATIONS_DIR, fileName), 'utf8');
         const literals = extractLiterals(source, fileName);
+        const inlineText = firstInlinePayloadText(source, fileName);
+        if (inlineText !== undefined) {
+            expect(literals.map((literal) => literal.text), fileName).toContain(inlineText);
+        }
 
-        expect(literals.length).toBeGreaterThan(0);
+        // Canonical locale entries own copy. Non-English feature entries own extracted copy;
+        // the English feature entry delegates to shared English payloads. Shared files can also
+        // be copy-parameter factories or types, so their rewrite invariant does not imply copy.
+        const ownsCanonicalLocalePayload = SUPPORTED_LANGUAGE_CODES.some((locale) =>
+            fileName === (locale === 'zh-Hant' ? 'zh-HantOverrides.ts' : `${locale}.ts`)
+            || (locale !== 'en' && fileName === join('features', `${locale}.ts`)));
+        if (ownsCanonicalLocalePayload) {
+            expect(literals.length).toBeGreaterThan(0);
+        }
         expect(findRoundTripMismatches(source, literals)).toEqual([]);
         // The property that matters for an incremental edit: an untranslated literal is not
         // rewritten at all, so its bytes — including any redundant escaping — survive exactly.
@@ -109,7 +154,7 @@ describe('satellite translation modules', () => {
         expect(references.some((reference) => reference.path.includes('.'))).toBe(true);
     });
 
-    it('every module a locale delegates to also carries that locale', () => {
+    it('every module a locale delegates to also carries that locale', async () => {
         const source = readFileSync(join(TRANSLATIONS_DIR, 'fr.ts'), 'utf8');
         const references = findSatelliteReferences(source, 'fr', 'fr.ts');
         expect(references.length).toBeGreaterThan(0);
@@ -117,13 +162,17 @@ describe('satellite translation modules', () => {
         for (const reference of references) {
             const modulePath = join(TRANSLATIONS_DIR, `${reference.module}.ts`);
             // Extension consts declared inside the locale file itself have no module of their own.
-            let moduleSource: string;
             try {
-                moduleSource = readFileSync(modulePath, 'utf8');
+                readFileSync(modulePath, 'utf8');
             } catch {
                 continue;
             }
-            expect(`${reference.module}: ${/\bfr\s*:/.test(moduleSource)}`).toBe(`${reference.module}: true`);
+            const translations: Record<string, unknown> = await import(modulePath);
+            expect(translations[reference.module], reference.module).toHaveProperty('fr');
+            const bundle = translations[reference.module];
+            expect(containsTranslatableCopy(
+                bundle && typeof bundle === 'object' && 'fr' in bundle ? bundle.fr : undefined,
+            ), reference.module).toBe(true);
         }
     });
 
