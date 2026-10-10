@@ -123,10 +123,18 @@ test('preview and stable releases advance a pre-promotion issue snapshot only af
   assert.equal(snapshot['continue-on-error'], true);
   assert.ok(!workflow.jobs.plan.needs.includes('snapshot_release_issues'));
 
-  assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_verify']);
+  assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_verify', 'release_status']);
   assert.equal(advance['continue-on-error'], true);
   assert.equal(advance.permissions.issues, 'write');
   assert.match(String(advance.if), /needs\.release_verify\.result == 'success'/);
+  assert.match(String(advance.if), /always\(\)/, 'resumed releases with skipped transitive jobs still evaluate verified advancement');
+  assert.match(String(advance.if), /needs\.release_status\.result == 'success'/, 'partial channel releases cannot advance availability');
+  assert.ok(!workflow.jobs.release_status.needs.includes('advance_release_issues'), 'terminal status must precede optional issue reconciliation');
+  assert.equal(workflow.on.workflow_call.outputs.release_complete.value, '${{ jobs.release_status.outputs.release_complete }}');
+  assert.equal(workflow.jobs.release_status.outputs.release_complete, '${{ steps.admit.outputs.release_complete }}');
+  const terminalAdmission = workflow.jobs.release_status.steps.find((step) => step.id === 'admit');
+  assert.match(String(terminalAdmission?.run), /status\.terminal !== "complete" && status\.terminal !== "published"/);
+  assert.match(String(terminalAdmission?.run), /release_complete=true/);
   assert.match(JSON.stringify(advance.steps), /reconcile-issue-stage\.mjs advance/);
   assert.match(JSON.stringify(advance.steps), /stage:source/);
   assert.match(JSON.stringify(advance.steps), /stage:dev/);

@@ -3,6 +3,10 @@ run-name: ${{ inputs.hmaint_operation_id != '' && format('RELEASE — Publish ({
 
 on:
   workflow_call:
+    outputs:
+      release_complete:
+        description: The channel's canonical terminal release status is complete or published
+        value: ${{ jobs.release_status.outputs.release_complete }}
     inputs:
       validation_profile:
         required: true
@@ -279,7 +283,6 @@ jobs:
       source_sha: ${{ steps.source.outputs.authorized_sha }}
       source_ref: ${{ steps.dispatch.outputs.source_ref }}
       base_ref: ${{ steps.dispatch.outputs.base_ref }}
-      base_sha: ${{ steps.issue_base.outputs.authorized_sha }}
       validation_profile: ${{ steps.profile.outputs.profile }}
       checks_profile: ${{ steps.profile.outputs.checks_profile }}
     steps:
@@ -344,14 +347,6 @@ jobs:
             args+=(--authorized-sha "$AUTHORIZED_PROMOTION_SOURCE_SHA")
           fi
           node scripts/pipeline/github/resolve-authorized-release-source.mjs "${args[@]}"
-      - name: Bind issue snapshot base before promotion
-        id: issue_base
-        env:
-          BASE_REF: ${{ steps.dispatch.outputs.base_ref }}
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
-            --source-ref "refs/heads/$BASE_REF" --remote origin --github-output "$GITHUB_OUTPUT"
       - name: Record explicit maintainer overrides
         if: ${{ inputs.waive_ci == true || inputs.waive_validation_suites != '' }}
         env:
@@ -410,7 +405,6 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GITHUB_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ needs.release_preflight.outputs.base_sha }}
           CANDIDATE_SHA: ${{ needs.release_preflight.outputs.source_sha }}
           INCLUDE_DEVELOPMENT_STAGES: ${{ inputs.environment == 'preview' || (inputs.environment == 'production' && (inputs.confirm == 'release dev to main' || inputs.confirm == 'reset main from dev')) }}
           INCLUDE_PREVIEW_STAGE: ${{ inputs.environment == 'production' && (inputs.confirm == 'release preview to main' || inputs.confirm == 'reset main from preview') }}
@@ -427,11 +421,11 @@ jobs:
           dev_issues_json="[]"
           preview_issues_json="[]"
           if [ "$INCLUDE_DEVELOPMENT_STAGES" = "true" ]; then
-            source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:source" --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA")"
-            dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:dev" --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA")"
+            source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:source" --candidate-sha "$CANDIDATE_SHA")"
+            dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:dev" --candidate-sha "$CANDIDATE_SHA")"
           fi
           if [ "$INCLUDE_PREVIEW_STAGE" = "true" ]; then
-            preview_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:preview" --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA")"
+            preview_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:preview" --candidate-sha "$CANDIDATE_SHA")"
           fi
           echo "source_issues_json=$source_issues_json" >> "$GITHUB_OUTPUT"
           echo "dev_issues_json=$dev_issues_json" >> "$GITHUB_OUTPUT"
@@ -1572,8 +1566,8 @@ jobs:
 
   advance_release_issues:
     name: Advance issues to the released channel
-    if: ${{ inputs.combined_preview_production != true && needs.release_verify.result == 'success' && needs.snapshot_release_issues.outputs.eligible == 'true' }}
-    needs: [snapshot_release_issues, release_verify]
+    if: ${{ always() && inputs.combined_preview_production != true && needs.release_verify.result == 'success' && needs.release_status.result == 'success' && needs.snapshot_release_issues.outputs.eligible == 'true' }}
+    needs: [snapshot_release_issues, release_verify, release_status]
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -1623,11 +1617,13 @@ jobs:
   release_status:
     name: Project terminal release status
     if: ${{ always() && inputs.dry_run != true }}
-    needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, verify_resume_candidates, promote_cli_binaries, promote_hstack_binaries, promote_server_runtime, promote_ui_web, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_docker, publish_npm, release_verify, advance_release_issues, sync_dev]
+    needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, verify_resume_candidates, promote_cli_binaries, promote_hstack_binaries, promote_server_runtime, promote_ui_web, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_docker, publish_npm, release_verify, sync_dev]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+    outputs:
+      release_complete: ${{ steps.admit.outputs.release_complete }}
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1718,6 +1714,7 @@ jobs:
           if-no-files-found: error
           overwrite: true
       - name: Admit complete release status
+        id: admit
         if: ${{ always() }}
         run: |
           set -euo pipefail
@@ -1728,6 +1725,7 @@ jobs:
               throw new Error(`Release status is not complete: ${String(status.terminal)}`);
             }
           '
+          echo 'release_complete=true' >> "$GITHUB_OUTPUT"
         env:
           STATUS_PATH: ${{ runner.temp }}/release-status.json
   sync_dev:

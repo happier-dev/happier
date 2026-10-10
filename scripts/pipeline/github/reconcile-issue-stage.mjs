@@ -74,11 +74,12 @@ async function requestJson({ fetchImpl, url, token, method = 'GET', body }) {
   return { value: await response.json(), response };
 }
 
-async function listPaginated({ fetchImpl, initialUrl, token, collectionKey }) {
+async function listPaginated({ fetchImpl, initialUrl, token, collectionKey, validate }) {
   const values = [];
   let url = initialUrl;
   while (url) {
     const { value, response } = await requestJson({ fetchImpl, url, token });
+    validate?.(value);
     const collection = collectionKey ? value?.[collectionKey] : value;
     if (!Array.isArray(collection)) throw new Error(`GitHub API returned a non-array collection for ${url}.`);
     values.push(...collection);
@@ -87,20 +88,32 @@ async function listPaginated({ fetchImpl, initialUrl, token, collectionKey }) {
   return values;
 }
 
+function referencedIssueNumbers(commits, repository) {
+  const referenced = new Set();
+  for (const commit of commits) {
+    if (typeof commit?.commit?.message !== 'string') throw new Error('Candidate ancestry returned a commit without its message.');
+    for (const line of commit.commit.message.split(/\r?\n/)) {
+      if (!/^\s*(?:refs?|fix(?:es|ed)?|clos(?:e[sd]?)|resolv(?:e[sd]?))\b:?\s+/i.test(line)) continue;
+      for (const match of line.matchAll(/(?:(?:https:\/\/github\.com\/)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\/issues\/|#)|#)([1-9][0-9]*)/g)) {
+        if (!match[1] || match[1].toLowerCase() === repository.toLowerCase()) referenced.add(Number(match[2]));
+      }
+    }
+  }
+  return referenced;
+}
+
 export async function snapshotOpenIssueNumbers({
   repository,
   fromStage,
   token,
   fetchImpl = fetch,
   apiBaseUrl = DEFAULT_API_BASE_URL,
-  baseSha = '',
   candidateSha = '',
 }) {
   assertRepository(repository);
   assertStage(fromStage);
-  const hasRange = Boolean(baseSha || candidateSha);
-  if (hasRange && (!/^[a-f0-9]{40}$/.test(baseSha) || !/^[a-f0-9]{40}$/.test(candidateSha))) {
-    throw new Error('Candidate issue range requires both base and candidate full commit SHAs.');
+  if (candidateSha && !/^[a-f0-9]{40}$/.test(candidateSha)) {
+    throw new Error('Candidate issue snapshot requires a full commit SHA.');
   }
   const query = new URLSearchParams({
     state: 'open',
@@ -115,24 +128,37 @@ export async function snapshotOpenIssueNumbers({
   const issueNumbers = values
     .filter((issue) => issue && typeof issue.number === 'number' && !issue.pull_request)
     .map((issue) => issue.number);
-  // Current-dev nightlies retain their whole-queue contract. Normal releases
-  // bind both endpoints before promotion so later corrections stay queued.
-  if (!hasRange || issueNumbers.length === 0) return issueNumbers;
-  const commits = await listPaginated({
+  // Current-dev nightlies retain their whole-queue contract. Pinned releases
+  // need cumulative candidate ancestry: the target branch may already contain
+  // a correction, including after a partially completed release is resumed.
+  if (!candidateSha || issueNumbers.length === 0) return issueNumbers;
+  // Bind source after reading the queue. A historical partial reference cannot
+  // stand in for newer correction work on the queue's canonical source branch.
+  const { value: dev } = await requestJson({
+    fetchImpl, url: `${apiBaseUrl}/repos/${repository}/commits/dev`, token,
+  });
+  if (!/^[a-f0-9]{40}$/.test(dev?.sha)) throw new Error('Canonical dev source returned an invalid commit SHA.');
+  const newerReferences = dev.sha === candidateSha ? new Set() : referencedIssueNumbers(await listPaginated({
     fetchImpl,
-    initialUrl: `${apiBaseUrl}/repos/${repository}/compare/${baseSha}...${candidateSha}?per_page=100`,
+    initialUrl: `${apiBaseUrl}/repos/${repository}/compare/${candidateSha}...${dev.sha}?per_page=100`,
     token,
     collectionKey: 'commits',
-  });
-  const referenced = new Set();
-  for (const commit of commits) {
-    if (typeof commit?.commit?.message !== 'string') throw new Error('Candidate range returned a commit without its message.');
-    for (const line of commit.commit.message.split(/\r?\n/)) {
-      if (!/^\s*(?:refs?|fix(?:es|ed)?|clos(?:e[sd]?)|resolv(?:e[sd]?))\b:?\s+/i.test(line)) continue;
-      for (const match of line.matchAll(/(?:(?:https:\/\/github\.com\/)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\/issues\/|#)|#)([1-9][0-9]*)/g)) {
-        if (!match[1] || match[1].toLowerCase() === repository.toLowerCase()) referenced.add(Number(match[2]));
+    validate: (comparison) => {
+      if (comparison?.status !== 'ahead' && comparison?.status !== 'identical') {
+        throw new Error('Pinned candidate is not integrated in canonical dev ancestry.');
       }
-    }
+    },
+  }), repository);
+  const commits = await listPaginated({
+    fetchImpl,
+    initialUrl: `${apiBaseUrl}/repos/${repository}/commits?sha=${candidateSha}&per_page=100`,
+    token,
+  });
+  const referenced = referencedIssueNumbers(commits, repository);
+  for (const number of newerReferences) referenced.delete(number);
+  const unproven = issueNumbers.filter((number) => !referenced.has(number));
+  if (unproven.length > 0) {
+    console.error(`[issue-stage] Keeping ${fromStage} issues queued without current correction proof in candidate ${candidateSha} (missing candidate reference or newer dev work): ${unproven.map((number) => `#${number}`).join(', ')}. Verify their complete correction provenance before advancing them.`);
   }
   return issueNumbers.filter((number) => referenced.has(number));
 }
@@ -239,7 +265,6 @@ async function main() {
       'to-stage': { type: 'string' },
       'issues-json': { type: 'string', default: '[]' },
       'github-output': { type: 'string', default: '' },
-      'base-sha': { type: 'string', default: '' },
       'candidate-sha': { type: 'string', default: '' },
     },
   });
@@ -251,7 +276,6 @@ async function main() {
   if (operation === 'snapshot') {
     const issues = await snapshotOpenIssueNumbers({
       repository, fromStage, token,
-      baseSha: String(values['base-sha'] ?? '').trim(),
       candidateSha: String(values['candidate-sha'] ?? '').trim(),
     });
     const issuesJson = JSON.stringify(issues);

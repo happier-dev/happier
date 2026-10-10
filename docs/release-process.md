@@ -223,10 +223,13 @@ opts in; preview/main destinations remain exact. Post-promotion candidate
 binding and immutable publication keep their exact-equality checks.
 
 Normal release issue snapshots intersect the open stage queue with correction
-references in the exact pre-promotion target-base-to-candidate range. Use a
+references in the exact candidate's cumulative commit ancestry. Use a
 `Refs`, `Fixes`, `Closes` or `Resolves` line naming the issue in correction
-commits; missing references remain queued for later reconciliation. The combined
-release uses the main-to-candidate range once for both channels. This follow-up
+commits identifying the complete correction; older references remain eligible
+after branch promotion. Missing references and issues with newer reference-bearing
+work on canonical dev stay queued with an explicit provenance diagnostic.
+Candidates outside canonical dev ancestry fail closed. The combined
+release snapshots source/dev/preview eligibility once for both channels. This follow-up
 must be integrated into the target workflow controls and the private conductor
 before pinned new releases are available.
 
@@ -260,7 +263,7 @@ Notes:
 When the same approved source must ship to preview and production without a
 second operator cycle, use the private conductor target
 `preview-and-production`. The target dispatches
-`release-preview-and-production.yml`, which snapshots source/dev issue
+`release-preview-and-production.yml`, which snapshots source/dev/preview issue
 eligibility once and invokes the canonical `release.yml` for both channels in
 parallel.
 
@@ -281,8 +284,11 @@ the producer's artifact ID. Android store retry downloads historical collided
 AAB/APK artifacts separately and admits exactly one AAB with its adjacent
 candidate identity. OTA and release-note artifacts also include the environment.
 Same-channel releases still serialize, while the two channel calls use separate
-non-cancelling concurrency groups. Issues advance directly
-to `stage:stable` only after both channel workflows succeed.
+non-cancelling concurrency groups. Issue stages follow the highest channel with
+successful post-promotion verification and canonical terminal completion:
+production completion advances eligible issues to `stage:stable`, while preview
+completion alone advances source/dev issues to `stage:preview`. A failed sibling
+channel does not block verified availability in the completed channel.
 
 Use GitHub's failed-job rerun when workflow control is unchanged. If control
 changes, resume the combined operation from its prior run; each channel reads
@@ -351,7 +357,7 @@ immutable candidate bytes are unchanged. A candidate-reachable change requires
 a new prepared release. Never dispatch the privileged release workflow
 directly as a substitute for the conductor.
 
-Issue availability is tracked by the mutually exclusive `stage:source`, `stage:dev`, `stage:preview`, and `stage:stable` labels documented in `docs/issue-triage.md`. Ordinary current-`dev` nightlies perform `source → dev`; preview, production, and combined releases perform the transitions above. Failed and dry-run releases move nothing. The reconciler re-reads each snapshotted issue, preserves unrelated labels, and skips closed or manually restaged issues. It never comments on or closes an issue.
+Issue availability is tracked by the mutually exclusive `stage:source`, `stage:dev`, `stage:preview`, and `stage:stable` labels documented in `docs/issue-triage.md`. Ordinary current-`dev` nightlies perform `source → dev`; preview, production, and combined releases perform the transitions above. Failed channels and dry-run releases move nothing. Standalone surface retries do not establish channel completion; use the canonical release resume to verify the complete channel before stage advancement. The reconciler re-reads each snapshotted issue, preserves unrelated labels, and skips closed or manually restaged issues. It never comments on or closes an issue.
 
 Deploy branches typically include `deploy/<env>/ui`, `deploy/<env>/server`, `deploy/<env>/website`, and `deploy/<env>/docs` (depending on what changed and which options you select).
 

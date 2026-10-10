@@ -44,11 +44,30 @@ test('combined preview and production release reuses the canonical channel workf
 
   const advance = combined.jobs.advance_release_issues;
   assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_preview', 'release_production']);
-  assert.match(String(advance.if), /needs\.release_preview\.result == 'success'/u);
-  assert.match(String(advance.if), /needs\.release_production\.result == 'success'/u);
-  const reconcile = advance.steps.find((step) => step.name === 'Advance the initially eligible issues directly to stable')?.run ?? '';
-  assert.match(reconcile, /--from-stage "stage:source"[\s\S]*--to-stage "stage:stable"/u);
-  assert.match(reconcile, /--from-stage "stage:dev"[\s\S]*--to-stage "stage:stable"/u);
+  assert.match(String(advance.if), /always\(\)/u);
+  assert.match(String(advance.if), /needs\.release_preview\.outputs\.release_complete == 'true' \|\| needs\.release_production\.outputs\.release_complete == 'true'/u);
+  assert.doesNotMatch(String(advance.if), /needs\.release_(?:preview|production)\.result/u, 'availability follows verified terminal channel completion even when the other channel fails');
+  const reconcile = advance.steps.find((step) => step.env?.TO_STAGE);
+  assert.equal(reconcile.env.TO_STAGE, "${{ needs.release_production.outputs.release_complete == 'true' && 'stage:stable' || 'stage:preview' }}");
+  const evaluate = (expression, needs, dryRun = false) => Function('needs', 'inputs', 'always',
+    `return ${expression.slice(3, -2).trim()};`)(needs, { dry_run: dryRun }, () => true);
+  for (const [previewComplete, productionComplete, expectedStage] of [
+    ['false', 'false', null], ['true', 'false', 'stage:preview'],
+    ['false', 'true', 'stage:stable'], ['true', 'true', 'stage:stable'],
+  ]) {
+    const needs = {
+      snapshot_release_issues: { outputs: { eligible: 'true' } },
+      release_preview: { result: previewComplete === 'true' ? 'success' : 'failure', outputs: { release_complete: previewComplete } },
+      release_production: { result: productionComplete === 'true' ? 'success' : 'failure', outputs: { release_complete: productionComplete } },
+    };
+    assert.equal(evaluate(advance.if, needs), expectedStage !== null);
+    assert.equal(evaluate(advance.if, needs, true), false, 'dry runs never advance even when channel evidence is complete');
+    if (expectedStage) assert.equal(evaluate(reconcile.env.TO_STAGE, needs), expectedStage);
+  }
+  assert.match(reconcile.run, /--from-stage "stage:source"[\s\S]*--to-stage "\$TO_STAGE"/u);
+  assert.match(reconcile.run, /--from-stage "stage:dev"[\s\S]*--to-stage "\$TO_STAGE"/u);
+  assert.match(reconcile.run, /if \[ "\$TO_STAGE" = "stage:stable" \]; then[\s\S]*--from-stage "stage:preview"[\s\S]*--to-stage "\$TO_STAGE"/u);
+  assert.ok(combined.jobs.snapshot_release_issues.outputs.preview_issues_json, 'a later recovery must include already-preview issues');
 
   for (const forbiddenJob of ['plan', 'publish_cli_binaries', 'publish_server_runtime', 'deploy_ui']) {
     assert.equal(combined.jobs[forbiddenJob], undefined, `combined workflow must not copy the canonical ${forbiddenJob} job`);

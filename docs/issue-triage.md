@@ -78,7 +78,7 @@ Choose `needs:*` separately by the next substantive human action. To retain `nee
 
 Preserve an existing higher verified `stage:*` instead of downgrading it. These are disposition rules, not new mutation authority: apply the exact or bounded standing authorization rules below and in `.agents/skills/happier-github-ops`; without authority, include the complete label proposal in the handoff.
 
-The release workflows own normal advancement. Before binding a candidate they snapshot only the open issue stages proven by the selected source topology: a current-`dev` nightly snapshots source, `dev` → `preview` snapshots source/dev, `preview` → `main` snapshots preview, direct `dev` → `main` snapshots source/dev, and the coordinated `dev` → preview + main path snapshots source/dev once. After the existing post-promotion verification succeeds, they re-read each snapshotted issue and advance only issues that remain open at the expected earlier stage. The coordinated path advances its snapshot directly to stable only after both channel releases succeed:
+The release workflows own normal advancement. Before binding a candidate they snapshot only the open issue stages proven by the selected source topology: a current-`dev` nightly snapshots source, `dev` → `preview` snapshots source/dev, `preview` → `main` snapshots preview, direct `dev` → `main` snapshots source/dev, and the coordinated `dev` → preview + main path snapshots source/dev/preview once. After post-promotion verification and canonical terminal channel completion succeed, they re-read each snapshotted issue and advance only issues that remain open at the expected earlier stage. The coordinated path records the highest completed channel: production completion advances to stable; preview completion alone advances source/dev issues to preview. Failure of the other channel does not erase verified availability:
 
 ```text
 ordinary current-dev nightly: stage:source  -> stage:dev
@@ -86,16 +86,21 @@ preview release:             stage:dev     -> stage:preview
 stable release:              stage:preview -> stage:stable
 ```
 
-Issues labeled after a snapshot wait for the next matching release. Failed or dry-run releases move nothing. A nightly resume or a manually selected non-`dev` source also moves nothing because its older candidate cannot safely represent the current source queue. Reconciliation is idempotent, preserves unrelated labels, tolerates an add-before-remove partial retry, and skips closed issues or issues whose stage was manually changed. It never comments, closes, reopens, assigns, or edits other fields.
+Issues labeled after a snapshot wait for the next matching release. Failed channels and dry-run releases move nothing. Standalone desktop or store retries do not establish canonical channel completion and cannot advance stages. A nightly resume or a manually selected non-`dev` source also moves nothing because its older candidate cannot safely represent the current source queue. Reconciliation is idempotent, preserves unrelated labels, tolerates an add-before-remove partial retry, and skips closed issues or issues whose stage was manually changed. It never comments, closes, reopens, assigns, or edits other fields.
 
 The pinned-candidate release-control follow-up bounds normal release snapshots
-to the exact pre-promotion target-base-to-candidate commit range, intersected
+to the exact candidate's cumulative commit ancestry, intersected
 with the still-open stage queue. Only issues named in a correction commit's
 `Refs`, `Fixes`, `Closes` or `Resolves` line qualify; qualified references must
-name this repository. Later dev commits and issues without a range reference
-remain queued. Preview uses the preview base, production the main base, and
-the combined release captures main-to-candidate once before either channel
-promotes. Current-dev nightlies retain their existing whole-queue contract.
+name this repository and identify the current complete correction. References older than the target branch tip still qualify,
+including when a partial release already promoted that branch. Later dev commits
+and issues without a candidate reference remain queued. Any issue referenced by
+newer work between the candidate and the bound current dev source also stays
+queued: an older partial reference cannot prove the complete correction.
+Candidates outside canonical dev ancestry fail closed. Missing provenance is
+reported explicitly. A manually applied stage label does not replace candidate
+inclusion evidence. The combined release captures eligibility once before either
+channel promotes. Current-dev nightlies retain their existing whole-queue contract.
 This follow-up is not available until its workflow controls are integrated.
 
 This also covers a channel bypass: a preview release can move a still-`stage:source` issue directly to `stage:preview`, and an authorized direct `dev` → `main` release can move any snapshotted earlier-stage issue to `stage:stable`. Higher-channel availability subsumes the skipped lower channel; it does not require a synthetic lower-channel release.

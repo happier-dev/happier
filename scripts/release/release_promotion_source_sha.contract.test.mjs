@@ -259,18 +259,18 @@ test('new combined release plans stay at an explicitly selected candidate after 
   assert.equal(plan(['--source-sha', candidate]).authorizedPromotionSourceSha, candidate);
 });
 
-test('both release snapshot paths bind issue eligibility to candidate endpoints before promotion', async () => {
+test('both release snapshot paths bind issue eligibility to the cumulative candidate before promotion', async () => {
   const single = parse(await readFile(resolve(repoRoot, '.github/workflows/release.yml'), 'utf8'));
   const combined = parse(await readFile(resolve(repoRoot, '.github/workflows/release-preview-and-production.yml'), 'utf8'));
   const snapshot = single.jobs.snapshot_release_issues;
   assert.ok(snapshot.needs.includes('release_preflight'));
   const step = snapshot.steps.find((item) => item.id === 'snapshot');
   assert.equal(step.env.CANDIDATE_SHA, '${{ needs.release_preflight.outputs.source_sha }}');
-  assert.equal(step.env.BASE_SHA, '${{ needs.release_preflight.outputs.base_sha }}');
+  assert.equal(step.env.BASE_SHA, undefined);
   for (const job of [snapshot, combined.jobs.snapshot_release_issues]) {
     const run = job.steps.find((item) => item.id === 'snapshot').run;
     for (const line of run.split('\n').filter((item) => item.includes('reconcile-issue-stage.mjs snapshot'))) {
-      assert.match(line, /--base-sha "\$BASE_SHA"/);
+      assert.doesNotMatch(line, /--base-sha/);
       assert.match(line, /--candidate-sha "\$CANDIDATE_SHA"/);
     }
   }
