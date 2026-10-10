@@ -14,7 +14,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { realizeWorkspaceCheckoutWithScmWorkspaceSource } from '@/scm/workspace/workspaceCheckoutOperations';
-import { resolveSessionDirectoryInCheckout } from '@/session/creation/prepareSessionCreationTarget';
+import { DirectoryInCheckoutError, resolveDirectoryInCheckout } from '@/workspaces/activation/resolveDirectoryInCheckout';
 import {
   canonicalAbsolutePathsEqual,
   resolveCanonicalAbsolutePath,
@@ -255,12 +255,19 @@ async function realizeWorktree(intent: WorkflowWorkspaceCreationIntent): Promise
     checkoutCreation: intent,
   });
   if (!realized) return null;
-  return {
-    directory: await resolveSessionDirectoryInCheckout({
+  let directory: string;
+  try {
+    directory = await resolveDirectoryInCheckout({
       sourceDirectory: intent.sourceDirectory,
       sourceRootPath: realized.sourceRootPath,
       checkoutRootPath: realized.realization.targetPath,
-    }),
+    });
+  } catch (error) {
+    if (error instanceof DirectoryInCheckoutError) return null;
+    throw error;
+  }
+  return {
+    directory,
     checkoutRootPath: realized.realization.targetPath,
     branchName: realized.realization.branchName,
   };
@@ -374,11 +381,11 @@ export async function resolveWorkflowWorkspace(input: Readonly<{
   const intent = input.recorded?.creationIntent ?? (() => null)();
   let creationIntent = intent;
   if (!creationIntent) {
-    const baseRef = selection.source.kind === 'original'
+    const baseRef = selection.baseRef ?? (selection.source.kind === 'original'
       ? input.originalCommittedRevision ?? null
-      : await (input.deps.inspectCommittedRevision ?? inspectCommittedRevision)(sourceWorkspace.checkoutRootPath);
+      : await (input.deps.inspectCommittedRevision ?? inspectCommittedRevision)(sourceWorkspace.checkoutRootPath));
     if (!baseRef) return { ok: false, code: 'committed_revision_unavailable' };
-    creationIntent = { kind: 'git_worktree', sourceDirectory: sourceWorkspace.directory, baseRef, displayName: creationDisplayName(input.runId, input.logicalInvocationRecordId, input.creationSlot), branchMode: 'new' };
+    creationIntent = { kind: 'git_worktree', sourceDirectory: sourceWorkspace.directory, baseRef, displayName: selection.displayName ?? creationDisplayName(input.runId, input.logicalInvocationRecordId, input.creationSlot), branchMode: 'new' };
     await input.deps.persistCreationIntent?.(creationIntent);
   }
   const realized = await (input.deps.realizeWorktree ?? realizeWorktree)(creationIntent);

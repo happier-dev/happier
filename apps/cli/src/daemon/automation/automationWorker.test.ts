@@ -495,10 +495,10 @@ describe('automationWorker', () => {
       token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
       machineId: 'machine-1',
-      env: {
+      env: { NODE_ENV: 'test',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '5000',
-      } as NodeJS.ProcessEnv,
+      },
     });
 
     await waitForCondition(() => mockGet.mock.calls.length >= 1);
@@ -533,10 +533,10 @@ describe('automationWorker', () => {
       credentials: { token: 'token-1', encryption: null },
       machineId: 'machine-1',
       recoverWorkflowRuns,
-      env: {
+      env: { NODE_ENV: 'test',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '5000',
-      } as NodeJS.ProcessEnv,
+      },
     });
 
     try {
@@ -585,10 +585,10 @@ describe('automationWorker', () => {
         token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        env: {
+        env: { NODE_ENV: 'test',
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
-        } as NodeJS.ProcessEnv,
+        },
       });
 
       await worker.refreshAssignments();
@@ -627,10 +627,10 @@ describe('automationWorker', () => {
       token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
       machineId: 'machine-1',
-      env: {
+      env: { NODE_ENV: 'test',
         HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
         HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
-      } as NodeJS.ProcessEnv,
+      },
     });
 
     await worker.refreshAssignments();
@@ -673,10 +673,10 @@ describe('automationWorker', () => {
         token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        env: {
+        env: { NODE_ENV: 'test',
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '5000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
-        } as NodeJS.ProcessEnv,
+        },
       });
 
       await settleRequestDispatch();
@@ -722,10 +722,10 @@ describe('automationWorker', () => {
         token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        env: {
+        env: { NODE_ENV: 'test',
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
-        } as NodeJS.ProcessEnv,
+        },
       });
 
       await vi.advanceTimersByTimeAsync(0);
@@ -761,10 +761,10 @@ describe('automationWorker', () => {
         token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        env: {
+        env: { NODE_ENV: 'test',
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
-        } as NodeJS.ProcessEnv,
+        },
       });
 
       await vi.advanceTimersByTimeAsync(0);
@@ -846,11 +846,11 @@ describe('automationWorker', () => {
         token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        env: {
+        env: { NODE_ENV: 'test',
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
           HAPPIER_AUTOMATION_LEASE_MS: '30000',
-        } as NodeJS.ProcessEnv,
+        },
       });
 
       await settleRequestDispatch();
@@ -958,11 +958,11 @@ describe('automationWorker', () => {
         token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        env: {
+        env: { NODE_ENV: 'test',
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
           HAPPIER_AUTOMATION_LEASE_MS: '30000',
-        } as NodeJS.ProcessEnv,
+        },
       });
 
       await worker.refreshAssignments();
@@ -1008,10 +1008,10 @@ describe('automationWorker', () => {
         token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        env: {
+        env: { NODE_ENV: 'test',
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
-        } as NodeJS.ProcessEnv,
+        },
       });
 
       // Allow any initial background refresh to complete.
@@ -1075,11 +1075,11 @@ describe('automationWorker', () => {
         token: 'token-1',
       credentials: { token: 'token-1', encryption: null },
         machineId: 'machine-1',
-        env: {
+        env: { NODE_ENV: 'test',
           HAPPIER_AUTOMATION_ASSIGNMENT_REFRESH_MS: '600000',
           HAPPIER_AUTOMATION_CLAIM_POLL_MS: '1000',
           HAPPIER_AUTOMATION_LEASE_MS: '30000',
-        } as NodeJS.ProcessEnv,
+        },
       });
 
       await vi.advanceTimersByTimeAsync(0);

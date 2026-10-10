@@ -9,7 +9,7 @@ import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/register
 import { createScmBackendRegistry } from '@/scm/registry';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { realizeWorkspaceCheckoutWithScmWorkspaceSource } from '@/scm/workspace/workspaceCheckoutOperations';
-import { resolveSessionDirectoryInCheckout } from '@/session/creation/prepareSessionCreationTarget';
+import { resolveDirectoryInCheckout } from '@/workspaces/activation/resolveDirectoryInCheckout';
 
 import { verifyWorkflowWorkspaceCurrentness } from './resolveWorkflowWorkspace';
 
@@ -44,7 +44,7 @@ export function createGitWorkflowWorkspaceTestDependencies() {
         })
       ));
       return realized ? {
-        directory: await resolveSessionDirectoryInCheckout({
+        directory: await resolveDirectoryInCheckout({
           sourceDirectory: intent.sourceDirectory,
           sourceRootPath: realized.sourceRootPath,
           checkoutRootPath: realized.realization.targetPath,

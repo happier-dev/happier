@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { EventEmitter } from 'node:events';
+import { createSocketTransportAdapter } from '@happier-dev/sync-client';
+import * as sessionSockets from '@/api/session/sockets';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import {
   createAccountScopedCryptoMaterialSnapshotV1,
   prepareWorkflowRunDataKeyV1,
@@ -25,6 +31,8 @@ import { createWorkflowInvocationRecoveryObserver } from './daemonRuntime';
 import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from './workflowRunStorage.testkit';
 import type { AvailableAutomationAccountEncryptionV1 } from '@/plugins/runtime/automations/automationAccountCurrentness';
 import type { SessionInputResultV1 } from '@/session/services/sendSessionMessage';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 const accountId = 'account-1';
 const machineId = 'machine-1';
@@ -32,6 +40,58 @@ const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
 const now = '2026-09-08T12:00:00.000Z';
 const availability = { pause: false, resumeBoundary: false,
     restoreWorkspace: false, cancel: false, inspectExecution: true, disabledReasons: [] };
+
+it.each(['retained', 'observed'] as const)('retains Project consent custody (%s) without granting result review or changing operation correspondence', async scenario => {
+  const rootId = '2aaf1a39-4c48-4904-83a4-7eae318dfc2c';
+  const childId = '33333333-3333-4333-8333-333333333333';
+  const pending = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
+  const input = { workspace: { serverId: 'home', workspaceId: 'workspace', machineId, rootPath: '/repo' }, phase: 'setup' };
+  const operation = { version: 1 as const, operationId: 'original-operation', revision: 1, actionId: 'projects.prepare',
+    state: 'accepted' as const, scope: { accountId, machineId }, title: 'Prepare', createdAt: 1, cancellation: 'supported' as const,
+    domainRef: { kind: 'projectCommand' as const, purpose: 'setup' as const, serverId: 'home', machineId,
+      workspaceRefId: 'workspace', cwd: '/repo' } };
+  const target = { key: 'command', serverId: 'home', machineId, operationId: operation.operationId };
+  const reviewOutput = { operation: { ...operation, revision: 2, setupReview: { ...pending,
+    kind: 'pendingApproval' as const, code: 'project_setup_consent_required' as const, reviewedEffect: { commands: [] } } } };
+  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
+    { kind: 'action', id: 'prepare', actionId: 'projects.prepare', input: {}, pauseForReview: true },
+  ] };
+  const spec = getActionSpec('projects.prepare');
+  if (!spec.outputSchema || !spec.completion) throw new Error('Project preparation requires an output completion contract');
+  const kit = createWorkflowRunStorageTestkit({ accountId, runId, machineId, now, origin: { kind: 'direct' },
+    acceptedEnvelope: directAcceptedEnvelope({ definition, materializedLeaves: [{ sourceKey: '$root', blockId: 'prepare',
+      kind: 'action', actionId: 'projects.prepare', selection: {}, executionTarget: { kind: 'session' }, authoredWorkspace: { kind: 'inherit' },
+      actionInput: input, actionContract: {
+        inputSchema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(spec.inputSchema, { target: 'draft-7' })),
+        outputSchema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(spec.outputSchema, { target: 'draft-7' })),
+        completion: freezeActionCompletionContractV1(spec.completion),
+      } }] }) });
+  const seal = (id: string, root: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+    binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: id,
+      sequence: root ? '0' : '1', parentRecordId: root ? null : rootId, memberOrdinal: '0', attempt: '0' },
+    progress: { kind: 'happier.workflow-progress.v1', blockKind: root ? 'root' : 'action',
+      invocationPath: { blockId: root ? '$root' : 'prepare', scope: [] }, attempt: '0', logicalInvocationRecordId: id,
+      ...(root ? {} : { reason: { code: pending.code }, execution: { kind: 'action' as const, actionId: 'projects.prepare',
+        actionRequestId: 'original', localInputId: 'original', input,
+        output: scenario === 'retained' ? pending : { operation }, ...(scenario === 'observed' ? { awaitedOperations: [target] } : {}) } }) },
+  }));
+  await kit.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: checkpointEnvelope(),
+    rootInvocation: { id: rootId, contentEnvelope: seal(rootId, true) } });
+  await kit.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, checkpointEnvelope: checkpointEnvelope(),
+    invocations: [{ id: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0', lifecycle: scenario === 'retained' ? 'needs_attention' : 'running', contentEnvelope: seal(childId, false) }] });
+  const writer = createWorkflowInvocationRecoveryFactWriter({ accountId, run: kit.run(), parentAttempt: 0, storage: kit,
+    encryption: { witness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, runCrypto: { mode: 'plain' } } });
+  const held = await writer.readInvocation(childId);
+  if (!held) throw new Error('fixture_invocation_unavailable');
+  if (scenario === 'retained') expect(await writer.commitObservation(held, { kind: 'completed', result: pending })).toBeNull();
+  else expect(await writer.commitObservation(held, { kind: 'unresolved', code: pending.code, setupConsentOutput: reviewOutput }))
+    .toMatchObject({ lifecycle: 'needs_attention' });
+  expect(kit.rowById(childId)?.index.lifecycle).toBe('needs_attention');
+  expect((await writer.readInvocation(childId))?.progress).toMatchObject({ execution: { input, actionRequestId: 'original',
+    output: scenario === 'retained' ? pending : reviewOutput, ...(scenario === 'observed' ? { awaitedOperations: [target] } : {}) } });
+  expect((await writer.readInvocation(childId))?.progress.result).toBeUndefined();
+  expect((await writer.readInvocation(childId))?.progress.review).toBeUndefined();
+});
 
 it('refreshes the encrypted root counts after interrupted native reattach without completing the parent', async () => {
   const rootId = '2aaf1a39-4c48-4904-83a4-7eae318dfc2c';
@@ -429,6 +489,83 @@ describe.each(['plain', 'e2ee'] as const)('frozen result recovery (%s)', (mode) 
 });
 
 describe('workflow Run startup/reconnect recovery', () => {
+  it.each(['cancelled_input', 'other_input', 'handled_input', 'unknown_launch'] as const)('recovers exact discarded Session input custody without treating inactive or unknown work as stopped (%s)', async scenario => {
+    const rootId = '33333333-3333-4333-8333-333333333333';
+    const childId = '44444444-4444-4444-8444-444444444444';
+    const sessionId = 'stopped-workflow-session';
+    const localId = 'exact-workflow-input';
+    const kit = createWorkflowRunStorageTestkit({ runId, machineId, now, origin: { kind: 'direct' },
+      acceptedEnvelope: directAcceptedEnvelope() });
+    const seal = (id: string, root: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: id,
+        sequence: root ? '0' : '1', parentRecordId: root ? null : rootId, memberOrdinal: '0', attempt: '0' },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: root ? 'root' : 'step',
+        invocationPath: { blockId: root ? '$root' : 'step', scope: [] }, attempt: '0', logicalInvocationRecordId: id,
+        ...(!root && scenario !== 'unknown_launch' ? { execution: { kind: 'session' as const, sessionId, localInputId: localId } } : {}) },
+    }));
+    await kit.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: checkpointEnvelope(rootId),
+      rootInvocation: { id: rootId, contentEnvelope: seal(rootId, true) } });
+    await kit.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, checkpointEnvelope: checkpointEnvelope(rootId),
+      invocations: [{ id: childId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0', lifecycle: 'running', contentEnvelope: seal(childId, false) }] });
+    kit.requestControl('cancelled');
+    expect(kit.run()).toMatchObject({ workflowCustodyState: 'pending', attentionRequired: true });
+    const requests: { method: string; path: string }[] = [];
+    // Real HTTP readers consume the same tombstone shape as the retained Home.
+    // Only the Home/storage and socket transports are substituted.
+    const server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      requests.push({ method: request.method ?? '', path: url.pathname });
+      response.setHeader('Content-Type', 'application/json');
+      const reply = (data: unknown, status = 200) => { response.statusCode = status; response.end(JSON.stringify(data)); };
+      if (url.pathname === '/v1/account/encryption/currentness') return reply({
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+      });
+      if (url.pathname === `/v2/sessions/${sessionId}`) return reply({ session: createSessionRecordFixture({
+        id: sessionId, active: false, encryptionMode: 'plain', machineId,
+        metadata: JSON.stringify({ machineId, path: '/repo' }),
+      }) });
+      if (url.pathname.startsWith(`/v2/sessions/${sessionId}/messages/by-local-id/`)) return reply({ error: 'Message not found' }, 404);
+      if (url.pathname === `/v2/sessions/${sessionId}/pending` && request.method === 'GET') {
+        return reply({ pending: url.searchParams.get('includeDiscarded') === 'true' ? [{
+          localId: scenario === 'other_input' ? 'different-input' : localId,
+          status: 'discarded', deliveryStatus: { status: 'discarded', reason: scenario === 'handled_input' ? 'manual_handled' : 'session_input_cancelled' }, discardedAt: 1,
+        }] : [] });
+      }
+      return reply({ error: 'session-not-found' }, 404);
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('test_http_address_unavailable');
+    const socketBoundary = vi.spyOn(sessionSockets, 'createSessionScopedSocketConnection').mockImplementation(() => {
+      // This fixture represents the untyped socket.io network adapter, not its host observer.
+      const socket = Object.assign(new EventEmitter(), { connected: false, connect() {}, disconnect() {}, close() {} }) as unknown as ReturnType<typeof sessionSockets.createSessionScopedSocketConnection>['socket'];
+      return { socket, transport: createSocketTransportAdapter(socket) };
+    });
+    try {
+      const observe = createWorkflowInvocationRecoveryObserver({
+        credentials: { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null }, machineId,
+        actionExecutor: { execute: async () => { throw new Error('Recovery cannot start an Action'); } },
+      });
+      const recover = createWorkflowRunRecoveryReader({ accountId, machineId,
+        storage: { execute: async (operation, options) => operation.operation === 'recovery.list'
+          ? { candidates: [{ run: kit.run(), parentAttempt: 0 }] } : await kit.execute(operation, options) },
+        resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+        reconcileInvocation: observe,
+      });
+      await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => recover('startup'));
+      const cancelled = scenario === 'cancelled_input';
+      if (scenario !== 'unknown_launch') expect(requests).toContainEqual({ method: 'GET', path: `/v2/sessions/${sessionId}/pending` });
+      expect(kit.rowById(childId)?.index.lifecycle).toBe(cancelled ? 'cancelled' : 'cancel_requested');
+      expect(kit.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: cancelled ? 'settled' : 'pending', attentionRequired: !cancelled });
+      if (cancelled) expect(requests.every(request => request.method === 'GET')).toBe(true);
+      if (scenario === 'unknown_launch') expect(requests).toEqual([]);
+    } finally {
+      socketBoundary.mockRestore();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it.each(['later', 'before_observation', 'running_parent', 'lost_stop_response'] as const)('settles stopped Action child custody when terminal arrives %s without another recovery trigger', async (timing) => {
     const rootId = '33333333-3333-4333-8333-333333333333';
     const childId = '44444444-4444-4444-8444-444444444444';

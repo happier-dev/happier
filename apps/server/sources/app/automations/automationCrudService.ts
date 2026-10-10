@@ -62,7 +62,6 @@ import {
     isValidPluginJsonSchemaValue,
     validateAutomationEventFilterAgainstPayloadSchemaV1,
     validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
-    validateAutomationStoredDefinitionExecutionRecipeOuterV1,
     type AutomationRunCause,
     type AutomationSessionLifecycleTrigger,
     type AutomationDefinitionReconcileRequest,
@@ -105,6 +104,9 @@ import {
     resolveCurrentAutomationEventContributionTx,
 } from "./automationEventCurrentness";
 import { rejoinAutomationOccurrenceInsertRace } from "./automationOccurrencePersistence";
+import { readAutomationRunCauseChainTx } from "./automationTriggerCauseChain";
+import { automationPortableQueryChunks } from "./automationPortableQueryChunks";
+import { parseStoredSessionTurnFacts } from "@/app/session/turns/parseSessionTurnState";
 import { checkCurrentPluginWebhookEndpointCorrespondenceTxV1 } from "@/app/plugins/webhooks/endpointCorrespondence";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
@@ -212,14 +214,14 @@ function toCurrentAutomationDefinitionTargetType(
 
 /**
  * The single current Definition writer. It keeps the Protocol-owned strict
- * recipe intact, maps only its public target arm to the physical column, and
+ * Workflow recipe intact, clears the retired physical target arm, and
  * fences the Account and validates the opaque private envelopes against its
  * current mode. The server never opens current-definition content here.
  */
 async function normalizeCurrentAutomationDefinitionWriteTx(params: Readonly<{
     tx: Tx;
     accountId: string;
-    executionRecipe: AutomationStoredDefinitionExecutionRecipeV1 | AutomationStoredWorkflowDefinitionRecipeV2;
+    executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2;
     expectedTemplateVersion: number;
 }>): Promise<CurrentAutomationDefinitionWrite> {
     const fence = await acquireAccountEncryptionTransitionFenceInTx(params.tx, params.accountId);
@@ -237,54 +239,26 @@ async function normalizeCurrentAutomationDefinitionWriteTx(params: Readonly<{
     if (!accountCurrentness) {
         throw new Error("Account encryption state is inconsistent");
     }
-    if (params.executionRecipe.v === 2) {
-        const serialized = serializeAutomationStoredWorkflowDefinitionRecipeV2(params.executionRecipe);
-        if (serialized.kind !== "available") {
-            throw new AutomationValidationError("Automation workflow recipe is invalid");
-        }
-        if (serialized.recipe.templateVersion !== params.expectedTemplateVersion) {
-            throw new AutomationValidationError(
-                "Automation execution recipe version must match the next template version",
-            );
-        }
-        const workflowOuter = validateAutomationStoredContentEnvelopeOuterForMode({
-            raw: createCanonicalJsonSigningInput(serialized.recipe.workflow),
-            mode: accountCurrentness.mode,
-        });
-        if (workflowOuter.kind !== "available") {
-            throw new AutomationValidationError("Automation workflow recipe does not match the Account");
-        }
-        return {
-            targetType: null,
-            templateCiphertext: serialized.serialized,
-            accountMode: accountCurrentness.mode,
-        };
-    }
-
-    const serialized = serializeAutomationStoredDefinitionExecutionRecipeV1(params.executionRecipe);
+    const serialized = serializeAutomationStoredWorkflowDefinitionRecipeV2(params.executionRecipe);
     if (serialized.kind !== "available") {
-        throw new AutomationValidationError("Automation execution recipe is invalid");
+        throw new AutomationValidationError("Automation workflow recipe is invalid");
     }
     if (serialized.recipe.templateVersion !== params.expectedTemplateVersion) {
         throw new AutomationValidationError(
             "Automation execution recipe version must match the next template version",
         );
     }
-    const outer = validateAutomationStoredDefinitionExecutionRecipeOuterV1({
-        recipe: serialized.recipe,
-        accountCurrentness,
+    const workflowOuter = validateAutomationStoredContentEnvelopeOuterForMode({
+        raw: createCanonicalJsonSigningInput(serialized.recipe.workflow),
+        mode: accountCurrentness.mode,
     });
-    if (outer.kind !== "available") {
-        throw new AutomationValidationError("Automation execution recipe does not match the Account");
+    if (workflowOuter.kind !== "available") {
+        throw new AutomationValidationError("Automation workflow recipe does not match the Account");
     }
-
     return {
-        targetType: toCurrentAutomationDefinitionTargetType(serialized.recipe),
+        targetType: null,
         templateCiphertext: serialized.serialized,
         accountMode: accountCurrentness.mode,
-        ...(serialized.recipe.target.kind === "existingSession"
-            ? { strictExistingSessionId: serialized.recipe.target.sessionId }
-            : {}),
     };
 }
 
@@ -1034,9 +1008,7 @@ function automationMatchesCurrentCreateInput(
     existing: AutomationListItem,
     requested: AutomationCurrentUpsertInput,
 ): boolean {
-    const serialized = requested.executionRecipe.v === 2
-        ? serializeAutomationStoredWorkflowDefinitionRecipeV2(requested.executionRecipe)
-        : serializeAutomationStoredDefinitionExecutionRecipeV1(requested.executionRecipe);
+    const serialized = serializeAutomationStoredWorkflowDefinitionRecipeV2(requested.executionRecipe);
     if (serialized.kind !== "available") return false;
     if (
         existing.id !== requested.automationId
@@ -1046,8 +1018,7 @@ function automationMatchesCurrentCreateInput(
         || existing.enabled !== requested.enabled
         || existing.workflowDefinitionId !== (requested.workflowDefinitionId ?? null)
         || existing.scopeSessionId !== (requested.scopeSessionId ?? null)
-        || existing.targetType !== (serialized.recipe.v === 2
-            ? null : toCurrentAutomationDefinitionTargetType(serialized.recipe))
+        || existing.targetType !== null
         || existing.templateCiphertext !== serialized.serialized
         || !automationCreateAssignmentsMatch(existing.assignments, requested.assignments)
         || existing.triggers.length !== requested.triggers.length
@@ -4022,6 +3993,26 @@ export function automationRunCustodyTerminalWhere() {
     };
 }
 
+/** Actual live Run/turn publishers keep their retained cause ancestors readable. */
+export async function readAutomationLiveCauseRunIdsTx(tx: Tx, accountId: string): Promise<ReadonlySet<string>> {
+    const liveRuns = await tx.automationRun.findMany({ where: {
+        accountId, NOT: automationRunCustodyTerminalWhere(),
+    }, select: { id: true } });
+    const liveTurns = await tx.sessionTurn.findMany({ where: {
+        status: "in_progress", initiator: "workflow", session: { accountId },
+    }, select: { initiator: true, workDepth: true, workflowInvocationJson: true } });
+    const roots = new Set(liveRuns.map(run => run.id));
+    for (const turn of liveTurns) {
+        const runId = parseStoredSessionTurnFacts(turn).workflowInvocation?.runId;
+        if (runId !== undefined) roots.add(runId);
+    }
+    const retainedRunIds = new Set<string>();
+    for (const root of roots) {
+        for (const runId of (await readAutomationRunCauseChainTx(tx, root)).runIds) retainedRunIds.add(runId);
+    }
+    return retainedRunIds;
+}
+
 export type ClearAutomationRunHistoryResult =
     | Readonly<{ status: "not_found" }>
     | Readonly<{ status: "cleared"; clearedRuns: number }>;
@@ -4050,14 +4041,29 @@ export async function clearAutomationRunHistory(params: {
         if (!automation) {
             return { status: "not_found" };
         }
-        const cleared = await tx.automationRun.deleteMany({
+        // Live descendants and exact in-progress Workflow turns still publish
+        // events. Their canonical cause chains must survive an ordinary clear.
+        const retainedRunIds = await readAutomationLiveCauseRunIdsTx(tx, params.accountId);
+        const candidates = await tx.automationRun.findMany({
             where: {
                 accountId: params.accountId,
                 automationId: automation.id,
                 ...automationRunCustodyTerminalWhere(),
             },
+            select: { id: true },
         });
-        if (cleared.count > 0) {
+        let clearedRuns = 0;
+        for (const ids of automationPortableQueryChunks({
+            values: candidates.filter(run => !retainedRunIds.has(run.id)).map(run => run.id),
+            bindingsPerValue: 1,
+            fixedBindings: 3 + AUTOMATION_RUN_TERMINAL_STATES.length + AUTOMATION_RUN_REPLY_HANDOFF_TERMINAL_STATES.length,
+        })) {
+            clearedRuns += (await tx.automationRun.deleteMany({ where: {
+                id: { in: [...ids] }, accountId: params.accountId, automationId: automation.id,
+                ...automationRunCustodyTerminalWhere(),
+            } })).count;
+        }
+        if (clearedRuns > 0) {
             const cursor = await markAutomationChangedTx(tx, {
                 accountId: params.accountId,
                 automationId: automation.id,
@@ -4068,7 +4074,7 @@ export async function clearAutomationRunHistory(params: {
                 cursor,
             }));
         }
-        return { status: "cleared", clearedRuns: cleared.count };
+        return { status: "cleared", clearedRuns };
     });
 }
 
@@ -4586,7 +4592,9 @@ async function assertWorkflowTriggerContextTx(tx: Tx, params: Readonly<{
     targetType: AutomationTargetType | null;
     workflowDefinitionId: string | null;
     scopeSessionId: string | null;
+    enabled: boolean;
     assignments: readonly AutomationAssignmentInput[];
+    existingAssignments?: AutomationListItem['assignments'];
 }>): Promise<void> {
     if (params.targetType !== null) {
         if (params.workflowDefinitionId !== null || params.scopeSessionId !== null) {
@@ -4594,7 +4602,13 @@ async function assertWorkflowTriggerContextTx(tx: Tx, params: Readonly<{
         }
         return;
     }
-    if (params.assignments.length !== 1) {
+    // New authoring remains single-project. A disabled draft may own no
+    // assignment, and a same-row conversion/metadata edit preserves the exact
+    // existing placement census rather than fabricating a replacement Machine.
+    if (params.assignments.length !== 1
+        && !(params.assignments.length === 0 && !params.enabled)
+        && !(params.existingAssignments
+            && automationCreateAssignmentsMatch(params.existingAssignments, params.assignments))) {
         throw new AutomationValidationError("A workflow trigger set requires exactly one machine assignment");
     }
     if (params.scopeSessionId !== null && !await tx.session.findFirst({
@@ -4694,6 +4708,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
         accountId: params.accountId, targetType: definition.targetType,
         workflowDefinitionId: params.input.workflowDefinitionId ?? null,
         scopeSessionId: params.input.scopeSessionId ?? null,
+        enabled: params.input.enabled,
         assignments: params.input.assignments ?? [],
     });
 
@@ -5049,6 +5064,8 @@ export async function updateAutomation(params: {
         await assertWorkflowTriggerContextTx(tx, {
             accountId: params.accountId, targetType: effectiveTargetType,
             workflowDefinitionId: effectiveWorkflowDefinitionId, scopeSessionId: effectiveScopeSessionId,
+            enabled: effectiveEnabled,
+            existingAssignments: existing.assignments,
             assignments: params.input.assignments ?? existing.assignments,
         });
         // Assignment-liveness against the exact post-patch set: a replacement
@@ -5370,6 +5387,8 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 ? existing.workflowDefinitionId : params.input.workflowDefinitionId,
             scopeSessionId: params.input.scopeSessionId === undefined
                 ? existing.scopeSessionId : params.input.scopeSessionId,
+            enabled: params.input.enabled,
+            existingAssignments: existing.assignments,
             assignments: params.input.assignments,
         });
         await validateExistingSessionAutomationTargetTx({

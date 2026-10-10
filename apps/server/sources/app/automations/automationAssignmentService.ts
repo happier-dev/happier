@@ -17,6 +17,7 @@ import {
     normalizeAutomationAssignments,
 } from "./automationValidation";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { parseAutomationStoredWorkflowDefinitionRecipeV2 } from "@happier-dev/protocol";
 
 type AutomationAssignmentWakeRun = Readonly<{
     triggerId: string | null;
@@ -443,5 +444,9 @@ export async function listDaemonAssignments(params: {
         right.priority - left.priority
         || right.updatedAt.getTime() - left.updatedAt.getTime()
         || left.id.localeCompare(right.id)
-    ));
+    )).map((assignment) => ({
+        ...assignment,
+        executionRecipeVersion: parseAutomationStoredWorkflowDefinitionRecipeV2(assignment.automation.templateCiphertext).kind === "available"
+            ? 2 as const : null,
+    }));
 }

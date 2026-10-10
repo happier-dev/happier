@@ -17,6 +17,7 @@ import {
 } from "@happier-dev/protocol";
 
 import { afterTx, type Tx } from "@/storage/inTx";
+import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { invalidateSessionReviewProjectionsForAutomationInTx } from './sessionReviewProjectionInvalidation';
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
@@ -247,6 +248,74 @@ function isSessionLifecycleCause(cause: AutomationRunCause): boolean {
         && cause.triggerKind === "sessionLifecycle";
 }
 
+/** The same definition-to-frozen-input owner serves new admission and safe predecessor claims. */
+export function freezeAutomationRunInput(params: Readonly<{
+    definition: Pick<AutomationAdmissionDefinition, "targetType" | "templateVersion" | "templateCiphertext">;
+    cause: AutomationRunCause;
+    assignmentMachineIds: readonly string[];
+    triggerEvidenceEnvelope: string | null | undefined;
+    recipeFeaturePolicy: AutomationRecipeFeaturePolicy;
+}>): Readonly<{ kind: "available"; executionInputEnvelope: string; workflowDefinitionEnvelope: string | null }>
+    | Readonly<{ kind: "ineligible"; reason: "definitionInvalid" | "featureDisabled" }> {
+    const automation = params.definition;
+    const cause = params.cause;
+    const definition = parseAutomationStoredDefinitionExecutionRecipeV1(automation.templateCiphertext);
+    const triggerEvidence = parseTriggerEvidenceEnvelope(params.triggerEvidenceEnvelope);
+    if (definition.kind === "available") {
+        if (
+            definition.recipe.templateVersion !== automation.templateVersion
+            || definition.recipe.triggerEvidence !== null
+            || targetTypeForRecipe(definition.recipe) !== automation.targetType
+            || triggerEvidence === undefined
+            || !triggerEvidenceMatchesCause(cause, triggerEvidence)
+        ) return { kind: "ineligible", reason: "definitionInvalid" };
+        const frozen = serializeAutomationRunExecutionRecipeV1({
+            ...definition.recipe,
+            triggerEvidence,
+            assignmentMachineIds: [...params.assignmentMachineIds],
+        });
+        return frozen.kind === "available"
+            ? { kind: "available", executionInputEnvelope: frozen.serialized, workflowDefinitionEnvelope: null }
+            : { kind: "ineligible", reason: "definitionInvalid" };
+    }
+    const workflowDefinition = parseAutomationStoredWorkflowDefinitionRecipeV2(automation.templateCiphertext);
+    if (workflowDefinition.kind === "available") {
+        if (!params.recipeFeaturePolicy.workflowsEnabled) return { kind: "ineligible", reason: "featureDisabled" };
+        if (
+            workflowDefinition.recipe.templateVersion !== automation.templateVersion
+            || workflowDefinition.recipe.triggerEvidence !== null
+            || automation.targetType !== null
+            || triggerEvidence === undefined
+            || !triggerEvidenceMatchesCause(cause, triggerEvidence)
+        ) return { kind: "ineligible", reason: "definitionInvalid" };
+        const workflowDefinitionEnvelope = createCanonicalJsonSigningInput(workflowDefinition.recipe.workflow);
+        return { kind: "available", executionInputEnvelope: workflowDefinitionEnvelope, workflowDefinitionEnvelope };
+    }
+    const legacyCause = cause.kind === "manual" || (cause.kind === "trigger" && cause.triggerKind === "schedule");
+    let legacyTemplate: unknown;
+    try { legacyTemplate = JSON.parse(automation.templateCiphertext); } catch { legacyTemplate = null; }
+    if (
+        !legacyCause
+        || automation.targetType === null
+        || automation.targetType === "execution_run"
+        || triggerEvidence !== null
+        || normalizeAutomationTemplateEnvelopeStoredRead(legacyTemplate) === null
+    ) return { kind: "ineligible", reason: "definitionInvalid" };
+    const origin = toAutomationRunExecutionInputV1Origin(cause);
+    if (!origin) return { kind: "ineligible", reason: "definitionInvalid" };
+    return {
+        kind: "available",
+        executionInputEnvelope: JSON.stringify(AutomationRunExecutionInputV1Schema.parse({
+            kind: "happier_automation_run_execution_input_v1",
+            targetType: automation.targetType,
+            templateVersion: automation.templateVersion,
+            templateCiphertext: automation.templateCiphertext,
+            origin,
+        })),
+        workflowDefinitionEnvelope: null,
+    };
+}
+
 function prepareAutomationRunAdmission(params: Readonly<{
     request: AutomationRunAdmissionRequest;
     cause: AutomationRunCause;
@@ -303,69 +372,14 @@ function prepareAutomationRunAdmission(params: Readonly<{
         }
     }
 
-    const definition = parseAutomationStoredDefinitionExecutionRecipeV1(automation.templateCiphertext);
-    const triggerEvidence = parseTriggerEvidenceEnvelope(
-        params.request.executionTriggerEvidenceEnvelope ?? params.request.triggerEvidenceEnvelope,
-    );
-    let executionInputEnvelope: string | null;
-    let workflowDefinitionEnvelope: string | null = null;
-    if (definition.kind === "available") {
-        if (
-            definition.recipe.templateVersion !== automation.templateVersion
-            || definition.recipe.triggerEvidence !== null
-            || targetTypeForRecipe(definition.recipe) !== automation.targetType
-            || triggerEvidence === undefined
-            || !triggerEvidenceMatchesCause(cause, triggerEvidence)
-        ) return { kind: "ineligible", reason: "definitionInvalid" };
-        const frozen = serializeAutomationRunExecutionRecipeV1({
-            ...definition.recipe,
-            triggerEvidence,
-            assignmentMachineIds: admissionAutomation.assignments.map((assignment) => assignment.machineId),
-        });
-        if (frozen.kind !== "available") return { kind: "ineligible", reason: "definitionInvalid" };
-        executionInputEnvelope = frozen.serialized;
-    } else {
-        const workflowDefinition = parseAutomationStoredWorkflowDefinitionRecipeV2(
-            automation.templateCiphertext,
-        );
-        if (workflowDefinition.kind === "available") {
-            if (!params.recipeFeaturePolicy.workflowsEnabled) {
-                return { kind: "ineligible", reason: "featureDisabled" };
-            }
-            if (
-                workflowDefinition.recipe.templateVersion !== automation.templateVersion
-                || workflowDefinition.recipe.triggerEvidence !== null
-                || automation.targetType !== null
-                || triggerEvidence === undefined
-                || !triggerEvidenceMatchesCause(cause, triggerEvidence)
-            ) return { kind: "ineligible", reason: "definitionInvalid" };
-            executionInputEnvelope = null;
-            workflowDefinitionEnvelope = createCanonicalJsonSigningInput(
-                workflowDefinition.recipe.workflow,
-            );
-        } else {
-            const legacyCause = cause.kind === "manual"
-                || (cause.kind === "trigger" && cause.triggerKind === "schedule");
-            let legacyTemplate: unknown;
-            try { legacyTemplate = JSON.parse(automation.templateCiphertext); } catch { legacyTemplate = null; }
-            if (
-                !legacyCause
-                || automation.targetType === null
-                || automation.targetType === "execution_run"
-                || triggerEvidence !== null
-                || normalizeAutomationTemplateEnvelopeStoredRead(legacyTemplate) === null
-            ) return { kind: "ineligible", reason: "definitionInvalid" };
-            const origin = toAutomationRunExecutionInputV1Origin(cause);
-            if (!origin) return { kind: "ineligible", reason: "definitionInvalid" };
-            executionInputEnvelope = JSON.stringify(AutomationRunExecutionInputV1Schema.parse({
-                kind: "happier_automation_run_execution_input_v1",
-                targetType: automation.targetType,
-                templateVersion: automation.templateVersion,
-                templateCiphertext: automation.templateCiphertext,
-                origin,
-            }));
-        }
-    }
+    const frozen = freezeAutomationRunInput({
+        definition: automation,
+        cause,
+        assignmentMachineIds: admissionAutomation.assignments.map((assignment) => assignment.machineId),
+        triggerEvidenceEnvelope: params.request.executionTriggerEvidenceEnvelope ?? params.request.triggerEvidenceEnvelope,
+        recipeFeaturePolicy: params.recipeFeaturePolicy,
+    });
+    if (frozen.kind === "ineligible") return frozen;
 
     return {
         kind: "prepared",
@@ -374,8 +388,8 @@ function prepareAutomationRunAdmission(params: Readonly<{
             cause,
             // The queued row must already carry its frozen bytes; the Workflow
             // attachment below changes custody under the same transaction.
-            executionInputEnvelope: executionInputEnvelope ?? workflowDefinitionEnvelope,
-            workflowDefinitionEnvelope,
+            executionInputEnvelope: frozen.executionInputEnvelope,
+            workflowDefinitionEnvelope: frozen.workflowDefinitionEnvelope,
             automation: admissionAutomation,
         },
     };
@@ -483,6 +497,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
         kind: "automation",
         entityId: request.automationId,
     });
+    await publishManagedRunWakeInTx(params.tx, { accountId: params.accountId, runId: run.id, cursor });
     afterTx(params.tx, () => {
         emitAutomationRunTransition({
             accountId: params.accountId,

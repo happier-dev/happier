@@ -10,7 +10,7 @@ import { AUTOMATION_RUN_TERMINAL_STATES } from "./automationTypes";
 import { AutomationValidationError } from "./automationValidation";
 import { admitAutomationRunTx } from "./automationRunAdmissionService";
 import { decodeAutomationRunLifecycleConfiguration } from "./automationRunLifecycleConfigurationCodec";
-import { readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
+import { isAutomationOriginRunPublisherTx, readAutomationLifecycleOriginRunIdTx, readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
 
 /** Registration uses the source's existing Account access owner, never the target's placement. */
 export async function validateAutomationRunLifecycleSourceTx(tx: Tx, accountId: string, definition: AutomationRunLifecycleTrigger): Promise<void> {
@@ -47,7 +47,8 @@ async function admitRunLifecycleOccurrenceTx(tx: Tx, accountId: string, occurren
         enabled: true, deletedAt: null, remainingOccurrences: 1,
         automation: { accountId, enabled: true, deletedAt: null } },
         select: { id: true, automationId: true, revision: true, runLifecycleConfigurationJson: true }, orderBy: { id: "asc" } });
-    const originTriggerIds = rows.length > 0 ? await readAutomationOriginTriggerIdsTx(tx, evidence) : new Set<string>();
+    const originRunId = rows.length > 0 ? await readAutomationLifecycleOriginRunIdTx(tx, evidence) : null;
+    const originTriggerIds = rows.length > 0 ? await readAutomationOriginTriggerIdsTx(tx, evidence, originRunId ?? undefined) : new Set<string>();
     const admitted = [];
     for (const row of rows) {
         if (originTriggerIds.has(row.id)) continue;
@@ -62,7 +63,8 @@ async function admitRunLifecycleOccurrenceTx(tx: Tx, accountId: string, occurren
             now: new Date(evidence.occurredAt), cause: AutomationRunCauseSchema.parse({ kind: "trigger", triggerKind: "runLifecycle",
                 triggerId: row.id, triggerRevision: row.revision, occurredAt: evidence.occurredAt,
                 occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: row.id, evidence }),
-                evidence: { source: evidence.source, condition: evidence.condition, sourceRevision: evidence.sourceRevision } }) });
+                evidence: { source: evidence.source, condition: evidence.condition, sourceRevision: evidence.sourceRevision,
+                    ...(evidence.originRunId !== undefined ? { originRunId: evidence.originRunId } : {}) } }) });
         if (result.kind === "ineligible") {
             await tx.automationTrigger.updateMany({ where: { id: row.id, revision: row.revision, remainingOccurrences: 0 },
                 data: { remainingOccurrences: 1 } });
@@ -105,6 +107,10 @@ export async function admitExecutionRunLifecycleAutomationRunsTx(params: Readonl
 }>) {
     const occurrence = AutomationRunLifecycleOccurrenceEvidenceV1Schema.parse(params.occurrence);
     if (occurrence.source.kind !== "execution_run" || occurrence.source.machineId !== params.machineId || occurrence.condition !== "terminal") {
+        throw new AutomationValidationError("source_unavailable");
+    }
+    if (occurrence.originRunId !== undefined && !await isAutomationOriginRunPublisherTx(params.tx,
+        { accountId: params.accountId, machineId: params.machineId, runId: occurrence.originRunId })) {
         throw new AutomationValidationError("source_unavailable");
     }
     return admitRunLifecycleOccurrenceTx(params.tx, params.accountId, occurrence);

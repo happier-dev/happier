@@ -384,6 +384,15 @@ export function readRetainedAutomationRunExecutionInputV2ForMode(params: {
     return validation?.kind === "available" ? validation.input : null;
 }
 
+/** Unattended Workflow admission has only Account custody, never retained Session keys. */
+export function readRetainedAutomationRunExecutionInputForWorkflowAdmission(params: {
+    raw: string; mode: "plain" | "e2ee"; retainedV2OriginKind?: "scheduled" | "manual";
+}): RetainedAutomationRunExecutionInputV2 | null {
+    const retained = parseRetainedAutomationRunExecutionInputV2(params);
+    if (!retained || (retained.template.envelope.kind === "happier_automation_template_plain_v1") !== (params.mode === "plain")) return null;
+    return retained.recipe;
+}
+
 export function assertAutomationExecutionInputEnvelopeOuterForMode(params: {
     raw: string | null;
     mode: "plain" | "e2ee";

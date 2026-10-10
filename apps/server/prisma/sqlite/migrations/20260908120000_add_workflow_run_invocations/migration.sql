@@ -249,6 +249,13 @@ CREATE TABLE "new_AutomationRun" (
         "state" NOT IN ('queued', 'claimed', 'running')
         OR "executionInputEnvelope" IS NOT NULL
         OR "workflowAcceptedSnapshotEnvelope" IS NOT NULL
+        OR ("state" IN ('queued', 'claimed') AND "startedAt" IS NULL
+            AND "finishedAt" IS NULL AND "producedSessionId" IS NULL
+            AND "summaryCiphertext" IS NULL AND "resultEnvelope" IS NULL
+            AND "executionAttempt" = 0 AND "executionDispatchCommittedAt" IS NULL
+            AND ("executionDispatchState" IS NULL OR "executionDispatchState" = 'notStarted')
+            AND "executionNativeRunId" IS NULL AND "executionNativeCallId" IS NULL
+            AND "executionNativeSidechainId" IS NULL)
     ),
     CONSTRAINT "AutomationRun_reply_handoff_arm_check" CHECK ("originKind" = 'direct' OR (
         ("causeKind" = 'conversation' AND "replyContextEnvelope" IS NOT NULL AND "replyHandoffActionPluginId" IS NOT NULL AND "replyHandoffActionLocalId" IS NOT NULL AND "replyHandoffTargetMachineId" IS NOT NULL AND "replyHandoffTargetMachineInstallationId" IS NOT NULL AND "replyHandoffTargetMaterializationId" IS NOT NULL AND "replyHandoffId" IS NOT NULL AND "replyHandoffState" <> 'none')

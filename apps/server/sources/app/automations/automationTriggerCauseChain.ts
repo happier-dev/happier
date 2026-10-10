@@ -9,7 +9,7 @@ import { resolveWorkflowRunAccessInTx } from "@/app/workflows/workflowRunAccess"
 import type { Tx } from "@/storage/inTx";
 
 import { automationRunCauseSelect } from "./automationPersistenceSelect";
-import { decodeAutomationRunCause } from "./automationRunCauseCodec";
+import { decodeAutomationRunCause, isAutomationCauseRow } from "./automationRunCauseCodec";
 
 /** A signed Machine publisher can report only its own admitted Run origin. */
 export async function isAutomationOriginRunPublisherTx(tx: Tx, params: Readonly<{
@@ -29,6 +29,7 @@ export async function isAutomationOriginRunPublisherTx(tx: Tx, params: Readonly<
     if (cause?.kind !== 'trigger' || (cause.triggerKind !== 'sessionLifecycle' && cause.triggerKind !== 'runLifecycle')) return true;
     if (cause.triggerKind === 'sessionLifecycle' && cause.evidence.event !== 'sessionArchived'
         || cause.triggerKind === 'runLifecycle' && cause.evidence.condition !== 'terminal') return true;
+    if (!isAutomationCauseRow(run)) return false;
     const trigger = await tx.automationTrigger.findFirst({ where: { id: cause.triggerId, automationId: run.automationId,
         revision: cause.triggerRevision, kind: cause.triggerKind, enabled: true, deletedAt: null,
         automation: { accountId: params.accountId, enabled: true, deletedAt: null } },

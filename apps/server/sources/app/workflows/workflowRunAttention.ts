@@ -2,6 +2,26 @@ import type { Prisma } from "@prisma/client";
 import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1 } from "@happier-dev/protocol";
 import { AUTOMATION_RUN_TERMINAL_STATES } from "@/app/automations/automationTypes";
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
+import type { Tx } from '@/storage/inTx';
+
+/** Actual origin work, excluding attention and withdrawal-only reconciliation. */
+export async function readWorkflowRunOriginWakeCandidatesInTx(tx: Tx, input:
+    | Readonly<{ originSessionId: string; runId?: string }>
+    | Readonly<{ accountIds: readonly string[] }>) {
+    return tx.automationRun.findMany({ where: {
+        ...('originSessionId' in input
+            ? { originSessionId: input.originSessionId, ...(input.runId ? { id: input.runId } : {}) }
+            : { accountId: { in: [...input.accountIds] }, originSessionId: { not: null } }),
+        workflowCustodyState: { not: null }, workflowAcceptedSnapshotEnvelope: { not: null },
+        OR: [
+            { workflowInvocations: { some: { lifecycle: 'admitting' } } },
+            { state: { in: [...AUTOMATION_RUN_TERMINAL_STATES] }, originDeliveryAckRevision: { not: null },
+                revision: { gt: tx.automationRun.fields.originDeliveryAckRevision } },
+        ],
+    }, select: { id: true, accountId: true, originSessionId: true, revision: true,
+        automationId: true, state: true, scheduledAt: true, startedAt: true, finishedAt: true,
+        updatedAt: true, claimedByMachineId: true, attempt: true } });
+}
 
 /** Plaintext attention facts. Delivery and a settled exhausted result are not attention. */
 const attention = {

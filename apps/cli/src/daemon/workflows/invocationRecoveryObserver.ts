@@ -5,7 +5,11 @@ import { SessionContinuationInspectionV1Schema } from '@happier-dev/protocol/ses
 import type { WorkflowAccountRunActionDeps, WorkflowProgressEnvelopeV1, WorkflowMaterializedLeafV1, ReviewWalkthroughObservation } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { resumeActionCompletionV1, readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
+import { readProjectSetupConsentHoldV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionCompletionOperation } from '@happier-dev/protocol/actions/actionCompletion';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
@@ -48,6 +52,7 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
   machineId: string;
   progress: WorkflowProgressEnvelopeV1;
   getRun: (request: Readonly<{ runId: string; includeStructured: false }>) => Promise<unknown>;
+  getOperation?: (operation: ActionCompletionOperation) => Promise<unknown>;
   signal?: AbortSignal;
 }>): Promise<WorkflowInvocationRecoveryEvidence> {
   const unavailable: WorkflowInvocationRecoveryEvidence = {
@@ -55,8 +60,21 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
   };
   const execution = params.progress.execution;
   if (!execution) return unavailable;
+  if (execution.kind === 'session_ready') return { activity: 'not_active', canReattach: true, canContinueConversation: false };
   try {
     if (execution.kind === 'action') {
+      if (execution.awaitedOperations?.length && params.getOperation) {
+        const snapshots = await Promise.all(execution.awaitedOperations.map(async (target) => {
+          const parsed = ActionOperationGetV1ResponseSchema.safeParse(await params.getOperation!(target));
+          return parsed.success && parsed.data.kind === 'found' && parsed.data.operation.operationId === target.operationId
+            && parsed.data.operation.scope.machineId === target.machineId && parsed.data.operation.actionId === execution.actionId
+            ? parsed.data.operation : undefined;
+        }));
+        if (snapshots.some(snapshot => snapshot === undefined)) return unavailable;
+        return { activity: snapshots.some(snapshot => snapshot?.state === 'running') ? 'active'
+          : snapshots.some(snapshot => snapshot?.state === 'accepted') ? 'unknown' : 'not_active',
+          canReattach: true, canContinueConversation: false };
+      }
       if (!execution.awaitedRuns?.length) return unavailable;
       const snapshots = await Promise.all(execution.awaitedRuns.map(async (run) => {
         const parsed = ExecutionRunGetResponseSchema.safeParse(await params.getRun({ runId: run.runId, includeStructured: false }));
@@ -131,6 +149,11 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
   observeSession?: typeof observeWorkflowSessionInputResult;
   cancelSession?: typeof cancelSessionInput;
   observeRun?: typeof observeWorkflowDetachedExecutionRunInput;
+  nativeActionOperations?: Readonly<{
+    get: (operation: ActionCompletionOperation, signal?: AbortSignal) => Promise<unknown>;
+    cancel: (operation: ActionCompletionOperation, signal?: AbortSignal) => Promise<unknown>;
+    wait: (operation: ActionCompletionOperation, signal?: AbortSignal) => Promise<unknown>;
+  }>;
   nativeActionRuns?: Readonly<{
     get: (runId: string, signal?: AbortSignal) => Promise<unknown>;
     stop: (runId: string, signal?: AbortSignal) => Promise<unknown>;
@@ -151,8 +174,61 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
   }>): Promise<WorkflowInvocationRecoveryObservation> => {
     const execution = input.progress.execution;
     if (!execution) return { kind: 'unresolved', code: 'workflow_execution_correspondence_missing' };
+    if (execution.kind === 'session_ready') return { kind: 'completed', result: '' };
     if (execution.kind === 'action') {
       const id = ActionIdSchema.safeParse(execution.actionId);
+      if (execution.awaitedOperations?.length) {
+        if (!id.success || execution.output === undefined || !input.frozenActionContract?.completion) {
+          return { kind: 'outcome_uncertain', code: 'outcome_uncertain' };
+        }
+        const transport = params.nativeActionOperations;
+        if (!transport) return { kind: 'unresolved', code: 'action_operation_observation_unavailable' };
+        try {
+          const read = (raw: unknown, target: ActionCompletionOperation) => {
+            const parsed = ActionOperationGetV1ResponseSchema.parse(raw);
+            if (parsed.kind !== 'found' || parsed.operation.operationId !== target.operationId
+              || parsed.operation.scope.machineId !== target.machineId || parsed.operation.actionId !== execution.actionId) {
+              throw new Error('action_operation_correspondence_mismatch');
+            }
+            return parsed.operation;
+          };
+          const snapshots = await Promise.all(execution.awaitedOperations.map(async (target) => ({ target,
+            operation: read(await transport.get(target, input.signal), target) })));
+          const uncertain = snapshots.find(({ operation }) => operation.observation?.kind === 'outcome_uncertain');
+          if (uncertain) return { kind: 'outcome_uncertain', code: uncertain.operation.observation!.code };
+          const pending = snapshots.filter(({ operation }) => (operation.state === 'accepted' || operation.state === 'running')
+            && (!operation.setupReview || input.terminalParent || input.cancellationRequested));
+          if (pending.length) {
+            if (!input.observationOnly && (input.terminalParent || input.cancellationRequested)) {
+              // A requested/refused/lost stop is never terminal process evidence.
+              await Promise.allSettled(pending.map(({ target }) => transport.cancel(target, input.signal)));
+            }
+            return { kind: 'unresolved', code: 'action_operation_pending', ...(!input.observationOnly ? {
+              waitForCompletion: async () => {
+                await Promise.all(pending.map(async ({ target }) => {
+                  const operation = read(await transport.wait(target, input.signal), target);
+                  if (operation.state === 'accepted' || operation.state === 'running') throw new Error('action_operation_pending');
+                }));
+              },
+            } : {}) };
+          }
+          const completion = await resumeActionCompletionV1({ actionId: execution.actionId,
+            completion: input.frozenActionContract.completion,
+            state: { output: execution.output, awaitedOperations: execution.awaitedOperations },
+            resolveDeclaration: () => getActionSpec(id.data).completion,
+            observeOperation: async (target) => snapshots.find((entry) => entry.target.key === target.key
+              && entry.target.operationId === target.operationId && entry.target.serverId === target.serverId
+              && entry.target.machineId === target.machineId)?.operation,
+          });
+          if (completion.kind === 'failed') {
+            const consent = readProjectSetupConsentHoldV1(execution.actionId, completion.value);
+            const output = ProjectCommandActionOutputV1Schema.safeParse(completion.value);
+            if (consent && output.success) return { kind: 'unresolved', code: consent.code, setupConsentOutput: output.data };
+          }
+          return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
+            : { kind: completion.kind, code: completion.errorCode };
+        } catch { return { kind: 'unresolved', code: 'action_operation_observation_unavailable' }; }
+      }
       if (!id.success || !execution.awaitedRuns?.length || execution.output === undefined || !input.frozenActionContract?.completion) {
         return { kind: 'outcome_uncertain', code: 'outcome_uncertain' };
       }

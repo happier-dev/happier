@@ -35,7 +35,7 @@ describe('CLI workflow trigger Account codec', () => {
     network.get.mockImplementation(async () => stored);
     network.list.mockResolvedValue({ automations: [], nextCursor: null });
   });
-  it('projects retained E2EE Session templates from historical credentials while ordinary Account reads stay plain', async () => {
+  it('pauses retained encrypted rows before disclosure and requires explicit device Save for a plain Workflow', async () => {
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     stored = { id: 'automation-old', name: 'Old', description: null, enabled: true, targetType: 'existingSession',
       existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
@@ -43,41 +43,54 @@ describe('CLI workflow trigger Account codec', () => {
       assignments: [{ machineId: 'machine', enabled: true, priority: 0, updatedAt: 1 }], triggers: [] };
     network.list.mockResolvedValue({ automations: [stored], nextCursor: null });
     network.session.mockResolvedValue({ id: 'session-old', encryptionMode: 'e2ee', dataEncryptionKey: null, share: null });
+    network.reconcile.mockImplementation(async ({ input }: { input: AutomationDefinitionReconcileRequest }) => {
+      stored = { ...stored, templateVersion: stored.templateVersion + 1, enabled: input.enabled,
+        ...(input.executionRecipe === undefined ? {} : { targetType: null, templateCiphertext: undefined,
+          executionRecipe: input.executionRecipe }) };
+      return stored;
+    });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
     const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
-      resolveWorkflow: async () => definition });
-    expect((await actions.list({ scope: 'account_inline' })).sets[0]).toMatchObject({ health: 'available', legacy: { editable: false },
-      target: { definition: { defaults: { conversation: { sessionId: 'session-old' } } } } });
-    const keyless = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition });
-    expect((await keyless.list({ scope: 'account_inline' })).sets[0]).toMatchObject({ health: 'source_unavailable',
-      legacy: { lockedReason: 'session_key_required' } });
+      resolveWorkflow: async () => definition,
+      resolveSession: async () => ({ project: { machineId: 'machine', directory: '/repo' }, nativeGoalOwner: false,
+        executionSelection: { agentTarget: definition.defaults!.agentTarget! } }) });
+    expect((await actions.list({ scope: 'account_all' })).sets[0]).toMatchObject({ enabled: false, health: 'source_unavailable',
+      legacy: { lockedReason: 'review_required' } });
+    expect(stored.executionRecipe).toBeUndefined();
+    expect(network.session).not.toHaveBeenCalled();
     expect(stored.templateCiphertext).toBe(AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED);
-    expect(network.reconcile).not.toHaveBeenCalled();
+    const caller = { surface: 'cli' as const, authority: 'present_user' as const };
+    const reviewed = (await actions.list({ review: true, automationId: stored.id }, caller)).sets[0]!;
+    expect(reviewed).toMatchObject({ health: 'available', legacy: { lockedReason: 'review_required' },
+      target: { definition: { defaults: { conversation: { sessionId: 'session-old' } } } } });
+    expect(stored.executionRecipe).toBeUndefined();
+    const keyless = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition });
+    await expect(keyless.list({ review: true, automationId: stored.id }, caller))
+      .rejects.toMatchObject({ code: 'session_key_required' });
+    if (!reviewed.target || !reviewed.project) throw new Error('review_did_not_open_source');
+    await actions.update({ automationId: stored.id, expectedRevision: reviewed.revision, confirmLegacyConversion: true,
+      patch: { target: reviewed.target, project: reviewed.project, enabled: true } }, caller);
+    expect(stored).toMatchObject({ id: 'automation-old', enabled: true, executionRecipe: { v: 2, workflow: { t: 'plain' } } });
+    expect(stored.templateCiphertext).toBeUndefined();
   });
-  it.each(['absent', 'bound', 'unknown'] as const)('uses the Channels transport witness before converting a predecessor row (%s)', async (kind) => {
+  it('converts predecessor rows in place without changing their Channels association identity', async () => {
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     stored = { id: 'automation-old', name: 'Old', description: null, enabled: true,
       targetType: 'newSession', existingSessionId: null, templateVersion: 1, lastRunAt: null,
       createdAt: 1, updatedAt: 1, workflowDefinitionId: null, scopeSessionId: null,
       templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN,
       assignments: [{ machineId: 'machine', enabled: true, priority: 0, updatedAt: 1 }], triggers: [] };
+    network.list.mockResolvedValue({ automations: [stored], nextCursor: null });
     network.reconcile.mockImplementation(async ({ input }: { input: AutomationDefinitionReconcileRequest }) => {
       stored = { ...stored, templateVersion: 2, templateCiphertext: undefined, executionRecipe: input.executionRecipe, enabled: input.enabled };
       return stored;
     });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
-    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition,
-      // Channels invocation is an external plugin transport; its domain/read owner is tested separately.
-      observeLegacyChannelAssociation: async () => ({ kind }) });
-    const updating = actions.update({ automationId: stored.id, expectedRevision: 1, patch: { enabled: false } });
-    if (kind === 'absent') {
-      expect((await updating).set).toMatchObject({ revision: 2, health: 'available', context: { workspace: { directory: '/repo' } } });
-      expect(stored.executionRecipe).toMatchObject({ v: 2 });
-    } else {
-      await expect(updating).rejects.toMatchObject({ code: 'legacy_conversion_unsupported', details: {
-        reason: kind === 'bound' ? 'channel_reply_handoff' : 'channel_association_unknown' } });
-      expect(network.reconcile).not.toHaveBeenCalled();
-    }
+    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition });
+    expect((await actions.list({ scope: 'account_all' })).sets[0]).toMatchObject({ automationId: 'automation-old',
+      revision: 2, health: 'available', context: { workspace: { directory: '/repo' } } });
+    expect(stored.id).toBe('automation-old');
+    expect(stored.executionRecipe).toMatchObject({ v: 2 });
   });
   it('writes a keyless plain Account inline payload through the Automation owner', async () => {
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
@@ -132,26 +145,5 @@ describe('CLI workflow trigger Account codec', () => {
     } });
     expect((await actions.list({ scope: 'account_inline' })).sets).toEqual([]);
     expect((await actions.sessionList({ sessionId: 'session-one' })).sets).toHaveLength(1);
-  });
-  it('refuses retained V1 mutation when the Channel binding owner cannot prove handoff absence', async () => {
-    network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
-    const retained = { id: 'automation-old', name: 'Old', description: null,
-      enabled: true, targetType: 'newSession', existingSessionId: null, templateVersion: 1, lastRunAt: null,
-      createdAt: 1, updatedAt: 1, workflowDefinitionId: null, scopeSessionId: null,
-      executionRecipe: { v: 1, templateVersion: 1, template: { t: 'plain', v: { v: 1, prompt: 'Review' } },
-        triggerEvidence: null, target: { kind: 'newSession', spawn: {
-          executionTarget: { serverId: 'portable-source-server', machineId: 'machine' },
-          directory: { kind: 'path', path: '/work' }, agentTarget: definition.defaults!.agentTarget!,
-        } } }, assignments: [{ machineId: 'machine', enabled: true, priority: 0, updatedAt: 1 }], triggers: [],
-    } satisfies AutomationDefinitionDetail;
-    network.get.mockResolvedValue(retained);
-    network.list.mockResolvedValue({ automations: [retained], nextCursor: null });
-    const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
-    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition });
-    await expect(actions.update({ automationId: 'automation-old', expectedRevision: 1, patch: { enabled: false } }))
-      .rejects.toMatchObject({ code: 'legacy_conversion_unsupported', details: { reason: 'channel_association_unknown' } });
-    expect(network.reconcile).not.toHaveBeenCalled();
-    // Native one-shot recipes are not Workflow definitions and stay out of this list.
-    expect((await actions.list({ scope: 'account_inline' })).sets).toEqual([]);
   });
 });

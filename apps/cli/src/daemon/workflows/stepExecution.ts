@@ -1,4 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
+export { readProjectSetupConsentHoldV1 as readWorkflowProjectSetupConsentHold } from '@happier-dev/protocol/actions/projectActionFamily';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import {
   sendSessionMessage,
@@ -217,6 +218,8 @@ export async function enqueueWorkflowSessionInput(params: Readonly<{
   sourceAuthority?: SessionInputSourceAuthorityV1;
   /** Coordinator-resolved authoring selection; Session owns model normalization. */
   modelSelectionInput?: SessionMessageModelSelectionInput;
+  modelSelectionUpdatedAt?: number;
+  incomingResumeOptions?: Parameters<typeof sendSessionMessage>[0]['incomingResumeOptions'];
   /** Frozen identity from the accepted Run. When supplied it must equal the canonical derivation. */
   localInputId?: string;
   signal?: AbortSignal;
@@ -276,6 +279,8 @@ export async function enqueueWorkflowSessionInput(params: Readonly<{
       : {}),
     ...(Object.keys(messageMeta).length > 0 ? { messageMeta } : {}),
     ...(params.modelSelectionInput === undefined ? {} : { modelSelectionInput: params.modelSelectionInput }),
+    ...(params.modelSelectionUpdatedAt === undefined ? {} : { modelSelectionUpdatedAt: params.modelSelectionUpdatedAt }),
+    ...(params.incomingResumeOptions ? { incomingResumeOptions: params.incomingResumeOptions } : {}),
     inputAdmission,
     machineAdmissionTransport: params.machineAdmissionTransport,
     ...(params.signal ? { signal: params.signal } : {}),

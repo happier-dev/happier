@@ -1,6 +1,5 @@
--- Released V2 open Runs have no frozen recipe bytes. The duplicate primary-key
--- insert is a hard failure until the released worker has drained or cancelled
--- them and predecessor writers are excluded.
+-- Pre-effect V2 queued/claimed Runs acquire their first frozen input at claim.
+-- Effectful open history cannot safely be reconstructed or replayed.
 CREATE TEMPORARY TABLE `_AutomationRun_open_frozen_input_preflight` (
     `ok` TINYINT NOT NULL PRIMARY KEY
 );
@@ -8,7 +7,12 @@ INSERT INTO `_AutomationRun_open_frozen_input_preflight` (`ok`)
 SELECT 1
 UNION ALL
 SELECT 1 FROM DUAL WHERE EXISTS (
-    SELECT 1 FROM `AutomationRun` WHERE `state` IN ('queued', 'claimed', 'running')
+    SELECT 1 FROM `AutomationRun` WHERE `state` IN ('queued', 'claimed', 'running') AND (
+        `state` = 'running' OR `startedAt` IS NOT NULL OR `finishedAt` IS NOT NULL
+        OR `producedSessionId` IS NOT NULL OR `summaryCiphertext` IS NOT NULL
+        OR EXISTS (SELECT 1 FROM `AutomationRunEvent` event
+            WHERE event.`runId` = `AutomationRun`.`id` AND event.`type` = 'run_started')
+    )
 );
 DROP TEMPORARY TABLE `_AutomationRun_open_frozen_input_preflight`;
 
@@ -302,11 +306,45 @@ ALTER TABLE `AutomationRun`
                     AND `occurrenceEvidenceEqualityTag` REGEXP '^[A-Za-z0-9_-]{43}$')))
     );
 
-ALTER TABLE `AutomationRun`
-    ADD CONSTRAINT `AutomationRun_execution_input_arm_check` CHECK (
-        `state` NOT IN ('queued', 'claimed', 'running')
-        OR `executionInputEnvelope` IS NOT NULL
-    );
+-- MySQL cannot CHECK producedSessionId because its FK has referential actions.
+-- Enforce the complete input invariant at both provider write boundaries.
+CREATE TRIGGER `AutomationRun_execution_input_insert`
+BEFORE INSERT ON `AutomationRun`
+FOR EACH ROW
+BEGIN
+IF NOT (
+    NEW.`state` NOT IN ('queued', 'claimed', 'running')
+    OR NEW.`executionInputEnvelope` IS NOT NULL
+    OR (NEW.`state` IN ('queued', 'claimed') AND NEW.`startedAt` IS NULL
+        AND NEW.`finishedAt` IS NULL AND NEW.`producedSessionId` IS NULL
+        AND NEW.`summaryCiphertext` IS NULL AND NEW.`resultEnvelope` IS NULL
+        AND NEW.`executionAttempt` = 0 AND NEW.`executionDispatchCommittedAt` IS NULL
+        AND (NEW.`executionDispatchState` IS NULL OR NEW.`executionDispatchState` = 'notStarted')
+        AND NEW.`executionNativeRunId` IS NULL AND NEW.`executionNativeCallId` IS NULL
+        AND NEW.`executionNativeSidechainId` IS NULL)
+) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AutomationRun execution input is required';
+END IF;
+END;
+
+CREATE TRIGGER `AutomationRun_execution_input_update`
+BEFORE UPDATE ON `AutomationRun`
+FOR EACH ROW
+BEGIN
+IF NOT (
+    NEW.`state` NOT IN ('queued', 'claimed', 'running')
+    OR NEW.`executionInputEnvelope` IS NOT NULL
+    OR (NEW.`state` IN ('queued', 'claimed') AND NEW.`startedAt` IS NULL
+        AND NEW.`finishedAt` IS NULL AND NEW.`producedSessionId` IS NULL
+        AND NEW.`summaryCiphertext` IS NULL AND NEW.`resultEnvelope` IS NULL
+        AND NEW.`executionAttempt` = 0 AND NEW.`executionDispatchCommittedAt` IS NULL
+        AND (NEW.`executionDispatchState` IS NULL OR NEW.`executionDispatchState` = 'notStarted')
+        AND NEW.`executionNativeRunId` IS NULL AND NEW.`executionNativeCallId` IS NULL
+        AND NEW.`executionNativeSidechainId` IS NULL)
+) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AutomationRun execution input is required';
+END IF;
+END;
 
 ALTER TABLE `AutomationRun`
     ADD CONSTRAINT `AutomationRun_reply_handoff_arm_check` CHECK (

@@ -15,6 +15,7 @@ import { AutomationValidationError } from "@/app/automations/automationValidatio
 import type { ClearAutomationRunHistoryResult } from "@/app/automations/automationCrudService";
 import type { AutomationRunItem } from "@/app/automations/automationTypes";
 import { PRESENT_USER_REQUIRED_ERROR } from "../../utils/requirePresentUser";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 
 const dbMocks = createDbMocks({
     account: ["findUnique"],
@@ -36,7 +37,7 @@ const accountCurrentness = {
     contentKeyFingerprint: null,
 } as const;
 
-const scheduleExecutionRecipe = {
+const retainedScheduleExecutionRecipe = {
     v: 1,
     templateVersion: 1,
     template: {
@@ -57,6 +58,10 @@ const scheduleExecutionRecipe = {
     },
 };
 
+const scheduleExecutionRecipe = createAutomationWorkflowRecipeFixture({
+    templateVersion: 1, directory: "/tmp/daily-sweep", prompt: "daily sweep",
+});
+
 const scheduleAutomation = {
     id: "automation-1",
     accountId: "account-1",
@@ -64,7 +69,7 @@ const scheduleAutomation = {
     description: null,
     enabled: true,
     targetType: "new_session",
-    templateCiphertext: JSON.stringify(scheduleExecutionRecipe),
+    templateCiphertext: JSON.stringify(retainedScheduleExecutionRecipe),
     templateVersion: 1,
     lastRunAt: null,
     createdAt: new Date("2026-02-12T10:00:00.000Z"),

@@ -10,6 +10,7 @@ import { cancelSessionInput } from '@/session/services/cancelSessionInput';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
+import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
@@ -22,6 +23,7 @@ import type {
   WorkflowAuthoredProducerRef,
   WorkflowProgressEnvelopeV1,
   WorkflowSessionAuthoringSelection,
+  WorkflowStepExecutionSelection,
   WorkflowWorkspaceDescriptorV1,
 } from '@happier-dev/protocol/workflows';
 import type { ResolvedRoleV1, SessionAwarenessOriginV1, SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
@@ -41,6 +43,34 @@ import {
 } from './stepExecution';
 import { resolveWorkflowConversationSelection, type WorkflowConversationBinding } from './workflowConversation';
 import type { WorkflowProducerBinding } from './workflowScopeBinding';
+import { resolveSessionRuntimeSnapshot, type SessionRuntimeSnapshot } from '@/daemon/sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
+import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
+import { resolveWorkflowAuthorizedSession } from './invocationRecoveryObserver';
+
+function workflowSessionResumeOptions(selection: WorkflowStepExecutionSelection): NonNullable<Parameters<typeof requestInactiveSessionResume>[0]['incomingOptions']> {
+  const terminal = selection.terminal ? {
+    ...(selection.terminal.mode && selection.terminal.mode !== 'integrated' ? { mode: selection.terminal.mode } : {}),
+    ...(selection.terminal.tmux ? { tmux: selection.terminal.tmux } : {}),
+  } : undefined;
+  return {
+    ...(selection.launchEnvironment ? { environmentVariables: selection.launchEnvironment.values } : {}),
+    ...(selection.providerSessionResume ? { resume: selection.providerSessionResume.providerSessionId } : {}),
+    ...(selection.permissionMode ? { permissionMode: parsePermissionIntentAlias(selection.permissionMode) ?? undefined } : {}),
+    ...(selection.permissionModeUpdatedAt === undefined ? {} : { permissionModeUpdatedAt: selection.permissionModeUpdatedAt }),
+    ...(selection.modelSelection ? { modelSelection: selection.modelSelection } : {}),
+    ...(selection.profileId ? { profileId: selection.profileId } : {}),
+    ...(terminal ? { terminal } : {}),
+    ...(selection.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: selection.windowsRemoteSessionLaunchMode } : {}),
+    ...(selection.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: selection.windowsRemoteSessionConsole } : {}),
+    ...(selection.windowsTerminalWindowName ? { windowsTerminalWindowName: selection.windowsTerminalWindowName } : {}),
+    ...(selection.acpSessionModeId ? { agentModeId: selection.acpSessionModeId } : {}),
+    ...(selection.mcpSelection ? { mcpSelection: selection.mcpSelection } : {}),
+    ...(selection.connectedServices ? { connectedServices: selection.connectedServices } : {}),
+    ...(selection.transcriptStorage ? { transcriptStorage: selection.transcriptStorage } : {}),
+    ...(selection.runtimeDescriptorV1 ? { runtimeDescriptorV1: selection.runtimeDescriptorV1 } : {}),
+    ...(selection.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: selection.sessionConfigOptionOverrides } : {}),
+  };
+}
 
 export type PreparedWorkflowSessionConversation = Readonly<{
   kind: 'workflow_session_conversation';
@@ -54,18 +84,20 @@ export type WorkflowSessionConversation = Readonly<{
   directory: string;
   agentTarget?: WorkflowSessionAuthoringSelection['agentTarget'];
   runtimeSelection?: WorkflowSessionAuthoringSelection;
+  runtimeSnapshot?: Pick<SessionRuntimeSnapshot, 'permissionMode' | 'modelSelection'>;
   /** Session-owned creation facts, retained across shared inputs and recovery. */
   origin?: SessionAwarenessOriginV1;
   workDepth?: number;
 }>;
 
 export type CreateFreshWorkflowSessionConversation = (params: Readonly<{
-  selection: WorkflowSessionAuthoringSelection;
+  selection: Omit<WorkflowStepExecutionSelection, 'conversation' | 'workspace'>;
   workspace: WorkflowWorkspaceDescriptorV1;
   creationKey: string;
   initialTitle?: string;
   /** The accepted selected Role, never re-resolved from mutable Settings. */
   frozenRole?: ResolvedRoleV1;
+  observationOnly?: boolean;
   signal?: AbortSignal;
 }>) => Promise<WorkflowSessionConversation>;
 
@@ -86,7 +118,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
   machineAdmissionTransport: NonNullable<Parameters<typeof enqueueWorkflowSessionInput>[0]['machineAdmissionTransport']>;
   resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
 }>): CreateFreshWorkflowSessionConversation {
-  return async ({ selection, workspace, creationKey, initialTitle, frozenRole, signal }) => {
+  return async ({ selection, workspace, creationKey, initialTitle, frozenRole, observationOnly, signal }) => {
     signal?.throwIfAborted();
     if (workspace.machineId !== deps.machineId) {
       throw new WorkflowSessionCompositionError('target_unavailable');
@@ -158,6 +190,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
       directory: target.directory,
       approvedNewDirectoryCreation: false,
       spawnNonce: creationKey,
+      ...(observationOnly ? { resumeOnly: true } : {}),
       originKind: 'run_step',
       originRunId: deps.originRunId,
       ...(team ? {
@@ -175,7 +208,10 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
       agentTarget: selection.agentTarget ?? undefined,
       ...(selection.modelSelection ? { modelSelection: selection.modelSelection } : {}),
       ...(selection.profileId ? { profileId: selection.profileId } : {}),
+      ...(selection.launchEnvironment ? { environmentVariables: selection.launchEnvironment.values } : {}),
+      ...(selection.providerSessionResume ? { resume: selection.providerSessionResume.providerSessionId } : {}),
       ...(permissionMode ? { permissionMode } : {}),
+      ...(selection.permissionModeUpdatedAt === undefined ? {} : { permissionModeUpdatedAt: selection.permissionModeUpdatedAt }),
       ...(selection.acpSessionModeId ? { agentModeId: selection.acpSessionModeId } : {}),
       ...(selection.sessionConfigOptionOverrides
         ? { sessionConfigOptionOverrides: selection.sessionConfigOptionOverrides }
@@ -214,6 +250,18 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
       ...(selection.runtimeDescriptorV1 ? { runtimeDescriptorV1: selection.runtimeDescriptorV1 } : {}),
       machineAdmissionTransport: deps.machineAdmissionTransport,
       ...(signal ? { signal } : {}),
+    }).catch((error: unknown) => {
+      // Only the exact creator's typed private response proves no runner was
+      // admitted. Transport loss and nonce observation remain unresolved.
+      if (error instanceof Error && 'code' in error && 'details' in error
+        && typeof error.code === 'string' && isDefiniteSpawnPreAdmissionRejection(error.code)) {
+        const response = error.details;
+        if (response && typeof response === 'object' && 'type' in response && response.type === 'error'
+          && 'errorCode' in response && response.errorCode === error.code) {
+          throw new WorkflowSessionCompositionError(error.code, error.message);
+        }
+      }
+      throw error;
     });
     signal?.throwIfAborted();
     return { sessionId: created.sessionId, machineId: deps.machineId, directory: target.directory,
@@ -222,8 +270,8 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
 }
 
 export class WorkflowSessionCompositionError extends Error {
-  constructor(readonly code: string) {
-    super(code);
+  constructor(readonly code: string, message = code) {
+    super(message);
   }
 }
 
@@ -379,6 +427,10 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       }
     };
     if (params.invocation.execution) {
+      if (params.invocation.execution.kind === 'session_ready') {
+        return params.step.inputMode === 'none' ? { kind: 'completed', result: '' }
+          : { kind: 'failed', code: 'workflow_execution_target_mismatch' };
+      }
       if (params.invocation.execution.kind !== 'session') {
         return { kind: 'failed', code: 'workflow_execution_target_mismatch' };
       }
@@ -391,7 +443,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
           ? { deadlineMs: Date.parse(params.invocation.observationDeadline.expiresAt) }
           : params.step.timeoutMs === undefined ? {} : { timeoutAfterInputMs: params.step.timeoutMs }),
         onInputMaterialized: async (acceptedAtMs) => {
-          await params.onInputAccepted(params.invocation.execution!, acceptedAtMs);
+          if (params.invocation.execution?.kind === 'session') await params.onInputAccepted(params.invocation.execution, acceptedAtMs);
         },
         ...(params.signal ? { signal: params.signal } : {}),
       });
@@ -419,7 +471,8 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
         : await deps.prepareConversation(params);
     } catch (error) {
       if (params.signal?.aborted) return settleBeforeAdmissionAfterAbort();
-      if (error instanceof WorkflowSessionCompositionError) return { kind: 'failed', code: error.code };
+      if (error instanceof WorkflowSessionCompositionError) return { kind: 'failed', code: error.code,
+        ...(error.message === error.code ? {} : { message: error.message }) };
       throw error;
     }
     const keepsStepSessionDepth = prepared.existing?.origin?.kind === 'run_step'
@@ -476,13 +529,34 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       return settleObservedInput(observed.result);
     }
     let conversation: Awaited<ReturnType<typeof deps.materializeConversation>>;
+    const explicitExisting = params.conversationBinding?.kind === 'existing_session'
+      || params.execution.conversation?.kind === 'existing_session';
+    if (params.step.inputMode === 'none' || (!params.observationOnly && prepared.existing && explicitExisting)) {
+      if (params.step.inputMode === 'none' && !params.onSessionReady) return { kind: 'failed', code: 'workflow_session_creation_correspondence_unavailable' };
+      if (!params.observationOnly || prepared.existing) await params.beforeInputAdmission();
+      assertWorkflowAdmissionSignal(params.signal);
+    }
     try {
       conversation = await deps.materializeConversation(prepared, params);
     } catch (error) {
       if (params.signal?.aborted) return settleBeforeAdmissionAfterAbort();
-      if (error instanceof WorkflowSessionCompositionError) return { kind: 'failed', code: error.code };
+      if (error instanceof WorkflowSessionCompositionError) return { kind: 'failed', code: error.code,
+        ...(error.message === error.code ? {} : { message: error.message }) };
       throw error;
     }
+    if (params.step.inputMode === 'none') {
+      await params.onSessionReady!({ kind: 'session_ready', sessionId: conversation.sessionId });
+      return { kind: 'completed', result: '' };
+    }
+    const runtime = prepared.existing?.runtimeSnapshot;
+    const selectedControls = runtime ? resolveSessionRuntimeSnapshot({
+      incomingOptions: { directory: params.workspace.directory, permissionMode: parsePermissionIntentAlias(requestedPermissionCeiling ?? 'default') ?? undefined,
+        permissionModeUpdatedAt: params.execution.permissionModeUpdatedAt, modelSelection: params.execution.modelSelection ?? undefined },
+      trackedSpawnOptions: { directory: params.workspace.directory,
+        ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode.value, permissionModeUpdatedAt: runtime.permissionMode.updatedAt } : {}),
+      },
+      trackedModelSelection: runtime.modelSelection,
+    }).snapshot : null;
     const text = renderWorkflowSessionStepInput({ input: params.input, result: params.step.result,
       roleInstructions: deps.resolveRoleInstructions?.(params) });
     if (params.observationOnly) {
@@ -510,19 +584,28 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
     const admission = await sessionInput.enqueue({
       credentials: deps.credentials,
       sessionId: conversation.sessionId,
-      workflow: { purpose: 'invocation', runId: params.runId, invocationRecordId: params.invocationRecordId ?? params.invocation.logicalInvocationRecordId },
+      // The step's visible number travels on its provenance, so the transcript shows the number the
+      // step's heading and Session title show (stamped here, never recomputed by a reader).
+      workflow: { purpose: 'invocation', runId: params.runId, invocationRecordId: params.invocationRecordId ?? params.invocation.logicalInvocationRecordId,
+        ...(params.stepOrdinal === undefined ? {} : { stepOrdinal: params.stepOrdinal }) },
       ...(inputDepth === undefined ? {} : { workDepth: inputDepth }),
       text,
+      ...(params.input.displayText === undefined ? {} : { displayText: params.input.displayText }),
       mentions: params.input.references,
       attachments: params.input.attachments,
       machineAdmissionTransport: conversation.machineAdmissionTransport,
-      permissionMode: requestedPermissionCeiling,
+      permissionMode: params.execution.permissionMode === null ? null : selectedControls?.permissionMode?.value ?? requestedPermissionCeiling,
+      incomingResumeOptions: workflowSessionResumeOptions(params.execution),
       ...(params.authorization.sourceAuthority
         ? { sourceAuthority: params.authorization.sourceAuthority }
         : {}),
       ...(params.execution.modelSelection === undefined
         ? {}
-        : { modelSelectionInput: params.execution.modelSelection?.ref ?? { modelId: null } }),
+        : { modelSelectionInput: params.execution.modelSelection === null ? { modelId: null }
+            : selectedControls?.modelSelection
+              ? selectedControls.modelSelection.value ?? { modelId: null }
+              : params.execution.modelSelection.ref ?? { modelId: null },
+          ...(params.execution.modelSelection === null ? {} : { modelSelectionUpdatedAt: selectedControls?.modelSelection?.updatedAt ?? params.execution.modelSelection.updatedAt }) }),
       ...(params.signal ? { signal: params.signal } : {}),
     });
     if (admission.status === 'rejected') return { kind: 'failed', code: admission.code };
@@ -581,10 +664,13 @@ function assertWorkflowSessionReuseCompatible(
   actual: WorkflowSessionConversation,
   keepSessionAgent = false,
 ): void {
+  // Explicit existing targets keep their Agent; the canonical resume snapshot
+  // decides which authored launch controls can apply when the runner is offline.
+  if (keepSessionAgent) return;
   for (const field of WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS) {
     // These two supported next-input choices are applied by Session Pending.
     if (field === 'modelSelection' || field === 'permissionMode'
-      || (keepSessionAgent && field === 'agentTarget') || requested[field] === undefined) continue;
+      || requested[field] === undefined) continue;
     const retained = field === 'agentTarget' ? actual.agentTarget : actual.runtimeSelection?.[field];
     if (field === 'mcpSelection' && requested.mcpSelection && actual.runtimeSelection?.mcpSelection
       && areSessionMcpSelectionsEquivalent(requested.mcpSelection, actual.runtimeSelection.mcpSelection)) continue;
@@ -609,6 +695,7 @@ function assertWorkflowSessionReuseCompatible(
 
 /** Session identity stays exact; authored continuity is interpreted by the common binder. */
 export function createProductionWorkflowConversationOwner(deps: Readonly<{
+  credentials?: StoredCredentials;
   machineId: string;
   createFreshConversation: CreateFreshWorkflowSessionConversation;
   resolveFrozenRole?: (params: Pick<Parameters<WorkflowStepExecutor>[0], 'step' | 'invocation' | 'role'>) => ResolvedRoleV1 | undefined;
@@ -640,7 +727,7 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
       const resolution = resolveWorkflowConversationSelection(params);
       if (resolution.kind === 'unavailable') throw new WorkflowSessionCompositionError('workflow_conversation_unavailable');
       if (resolution.kind === 'observe') {
-        if (resolution.execution.kind !== 'session') {
+        if (resolution.execution.kind !== 'session' && resolution.execution.kind !== 'session_ready') {
           throw new WorkflowSessionCompositionError('workflow_execution_target_mismatch');
         }
         // The executor rejoins this input directly. Neither fresh selection nor
@@ -657,7 +744,7 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
       }
       let existing: WorkflowSessionConversation | null = null;
       if (resolution.kind === 'retained') {
-        if (resolution.execution.kind !== 'session') {
+        if (resolution.execution.kind !== 'session' && resolution.execution.kind !== 'session_ready') {
           throw new WorkflowSessionCompositionError('workflow_conversation_unavailable');
         }
         existing = await deps.resolveExistingSessionConversation({
@@ -722,14 +809,30 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
         if (!canonicalAbsolutePathsEqual(prepared.existing.directory, params.workspace.directory)) {
           throw new WorkflowSessionCompositionError('conversation_workspace_mismatch');
         }
+        if (params.step.inputMode === 'none' || (!params.observationOnly && (
+          params.conversationBinding?.kind === 'existing_session' || params.execution.conversation?.kind === 'existing_session'
+        ))) {
+          const credentials = deps.credentials;
+          if (!credentials) throw new WorkflowSessionCompositionError('workflow_conversation_unavailable');
+          const authorized = await resolveWorkflowAuthorizedSession({ credentials,
+            sessionId: prepared.existing.sessionId, machineId: prepared.existing.machineId,
+            ...(params.signal ? { signal: params.signal } : {}) });
+          if (!authorized) throw new WorkflowSessionCompositionError('workflow_conversation_unavailable');
+          const resumed = await requestInactiveSessionResume({ credentials,
+            sessionId: prepared.existing.sessionId, requestId: `workflow:${params.runId}:${params.invocationRecordId ?? params.invocation.logicalInvocationRecordId}:session-ready`,
+            rawSession: authorized.target.rawSession, metadata: authorized.metadata,
+            incomingOptions: workflowSessionResumeOptions(params.execution), waitForReady: true,
+            ...(params.signal ? { signal: params.signal } : {}) });
+          if (!resumed.ok) throw new WorkflowSessionCompositionError(resumed.code);
+        }
         return prepared.existing;
       }
       params.signal?.throwIfAborted();
       if (!params.execution.agentTarget) throw new WorkflowSessionCompositionError('target_unavailable');
       const { conversation: _conversation, workspace: _workspace, ...selection } = params.execution;
       const frozenRole = deps.resolveFrozenRole?.(params);
-      const initialTitle = params.memberOrdinal === undefined ? null : formatWorkflowStepSessionTitle({
-        step: params.step, memberOrdinal: params.memberOrdinal,
+      const initialTitle = params.stepOrdinal === undefined ? null : formatWorkflowStepSessionTitle({
+        step: params.step, stepOrdinal: params.stepOrdinal,
         ...(params.item ? { item: params.item } : {}),
       });
       const conversation = await deps.createFreshConversation({
@@ -738,6 +841,7 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
         ...(initialTitle === null ? {} : { initialTitle }),
         workspace: params.workspace,
         creationKey: `workflow:${params.runId}:${params.invocationRecordId ?? params.invocation.logicalInvocationRecordId}`,
+        ...(params.observationOnly ? { observationOnly: true } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
       });
       params.signal?.throwIfAborted();

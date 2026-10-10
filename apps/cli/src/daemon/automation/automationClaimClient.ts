@@ -53,6 +53,7 @@ function toWorkerAssignmentResponseFromV3(
       machineId: assignment.machineId,
       automationId: assignment.automationId,
       nextClaimAt: assignment.nextClaimAt,
+      ...(assignment.executionRecipeVersion === undefined ? {} : { executionRecipeVersion: assignment.executionRecipeVersion }),
     })),
     settings: response.settings,
   };

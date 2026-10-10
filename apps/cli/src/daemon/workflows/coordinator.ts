@@ -803,7 +803,7 @@ class WorkflowReviewHolds {
   close(): void { this.closed = true; if (this.scheduled) clearImmediate(this.scheduled); this.onActivityChanged(); }
 }
 
-export function createWorkflowCoordinator(deps: Readonly<{
+type WorkflowCoordinatorDependencies = Readonly<{
   requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   store: WorkflowCoordinatorStore;
   sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField'>;
@@ -820,7 +820,9 @@ export function createWorkflowCoordinator(deps: Readonly<{
   allocateInvocationRecordId?: () => string;
   rootInvocationRecordId?: string;
   onReviewEntered?: (params: Readonly<{ runId: string; invocation: WorkflowCoordinatorInvocation }>) => Promise<void>;
-}>): Readonly<{
+}>;
+
+export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies): Readonly<{
   liveWorkProducer: LiveWorkProducerV1;
   refreshReviewHolds: () => Promise<void>;
   run: (params: Readonly<{
@@ -954,17 +956,8 @@ type ExecutionContext = Readonly<{
   signal?: AbortSignal;
   admissionGate: KeyedAdmissionGate;
   holds: WorkflowReviewHolds;
-  deps: Readonly<{
-    store: WorkflowCoordinatorStore;
-    sessionContext?: Pick<WorkflowValueResolutionRuntime, 'resolveSessionContext' | 'resolveSessionContextField'>;
-    executeStep: WorkflowStepExecutor;
-    prepareStep?: WorkflowStepPreparer;
-    action?: WorkflowActionExecutor;
-    resolveWorkspace: WorkflowWorkspaceResolver;
-    isAcceptedAuthorizationCurrent: WorkflowAcceptedAuthorizationCurrentness;
-    checkReviewGenerationAuthority?: (params: Readonly<{ signal?: AbortSignal }>) => Promise<string | undefined>;
+  deps: WorkflowCoordinatorDependencies & Readonly<{
     allocateInvocationRecordId: () => string;
-    onReviewEntered?: (params: Readonly<{ runId: string; invocation: WorkflowCoordinatorInvocation }>) => Promise<void>;
   }>;
 }>;
 

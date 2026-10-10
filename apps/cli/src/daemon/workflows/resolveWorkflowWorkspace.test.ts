@@ -1,7 +1,7 @@
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -114,6 +114,33 @@ async function createTemporaryGitProject() {
 }
 
 describe('resolveWorkflowWorkspace', () => {
+  it('preserves a predecessor worktree name and named base ref through the real SCM boundary', async () => {
+    const fixture = await createTemporaryGitProject();
+    try {
+      const git = createGitWorkflowWorkspaceTestDependencies();
+      let intent: WorkflowWorkspaceCreationIntent | undefined;
+      const result = await resolveWorkflowWorkspace({
+        selection: { kind: 'new_worktree', source: { kind: 'workflow' }, displayName: 'daily-check', baseRef: 'main' },
+        defaultSelection: { kind: 'project_checkout' },
+        projectWorkspace: { machineId: 'machine-1', directory: fixture.projectDirectory, checkoutRootPath: fixture.root },
+        runId: 'retained-automation', logicalInvocationRecordId: 'prompt',
+        deps: { ...git, persistCreationIntent: async value => { intent = value; } },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.code);
+      expect(intent).toMatchObject({ displayName: 'daily-check', baseRef: 'main' });
+      expect((await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: result.workspace.checkoutRootPath })).stdout.trim())
+        .toBe(fixture.revision);
+      expect((await execFileAsync('git', ['status', '--short', '--', 'README.md', 'untracked.txt', 'packages/app/index.ts'], { cwd: fixture.root })).stdout)
+        .toBe(fixture.dirtyStatus);
+      expect((await execFileAsync('git', ['show', ':README.md'], { cwd: fixture.root })).stdout).toBe('staged\n');
+      expect(await readFile(join(fixture.root, 'README.md'), 'utf8')).toBe('unstaged-after-staged\n');
+      expect(await readFile(join(fixture.root, 'untracked.txt'), 'utf8')).toBe('untracked\n');
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it('finds original-revision workspace selections through deeply nested authored blocks', async () => {
     let block: WorkflowBlock = { kind: 'wait', id: 'original',
       document: { text: 'Continue', references: [], attachments: [] },
@@ -370,7 +397,7 @@ describe('resolveWorkflowWorkspace', () => {
     await expect(prepareWorkflowAcceptedWorkspaceTarget({
       projectTarget: { machineId: 'machine-1', directory },
       definition: { version: 1, inputs: [], defaults: {}, blocks: [] },
-      env,
+      env: { ...env, NODE_ENV: 'test' },
       platform,
       pathIsDirectory: async (path) => path === expectedDirectory,
       inspectLocation: async ({ candidatePath }) => ({ inspection: { rootPath: candidatePath === expectedDirectory ? rootPath : '/wrong' } }),
@@ -384,7 +411,7 @@ describe('resolveWorkflowWorkspace', () => {
     await expect(prepareWorkflowAcceptedWorkspaceTarget({
       projectTarget: { machineId: 'machine-1', directory: 'C:\\Users\\alice2\\repo' },
       definition: { version: 1, inputs: [], defaults: {}, blocks: [] },
-      env: { USERPROFILE: 'C:\\Users\\alice' },
+      env: { NODE_ENV: 'test', USERPROFILE: 'C:\\Users\\alice' },
       platform: 'win32',
       pathIsDirectory: async (path) => path === 'C:\\Users\\alice2\\repo',
       inspectLocation: async () => ({ inspection: { rootPath: 'C:\\Users\\alice2\\repo' } }),
@@ -578,7 +605,7 @@ describe('resolveWorkflowWorkspace', () => {
         invocation, scope: [], producerBinding: noProducerBinding, useConversationWorkspace: true,
         conversationWorkspace: { machineId: 'machine-1', directory: fixture.projectDirectory },
       });
-      expect(result).toEqual({ ok: true, workspace: { machineId: 'machine-1', directory: fixture.projectDirectory, checkoutRootPath: fixture.root } });
+      expect(result).toEqual({ ok: true, workspace: { machineId: 'machine-1', directory: fixture.projectDirectory, checkoutRootPath: await realpath(fixture.root) } });
       expect(store.records.get(key)?.workspace?.descriptor).toEqual(result.ok ? result.workspace : undefined);
       expect((await execFileAsync('git', ['worktree', 'list', '--porcelain'], { cwd: fixture.root })).stdout.match(/^worktree /gm)).toHaveLength(1);
     } finally {

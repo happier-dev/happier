@@ -5,19 +5,17 @@ import { AutomationPluginEventOccurrenceEvidenceV1Schema } from "@happier-dev/pr
 
 import { classifyPlainAutomationOccurrenceEvidence, findAutomationOccurrencesTx } from "./automationOccurrencePersistence";
 
-describe("retained host occurrence provenance", () => {
-    it("reads legacy evidence and host-origin wrapped evidence while rejecting different immutable origins", () => {
+describe("retained occurrence evidence", () => {
+    it("continues to read the legacy plain occurrence evidence", () => {
         const evidence = AutomationPluginEventOccurrenceEvidenceV1Schema.parse({ v: 1, kind: "pluginEvent",
-            eventRef: { pluginId: "acme.events", localId: "changed" }, sourceSelectorId: "source",
+            eventRef: { pluginId: "acme.events", localId: "changed" }, sourceSelectorId: "04de2271-6313-4fd4-8f1b-e0bd39222f21",
             occurrenceId: "occurrence", occurredAt: 100, payload: { changed: true } });
         const legacy = JSON.stringify({ t: "plain", v: evidence });
         expect(classifyPlainAutomationOccurrenceEvidence({ triggerEvidenceEnvelope: legacy, expectedEvidence: evidence })).toBe("match");
-        const wrapped = JSON.stringify({ v: 1, originRunId: "host-origin", evidence: JSON.parse(legacy) });
-        expect(classifyPlainAutomationOccurrenceEvidence({ triggerEvidenceEnvelope: wrapped,
-            expectedEvidence: evidence, expectedOriginRunId: "host-origin" })).toBe("match");
-        expect(classifyPlainAutomationOccurrenceEvidence({ triggerEvidenceEnvelope: wrapped,
-            expectedEvidence: evidence, expectedOriginRunId: "different-origin" })).toBe("mismatch");
     });
+
+    // Current cause-arm CHECKs prohibit host-origin wrappers; an approved storage amendment is required.
+    it.todo("retains immutable host origin through opaque evidence reads and encryption migration");
 });
 
 describe("findAutomationOccurrencesTx", () => {

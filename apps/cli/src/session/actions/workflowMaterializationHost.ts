@@ -1,13 +1,16 @@
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginActionSchemasReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { buildMachineAgentsDetectRequest, buildMachineAgentInventoryDescriptors, projectMachineAgentsDetectResponse } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
+import { readAccountLaunchProfiles } from '@/settings/profiles/readProfilesFromAccountSettings';
 import type { AiLaunchProfile, ResolveRoleSelectionV1Input, AccountSettings, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveWorkflowAuthorizedSession } from '@/daemon/workflows/invocationRecoveryObserver';
@@ -182,6 +185,9 @@ export function createCredentialedWorkflowMaterializationHostV1(params: Omit<Wor
         honorAccountSettingsModeEnv: false });
       target.signal?.throwIfAborted();
       if (current.source === 'none') throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+      const roleAccount = { credentials: params.credentials,
+        scopeKey: resolveAccountSettingsScopeKeyForToken(params.credentials.token),
+        lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), ...(target.signal ? { signal: target.signal } : {}) };
       const sourceReader = params.readRoleSources ?? createRoleSourceReader({ artifactStore,
         accountId: params.accountId ?? readAccountIdFromToken(params.credentials.token) ?? undefined,
         readRawAccountSettings: async () => {
@@ -190,13 +196,11 @@ export function createCredentialedWorkflowMaterializationHostV1(params: Omit<Wor
         },
       });
       const roleSources = await sourceReader(target.signal);
-      let launchProfiles: Promise<ReturnType<typeof readAiLaunchProfileCollection>> | undefined;
+      let launchProfiles: ReturnType<typeof readAccountLaunchProfiles> | undefined;
       const readLaunchProfile = async (profileId: string) => {
-        launchProfiles ??= loadAiLaunchProfileArtifacts(current.settings.profiles, artifactStore, target.signal)
-          .then((artifactsById) => readAiLaunchProfileCollection(current.settings.profiles, { artifactsById, includeShared: true }));
-        const matching = (await launchProfiles).entries.filter((candidate) => candidate.kind !== 'opaque' && candidate.profile.id === profileId);
-        const entry = matching.length === 1 ? matching[0] : undefined;
-        return entry && entry.kind !== 'opaque' ? entry.profile : null;
+        launchProfiles ??= readAccountLaunchProfiles(current.settings, params.credentials, target.signal);
+        const matching = (await launchProfiles).visibleProfiles.filter((candidate) => candidate.id === profileId);
+        return matching.length === 1 && matching[0]!.enabled !== false ? matching[0]! : null;
       };
       const materialization = await createWorkflowMaterializationHostV1({ ...params,
         callMachineAction: (input) => params.serverHttpBaseUrl
@@ -207,8 +211,13 @@ export function createCredentialedWorkflowMaterializationHostV1(params: Omit<Wor
         readWorkflowDefinition: (ref, signal) => params.serverHttpBaseUrl
           ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => params.readWorkflowDefinition(ref, signal))
           : params.readWorkflowDefinition(ref, signal),
-        readRoleSelection: async () => ({ settingsRoles: Object.fromEntries(roleSources.map((entry) => [entry.roleId, entry.role])),
-          settingsOverrides: current.settings.rolesV1.overrides }),
+        readRoleSelection: async () => {
+          // Demand the canonical catalog in the captured Account lifetime after
+          // Artifact inventory; unavailable authority cannot become defaults.
+          const roleOverrides = await prepareActiveAccountRoleOverrides(roleAccount);
+          if (roleOverrides.status !== 'ready') throw Object.assign(new Error('account_role_overrides_unavailable'), { code: 'account_role_overrides_unavailable' });
+          return { roleSourceInventory: roleSources, settingsOverrides: roleOverrides.overrides };
+        },
         readLaunchProfile: (profileId) => params.serverHttpBaseUrl
           ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => readLaunchProfile(profileId)) : readLaunchProfile(profileId),
       })(target);

@@ -306,6 +306,7 @@ export async function evaluateWorkflowStopCondition(
 
 export type MaterializedWorkflowStepInput = Readonly<{
   text: string;
+  displayText?: string;
   references: WorkflowStepComposerDocument['references'];
   attachments: WorkflowStepComposerDocument['attachments'];
   values: readonly WorkflowJsonValue[];
@@ -363,6 +364,7 @@ export async function materializeWorkflowStepInput(params: Readonly<{
   }
   return {
     text,
+    ...(params.document.displayText === undefined ? {} : { displayText: params.document.displayText }),
     references: params.document.references.filter((mention) => mention.kind !== MENTION_KIND_V1.workflowInput),
     attachments: params.document.attachments,
     values,

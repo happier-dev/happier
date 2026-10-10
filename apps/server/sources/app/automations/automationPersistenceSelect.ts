@@ -2,6 +2,20 @@ import type { Prisma } from "@prisma/client";
 
 import { AUTOMATION_V3_RUN_DETAIL_MAX_EVENTS } from "@happier-dev/protocol";
 
+/** The predecessor started transaction committed before any Session effect.
+ * Reclaimed pre-start claims remain safe; attempt count is not effect evidence.
+ */
+export const automationRunWithoutExecutionWhere = {
+    state: { in: ["queued", "claimed"] },
+    startedAt: null, finishedAt: null, producedSessionId: null, summaryCiphertext: null, resultEnvelope: null,
+    executionAttempt: 0, executionDispatchCommittedAt: null,
+    executionNativeRunId: null, executionNativeCallId: null, executionNativeSidechainId: null,
+    workflowAcceptedSnapshotEnvelope: null, workflowCheckpointEnvelope: null,
+    workflowInvocations: { none: {} },
+    events: { none: { type: "run_started" } },
+    AND: [{ OR: [{ executionDispatchState: null }, { executionDispatchState: "notStarted" }] }],
+} satisfies Prisma.AutomationRunWhereInput;
+
 export const automationTriggerSelect = {
     id: true, automationId: true, kind: true, enabled: true, revision: true, deletedAt: true,
     scheduleKind: true, scheduleExpr: true, everyMs: true, timezone: true, nextRunAt: true,

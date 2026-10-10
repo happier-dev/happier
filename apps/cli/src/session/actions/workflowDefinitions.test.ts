@@ -14,6 +14,7 @@ const agentStartContext = resolveCliAgentStartContextV1({
   sessionId: 'origin', machineId: 'machine', directory: '/repo',
   backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
   metadata: {}, starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default', settings: accountSettingsParse({}),
+  accountRoleOverrides: { status: 'ready', overrides: {} },
 });
 if (!agentStartContext) throw new Error('expected current host authority fixture');
 // The machine catalog is a system boundary. Materialization and policy remain real.

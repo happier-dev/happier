@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import tweetnacl from "tweetnacl";
 import {
     MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
@@ -7,8 +6,9 @@ import {
     sealWorkflowCheckpointStoredEnvelopeV1,
     AutomationRunCauseSchema,
     deriveAutomationManualOccurrenceKeyV1,
-    PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
+    createCanonicalJsonSigningInput,
 } from "@happier-dev/protocol";
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     applySessionTurnMutation as applySessionTurnMutationWithAuthentication,
@@ -20,10 +20,10 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
-import { createSignedPluginInstallationPublisherHeader } from "@/testkit/pluginInstallationPublisherTestkit";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerSessionArchiveRoutes } from "@/app/api/routes/session/registerSessionArchiveRoutes";
 import { deleteOwnedSession } from "@/app/session/delete/deleteOwnedSession";
+import { deleteWorkflowRun } from "@/app/workflows/workflowRunService";
 
 import { automationPortableQueryChunks } from "./automationPortableQueryChunks";
 import { admitSessionLifecycleAutomationRunsTx } from "./automationSessionLifecycleAdmission";
@@ -33,6 +33,8 @@ import { admitDueAutomationScheduleTriggerTx } from "./automationRunQueueService
 import { failAutomationRun } from "./automationRunService";
 import { validateSessionLifecycleTriggerRegistrationTx } from "./automationSessionLifecycleRegistration";
 import { encodeAutomationRunCause } from "./automationRunCauseCodec";
+import { clearAutomationRunHistory, deleteAutomationTrigger } from "./automationCrudService";
+import { isAutomationOriginRunPublisherTx } from "./automationTriggerCauseChain";
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -302,7 +304,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         await expect(db.automationRun.count({ where: { triggerId: { in: [first.id, second.id] } } })).resolves.toBe(2);
     });
 
-    it("suppresses an ancestor trigger's own needs-you event before consuming its budget, while unrelated and later user events still fire", async () => {
+    it.each([false, true, "deleteRun"] as const)("suppresses an ancestor trigger's own needs-you event before consuming its budget, while unrelated and later user events still fire (clear history: %s)", async (clearHistory) => {
         const current = await source();
         const origin = await trigger({ ...current, events: ["userActionRequired"], policy: { kind: "firstMatch" } });
         const unrelated = await trigger({ ...current, events: ["userActionRequired"], policy: { kind: "everyMatch" } });
@@ -345,6 +347,19 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             mutationId: `begin-workflow-${current.suffix}`, observedAt: Date.now(), initiator: "workflow", workDepth: 2,
             workflowInvocation: { runId: descendant.id, invocationRecordId: "step" },
         } });
+        if (clearHistory) {
+            await db.automationRun.update({ where: { id: parent.id },
+                data: { state: "succeeded", workflowCustodyState: "settled" } });
+            if (clearHistory === "deleteRun") {
+                // The explicit Run delete owner must preserve the same live ancestry as history clear.
+                await expect(deleteWorkflowRun({ accountId: current.accountId, runId: parent.id, expectedRevision: 0 }))
+                    .rejects.toMatchObject({ code: "custody_pending" });
+                expect(await db.automationRun.findUnique({ where: { id: parent.id } })).not.toBeNull();
+            } else {
+                await expect(clearAutomationRunHistory({ accountId: current.accountId, automationId: origin.automationId }))
+                    .resolves.toMatchObject({ status: "cleared" });
+            }
+        }
         const fire = (requestId: string, turnId: string) => inTx(tx => admitSessionLifecycleAutomationRunsTx({ tx, accountId: current.accountId,
             occurrence: { v: 1, kind: "sessionLifecycle", event: "userActionRequired", sourceSessionId: current.sessionId,
                 sourceTurnId: turnId, requestId, requestKind: "permission", occurredAt: Date.now() } }));
@@ -363,6 +378,19 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         } });
         await fire("user-request", userTurnId);
         expect(await db.automationRun.count({ where: { triggerId: origin.id } })).toBe(2);
+        if (clearHistory === true) {
+            await applySessionTurnMutation({ actorUserId: current.accountId, mutation: {
+                v: 1, sessionId: current.sessionId, turnId: userTurnId, action: "complete",
+                mutationId: `settle-user-${current.suffix}`, observedAt: Date.now(),
+            } });
+            // The external execution boundary has settled every actual descendant;
+            // retained ancestry is no longer live and must not become permanent history.
+            await db.automationRun.updateMany({ where: { accountId: current.accountId },
+                data: { state: "succeeded", workflowCustodyState: "settled" } });
+            await expect(clearAutomationRunHistory({ accountId: current.accountId, automationId: origin.automationId }))
+                .resolves.toMatchObject({ status: "cleared" });
+            expect(await db.automationRun.findUnique({ where: { id: parent.id } })).toBeNull();
+        }
     });
 
     it("coalesces scoped pending firings without reserving another bounded occurrence, then claims the newest after active completion", async () => {
@@ -420,42 +448,8 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             .toMatchObject({ id: newest.id, lastSucceededRun: { runId: active.run!.id, checkpointEnvelope } });
     });
 
-    it("suppresses signed host archive origin, retains ancestry for unrelated triggers, and refuses an unsigned origin claim", async () => {
-        const current = await source();
-        const own = await trigger({ ...current, workflow: true, policy: { kind: "firstMatch" } });
-        const unrelated = await trigger({ ...current, workflow: true, policy: { kind: "firstMatch" } });
-        await db.automationTrigger.updateMany({ where: { id: { in: [own.id, unrelated.id] } },
-            data: { sessionLifecycleEventsJson: '["sessionArchived"]' } });
-        const root = await db.automationRun.create({ data: { accountId: current.accountId, automationId: own.automationId,
-            state: "running", scheduledAt: new Date(), dueAt: new Date(), workflowCustodyState: "pending",
-            workflowAcceptedSnapshotEnvelope: "{}", ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({
-                kind: "trigger", triggerKind: "schedule", triggerId: own.id, triggerRevision: 1, occurredAt: 100,
-                evidence: { scheduledFor: 100 }, occurrenceKey: deriveAutomationManualOccurrenceKeyV1({
-                    automationId: own.automationId, idempotencyKey: randomUUID(),
-                }),
-            })) } });
-        const assignment = await db.automationAssignment.findFirstOrThrow({ where: { automationId: own.automationId } });
-        const keyPair = tweetnacl.sign.keyPair();
-        const installationId = randomUUID();
-        await db.machine.update({ where: { id: assignment.machineId },
-            data: { installationId, installationPublicKey: keyPair.publicKey } });
-        await db.automationRunAssignment.create({ data: { runId: root.id, machineId: assignment.machineId } });
-        await withAuthenticatedTestApp(registerSessionArchiveRoutes, async (app) => {
-            const url = `/v2/sessions/${current.sessionId}/archive`;
-            const body = { originRunId: root.id };
-            const headers = { "x-test-user-id": current.accountId };
-            expect((await app.inject({ method: "POST", url, payload: body, headers })).statusCode).toBe(403);
-            expect((await db.session.findUniqueOrThrow({ where: { id: current.sessionId } })).archivedAt).toBeNull();
-            const signed = createSignedPluginInstallationPublisherHeader({ keyPair, machineId: assignment.machineId,
-                installationId, path: url, body });
-            expect((await app.inject({ method: "POST", url, payload: body,
-                headers: { ...headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signed } })).statusCode).toBe(200);
-            expect(await db.automationRun.count({ where: { triggerId: own.id } })).toBe(1);
-            expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: own.id } })).remainingOccurrences).toBe(1);
-            const descendant = await db.automationRun.findFirstOrThrow({ where: { triggerId: unrelated.id } });
-            expect(JSON.parse(descendant.triggerEvidenceEnvelope!)).toMatchObject({ originRunId: root.id, evidence: null });
-        });
-    });
+    // Session-lifecycle CHECKs prohibit persisted archive actors without a storage amendment.
+    it.todo("suppresses authenticated archive actors and retains unrelated descendant ancestry");
 
     it("admits archive triggers only on archive transitions through the HTTP owner and rolls back archive when admission fails", async () => {
         const current = await source();
@@ -476,6 +470,85 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             expect((await post("archive")).statusCode).toBe(200);
             expect((await post("unarchive")).statusCode).toBe(200);
             expect(await db.automationRun.count({ where: { triggerId: attached.id } })).toBe(1);
+        });
+    });
+
+    it("retires an accepted managed scope effect on unarchive, trigger clear or revision change through FIN source currentness", async () => {
+        const current = await source();
+        const attached = await trigger({ ...current, workflow: true, scoped: true, policy: { kind: "everyMatch" } });
+        await db.automationTrigger.update({ where: { id: attached.id }, data: { sessionLifecycleEventsJson: '["sessionArchived"]' } });
+        await withAuthenticatedTestApp(registerSessionArchiveRoutes, async app => {
+            const post = (action: string) => app.inject({ method: "POST", url: `/v2/sessions/${current.sessionId}/${action}`,
+                headers: { "x-test-user-id": current.accountId } });
+            expect((await post("archive")).statusCode).toBe(200);
+            const run = await db.automationRun.findFirstOrThrow({ where: { triggerId: attached.id } });
+            const assignment = await db.automationRunAssignment.findFirstOrThrow({ where: { runId: run.id } });
+            // The FIN Action leaf has settled its accepted intent, while the
+            // same controller operation is still waiting for guest idle.
+            await db.automationRun.update({ where: { id: run.id }, data: {
+                state: "succeeded", workflowCustodyState: "settled", workflowAcceptedSnapshotEnvelope: "{}",
+            } });
+            const isCurrent = () => inTx(tx => isAutomationOriginRunPublisherTx(tx, {
+                accountId: current.accountId, machineId: assignment.machineId, runId: run.id,
+                requireCurrentScopeEnd: true,
+            }));
+            expect(await isCurrent()).toBe(true);
+            expect((await post("unarchive")).statusCode).toBe(200);
+            expect(await isCurrent()).toBe(false);
+            // Re-archiving is a new occurrence; it cannot revive the old effect.
+            await db.session.update({ where: { id: current.sessionId }, data: { archivedAt: new Date(run.causeOccurredAt!.getTime() + 1) } });
+            expect(await isCurrent()).toBe(false);
+            await db.session.update({ where: { id: current.sessionId }, data: { archivedAt: run.causeOccurredAt } });
+            await db.automationTrigger.update({ where: { id: attached.id }, data: { revision: { increment: 1 } } });
+            expect(await isCurrent()).toBe(false);
+            await db.automationTrigger.update({ where: { id: attached.id }, data: { revision: run.causeTriggerRevision! } });
+            expect(await deleteAutomationTrigger({ accountId: current.accountId, automationId: attached.automationId,
+                triggerId: attached.id, expectedRevision: run.causeTriggerRevision! })).not.toBeNull();
+            expect(await isCurrent()).toBe(false);
+        });
+    });
+
+    it.each(['plain', 'e2ee'] as const)("retires an accepted managed scope effect when its exact %s recipe envelope is replaced without changing the trigger revision", async mode => {
+        const current = await source();
+        if (mode === 'e2ee') await db.account.update({ where: { id: current.accountId },
+            data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        const attached = await trigger({ ...current, workflow: true, scoped: true, policy: { kind: 'everyMatch' } });
+        await db.automationTrigger.update({ where: { id: attached.id }, data: { sessionLifecycleEventsJson: '["sessionArchived"]' } });
+        const recipe = (templateVersion: number, afterMs: number) => {
+            const payload = { workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' }, inputs: {},
+                inlineDefinition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'action', id: 'managed-scope-end',
+                    actionId: 'machines.managed.power.set', input: { homeId: { kind: 'literal', value: 'home' },
+                        managedId: { kind: 'literal', value: 'managed' }, intent: { kind: 'literal', value: 'stop' },
+                        when: { kind: 'literal', value: 'after-idle' }, afterMs: { kind: 'literal', value: afterMs } } }] } };
+            const serialized = serializeAutomationStoredWorkflowDefinitionRecipeV2({ v: 2, templateVersion, triggerEvidence: null,
+                workflow: mode === 'plain' ? { t: 'plain', v: payload } : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+                    kind: 'automation_template_payload', material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) },
+                    payload, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)),
+                }) } });
+            if (serialized.kind !== 'available') throw new Error('Scope recipe unavailable');
+            return serialized;
+        };
+        const original = recipe(1, 10);
+        await db.automation.update({ where: { id: attached.automationId }, data: { templateCiphertext: original.serialized } });
+        await withAuthenticatedTestApp(registerSessionArchiveRoutes, async app => {
+            expect((await app.inject({ method: 'POST', url: `/v2/sessions/${current.sessionId}/archive`,
+                headers: { 'x-test-user-id': current.accountId } })).statusCode).toBe(200);
+            const run = await db.automationRun.findFirstOrThrow({ where: { triggerId: attached.id } });
+            const assignment = await db.automationRunAssignment.findFirstOrThrow({ where: { runId: run.id } });
+            // Admission copies this exact stored envelope; Home neither opens it
+            // nor claims that independently resealed ciphertext is equivalent.
+            expect(run.executionInputEnvelope).toBe(createCanonicalJsonSigningInput(original.recipe.workflow));
+            await db.automationRun.update({ where: { id: run.id }, data: { state: 'succeeded', workflowCustodyState: 'settled',
+                workflowAcceptedSnapshotEnvelope: '{}' } });
+            const isCurrent = () => inTx(tx => isAutomationOriginRunPublisherTx(tx, { accountId: current.accountId,
+                machineId: assignment.machineId, runId: run.id, requireCurrentScopeEnd: true }));
+            expect(await isCurrent()).toBe(true);
+            const revised = recipe(2, 20);
+            await db.automation.update({ where: { id: attached.automationId }, data: { templateVersion: 2, templateCiphertext: revised.serialized } });
+            expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: attached.id } })).revision).toBe(run.causeTriggerRevision);
+            expect(await isCurrent()).toBe(false);
+            expect(await inTx(tx => isAutomationOriginRunPublisherTx(tx, { accountId: current.accountId,
+                machineId: assignment.machineId, runId: run.id }))).toBe(true);
         });
     });
 

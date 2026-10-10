@@ -49,6 +49,7 @@ import {
 import { runAutomationReplyHandoffWorkerPass } from "@/app/automations/automationReplyHandoffWorker";
 import { runAutomationScheduleWorkerPass } from "@/app/automations/automationScheduleWorker";
 import { db } from "@/storage/db";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import {
     createLightSqliteHarness,
     type LightSqliteHarness,
@@ -821,8 +822,8 @@ describe("Channels first-party provider Automation Event composition", () => {
                     occurrenceId: PROVIDER_OCCURRENCE_ID,
                     sourceCustody: PROVIDER_SOURCE_CUSTODY,
                     transport: scenario.connectionTransport,
-                    generationSignal: new AbortController().signal,
-                    isGenerationCurrent: () => true,
+                    occurrenceSignal: new AbortController().signal,
+                    isOccurrenceCurrent: () => true,
                     revalidateCallerMaterialization: async () => true,
                     revalidateCallerOccurrence: async () => true,
                     readStoredDefinitions: async (params: JsonRecord) => {
@@ -1046,6 +1047,13 @@ describe("Channels first-party provider Automation Event composition", () => {
                         { connectionId: input.connectionId, waitMs: 0 },
                         channelsContext,
                     )).resolves.toMatchObject({ kind: "retry" });
+                } else if (scenario.connectionTransport.kind === "socket") {
+                    // The exact same-census retryDue record is durable socket
+                    // custody, so acknowledgment need not wait for admission retry.
+                    await expect(ingressModule.ingestConversationProviderObservationForInvocation(
+                        input,
+                        channelsContext,
+                    )).resolves.toBeUndefined();
                 } else {
                     await expect(ingressModule.ingestConversationProviderObservationForInvocation(
                         input,
@@ -1104,7 +1112,7 @@ describe("Channels first-party provider Automation Event composition", () => {
     // boundary fixtures, matching the existing lanes in this file.
     // ---------------------------------------------------------------------
 
-    function definitionRecipeVersioned(templateVersion: number) {
+    function historicalDefinitionRecipeVersioned(templateVersion: number) {
         return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
             v: 1,
             templateVersion,
@@ -1117,7 +1125,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 kind: "newSession",
                 spawn: {
                     executionTarget: { serverId: "server-channels-provider-composed", machineId: MACHINE_ID },
-                    directory: "/tmp/channels-provider-composed",
+                    directory: { kind: "path", path: "/tmp/channels-provider-composed" },
                     agentTarget: {
                         kind: "agent",
                         identity: { pluginId: "happier.agent.codex", localId: "codex" },
@@ -1127,9 +1135,14 @@ describe("Channels first-party provider Automation Event composition", () => {
         });
     }
 
+    function definitionRecipeVersioned(templateVersion: number) {
+        return createAutomationWorkflowRecipeFixture({ templateVersion,
+            directory: "/tmp/channels-provider-composed", prompt: `Handle the observed provider message (v${templateVersion})` });
+    }
+
     function strictRecipeVersioned(templateVersion: number): string {
         const result = serializeAutomationStoredDefinitionExecutionRecipeV1(
-            definitionRecipeVersioned(templateVersion),
+            historicalDefinitionRecipeVersioned(templateVersion),
         );
         if (result.kind !== "available") throw new Error("composed Event recipe must be valid");
         return result.serialized;
@@ -1369,8 +1382,8 @@ describe("Channels first-party provider Automation Event composition", () => {
                 occurrenceId: PROVIDER_OCCURRENCE_ID,
                 sourceCustody: PROVIDER_SOURCE_CUSTODY,
                 transport: { kind: "checkpointedPull" },
-                generationSignal: new AbortController().signal,
-                isGenerationCurrent: () => true,
+                occurrenceSignal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
                 revalidateCallerMaterialization: async () => true,
                 revalidateCallerOccurrence: async () => true,
                 readStoredDefinitions: async (storedParams: JsonRecord) => {
@@ -1689,7 +1702,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             causeSourceSelectorId: SOURCE_SELECTOR_ID,
             state: "queued",
         });
-        expect(frozenRecipeTemplateVersion(eventRun.executionInputEnvelope!)).toBe(2);
+        expect(JSON.parse(eventRun.executionInputEnvelope!)).toEqual(definitionRecipeVersioned(2).workflow);
         const occurrenceKeys = [
             ...scheduleRuns.map((run) => run.occurrenceKey),
             eventRun.occurrenceKey,
@@ -1711,7 +1724,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             where: { accountId: ACCOUNT_ID, causeKind: "manual", automationId: AUTOMATION_ID },
         });
         expect(manualRun.triggerId).toBeNull();
-        expect(frozenRecipeTemplateVersion(manualRun.executionInputEnvelope!)).toBe(2);
+        expect(JSON.parse(manualRun.executionInputEnvelope!)).toEqual(definitionRecipeVersioned(2).workflow);
         expect(await readTriggers()).toEqual(triggersBeforeEdit);
 
         // A zero-trigger Automation runs directly through the same manual cause.
@@ -2168,8 +2181,8 @@ describe("Channels first-party provider Automation Event composition", () => {
                 occurrenceId: PROVIDER_OCCURRENCE_ID,
                 sourceCustody: PROVIDER_SOURCE_CUSTODY,
                 transport: { kind: "socket" },
-                generationSignal: new AbortController().signal,
-                isGenerationCurrent: () => true,
+                occurrenceSignal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
                 revalidateCallerMaterialization: async () => true,
                 revalidateCallerOccurrence: async () => true,
                 readStoredDefinitions: async (params: JsonRecord) => {

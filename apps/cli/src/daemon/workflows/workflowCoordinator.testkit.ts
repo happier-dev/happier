@@ -1,6 +1,12 @@
 import type { WorkflowInvocationLifecycleV1 } from '@happier-dev/protocol/workflows';
+import { mergeWorkflowResultProvenanceV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createWorkflowCoordinator, workflowInvocationKey, type WorkflowCoordinatorInvocation, type WorkflowCoordinatorStore } from './coordinator';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { freezeActionCompletionContractV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { WorkflowJsonValue } from './input';
 import { shouldPublishWorkflowSharedConversation } from './workflowConversation';
 import { materializeWorkflowContainerResult } from './workflowContainerResult';
@@ -23,7 +29,14 @@ export function createTestWorkflowCoordinator(deps: Parameters<typeof createWork
         workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
         origin: { kind: 'direct', ...(input.originSessionId ? { originSessionId: input.originSessionId } : {}) },
         authorization: input.authorization },
-      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async (id) => {
+          const spec = getActionSpec(ActionIdSchema.parse(id));
+          if (!spec.outputSchema) return null;
+          return { inputSchema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(spec.inputSchema, { target: 'draft-7' })),
+            outputSchema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(spec.outputSchema, { target: 'draft-7' })),
+            ...(spec.completion ? { completion: freezeActionCompletionContractV1(spec.completion) } : {}) };
+        } } });
     if (!accepted.ok) throw new Error(`workflow_fixture_not_materialized:${accepted.error.code}`);
     return coordinator.run({ ...accepted.snapshot, ...input,
       authoredDefinition: input.authoredDefinition ?? accepted.snapshot.authoredDefinition,
@@ -181,7 +194,7 @@ export function createInMemoryWorkflowCoordinatorStore(): InMemoryWorkflowCoordi
         } });
       }
     },
-    commitFact: async ({ key, lifecycle, result, usage, reason, reasonMessage, validationIssues, review, execution, sharedConversationInvocationRecordId, observationDeadline, input, resultContract, workspace, container, containerResult }) => {
+    commitFact: async ({ key, lifecycle, result, usage, reason, reasonMessage, validationIssues, review, execution, sharedConversationInvocationRecordId, observationDeadline, input, resultContract, workspace, container, containerResult, resultProvenance }) => {
       const existing = records.get(key);
       if (!existing) throw new Error('workflow_invocation_intent_missing');
       if (existing.lifecycle === 'completed' || existing.lifecycle === 'failed'
@@ -195,6 +208,7 @@ export function createInMemoryWorkflowCoordinatorStore(): InMemoryWorkflowCoordi
         return existing;
       }
       const committed = { ...existing, lifecycle, contentRevision: String(BigInt(existing.contentRevision ?? '0') + 1n),
+        ...(resultProvenance ? { resultProvenance: mergeWorkflowResultProvenanceV1(existing.resultProvenance, resultProvenance) } : {}),
         ...(review ? { review } : {}), ...(result === undefined ? {} : { result }), ...(usage === undefined ? {} : { usage }), ...(reason ? { reason } : {}), ...(execution ? { execution } : {}), ...(sharedConversationInvocationRecordId ? { sharedConversationInvocationRecordId: { ...existing.sharedConversationInvocationRecordId, ...sharedConversationInvocationRecordId } } : {}), ...(observationDeadline ? { observationDeadline } : {}), ...(input ? { input } : {}), ...(workspace ? { workspace: { ...existing.workspace, ...workspace } } : {}), ...(container ? { container } : {}), ...(containerResult ? { containerResult } : {}) };
       const withContract = resultContract === undefined ? committed : { ...committed, resultContract };
       const withMessage = { ...withContract, ...(reasonMessage === undefined ? {} : { reasonMessage }),

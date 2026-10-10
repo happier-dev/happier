@@ -12,6 +12,7 @@ import { convertLegacyAutomationRecipeToInlineWorkflowV1 } from '@happier-dev/pr
 import { WorkflowAcceptedSnapshotV1Schema, WorkflowResolvedInputsV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { materializeWorkflowAcceptedSnapshotV1, workflowRequiresMachineStartCapacityV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
+import { collectWorkflowLeavesV1, deriveWorkflowDestinationsV1 } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
 import { readTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
@@ -182,6 +183,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
   private readonly recordsById = new Map<string, WorkflowCoordinatorInvocation>();
   private readonly currentSlots = new Map<string, WorkflowCoordinatorInvocation>();
   private readonly persisted = new Map<string, PersistedInvocation>();
+  private readonly destinationObservations = new Map<string,
+    NonNullable<NonNullable<WorkflowRunStepProgressV1['destinations']>[number]['observation']>>();
   private readonly materializedContainers = new Map<string, import('./input').WorkflowJsonValue>();
   private readonly loadedParentSlots = new Set<string>();
   private readonly progressMembers = new Map<string, {
@@ -202,6 +205,8 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       revision: number;
       authoredDefinition?: WorkflowDefinitionV1;
       definition?: WorkflowDefinitionV1;
+      frozenChildren?: Readonly<Record<string, WorkflowDefinitionV1>>;
+      destinations?: NonNullable<WorkflowRunStepProgressV1['destinations']>;
       projectionExpectedRevision?: number;
     },
   ) {}
@@ -322,7 +327,39 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
         }
       }
     }
+    if (this.params.destinations) {
+      if (progress.blockKind === 'root') {
+        for (const leaf of progress.stepProgress?.destinations ?? []) if (leaf.observation) {
+          this.rememberDestinationObservation(leaf.sourceKey, leaf.blockId, leaf.observation);
+        }
+      } else {
+        let sourceKey = '$root';
+        let definition = this.params.authoredDefinition;
+        for (const scope of progress.invocationPath.scope) {
+          if (scope.kind !== 'workflow' || !definition) continue;
+          const block = collectWorkflowLeavesV1(definition).find(block => block.id === scope.blockId);
+          if (block?.kind !== 'workflow') { definition = undefined; break; }
+          sourceKey = block.workflowRef;
+          definition = this.params.frozenChildren?.[sourceKey];
+        }
+        if (definition) this.rememberDestinationObservation(sourceKey, progress.invocationPath.blockId, {
+          recordId: index.id, sequence: index.sequence, attempt: index.attempt, contentRevision: index.contentRevision,
+          lifecycle: index.lifecycle, blockKind: progress.blockKind,
+        });
+      }
+    }
     return record;
+  }
+
+  private rememberDestinationObservation(sourceKey: string, blockId: string,
+    observation: NonNullable<NonNullable<WorkflowRunStepProgressV1['destinations']>[number]['observation']>): void {
+    const key = JSON.stringify([sourceKey, blockId]);
+    const previous = this.destinationObservations.get(key);
+    // Storage admits every physical row, including retries, at a new globally
+    // unique Run sequence. Revisions order observations of that same row only.
+    if (previous && (BigInt(observation.sequence) < BigInt(previous.sequence)
+      || (observation.recordId === previous.recordId && BigInt(observation.contentRevision) < BigInt(previous.contentRevision)))) return;
+    this.destinationObservations.set(key, observation);
   }
 
   read = (key: string) => this.records.get(key);
@@ -680,7 +717,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     const result = await this.serializedInvocation(fact.key, async () => await this.commitFactNow(fact));
     const parentId = this.persisted.get(result.key)?.index.parentRecordId;
     const parent = parentId ? this.recordsById.get(parentId) : undefined;
-    if (parentId === this.params.rootRecordId || (parent?.blockKind === 'loop'
+    if (this.params.destinations || parentId === this.params.rootRecordId || (parent?.blockKind === 'loop'
       && this.persisted.get(parent.key)?.index.parentRecordId === this.params.rootRecordId)) await this.refreshStepProgress();
     return result;
   };
@@ -724,7 +761,14 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       // nextMemberIndex is the admission frontier, not a completed-item count.
       currentLoop = { completed: projection.completed, total };
     }
-    return { completed, total: definition.blocks.length, ...(currentLoop ? { currentLoop } : {}) };
+    // Reload opens demanded rows only. Unopened writers retain their last exact
+    // observation; it never asserts completion of an entire loop or unseen work.
+    const destinations = this.params.destinations?.map(leaf => {
+      const observation = this.destinationObservations.get(JSON.stringify([leaf.sourceKey, leaf.blockId]));
+      return { ...leaf, ...(observation ? { observation } : {}) };
+    });
+    return { completed, total: definition.blocks.length, ...(currentLoop ? { currentLoop } : {}),
+      ...(destinations ? { destinations } : {}) };
   }
 
   /** The executing/recovery owner publishes counts; list readers never reconstruct private structure. */
@@ -1490,6 +1534,9 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       storage, encryption, rootRecordId, checkpoint, revision,
       authoredDefinition: accepted.authoredDefinition,
       definition: accepted.definition,
+      frozenChildren: accepted.frozenChildren,
+      destinations: deriveWorkflowDestinationsV1({ definition: accepted.authoredDefinition, children: accepted.frozenChildren,
+        materializedLeaves: accepted.materializedLeaves, originSessionId: accepted.origin?.originSessionId }).leaves,
     });
     await durableStore.refreshStepProgress();
     claim.registerControlCheck?.(async () => await durableStore.readControl());
@@ -1508,7 +1555,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const state = control === 'cancel_requested' ? 'cancelled' : hasInputCustody ? 'interrupted' : 'paused';
       // A denied resumed boundary owns no input. Reclaimed active custody must
       // remain recoverable rather than being mislabeled a quiescent pause.
-      if (state === 'cancelled' && hasInputCustody) return { state: 'interrupted', reason: controllerFailure };
+      if (state === 'cancelled') return await settleCoordinatorResult({ state: 'cancelled', reason: controllerFailure });
       const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
         ...sealMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId },
         checkpoint: { ...durableStore.checkpoint, frontier: { ...durableStore.checkpoint.frontier, paused: state === 'paused' } },
@@ -1772,97 +1819,99 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         result = await runCoordinator();
       }
     }
-    // Cancellation is the terminal authority even when it races the last
-    // admitted leaf. A pause that arrives after all authored work completed is
-    // intentionally allowed to settle that completed work normally.
-    const control = await durableStore.readControl();
-    if (control === 'cancel_requested') {
-      const pendingStops = await durableStore.listByLifecycle({
-        runId: claim.runId,
-        lifecycles: ['cancel_requested', 'outcome_uncertain'],
-      });
-      const hasPendingChildStop = pendingStops.some(
-        (record) => record.recordId !== durableStore.rootIndex?.id,
-      );
-      // Unresolved child custody, not a recoverable failure projection, keeps
-      // cancellation pending. A failed child with no outstanding effects can
-      // settle, while a stop request or uncertain outcome still needs recovery.
-      if (hasPendingChildStop) {
-        return result.state === 'interrupted'
-          ? result
-          : { state: 'interrupted', ...(result.reason ? { reason: result.reason } : {}) };
+    return await settleCoordinatorResult(result);
+
+    async function settleCoordinatorResult(result: WorkflowCoordinatorResult): Promise<WorkflowCoordinatorResult> {
+      const cancelledResult: WorkflowCoordinatorResult = { state: 'cancelled',
+        ...(controllerFailure ? { reason: controllerFailure } : {}) };
+      // Cancellation is the terminal authority even when it races the last
+      // admitted leaf. A pause that arrives after all authored work completed is
+      // intentionally allowed to settle that completed work normally.
+      const control = await durableStore.readControl();
+      let hasPendingChildStop = false;
+      if (control === 'cancel_requested') {
+        const pendingStops = await durableStore.listByLifecycle({
+          runId: claim.runId,
+          lifecycles: ['cancel_requested', 'outcome_uncertain'],
+        });
+        hasPendingChildStop = pendingStops.some(
+          (record) => record.recordId !== durableStore.rootIndex?.id,
+        );
+        // Cancellation ends authored work, not unresolved child custody. Retain
+        // pending custody for the terminal recovery owner instead of leaving the
+        // parent claimable and replaying this same cancellation indefinitely.
+        result = cancelledResult;
       }
-      result = { state: 'cancelled' };
-    }
-    let terminalState = result.state === 'succeeded' ? 'succeeded' : result.state;
-    const rootBeforeSettlement = durableStore.rootIndex;
-    if (!rootBeforeSettlement) throw new Error('workflow_root_invocation_missing');
-    let rootTerminal = projectWorkflowRootSettlementLifecycle(result.state, rootBeforeSettlement.lifecycle);
-    const endFingerprint = result.state === 'succeeded' && accepted.definition.inputs.some((input) => input.name === 'diffFingerprint')
-      ? await durableStore.readFinalReviewFingerprint(new Set(accepted.materializedLeaves
-        ?.filter((leaf) => leaf.kind === 'action' && leaf.actionId === 'review.start').map((leaf) => leaf.blockId)))
-      : undefined;
-    const { endFingerprint: _priorFingerprint, ...closingCheckpoint } = durableStore.checkpoint;
-    const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
-      ...sealMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId },
-      checkpoint: { ...closingCheckpoint, ...(endFingerprint === undefined ? {} : { endFingerprint }) },
-    }));
-    const resultEnvelope = result.finalResult
-      ? serializeWorkflowStoredContentEnvelopeV1(sealWorkflowFinalResultStoredEnvelopeV1({
-        ...sealMode(encryption),
-        binding: { v: 1, purpose: 'final_result', accountId: params.accountId, runId: claim.runId },
-        finalResult: result.finalResult,
-      }))
-      : undefined;
-    const custodyState = projectWorkflowTerminalCustodySettlement(result.state);
-    const transition = {
-      operation: 'transition', runId: claim.runId, parentAttempt: claim.attempt,
-      accountCurrentness: encryption.witness,
-      expectedRevision: durableStore.revision,
-      state: terminalState, checkpointEnvelope,
-      ...(resultEnvelope ? { resultEnvelope } : {}),
-      ...(custodyState ? { custodyState } : {}),
-      ...(rootTerminal === rootBeforeSettlement.lifecycle ? {} : {
-        invocationTransitions: [{ id: rootBeforeSettlement.id, expectedLifecycle: rootBeforeSettlement.lifecycle, expectedContentRevision: rootBeforeSettlement.contentRevision, lifecycle: rootTerminal }],
-      }),
-    } as const;
-    let committed: WorkflowRunSummaryV1;
-    try {
-      committed = WorkflowRunSummaryV1Schema.parse(await storage.execute(transition));
-    } catch (error) {
-      const snapshot = parseRunSnapshot(await storage.execute({ operation: 'get', runId: claim.runId }));
-      if (snapshot.run.state === 'cancelled') {
-        result = { state: 'cancelled' };
-        terminalState = 'cancelled';
-        rootTerminal = 'cancelled';
-        committed = snapshot.run;
-      } else {
-        const persistedRoot = await durableStore.refreshRootIndex();
-        const custodyMatches = snapshot.run.workflowCustodyState === (custodyState ?? 'pending');
-        const exactCommittedSettlement = snapshot.run.state === terminalState
-          && snapshot.checkpointEnvelope === checkpointEnvelope
-          && snapshot.resultEnvelope === (resultEnvelope ?? null)
-          && custodyMatches
-          && persistedRoot?.lifecycle === rootTerminal;
-        if (exactCommittedSettlement) {
-          // The transition committed and only its response was lost. Rejoin
-          // the exact durable bytes; never replay the mutation.
+      let terminalState = result.state === 'succeeded' ? 'succeeded' : result.state;
+      const rootBeforeSettlement = durableStore.rootIndex;
+      if (!rootBeforeSettlement) throw new Error('workflow_root_invocation_missing');
+      let rootTerminal = projectWorkflowRootSettlementLifecycle(result.state, rootBeforeSettlement.lifecycle);
+      const endFingerprint = result.state === 'succeeded' && accepted.definition.inputs.some((input) => input.name === 'diffFingerprint')
+        ? await durableStore.readFinalReviewFingerprint(new Set(accepted.materializedLeaves
+          ?.filter((leaf) => leaf.kind === 'action' && leaf.actionId === 'review.start').map((leaf) => leaf.blockId)))
+        : undefined;
+      const { endFingerprint: _priorFingerprint, ...closingCheckpoint } = durableStore.checkpoint;
+      const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
+        ...sealMode(encryption), binding: { v: 1, purpose: 'checkpoint', accountId: params.accountId, runId: claim.runId },
+        checkpoint: { ...closingCheckpoint, ...(endFingerprint === undefined ? {} : { endFingerprint }) },
+      }));
+      const resultEnvelope = result.finalResult
+        ? serializeWorkflowStoredContentEnvelopeV1(sealWorkflowFinalResultStoredEnvelopeV1({
+          ...sealMode(encryption),
+          binding: { v: 1, purpose: 'final_result', accountId: params.accountId, runId: claim.runId },
+          finalResult: result.finalResult,
+        }))
+        : undefined;
+      const custodyState = hasPendingChildStop ? undefined : projectWorkflowTerminalCustodySettlement(result.state);
+      const transition = {
+        operation: 'transition', runId: claim.runId, parentAttempt: claim.attempt,
+        accountCurrentness: encryption.witness,
+        expectedRevision: durableStore.revision,
+        state: terminalState, checkpointEnvelope,
+        ...(resultEnvelope ? { resultEnvelope } : {}),
+        ...(custodyState ? { custodyState } : {}),
+        ...(rootTerminal === rootBeforeSettlement.lifecycle ? {} : {
+          invocationTransitions: [{ id: rootBeforeSettlement.id, expectedLifecycle: rootBeforeSettlement.lifecycle, expectedContentRevision: rootBeforeSettlement.contentRevision, lifecycle: rootTerminal }],
+        }),
+      } as const;
+      let committed: WorkflowRunSummaryV1;
+      try {
+        committed = WorkflowRunSummaryV1Schema.parse(await storage.execute(transition));
+      } catch (error) {
+        const snapshot = parseRunSnapshot(await storage.execute({ operation: 'get', runId: claim.runId }));
+        if (snapshot.run.state === 'cancelled') {
+          result = cancelledResult;
+          terminalState = 'cancelled';
+          rootTerminal = 'cancelled';
           committed = snapshot.run;
-        } else if (snapshot.run.state === 'pause_requested') {
-          // One control-aware CAS reconciliation is sufficient: either all
-          // authored work completed and succeeds, or the paused boundary is
-          // durably settled. A second conflict remains visible to recovery.
-          committed = WorkflowRunSummaryV1Schema.parse(await storage.execute({
-            ...transition,
-            expectedRevision: snapshot.run.revision,
-          }));
         } else {
-          throw error;
+          const persistedRoot = await durableStore.refreshRootIndex();
+          const custodyMatches = snapshot.run.workflowCustodyState === (custodyState ?? 'pending');
+          const exactCommittedSettlement = snapshot.run.state === terminalState
+            && snapshot.checkpointEnvelope === checkpointEnvelope
+            && snapshot.resultEnvelope === (resultEnvelope ?? null)
+            && custodyMatches
+            && persistedRoot?.lifecycle === rootTerminal;
+          if (exactCommittedSettlement) {
+            // The transition committed and only its response was lost. Rejoin
+            // the exact durable bytes; never replay the mutation.
+            committed = snapshot.run;
+          } else if (snapshot.run.state === 'pause_requested') {
+            // One control-aware CAS reconciliation is sufficient: either all
+            // authored work completed and succeeds, or the paused boundary is
+            // durably settled. A second conflict remains visible to recovery.
+            committed = WorkflowRunSummaryV1Schema.parse(await storage.execute({
+              ...transition,
+              expectedRevision: snapshot.run.revision,
+            }));
+          } else {
+            throw error;
+          }
         }
       }
+      durableStore.applyParentTransition(committed, rootTerminal);
+      await onCommittedTransition({ run: committed, result });
+      return result;
     }
-    durableStore.applyParentTransition(committed, rootTerminal);
-    await onCommittedTransition({ run: committed, result });
-    return result;
   };
 }

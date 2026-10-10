@@ -16,6 +16,9 @@ import { isWorkflowJsonObject } from './input';
 import { createWorkflowRunReviewEntryNotificationHandler } from '@/notifications/activity/dispatchWorkflowRunUpdateNotification';
 import { DurableWorkflowCoordinatorStore } from './production';
 import { logger } from '@/ui/logger';
+import { readWorkflowProjectSetupConsentHold } from './stepExecution';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 const RECOVERABLE_INVOCATION_LIFECYCLES = [
   'pending',
@@ -50,7 +53,8 @@ function openMode(encryption: WorkflowRunEncryptionV1) {
 type RecoveryCandidate = Readonly<{ run: WorkflowRunSummaryV1; parentAttempt: number }>;
 
 export type WorkflowInvocationRecoveryObservation =
-  | Readonly<{ kind: 'unresolved'; code?: string; waitForCompletion?: () => Promise<void> }>
+  | Readonly<{ kind: 'unresolved'; code?: string; waitForCompletion?: () => Promise<void>;
+    setupConsentOutput?: Readonly<{ operation: ActionOperationSnapshotV1 }> }>
   | Readonly<{ kind: 'completed'; result: JsonValue; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'failed'; code: string; message?: string; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'cancelled'; code?: string; usage?: WorkflowUsageV1 }>
@@ -179,6 +183,8 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     if (!step || (step.kind !== 'step' && step.kind !== 'action')) return { kind: 'unresolved', code: 'workflow_invocation_binding_unavailable' };
     const execution = invocation.progress.execution;
     if (step.kind === 'action') {
+      const consent = readWorkflowProjectSetupConsentHold(step.actionId, observation.result);
+      if (consent) return { kind: 'unresolved', code: consent.code };
       const contract = await resolveFrozenActionContract(invocation);
       const schema = contract?.outputSchema;
       if (!isWorkflowJsonObject(schema)) {
@@ -192,7 +198,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     const value = step.pauseForReview && invocation.progress.review?.resultSource?.kind === 'published'
       && invocation.progress.result !== undefined
       ? { encoding: 'typed' as const, value: invocation.progress.result }
-      : execution?.kind === 'session'
+      : execution?.kind === 'session' || execution?.kind === 'session_ready'
       ? typeof observation.result === 'string' ? { encoding: 'raw_text' as const, value: observation.result } : null
       : execution?.kind === 'detached_run' ? { encoding: 'typed' as const, value: observation.result } : null;
     const decoded = value ? decodeExecutionRunResultObservation(value, step.result) : null;
@@ -251,10 +257,14 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
     const generation = prior?.progress.review?.decision?.kind === 'generate';
     const step = observed.kind === 'completed' || generation ? (await resolveFrozenLeaf(invocation).catch(() => undefined))?.leaf : undefined;
     const observation = observed.kind === 'completed' ? await adaptCompletion(invocation, observed) : observed;
+    const setupConsent = observation.kind === 'unresolved' && observation.setupConsentOutput
+      && progress.execution?.kind === 'action' && !TERMINAL_RUN_STATES.has(params.run.state)
+      && currentLifecycle !== 'cancel_requested' && currentLifecycle !== 'outcome_uncertain'
+      ? readWorkflowProjectSetupConsentHold(progress.execution.actionId, observation.setupConsentOutput) : null;
     if (params.expectedRevision !== undefined && observed.kind === 'completed' && observation.kind === 'unresolved') {
       throw Object.assign(new Error('workflow_outcome_unresolved'), { code: 'workflow_outcome_unresolved' });
     }
-    if (observation.kind === 'unresolved'
+    if (observation.kind === 'unresolved' && !setupConsent
       || (params.expectedRevision !== undefined && observation.kind === 'outcome_uncertain')
       || (currentLifecycle === 'outcome_uncertain' && observation.kind === 'outcome_uncertain')) return null;
     const resolvingUncertain = currentLifecycle === 'outcome_uncertain';
@@ -267,19 +277,22 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
       inputCompleted: observed.kind === 'completed',
       observation,
     }) === 'waiting_for_review';
-    const lifecycle: WorkflowInvocationLifecycleV1 = reviewRequired ? 'waiting_for_review' : stoppedWithUncertainEffects
+    const lifecycle: WorkflowInvocationLifecycleV1 = setupConsent ? 'needs_attention' : reviewRequired ? 'waiting_for_review' : stoppedWithUncertainEffects
       ? 'needs_attention'
-      : observation.kind;
+      : observation.kind === 'unresolved' ? 'needs_attention' : observation.kind;
     const nextProgress: WorkflowProgressEnvelopeV1 = {
       ...applyWorkflowInvocationFactV1(progress, {
         ...(observation.kind === 'completed' ? { result: observation.result } : {}),
-        ...(observation.usage ? { usage: observation.usage } : {}),
+        ...(observation.kind !== 'unresolved' && observation.usage ? { usage: observation.usage } : {}),
         ...(observation.kind !== 'completed' && observation.code ? { reason: observation.code,
           ...(observation.kind === 'failed' && observation.message !== undefined ? { reasonMessage: observation.message } : {}) } : {}),
       }),
       ...(observation.kind === 'completed' && (reviewRequired || generation) && !progress.review?.resultSource
         ? { review: { ...progress.review, resultSource: { kind: 'execution_input' as const } } } : {}),
       ...(stoppedWithUncertainEffects ? { uncertainPriorEffects: { activity: 'stopped' as const } } : {}),
+      ...(setupConsent && observation.kind === 'unresolved' && observation.setupConsentOutput && progress.execution?.kind === 'action'
+        ? { reason: { code: setupConsent.code }, execution: { ...progress.execution,
+          output: normalizeStrictJsonValue(observation.setupConsentOutput) } } : {}),
     };
     const binding = {
       v: 1 as const, purpose: 'invocation_progress' as const, accountId: params.accountId, runId: params.run.id,

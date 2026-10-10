@@ -100,11 +100,12 @@ describe('workflow input materialization', () => {
     const unknownMention = { kind: 'example.ticket', ref: 'ticket:123', token: '@ticket' };
     const text = 'Review @analysis alongside @README.md and @ticket';
     const materialized = await materializeWorkflowStepInput({
-      document: { text, references: [workflowToken, fileMention, unknownMention], attachments: [] },
+      document: { text, displayText: 'Scheduled review', references: [workflowToken, fileMention, unknownMention], attachments: [] },
       references: [{ kind: 'literal', value: 'unrelated' }, { kind: 'input', name: 'topic' }],
       runtime,
     });
     expect(materialized.text.split('\n\n**Workflow inputs**\n\n')[0]).toBe(text);
+    expect(materialized).toMatchObject({ displayText: 'Scheduled review' });
     expect(JSON.parse(materialized.text.split('\n\n**Workflow inputs**\n\n')[1]!)).toEqual([
       { reference: { kind: 'literal', value: 'unrelated' }, value: 'unrelated' },
       { token: '@analysis', reference: { kind: 'input', name: 'topic' }, value: 'typed value' },

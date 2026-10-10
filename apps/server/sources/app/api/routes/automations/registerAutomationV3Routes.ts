@@ -621,6 +621,7 @@ export function registerAutomationV3Routes(
                 machineId: assignment.machineId,
                 automationId: assignment.automation.id,
                 nextClaimAt: assignment.nextClaimAt?.getTime() ?? null,
+                executionRecipeVersion: assignment.executionRecipeVersion,
             })),
             settings: {
                 maxActiveRunsPerMachine: settings.maxActiveRunsPerMachine,

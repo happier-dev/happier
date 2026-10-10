@@ -2,6 +2,7 @@ import type {
   AutomationAccountCurrentnessWitnessV1,
   AutomationRunCause,
 } from '@happier-dev/protocol';
+import type { LiveWorkProducerV1 } from '../lifecycle/managedActivity';
 
 /**
  * Origin-neutral claim seam shared by Automation and direct Workflow Runs.
@@ -47,6 +48,8 @@ export type WorkflowClaimForCoordination = Readonly<{
   ) => void;
   /** Exact live coordinator callback; the incumbent worker remains its owner. */
   registerReviewHoldRefresh?: (refresh: () => Promise<void>) => void;
+  /** Projects this claim's actual coordinator custody through the incumbent worker map. */
+  registerLiveWorkProducer?: (producer: LiveWorkProducerV1) => () => void;
   /** Reserve the incumbent machine budget after private materialization. */
   acquireMachineStartCapacity?: (signal?: AbortSignal) => Promise<void>;
   signal?: AbortSignal;

@@ -23,9 +23,73 @@ its first prompt, select where it runs, and save explicitly. **Run now** opens
 the run composer to review the inputs and target before starting. **Run settings**
 in this destination controls capacity and retention.
 
-Existing schedule automations created by released 0.2 clients remain readable
-and runnable through the current 0.3 stored-data readers. Current clients use
-the V3 Automation transport; this data compatibility does not require a V2 route.
+Existing schedule automations created by released 0.2 clients remain readable.
+Current 0.3 development source converts them to Workflows through the canonical
+trigger reader, with the retained encrypted case requiring your review below.
+Current clients use the V3 Automation transport; this data compatibility does
+not require a V2 route.
+
+In current 0.3 development source, an older encrypted Automation attached to an
+encrypted Session on a now-plain Account pauses as **Needs your review** in
+Workflows. Open its trigger to review it on a device that still has the old
+encryption key. Opening does not save or run it. **Save** stores the reviewed
+workflow without end-to-end encryption and resumes its enabled triggers; the
+Session itself stays end-to-end encrypted. If the key is unavailable or review
+fails, the Automation stays paused. Automatic recovery never makes this
+conversion for you.
+
+### Create or edit with an Agent
+
+In current 0.3 development source, **Create with an agent** opens a focused
+sheet containing the ordinary New Session composer. **Edit with an agent**
+keeps that composer in the editor's **Agent** tab beside **Settings** on wide
+layouts. These are presentations of the same editable draft, not separate
+Agent launchers. Review the visible request and normal launch options; only
+your explicit **Send** starts the authoring Session.
+
+Opening authoring neither saves nor runs the Workflow. Validation and saving
+use the normal Workflow Actions after Send; editing operates on the saved
+revision, not your local unsaved draft. Starting the Workflow is a separate
+explicit Run action.
+
+### Try a saved workflow in place
+
+In current 0.3 development source, **Test run** runs the saved version for real
+after you review its inputs and target. It does not save or run your unsaved
+edits, and keeps the editor open. Step cards show the latest recorded occurrence's
+status, output preview, and elapsed interval from creation to last update,
+including admission and waiting. This is not execution-only time. Open the step's
+details to review the full retained result or respond when the run needs you.
+
+**Start from an example** includes recipes to notify you when an agent waits,
+send a daily summary into a selected session, create a worktree and install
+dependencies there, or run tests after a selected session's turns. Review the
+editable commands, session, and trigger before saving; choosing a template
+alone does not start work.
+
+Between ordered steps, **Run when** chooses **Success** (the default), **Failure**,
+or **Always**, relative to the preceding step in that sequence. A failure handler
+does not erase the failed step. Cancellation, an uncertain outcome, or a step
+waiting for your input is not a definitive failure and does not start a handler.
+
+## Roles for this run
+
+In 0.3 development, a workflow whose steps select roles offers **Roles for
+this run** in its Run now composer. Change the Agent/model or whether the
+role runs in a session or background run, then review before starting.
+**Use your role** removes the run-local choice. A test or rehearsal is a real
+execution, not a simulation. The accepted run freezes the resolved choices;
+later Account or workflow edits do not rewrite them.
+
+`workflow.run.start` accepts these choices as `roleOverrides`; the shared
+role resolver applies them above workflow pins, session choices and Account
+defaults, per field. Read [Roles](/agents/roles#roles-for-this-run) for precedence,
+repeat behavior and effort-picker limits. Other workflow tasks use
+`workflow.definition.*`, `workflow.trigger.*`, `session.trigger.*` and
+`workflow.run.*` through the same Actions front door. See the
+[host Action reference](/plugins/api/host-actions) for their exact schemas,
+approval requirements and surfaces. A successful start is admission of a
+run; observe that run before claiming its work completed.
 
 ## One recipe, several ways to start it
 
@@ -44,6 +108,39 @@ machine start capacity, whether the Automation belongs to the Account or is
 attached to a Session. Session-attached triggers keep their Session scope.
 Run queries can select the destination Session separately from the Session that
 started the Run; both kinds of Automation use that same destination relation.
+
+### See scheduled work in a Session
+
+In current 0.3 development source, the Session's **Work** tab shows its habits
+under **Triggers**: the schedule, next occurrence, last known Run status,
+**History**, **Run now**, and the on/off switch. History uses the same Run rows
+as Workflows. Run now is separate from resuming the automatic schedule.
+
+**Writes here** lists active Runs by their accepted destination, even when
+another Session started them, alongside enabled schedules targeting this
+Session. Active rows identify this Session's writers as **step N · title**, show
+their last observed step status, and retain the overall Run progress. A completed
+iteration is not a claim that a repeating step has finished all its work; a step
+without an observation has no guessed status. Active rows open the Run, and a
+visible working row also shows the existing live workflow map. Step numbers match
+the editor and Run map, including steps inside containers; nested workflows use
+their own numbering. The global **Work**
+sidebar has a **Scheduled** group with destination links. A pending next
+occurrence stays visible rather than being assigned a guessed time.
+Upcoming occurrence rows open their existing trigger or workflow, showing the
+schedule and what will run. Running and finished occurrences open their Run.
+
+Workflow-injected transcript messages link to their Run. When the authorized
+Run title and authored step number are available, the chip reads
+**From workflow · step N**. Opening a transcript batches missing facts without
+replacing its visible messages; an unavailable number is not guessed from event order.
+Public snapshot transcripts do not consult private Account Run content.
+
+For a **Notify me** Action whose message is bound to a reachable earlier Agent
+step's whole text result, **Only if the agent reported something** adds the
+existing non-empty-result condition. It skips an empty result and preserves
+other authored conditions. It is unavailable for a literal message, a JSON
+result, or a result that is not reachable from that Action.
 
 The same Automation can own no automatic triggers, one trigger, or several.
 Every enabled trigger is independent: if any one of them fires, the recipe
@@ -88,6 +185,18 @@ The GitHub plugin exposes semantic events for a repository push, an issue being
 opened, a pull request being opened, and a pull request being merged. Polling
 and webhook delivery normalize into those same event identities, so changing
 the observation transport does not change what the Automation means.
+
+In current 0.3 development source, choose **Plugin event** under a trigger's
+**When**, then **Set up event**. Search by the event's name or exact event ID;
+each result shows both. The plugin's current setup form collects the source,
+and you can then adjust its filter and maximum observation age before saving.
+
+An existing Run detail with readable event evidence also offers **Create a
+trigger from this event**. This preselects the event, not its private source
+configuration: choose **Runs on** and set up the source normally. **Test this
+trigger** checks the configured draft against that retained observation's
+event identity, source, filter, and observation age. It reports whether the
+event matches without replaying the event, saving the draft, or starting a Run.
 
 An event trigger is observed in one of three ways, and the difference matters
 operationally:
@@ -289,18 +398,23 @@ In current 0.3 development source, **Call a webhook** and **Run a command** are
 presets of the same Action leaf, also available through Action discovery and MCP.
 The webhook posts JSON from typed bindings, sends a run/step/attempt idempotency
 key, and retains the response body and status. A status of 300 or higher fails
-the step without following a redirect. It uses the notification webhook
-destination policy: public destinations require HTTPS, explicitly named local
-destinations are permitted, and metadata addresses or public-looking names that
-resolve to private addresses are refused.
+the step without following a redirect. Authored URLs may use HTTP or HTTPS.
+It shares the notification webhook's SSRF and pinned-address owner: explicitly
+named local destinations are permitted, while metadata addresses or
+public-looking names that resolve to private addresses are refused. Automatic
+Activity notifications retain their public-destination HTTPS requirement.
 
 A command runs on the Run's Machine in the step workspace, with the Machine's
 normal user permissions. Write shell syntax as literal text and pass dynamic
 values through the `env` field; reference those variables using your shell's
 syntax. Input or event values cannot become command text. The result retains
 `exitCode`, `stdout`, and `stderr`, including output from a failed command.
+Stopping the Run retains any definitive command response already returned.
 These are trusted-user operations, not a sandbox, and add no default step
-deadline or output truncation limit.
+deadline. Command output tails fit the existing stored-envelope capacity,
+including encryption and other step data, rather than a new per-stream quota.
+`stdoutTruncated` and `stderrTruncated` indicate when a prefix was omitted;
+small output stays unchanged. Integrated validation of this correction is pending.
 
 In unreleased 0.3 development source, each block can have its own optional name,
 separate from its prompt, Role or selected Action. Rename it inline in the block
@@ -308,9 +422,16 @@ heading; **Undo** and **Redo** use the same draft history as other edits. Blank
 names use the existing derived label. The authored name appears in the editor,
 read-only cards, Flow/Map and Run rows. A fresh Session for a named step starts
 with the title `{ordinal} · {step name}`, with ` · {item}` added for per-item
-work; the ordinal matches the step heading. Unnamed steps use normal Session
+work; the ordinal matches the step heading. Steps are numbered 1, 2, 3 … in the
+order they run, across lanes, loops and conditions; Side by side, Repeat and If
+groups are unnumbered and show their kind instead. A nested workflow numbers its
+own steps. Unnamed steps use normal Session
 naming. Changing a step name does not rename existing Sessions, and a later
 Session rename by you is preserved.
+
+Each lane of a parallel group can be named the same way: rename it in place on
+its caption in the editor. An unnamed lane reads "Lane 1", "Lane 2" and so on,
+and the name also captions the lane in Flow/Map.
 
 Parallel groups, conditions, and loops arrange those leaves. References select
 declared inputs and earlier invocation

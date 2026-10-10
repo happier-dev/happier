@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from "@happier-dev/protocol";
 import { serializeWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, type WorkflowDefinitionV1 } from "@happier-dev/protocol/workflows";
 import { db } from "@/storage/db";
@@ -7,6 +7,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAcceptedSnapshot";
 import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessWitness } from "@/app/automations/automationAccountCurrentness";
 import * as service from "./workflowRunService";
+import { eventRouter } from "@/app/events/eventRouter";
 
 describe("workflow Run live state", () => {
     let harness: LightSqliteHarness;
@@ -16,6 +17,7 @@ describe("workflow Run live state", () => {
         if (!harness) return;
         harness.resetEnv();
         await harness.resetDbTables([
+            () => db.managedMachine.deleteMany(),
             () => db.accountChange.deleteMany(), () => db.workflowRunInvocation.deleteMany(),
             () => db.automationRunAssignment.deleteMany(), () => db.automationRun.deleteMany(),
             () => db.automation.deleteMany(),
@@ -72,6 +74,51 @@ describe("workflow Run live state", () => {
         expect(admitted.run).toMatchObject({ sourceArtifactId, ownerAccountId: seeded.accountId });
         expect(await service.admitWorkflowRun(input)).toMatchObject({ kind: "existing", run: { sourceArtifactId } });
         await expect(service.admitWorkflowRun({ ...input, sourceArtifactId: randomUUID() })).rejects.toMatchObject({ code: "currentness_conflict" });
+    });
+
+    it("publishes an accepted managed assignment to its exact controller before guest claim and suppresses passive or retired work", async () => {
+        const seeded = await seed();
+        const homeId = `srv_${"b".repeat(32)}`;
+        process.env.HAPPIER_SERVER_IDENTITY_ID = homeId;
+        const controller = await db.machine.create({ data: { id: randomUUID(), accountId: seeded.accountId,
+            metadata: "{}", installationId: "managed-wake-controller" } });
+        const managed = await db.managedMachine.create({ data: {
+            homeId, custodianAccountId: seeded.accountId, controllerMachineId: controller.id,
+            controllerInstallationId: controller.installationId!, enrolledMachineId: seeded.machineId,
+            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: "bound", desired: "stop",
+            launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1,
+                name: "Retained guest", choices: {} },
+            resource: { contributionRef: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1,
+                value: { id: "same-native-guest" } }, retention: { kind: "until-delete" }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 1, availability: "present", power: "stopped" },
+        } });
+        // Socket publication is the external boundary; admission, row policy and current grants stay real.
+        const publication = vi.spyOn(eventRouter, "emitUpdate");
+        try {
+            const { input } = await admit(seeded);
+            expect(publication.mock.calls.map(([value]) => value)).toContainEqual(expect.objectContaining({
+                userId: seeded.accountId, recipientFilter: { type: "machine-only", machineId: controller.id },
+                payload: expect.objectContaining({ body: expect.objectContaining({
+                    t: "automation-run-updated", managedWakeTargetV1: expect.objectContaining({
+                        managedId: managed.id, enrolledMachineId: seeded.machineId,
+                        controller: { machineId: controller.id, installationId: controller.installationId },
+                        origin: { kind: "workflow-assignment", runId: input.runId, revision: 0,
+                            assignment: { machineId: seeded.machineId } },
+                    }),
+                }) }),
+            }));
+            publication.mockClear();
+            await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId });
+            expect(publication.mock.calls).toEqual([]);
+            await service.pauseWorkflowRun({ accountId: seeded.accountId, runId: input.runId, expectedRevision: 0 });
+            publication.mockClear();
+            await db.machine.update({ where: { id: controller.id }, data: { installationId: "replaced-controller" } });
+            await service.resumeWorkflowRunBoundary({ accountId: seeded.accountId, runId: input.runId, expectedRevision: 1 });
+            expect(publication.mock.calls.map(([value]) => value).some(value =>
+                value.recipientFilter?.type === "machine-only" && value.recipientFilter.machineId === controller.id)).toBe(false);
+            expect(await db.automationRun.findUniqueOrThrow({ where: { id: input.runId } }))
+                .toMatchObject({ state: "queued", claimedByMachineId: null });
+        } finally { publication.mockRestore(); }
     });
 
     it("returns the exact opaque root progress with the lean page and excludes child progress", async () => {

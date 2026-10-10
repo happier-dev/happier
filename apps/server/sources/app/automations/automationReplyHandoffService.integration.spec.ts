@@ -4,6 +4,7 @@ import {
     deriveAutomationOccurrenceKeyV1,
     MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS,
 } from "@happier-dev/protocol";
+import { sealWorkflowFinalResultStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from "@happier-dev/protocol/workflows";
 
 import { db } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -139,6 +140,21 @@ describe("Automation reply handoff service", () => {
             contentKeyFingerprint: null,
         };
     }
+
+    it("claims a completed Workflow result without dropping its bound Channels reply", async () => {
+        const resultEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowFinalResultStoredEnvelopeV1({
+            mode: "plain", binding: { v: 1, purpose: "final_result", accountId: ACCOUNT_ID, runId: RUN_ID },
+            finalResult: { kind: "happier.workflow-final-result.v1", result: { kind: "text", value: "Workflow reply" },
+                producerInvocation: { recordId: "prompt-invocation" } },
+        }));
+        await seedReadyHandoff({ resultEnvelope });
+        await db.automationRun.update({ where: { id: RUN_ID }, data: { workflowCustodyState: "settled" } });
+        const claimed = await claimNextAutomationReplyHandoff({ now: NOW });
+        expect(claimed).toMatchObject({ runId: RUN_ID, automationId: AUTOMATION_ID,
+            handoffId: HANDOFF_ID, recipeKind: "workflow-v2", resultEnvelope, replyContextEnvelope: REPLY_CONTEXT_ENVELOPE });
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID }, select: { replyHandoffState: true } }))
+            .toEqual({ replyHandoffState: "handingOff" });
+    });
 
     it("claims the earliest due ready handoff atomically and returns exact raw frozen envelopes", async () => {
         await seedReadyHandoff();

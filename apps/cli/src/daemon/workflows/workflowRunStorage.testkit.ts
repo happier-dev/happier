@@ -139,6 +139,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
     revision,
     machineId: params.machineId,
     workflowCustodyState: custodyState,
+    attentionRequired: requiresAttention(),
     originDeliveryAckRevision,
     availability: {
       pause: true, resumeBoundary: false,
@@ -220,6 +221,12 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
       case 'get': {
         if (acceptedEnvelope === null) throw notFound();
         return { run: summary(), acceptedEnvelope, checkpointEnvelope, resultEnvelope, keyCensus };
+      }
+      case 'list': {
+        const root = ordered().find(row => row.index.parentRecordId === null);
+        return { runs: acceptedEnvelope === null ? [] : [summary()],
+          acceptedEnvelopesByRunId: { [params.runId]: acceptedEnvelope }, keyCensusByRunId: { [params.runId]: keyCensus },
+          rootProgressByRunId: root ? { [params.runId]: root } : {}, nextCursor: null };
       }
       case 'initialize': {
         expectRevision();
@@ -428,7 +435,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
   return {
     execute: async (operation) => {
       const result = await execute(operation);
-      if (!['get', 'run-key.census', 'invocations.list', 'invocations.current', 'invocations.get', 'wait', 'delivery.pull'].includes(String(operation.operation))) publishChange();
+      if (!['get', 'list', 'run-key.census', 'invocations.list', 'invocations.current', 'invocations.get', 'wait', 'delivery.pull'].includes(String(operation.operation))) publishChange();
       return result;
     },
     observeChanges: (observedRunId, onChange) => {

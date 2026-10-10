@@ -1,0 +1,1 @@
+ALTER TABLE "ManagedMachine" ALTER COLUMN "desiredAfterMs" TYPE DOUBLE PRECISION USING "desiredAfterMs"::DOUBLE PRECISION;

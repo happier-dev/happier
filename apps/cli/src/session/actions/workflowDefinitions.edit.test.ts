@@ -33,7 +33,8 @@ const ops: WorkflowDefinitionEditOpV1[] = [
 function currentAuthority(permissionMode: 'default' | 'yolo') {
   const context = resolveCliAgentStartContextV1({ sessionId: 'origin', machineId: 'machine', directory: '/repo',
     backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, metadata: {},
-    starterDepth: 0, turnDepth: 0, callerPermissionMode: permissionMode, settings: accountSettingsParse({}) });
+    starterDepth: 0, turnDepth: 0, callerPermissionMode: permissionMode, settings: accountSettingsParse({}),
+    accountRoleOverrides: { status: 'ready', overrides: {} } });
   if (!context) throw new Error('expected current host authority fixture');
   return context;
 }

@@ -43,7 +43,9 @@ import {
     WorkflowRunServiceError,
 } from "@/app/workflows/workflowRunService";
 import { WorkflowStoredContentError } from "@/app/workflows/runs/storedContent";
-import { inTx } from "@/storage/inTx";
+import { inTx, isTransactionAcquisitionUnavailableError, isTransactionDeadlineExceededError } from "@/storage/inTx";
+import { getActivePrismaRuntime } from "@/storage/prisma";
+import { log } from "@/utils/logging/log";
 import { readWorkflowRunRecipientCensusInTx, commitWorkflowRunRecipientKeyEnvelopesInTx, WorkflowRunAccessError } from "@/app/workflows/workflowRunAccess";
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 
@@ -199,6 +201,19 @@ export function registerWorkflowRunStorageRoutes(
                 return reply.code(error.code === "run_not_found" ? 404 : error.code === "run_access_denied" ? 403 : error.code === "currentness_conflict" ? 409 : 422).send({ error: error.code });
             }
             if (error instanceof WorkflowStoredContentError) return reply.code(422).send({ error: error.code });
+            const prisma = getActivePrismaRuntime();
+            if (error instanceof prisma.PrismaClientKnownRequestError
+                || error instanceof prisma.PrismaClientUnknownRequestError
+                || error instanceof prisma.PrismaClientInitializationError
+                || error instanceof prisma.PrismaClientRustPanicError
+                || isTransactionAcquisitionUnavailableError(error)
+                || isTransactionDeadlineExceededError(error)) {
+                // Keep operational failures distinct from unreadable private content.
+                // Unexpected application errors still reach the global error owner.
+                log({ module: "workflow-storage", level: "error", operation: body.operation,
+                    errorCode: "code" in error ? error.code : error.name }, "Workflow storage is unavailable");
+                return reply.code(503).send({ error: "storage_unavailable" });
+            }
             if (!(error instanceof WorkflowRunServiceError)) throw error;
             const status = error.code === "run_not_found" ? 404 : error.code === "run_access_denied" ? 403 : error.code === "currentness_conflict" ? 409 : 422;
             return reply.code(status).send({ error: error.code });

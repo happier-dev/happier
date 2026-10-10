@@ -12,6 +12,8 @@ import {
     AutomationTriggerIdSchema,
     WorkflowTriggerRemoveRequestV1Schema,
     createWorkflowTriggerActions,
+    convertLegacyAutomationRecipeToInlineWorkflowV1,
+    openAutomationTemplateStoredV1,
     AutomationTriggerDefinitionInputSchema,
     AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
     AutomationPullRequestTriggerSchema,
@@ -26,6 +28,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
@@ -67,7 +70,7 @@ const AUTOMATION_TEMPLATE_V02_ENCRYPTED = readV02Fixture("AUTOMATION_TEMPLATE_V0
 const AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED = readV02Fixture("AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED");
 const AUTOMATION_TEMPLATE_V02_PLAIN = readV02Fixture("AUTOMATION_TEMPLATE_V02_PLAIN");
 
-function currentRecipe(templateVersion: number) {
+function historicalRecipe(templateVersion: number) {
     return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
         v: 1,
         templateVersion,
@@ -87,36 +90,13 @@ function currentRecipe(templateVersion: number) {
     });
 }
 
-function workflowRecipe(templateVersion: number, machineId: string) {
-    return AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({
-        v: 2,
-        templateVersion,
-        workflow: {
-            t: "plain",
-            v: {
-                inlineDefinition: {
-                    version: 1,
-                    inputs: [],
-                    defaults: {
-                        agentTarget: {
-                            kind: "agent",
-                            identity: { pluginId: "happier.agent.codex", localId: "codex" },
-                        },
-                    },
-                    blocks: [{
-                        kind: "step",
-                        id: "step",
-                        document: { text: "Work", references: [], attachments: [] },
-                        input: [],
-                        result: { kind: "text" },
-                    }],
-                },
-                workspace: { directory: "/tmp/automation-workflow" },
-                executionTarget: { kind: "session" },
-            },
-        },
-        triggerEvidence: null,
-    });
+function currentRecipe(templateVersion: number) {
+    return workflowRecipe(templateVersion, "unused", { directory: "/tmp/automation-crud", prompt: `Recipe ${templateVersion}` });
+}
+
+function workflowRecipe(templateVersion: number, _machineId: string, content?: Readonly<{ directory: string; prompt: string }>) {
+    return createAutomationWorkflowRecipeFixture({ templateVersion,
+        directory: content?.directory ?? "/tmp/automation-workflow", prompt: content?.prompt ?? "Work" });
 }
 
 function intervalTrigger(everyMs: number, enabled = true) {
@@ -300,6 +280,47 @@ describe("automationCrudService (integration)", () => {
         await expect(deleteAutomation({ accountId: account.id, automationId: retained.id })).resolves.toBe(true);
     });
 
+    it.each(["zero", "plural"] as const)("converts a real 0.2 row through canonical reconciliation without changing its %s placements", async (placement) => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const assignments = placement === "zero" ? [] : [
+            { machineId: await seedExecutionMachine(account.id), enabled: true, priority: 2 },
+            { machineId: await seedExecutionMachine(account.id), enabled: false, priority: 7 },
+        ];
+        const retained = await db.automation.create({ data: {
+            id: randomUUID(), accountId: account.id, name: "Predecessor placements", enabled: placement === "plural",
+            targetType: "new_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN, templateVersion: 1,
+            assignments: { create: assignments },
+        } });
+        await expect(getAutomation({ accountId: account.id, automationId: retained.id }))
+            .resolves.toMatchObject({ templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN, templateVersion: 1 });
+        const opened = openAutomationTemplateStoredV1({ templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN, accountMode: "plain" });
+        if (!opened.ok) throw new Error(opened.code);
+        const conversion = convertLegacyAutomationRecipeToInlineWorkflowV1({
+            legacyTemplate: { template: opened.template, targetType: "new_session" }, machineId: null,
+        });
+        if (conversion.kind !== "available") throw new Error(conversion.reason);
+        const { machineId: _machineId, ...workspace } = conversion.project;
+        const convertedRecipe = AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 2,
+            triggerEvidence: null, workflow: { t: "plain", v: { workspace, executionTarget: conversion.executionTarget,
+                inlineDefinition: conversion.definition } } });
+        const input = { expectedTemplateVersion: 1, name: retained.name, description: null, enabled: retained.enabled,
+            assignments, triggers: [], removedTriggers: [], executionRecipe: convertedRecipe };
+        const converted = await reconcileAutomationDefinition({ accountId: account.id, automationId: retained.id, input });
+        expect(converted).toMatchObject({ id: retained.id, enabled: retained.enabled, templateVersion: 2, targetType: null });
+        const placements = converted!.assignments.map(({ machineId, enabled, priority }) => ({ machineId, enabled, priority }));
+        expect(placements.sort((left, right) => left.machineId.localeCompare(right.machineId)))
+            .toEqual([...assignments].sort((left, right) => left.machineId.localeCompare(right.machineId)));
+        expect(AutomationStoredWorkflowDefinitionRecipeV2Schema.parse(JSON.parse(converted!.templateCiphertext))).toEqual(convertedRecipe);
+        if (placement === "plural") {
+            await expect(reconcileAutomationDefinition({ accountId: account.id, automationId: retained.id,
+                input: { ...input, expectedTemplateVersion: 2, executionRecipe: currentRecipe(3),
+                    assignments: assignments.map((assignment) => ({ ...assignment, priority: assignment.priority + 1 })) },
+            })).rejects.toBeInstanceOf(AutomationValidationError);
+            await expect(getAutomation({ accountId: account.id, automationId: retained.id }))
+                .resolves.toMatchObject({ enabled: true, templateVersion: 2, templateCiphertext: converted!.templateCiphertext });
+        }
+    });
+
     it("recovers a legacy encrypted new-Session template through the existing templateVersion CAS", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const retained = await db.automation.create({ data: {
@@ -309,7 +330,7 @@ describe("automationCrudService (integration)", () => {
         const recovered = await updateAutomation({ accountId: account.id, automationId: retained.id,
             expectedTemplateVersion: 1, input: { executionRecipe: currentRecipe(2) } });
         expect(recovered).toMatchObject({ templateVersion: 2 });
-        expect(JSON.parse(recovered!.templateCiphertext)).toMatchObject({ template: { t: "plain" } });
+        expect(JSON.parse(recovered!.templateCiphertext)).toMatchObject({ workflow: { t: "plain" } });
         await expect(updateAutomation({ accountId: account.id, automationId: retained.id,
             expectedTemplateVersion: 1, input: { executionRecipe: currentRecipe(2) } }))
             .rejects.toMatchObject({ name: "AutomationTemplateMutationConflictError" });
@@ -373,13 +394,13 @@ describe("automationCrudService (integration)", () => {
             expect(reloaded).toMatchObject({ targetType: "new_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN });
             const strict = await db.automation.create({ data: {
                 accountId: account.id, name: "Current recipe", enabled: false, targetType: "new_session",
-                templateCiphertext: JSON.stringify(currentRecipe(1)), templateVersion: 1,
+                templateCiphertext: JSON.stringify(historicalRecipe(1)), templateVersion: 1,
             } });
             const downgrade = await app.inject({ method: "PATCH", headers,
                 url: `/v3/automations/${strict.id}`, payload: patch });
             expect(downgrade.statusCode).toBe(400);
             await expect(db.automation.findUniqueOrThrow({ where: { id: strict.id } }))
-                .resolves.toMatchObject({ templateCiphertext: JSON.stringify(currentRecipe(1)), templateVersion: 1 });
+                .resolves.toMatchObject({ templateCiphertext: JSON.stringify(historicalRecipe(1)), templateVersion: 1 });
         });
     });
 
@@ -623,7 +644,7 @@ describe("automationCrudService (integration)", () => {
         const removed = await deleteAutomationTrigger({ accountId: account.id, automationId: automation.id, triggerId,
             expectedRevision: changed!.triggers[0]!.revision });
         expect(removed!.templateVersion).toBeGreaterThan(changed!.templateVersion);
-        const after = AutomationStoredDefinitionExecutionRecipeV1Schema.parse(JSON.parse(removed!.templateCiphertext));
+        const after = AutomationStoredWorkflowDefinitionRecipeV2Schema.parse(JSON.parse(removed!.templateCiphertext));
         expect(after).toEqual({ ...currentRecipe(1), templateVersion: removed!.templateVersion });
     });
 
@@ -1709,7 +1730,7 @@ describe("automationCrudService (integration)", () => {
         })).resolves.toMatchObject({ enabled: false, assignments: [] });
     });
 
-    it("authors, pauses, and resumes an existingSession definition against a layout-one Session", async () => {
+    it("pauses and resumes a historical strict existingSession definition against a layout-one Session", async () => {
         const account = await db.account.create({
             data: { encryptionMode: "plain" }, select: { id: true },
         });
@@ -1739,21 +1760,25 @@ describe("automationCrudService (integration)", () => {
             },
         });
 
-        const created = await createAutomation({
-            accountId: account.id,
-            input: {
-                automationId: randomUUID(),
+        // Historical undeployed V1 target custody remains readable, but is never a current write fixture.
+        const created = await db.automation.create({
+            data: {
+                id: randomUUID(),
+                accountId: account.id,
                 name: "Layout-one existing session",
                 enabled: true,
-                executionRecipe: AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
+                targetType: "existing_session",
+                templateVersion: 1,
+                templateCiphertext: JSON.stringify(AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
                     v: 1,
                     templateVersion: 1,
                     template: { t: "plain", v: { v: 1, prompt: "Continue the target Session" } },
                     triggerEvidence: null,
                     target: { kind: "existingSession", sessionId },
-                }),
-                assignments: [{ machineId: executionMachineId }],
-                triggers: [triggerInput(intervalTrigger(60_000))],
+                })),
+                assignments: { create: { machineId: executionMachineId, enabled: true } },
+                triggers: { create: { id: randomUUID(), kind: "schedule", enabled: true,
+                    scheduleKind: "interval", everyMs: 60_000 } },
             },
         });
         expect(created.targetType).toBe("existing_session");

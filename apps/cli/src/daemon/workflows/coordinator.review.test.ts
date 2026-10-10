@@ -38,15 +38,29 @@ describe('workflow review pipeline', () => {
         await params.onInputAccepted({ kind: 'session', sessionId: params.step.id, localInputId: params.step.id });
         return { kind: 'completed', result: params.step.id };
       } });
+    const activity: string[] = [];
+    const unsubscribe = coordinator.liveWorkProducer.subscribe(() => {
+      const observation = coordinator.liveWorkProducer.read();
+      if (observation instanceof Promise) throw new Error('coordinator_activity_must_be_owner_local');
+      activity.push(observation.items.some(item => item.state === 'active') ? 'busy' : 'idle');
+    });
+    expect(await coordinator.liveWorkProducer.read()).toEqual({ coverage: 'complete', items: [] });
     const running = coordinator.run({ runId: 'materialization', originSessionId: 'origin-session', definition: definition([{ kind: 'parallel', id: 'p', failurePolicy: 'fail_stop',
       branches: [{ id: 'a', blocks: [leaf('held', true)] }, { id: 'b', blocks: [{ ...leaf('context'),
         input: [{ kind: 'session_context', recentTurns: 0 }] }] }] }]), inputs: {}, executionTarget, authorization });
     await contextRead.promise;
+    expect(await coordinator.liveWorkProducer.read()).toMatchObject({ coverage: 'complete', items: [
+      { category: 'workflow_run', state: 'active', attribution: { kind: 'unknown' } },
+    ] });
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
     releaseContext.resolve();
     expect((await running).state).toBe('waiting_for_review');
     expect(executed).toContain('context');
+    expect(await coordinator.liveWorkProducer.read()).toEqual({ coverage: 'complete', items: [] });
+    expect(activity).toContain('busy');
+    expect(activity.at(-1)).toBe('idle');
+    unsubscribe();
   });
   it.each([undefined, null] as const)('preserves fieldless Continue versus an actual JSON null value (%s)', async (value) => {
     const store = createInMemoryWorkflowCoordinatorStore();

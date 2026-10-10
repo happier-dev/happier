@@ -43,7 +43,7 @@ export function sameWorkflowConversationTarget(
   left: NonNullable<WorkflowProgressEnvelopeV1['execution']>,
   right: NonNullable<WorkflowProgressEnvelopeV1['execution']>,
 ): boolean {
-  return left.kind === 'session' && right.kind === 'session'
+  return (left.kind === 'session' || left.kind === 'session_ready') && (right.kind === 'session' || right.kind === 'session_ready')
     ? left.sessionId === right.sessionId
     : left.kind === 'detached_run' && right.kind === 'detached_run' && left.runId === right.runId;
 }

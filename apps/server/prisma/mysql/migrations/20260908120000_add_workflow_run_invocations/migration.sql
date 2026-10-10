@@ -258,9 +258,45 @@ ALTER TABLE `AutomationRun` ADD CONSTRAINT `AutomationRun_reply_handoff_arm_chec
     )
 );
 
-ALTER TABLE `AutomationRun` DROP CHECK `AutomationRun_execution_input_arm_check`;
-ALTER TABLE `AutomationRun` ADD CONSTRAINT `AutomationRun_execution_input_arm_check` CHECK (
-    `state` NOT IN ('queued', 'claimed', 'running')
-    OR `executionInputEnvelope` IS NOT NULL
-    OR `workflowAcceptedSnapshotEnvelope` IS NOT NULL
-);
+-- Replace the input owner in place, admitting the accepted Workflow snapshot.
+DROP TRIGGER `AutomationRun_execution_input_insert`;
+DROP TRIGGER `AutomationRun_execution_input_update`;
+CREATE TRIGGER `AutomationRun_execution_input_insert`
+BEFORE INSERT ON `AutomationRun`
+FOR EACH ROW
+BEGIN
+IF NOT (
+    NEW.`state` NOT IN ('queued', 'claimed', 'running')
+    OR NEW.`executionInputEnvelope` IS NOT NULL
+    OR NEW.`workflowAcceptedSnapshotEnvelope` IS NOT NULL
+    OR (NEW.`state` IN ('queued', 'claimed') AND NEW.`startedAt` IS NULL
+        AND NEW.`finishedAt` IS NULL AND NEW.`producedSessionId` IS NULL
+        AND NEW.`summaryCiphertext` IS NULL AND NEW.`resultEnvelope` IS NULL
+        AND NEW.`executionAttempt` = 0 AND NEW.`executionDispatchCommittedAt` IS NULL
+        AND (NEW.`executionDispatchState` IS NULL OR NEW.`executionDispatchState` = 'notStarted')
+        AND NEW.`executionNativeRunId` IS NULL AND NEW.`executionNativeCallId` IS NULL
+        AND NEW.`executionNativeSidechainId` IS NULL)
+) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AutomationRun execution input is required';
+END IF;
+END;
+
+CREATE TRIGGER `AutomationRun_execution_input_update`
+BEFORE UPDATE ON `AutomationRun`
+FOR EACH ROW
+BEGIN
+IF NOT (
+    NEW.`state` NOT IN ('queued', 'claimed', 'running')
+    OR NEW.`executionInputEnvelope` IS NOT NULL
+    OR NEW.`workflowAcceptedSnapshotEnvelope` IS NOT NULL
+    OR (NEW.`state` IN ('queued', 'claimed') AND NEW.`startedAt` IS NULL
+        AND NEW.`finishedAt` IS NULL AND NEW.`producedSessionId` IS NULL
+        AND NEW.`summaryCiphertext` IS NULL AND NEW.`resultEnvelope` IS NULL
+        AND NEW.`executionAttempt` = 0 AND NEW.`executionDispatchCommittedAt` IS NULL
+        AND (NEW.`executionDispatchState` IS NULL OR NEW.`executionDispatchState` = 'notStarted')
+        AND NEW.`executionNativeRunId` IS NULL AND NEW.`executionNativeCallId` IS NULL
+        AND NEW.`executionNativeSidechainId` IS NULL)
+) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AutomationRun execution input is required';
+END IF;
+END;

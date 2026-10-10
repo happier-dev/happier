@@ -1,6 +1,7 @@
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter } from "@/app/events/eventRouter";
 import type { AutomationRunStateChangedHostEventV1 } from "@happier-dev/protocol";
+import type { ManagedWakeTargetV1 } from "@happier-dev/protocol";
 
 import type {
     AutomationListItem,
@@ -167,6 +168,7 @@ export function emitAutomationRunUpdatedToMachineOnly(params: {
     }>;
     cursor: number;
     workflowControl?: "cancel_requested" | "review_resolved";
+    managedWakeTargetV1?: ManagedWakeTargetV1;
 }): void {
     const projectedState: AutomationRunState = params.run.state === "pause_requested"
         || params.run.state === "paused"
@@ -192,6 +194,7 @@ export function emitAutomationRunUpdatedToMachineOnly(params: {
                 attempt: params.run.attempt,
                 targetMachineId: params.machineId,
                 ...(params.workflowControl ? { workflowControl: params.workflowControl } : {}),
+                ...(params.managedWakeTargetV1 ? { managedWakeTargetV1: params.managedWakeTargetV1 } : {}),
             },
             createdAt: Date.now(),
         },

@@ -1,7 +1,6 @@
 import {
     parseAutomationRunExecutionRecipeV1,
     type AutomationRunExecutionRecipeV1,
-    type AutomationStoredDefinitionExecutionRecipeV1,
     type AutomationStoredWorkflowDefinitionRecipeV2,
     type AutomationReplyHandoffStateV1,
     type AutomationExecutionDispatchStateV3,
@@ -151,7 +150,7 @@ export type AutomationLegacyDefinitionInput = AutomationDefinitionInputCommon & 
 /** One current definition writer: a strict Protocol recipe persisted in templateCiphertext. */
 export type AutomationCurrentDefinitionInput = AutomationDefinitionInputCommon & Readonly<{
     automationId: string;
-    executionRecipe: AutomationStoredDefinitionExecutionRecipeV1 | AutomationStoredWorkflowDefinitionRecipeV2;
+    executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2;
     triggers: ReadonlyArray<AutomationTriggerCreateRequest>;
     targetType?: never;
     templateCiphertext?: never;
@@ -173,7 +172,7 @@ type AutomationPatchCommon = Readonly<{
 }>;
 
 export type AutomationCurrentPatchInput = AutomationPatchCommon & Readonly<{
-    executionRecipe: AutomationStoredDefinitionExecutionRecipeV1 | AutomationStoredWorkflowDefinitionRecipeV2;
+    executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2;
     targetType?: never;
     templateCiphertext?: never;
     legacyTemplateEnvelopeAdmission?: never;

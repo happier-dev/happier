@@ -1,5 +1,8 @@
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createActionExecutor, freezeActionCompletionContractV1, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
@@ -9,6 +12,11 @@ import { validateExecutionRunProfileResult } from '@happier-dev/protocol/executi
 import type { WorkflowActionLeafV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows';
 import { WORKFLOW_CANCEL_REQUESTED_ABORT_REASON, WorkflowRuntimeInterruption } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { createDefaultWorkspaceWorkerPreferenceV1, ProjectExecutionChoiceV1Schema, resolveProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
+import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
+import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.testkit';
 
 const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
 const authorization = { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const };
@@ -65,6 +73,69 @@ const goal: WorkflowActionLeafV1 = { kind: 'action', id: 'goal', actionId: 'sess
   input: { sessionId: { kind: 'origin_session_id' }, status: { kind: 'literal', value: 'complete' } } };
 
 describe('workflow Action leaves', () => {
+  it.each([
+    ['projects.script.run', false],
+    ['projects.compute.exec', false],
+    ['projects.script.run', true],
+  ] as const)(
+    'keeps accepted Machine A at the actual %s transport and never resends it on replay (deferred=%s)', async (actionId, deferred) => {
+      const acceptedMachineId = 'machine-a';
+      const directory = await realpath(await mkdtemp(join(tmpdir(), 'happier-workflow-finite-')));
+      onTestFinished(async () => { await rm(directory, { recursive: true, force: true }); });
+      const sourceWorkspace = { serverId: 'home', workspaceId: 'workspace-a', machineId: acceptedMachineId, rootPath: directory };
+      const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'finite', actionId, input: actionId === 'projects.script.run'
+        ? { workspace: deferred ? { kind: 'item', field: 'value' } : { kind: 'literal', value: sourceWorkspace },
+          selection: { kind: 'literal', value: { kind: 'named', name: 'test' } } }
+        : { workspace: { kind: 'literal', value: sourceWorkspace }, executable: { kind: 'literal', value: '/bin/echo' },
+          argv: { kind: 'literal', value: ['hello'] }, cwd: { kind: 'literal', value: directory } } };
+      const blocks: WorkflowDefinitionV1['blocks'] = deferred ? [{ kind: 'loop', id: 'workspaces',
+        repetition: { kind: 'items', items: { kind: 'literal', value: [sourceWorkspace] }, execution: 'sequential',
+          failurePolicy: 'fail_stop' }, body: [leaf] }] : [leaf];
+      const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: definition(blocks),
+        context: { source: { kind: 'inline' }, inputs: {}, machineId: acceptedMachineId, executionTarget,
+          workspaceTarget: { project: { machineId: acceptedMachineId, directory, checkoutRootPath: directory } },
+          origin: { kind: 'direct' }, authorization }, admission: { kind: 'user' },
+        effects: { resolveTargetAvailability: async () => true, readActionContract: async () => frozen(leaf).actionContract! } });
+      if (!accepted.ok) throw new Error(accepted.error.code);
+      const requests: unknown[] = [];
+      const executor = createActionExecutor(createCliActionDeps({ mode: 'plain', ctx: null, token: 'token', sessionId: 'origin',
+        serverId: 'home', serverHttpBaseUrl: 'http://127.0.0.1:3005',
+        machineActionDirectTargetTransport: { machineId: acceptedMachineId, invoke: async (method, request) => {
+          requests.push({ method, request });
+          // Use the receiving finite owner's real pre-admission refusal, not a
+          // fabricated finite process or Run. FIN still conservatively retains
+          // uncertainty because this envelope has no launch correspondence.
+          return { ok: false, errorCode: 'machine_admission_required', error: 'machine_admission_required' };
+        } } }));
+      const store = createInMemoryWorkflowCoordinatorStore();
+      const coordinator = createWorkflowCoordinator({ store,
+        executeStep: async () => { throw new Error('Finite Action must not spawn an Agent'); },
+        resolveWorkspace: createCoordinatorWorkspaceResolver({ store, projectWorkspace: accepted.snapshot.workspaceTarget.project,
+          scm: createGitWorkflowWorkspaceTestDependencies() }),
+        isAcceptedAuthorizationCurrent: async () => true,
+        action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true,
+          externalActionTarget: { kind: 'machine', machineId: acceptedMachineId,
+            project: { machineId: acceptedMachineId, directory } } }),
+          observeRun: async () => { throw new Error('Refused finite work has no native Run'); } } });
+      const input = { ...accepted.snapshot, runId: `finite-${actionId}`, inputs: {} };
+      expect(await coordinator.run(input)).toMatchObject({ state: 'outcome_uncertain', reason: 'machine_admission_required' });
+      expect(requests).toEqual([{ method: getActionSpec(actionId).bindings?.rpcMethod,
+        request: expect.objectContaining({ choice: { kind: 'primary' } }) }]);
+      const execution = store.list().find((row) => row.blockId === 'finite')?.execution;
+      expect(execution).toMatchObject({ kind: 'action', input: { choice: { kind: 'primary' } } });
+      if (execution?.kind !== 'action') throw new Error('Expected a durable finite Action invocation');
+      // This is the same precedence owner consumed by the real finite receiver.
+      // Primary-only on the accepted primary checkout must remain runnable,
+      // even when the current workspace preference points at Machine B.
+      expect(resolveProjectExecutionChoiceV1({ execution: actionId === 'projects.script.run' ? 'primary' : 'portable',
+        adHoc: actionId === 'projects.compute.exec', invocation: ProjectExecutionChoiceV1Schema.parse(execution.input.choice),
+        preference: { status: 'ready', value: { ...createDefaultWorkspaceWorkerPreferenceV1(), enabled: true,
+          allowAdHoc: true, destination: { kind: 'machine', machineId: 'machine-b' } } } }))
+        .toMatchObject({ status: 'resolved', choice: { kind: 'primary' } });
+      expect(await coordinator.run(input)).toMatchObject({ state: 'outcome_uncertain', reason: 'machine_admission_required' });
+      expect(requests).toHaveLength(1);
+    },
+  );
   it('retains JSON failure output and gives the effect its run/step/attempt idempotency identity', async () => {
     const contexts: string[] = [];
     const store = createInMemoryWorkflowCoordinatorStore();
@@ -89,15 +160,15 @@ describe('workflow Action leaves', () => {
     expect(row).toMatchObject({ lifecycle: 'failed', reason: 'command_failed', result: output });
     expect(contexts).toEqual([`effect-run/${row.logicalInvocationRecordId ?? row.recordId}/0`]);
   });
-  it('keeps known command output when an authoritative Stop cancels the Run during the effect', async () => {
+  it.each([false, true])('keeps known command output when an authoritative Stop cancels the Run during the effect (success=%s)', async (success) => {
     const controller = new AbortController();
     const store = createInMemoryWorkflowCoordinatorStore();
-    const output = { exitCode: -1, stdout: 'printed before Stop', stderr: '' };
+    const output = { exitCode: success ? 0 : -1, stdout: 'printed before Stop', stderr: '' };
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'command', actionId: 'machines.command.run',
       input: { command: { kind: 'literal', value: 'long-running-command' } } };
     const executor = createTestActionExecutor({ machineCommandRun: async () => {
       controller.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
-      return { ok: false, errorCode: 'command_cancelled', error: 'Command cancelled', details: output };
+      return success ? output : { ok: false, errorCode: 'command_cancelled', error: 'Command cancelled', details: output };
     } });
     const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
       resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true,
@@ -108,7 +179,8 @@ describe('workflow Action leaves', () => {
     expect(await coordinator.run({ runId: 'stopped-command', definition: definition([leaf]), inputs: {},
       executionTarget, authorization, signal: controller.signal, materializedLeaves: [frozen(leaf)] }))
       .toMatchObject({ state: 'cancelled' });
-    expect(store.list().find((row) => row.blockId === leaf.id)?.result).toEqual(output);
+    expect(store.list().find((row) => row.blockId === leaf.id))
+      .toMatchObject({ lifecycle: 'cancelled', result: output });
   });
   it.each([true, false])('keeps a successful Action with invalid frozen output repairable only when review is enabled (%s)', async (pauseForReview) => {
     let effects = 0;

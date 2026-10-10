@@ -4,7 +4,7 @@ import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/prot
 import type { WorkflowDefinitionV1, WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
 
 import { createAutomationDefinition, deleteAutomationDefinition, getAutomationDefinition,
-  listAutomationDefinitions, reconcileAutomationDefinition } from '@/api/automations';
+  listAutomationDefinitions, reconcileAutomationDefinition, runAutomationNowReceipt } from '@/api/automations';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { getRandomBytes } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';
@@ -12,6 +12,8 @@ import { createAutomationAccountEncryptionMaterialSnapshotV1 } from '@/plugins/r
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { resolveAutomationTemplateRetainedSession } from '@/daemon/automation/automationRetainedSession';
+import { readManagedMachine } from '@/machines/managed/readManagedMachine';
+import { configuration } from '@/configuration';
 
 /** CLI adapts canonical Account currentness/crypto and Automation transport, not trigger semantics. */
 export function createCliWorkflowTriggerActions(params: Readonly<{
@@ -19,12 +21,12 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
   serverHttpBaseUrl?: string;
   resolveWorkflow: (ref: string) => Promise<WorkflowDefinitionV1>;
   resolveWorkflowTeamIds?: WorkflowTriggerActionsDependencies['resolveWorkflowTeamIds'];
+  sessionList?: WorkflowTriggerActionsDependencies['sessionList'];
   resolveSession?: WorkflowTriggerActionsDependencies['resolveSession'];
   resolveRunTrigger?: WorkflowTriggerActionsDependencies['resolveRunTrigger'];
   resolveRunSource?: WorkflowTriggerActionsDependencies['resolveRunSource'];
   resolveMaterializer?: WorkflowTriggerActionsDependencies['resolveMaterializer'];
   pullRequests?: WorkflowTriggerActionsDependencies['pullRequests'];
-  observeLegacyChannelAssociation?: Parameters<typeof createAccountWorkflowTriggerActions>[0]['observeLegacyChannelAssociation'];
 }>) {
   const onServer = <T>(operation: () => Promise<T>): Promise<T> => params.serverHttpBaseUrl
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
@@ -36,6 +38,7 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
       create: (input) => onServer(() => createAutomationDefinition({ token, input })),
       reconcile: (automationId, input) => onServer(() => reconcileAutomationDefinition({ token, automationId, input })),
       delete: (automationId) => onServer(() => deleteAutomationDefinition({ token, automationId })),
+      runNow: (automationId, options) => onServer(() => runAutomationNowReceipt({ token, automationId, ...options })),
     },
     resolveEncryption: async () => {
       const resolved = await resolveValidatedAutomationAccountEncryptionV1({
@@ -54,13 +57,17 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
     })),
     randomBytes: getRandomBytes,
     newId: () => randomUUID(),
+    ...(params.sessionList ? { sessionList: params.sessionList } : {}),
     ...(params.resolveSession ? { resolveSession: params.resolveSession } : {}),
     ...(params.resolveRunTrigger ? { resolveRunTrigger: params.resolveRunTrigger } : {}),
     ...(params.resolveRunSource ? { resolveRunSource: params.resolveRunSource } : {}),
+    resolveManagedMachine: (input, caller) => readManagedMachine({ ...input, credentials: params.credentials,
+      serverHttpBaseUrl: params.serverHttpBaseUrl ?? configuration.apiServerUrl,
+      ...(caller?.signal ? { signal: caller.signal } : {}),
+      ...(caller?.externalActionExecutionAuthorization ? { authorization: caller.externalActionExecutionAuthorization } : {}),
+    }),
     ...(params.resolveMaterializer ? { resolveMaterializer: params.resolveMaterializer } : {}),
     ...(params.pullRequests ? { pullRequests: params.pullRequests } : {}),
-    ...(params.observeLegacyChannelAssociation ? { observeLegacyChannelAssociation: (input, caller) =>
-      onServer(() => params.observeLegacyChannelAssociation!(input, caller)) } : {}),
     resolveWorkflow: (ref) => onServer(() => params.resolveWorkflow(ref)),
     resolveWorkflowTeamIds: (artifactId) => onServer(async () => {
       if (params.resolveWorkflowTeamIds) return params.resolveWorkflowTeamIds(artifactId);

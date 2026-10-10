@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import {
     AutomationStoredDefinitionExecutionRecipeV1Schema,
+    AutomationStoredWorkflowDefinitionRecipeV2Schema,
     AutomationTriggerIdSchema,
 } from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 
 import {
     createAutomation,
@@ -19,32 +21,12 @@ import {
     updateAutomationTrigger,
 } from "./automationCrudService";
 import { AutomationSessionLifecycleRegistrationValidationError } from "./automationSessionLifecycleRegistration";
+import { encodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
 
 function executionRecipe(templateVersion: number) {
-    return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
-        v: 1,
-        templateVersion,
-        template: {
-            t: "plain",
-            v: { v: 1, prompt: `Trigger-set recipe ${templateVersion}` },
-        },
-        triggerEvidence: null,
-        target: {
-            kind: "newSession",
-            spawn: {
-                executionTarget: { serverId: "server", machineId: "machine" },
-                directory: { kind: "path", path: "/tmp/automation-trigger-set" },
-                agentTarget: {
-                    kind: "agent",
-                    identity: {
-                        pluginId: "happier.agent.codex",
-                        localId: "codex",
-                    },
-                },
-            },
-        },
-    });
+    return createAutomationWorkflowRecipeFixture({ templateVersion,
+        directory: "/tmp/automation-trigger-set", prompt: `Trigger-set recipe ${templateVersion}` });
 }
 
 function intervalDefinition(everyMs: number) {
@@ -103,17 +85,24 @@ function boundedLifecycleDefinition(params: Readonly<{
     };
 }
 
-function existingSessionExecutionRecipe(templateVersion: number, sessionId: string) {
-    return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
-        v: 1,
-        templateVersion,
-        template: {
-            t: "plain",
-            v: { v: 1, prompt: `Retarget lifecycle recipe ${templateVersion}` },
-        },
-        triggerEvidence: null,
-        target: { kind: "existingSession", sessionId },
-    });
+function existingSessionExecutionRecipe(templateVersion: number, sessionId: string, machineId: string) {
+    return createAutomationWorkflowRecipeFixture({ templateVersion,
+        directory: "/tmp/automation-trigger-set", prompt: `Retarget lifecycle recipe ${templateVersion}`,
+        conversation: { kind: "existing_session", sessionId, machineId } });
+}
+
+async function seedHistoricalSameSourceAutomation(accountId: string, source: Readonly<{ sessionId: string; turnId: string }>) {
+    // Never-current strict V1 data remains readable; it is not authored through a current writer.
+    const recipe = AutomationStoredDefinitionExecutionRecipeV1Schema.parse({ v: 1, templateVersion: 1,
+        template: { t: "plain", v: { v: 1, prompt: "Historical lifecycle target" } }, triggerEvidence: null,
+        target: { kind: "existingSession", sessionId: source.sessionId } });
+    return db.automation.create({ data: { id: randomUUID(), accountId, name: "Historical same-source target", enabled: false,
+        targetType: "existing_session", templateVersion: 1, templateCiphertext: JSON.stringify(recipe),
+        triggers: { create: { id: randomUUID(), kind: "sessionLifecycle", enabled: true,
+            ...encodeAutomationSessionLifecycleConfiguration(lifecycleDefinition({
+                sourceSessionId: source.sessionId, sourceTurnId: source.turnId,
+            })) } },
+    }, include: { triggers: true } });
 }
 
 /** Creates one account machine for enabled-Automation assignment fixtures. */
@@ -532,7 +521,7 @@ describe("automation trigger-set CRUD", () => {
         })).rejects.toMatchObject({ code: "sourceTurnNotInProgress" });
     });
 
-    it("rejects lifecycle source changes and recipe retargeting against canonical source truth", async () => {
+    it("rejects stale lifecycle sources while current Workflow targets defer self-target admission to the Workflow owner", async () => {
         const account = await db.account.create({
             data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
             select: { id: true },
@@ -595,13 +584,23 @@ describe("automation trigger-set CRUD", () => {
             }),
         })).rejects.toMatchObject({ code: "sourceTurnNotInProgress" });
 
-        const retargetError = await updateAutomation({
+        const recipe = existingSessionExecutionRecipe(2, source.sessionId, await seedExecutionMachine(account.id));
+        const retargeted = await updateAutomation({
             accountId: account.id,
             automationId: created.id,
             expectedTemplateVersion: 1,
             input: {
-                executionRecipe: existingSessionExecutionRecipe(2, source.sessionId),
+                executionRecipe: recipe,
             },
+        });
+        expect(retargeted).toMatchObject({ targetType: null, templateVersion: 2 });
+        expect(AutomationStoredWorkflowDefinitionRecipeV2Schema.parse(JSON.parse(retargeted!.templateCiphertext))).toEqual(recipe);
+
+        const historical = await seedHistoricalSameSourceAutomation(account.id, source);
+        const historicalTrigger = historical.triggers[0]!;
+        const retargetError = await updateAutomationTrigger({ accountId: account.id, automationId: historical.id,
+            triggerId: historicalTrigger.id, expectedRevision: historicalTrigger.revision,
+            trigger: lifecycleDefinition({ sourceSessionId: source.sessionId, sourceTurnId: source.turnId }),
         }).then(() => null, (error: unknown) => error);
         expect(retargetError).toBeInstanceOf(
             AutomationSessionLifecycleRegistrationValidationError,
@@ -609,29 +608,13 @@ describe("automation trigger-set CRUD", () => {
         expect(retargetError).toMatchObject({ code: "sourceMatchesExecutionTarget" });
     });
 
-    it("rejects a same-source recipe retarget even when the exact-turn trigger patch is unchanged", async () => {
+    it("retains the historical same-source guard even when the exact-turn trigger patch is unchanged", async () => {
         const account = await db.account.create({
             data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
             select: { id: true },
         });
         const source = await seedActiveSourceTurn(account.id);
-        const created = await createAutomation({
-            accountId: account.id,
-            input: {
-                automationId: randomUUID(),
-                name: "Same-source retarget",
-                enabled: false,
-                executionRecipe: executionRecipe(1),
-                triggers: [{
-                    triggerId: automationTriggerId(),
-                    trigger: lifecycleTrigger({
-                        sourceSessionId: source.sessionId,
-                        sourceTurnId: source.turnId,
-                        enabled: true,
-                    }),
-                }],
-            },
-        });
+        const created = await seedHistoricalSameSourceAutomation(account.id, source);
         const trigger = created.triggers[0]!;
 
         // The explicit trigger patch resubmits the exact unchanged
@@ -642,7 +625,7 @@ describe("automation trigger-set CRUD", () => {
             automationId: created.id,
             input: {
                 expectedTemplateVersion: 1,
-                name: "Same-source retarget",
+                name: created.name,
                 description: null,
                 enabled: false,
                 assignments: [],
@@ -657,13 +640,12 @@ describe("automation trigger-set CRUD", () => {
                     }),
                 }],
                 removedTriggers: [],
-                executionRecipe: existingSessionExecutionRecipe(2, source.sessionId),
             },
         })).rejects.toMatchObject({ code: "sourceMatchesExecutionTarget" });
         await expect(db.automation.findUniqueOrThrow({
             where: { id: created.id },
             select: { targetType: true, templateVersion: true },
-        })).resolves.toMatchObject({ targetType: "new_session", templateVersion: 1 });
+        })).resolves.toMatchObject({ targetType: "existing_session", templateVersion: 1 });
     });
 
     it("preserves the lifecycle occurrence budget across pause, resume, and reordered Event submissions", async () => {
@@ -859,10 +841,14 @@ describe("automation trigger-set CRUD", () => {
                     }),
                 }],
                 removedTriggers: [],
-                executionRecipe: existingSessionExecutionRecipe(2, target.sessionId),
+                executionRecipe: existingSessionExecutionRecipe(2, target.sessionId, await seedExecutionMachine(account.id)),
             },
         });
-        expect(retargeted).toMatchObject({ targetType: "existing_session" });
+        expect(retargeted).toMatchObject({ targetType: null, templateVersion: 2 });
+        const current = AutomationStoredWorkflowDefinitionRecipeV2Schema.parse(JSON.parse(retargeted!.templateCiphertext));
+        expect(current.workflow).toMatchObject({ t: "plain", v: { inlineDefinition: { defaults: {
+            conversation: { kind: "existing_session", sessionId: target.sessionId },
+        } } } });
         expect(retargeted?.triggers[0]).toMatchObject({
             id: trigger.id,
             enabled: true,

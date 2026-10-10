@@ -165,7 +165,7 @@ describe('exact-machine workflow materialization effects', () => {
     vi.spyOn(axios, 'get').mockRejectedValue(new Error('account_settings_network_unavailable'));
     const resolve = createCredentialedWorkflowMaterializationHostV1({
       credentials: { token: 'unavailable-workflow-account', encryption: null },
-      serverHttpBaseUrl: 'http://127.0.0.1:41371', readRoleSources: async () => [],
+      serverHttpBaseUrl: 'http://127.0.0.1:41371',
       readWorkflowDefinition: async () => null, callMachineAction: async () => { throw new Error('must_not_probe_unadmitted_account'); },
     });
     await expect(resolve({ machineId: 'run-machine', directory: '/repo' })).rejects.toMatchObject({ code: 'source_unavailable' });

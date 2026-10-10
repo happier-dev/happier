@@ -87,6 +87,45 @@ describe('Run lifecycle source admission (retained SQLite owners)', () => {
     expect(await db.automationRun.count({ where: { triggerId: unrelated.id } })).toBe(1);
   });
 
+  it('retains verified execution origin in the existing cause JSON when a descendant publishes its own lifecycle', async () => {
+    const f = await fixture();
+    const source = { kind: 'execution_run' as const, machineId: f.machineId, runId: randomUUID() };
+    const configuration = { kind: 'runLifecycle', source, condition: 'terminal' };
+    const createTrigger = () => db.automationTrigger.create({ data: { automationId: f.automationId,
+      kind: 'runLifecycle', enabled: true, sourceRunId: source.runId, sourceRunMachineId: f.machineId,
+      remainingOccurrences: 1, runLifecycleConfigurationJson: JSON.stringify(configuration) } });
+    const own = await createTrigger();
+    const unrelated = await createTrigger();
+    const root = await db.automationRun.create({ data: { accountId: f.accountId, automationId: f.automationId,
+      state: 'running', scheduledAt: new Date(), dueAt: new Date(), workflowCustodyState: 'pending',
+      workflowAcceptedSnapshotEnvelope: '{}', ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({
+        kind: 'trigger', triggerKind: 'schedule', triggerId: own.id, triggerRevision: 1, occurredAt: 100,
+        evidence: { scheduledFor: 100 }, occurrenceKey: deriveAutomationManualOccurrenceKeyV1({
+          automationId: f.automationId, idempotencyKey: randomUUID(),
+        }),
+      })) } });
+    const occurrence = { v: 1 as const, kind: 'runLifecycle' as const, source, condition: 'terminal' as const,
+      sourceRevision: 200, occurredAt: 200, originRunId: root.id };
+    // Account access alone is not proof that this Machine produced the root.
+    await expect(inTx(tx => admitExecutionRunLifecycleAutomationRunsTx({ tx, ...f, occurrence })))
+      .rejects.toThrow('source_unavailable');
+    expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: unrelated.id } })).remainingOccurrences).toBe(1);
+    await db.automationRunAssignment.create({ data: { runId: root.id, machineId: f.machineId } });
+    await inTx(tx => admitExecutionRunLifecycleAutomationRunsTx({ tx, ...f, occurrence }));
+    const child = await db.automationRun.findFirstOrThrow({ where: { triggerId: unrelated.id } });
+    expect(child.triggerEvidenceEnvelope).toBeNull();
+    expect(JSON.parse(child.causeRunLifecycleEvidenceJson!)).toMatchObject({ originRunId: root.id });
+    await db.automationRun.update({ where: { id: child.id }, data: {
+      state: 'succeeded', workflowCustodyState: 'settled', revision: 1,
+    } });
+    await db.automationTrigger.update({ where: { id: own.id }, data: { sourceRunId: child.id,
+      sourceRunMachineId: null, runLifecycleConfigurationJson: JSON.stringify({ kind: 'runLifecycle',
+        source: { kind: 'workflow_run', runId: child.id }, condition: 'terminal' }) } });
+    await inTx(tx => catchUpAutomationRunLifecycleSourcesTx(tx, f.automationId));
+    expect(await db.automationRun.count({ where: { triggerId: own.id } })).toBe(1);
+    expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: own.id } })).remainingOccurrences).toBe(1);
+  });
+
   it('consumes the actual FIN terminal producer and catches up a later registration, while deletion stays cancelled', async () => {
     const f = await fixture();
     const run = await db.automationRun.create({ data: { accountId: f.accountId, originKind: 'direct', causeKind: null,

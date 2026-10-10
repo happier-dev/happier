@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { z } from 'zod';
-import { AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionDetailSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionReconcileRequestSchema, AutomationDeleteResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
-import { AutomationRunStateV3Schema } from '@happier-dev/protocol/automations/automationRunStateV3';
+import { AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionDetailSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionReconcileRequestSchema, AutomationDeleteResponseSchema, AutomationV3RunMutationResponseSchema, type AutomationV3RunMutationResponse } from '@happier-dev/protocol/automations/automationApiV3';
 import type { AutomationDefinitionListResponse, AutomationDefinitionListRequest, AutomationDefinitionDetail, AutomationDefinitionCreateRequest, AutomationDefinitionReconcileRequest } from '@happier-dev/protocol';
 
 import {
@@ -12,16 +11,8 @@ import {
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 
-const AutomationRunSummarySchema = z.object({
-  id: z.string().min(1),
-  automationId: z.string().min(1),
-  state: AutomationRunStateV3Schema,
-}).passthrough();
-const RunAutomationNowResponseSchema = z.object({ run: AutomationRunSummarySchema });
 // The incumbent Automation HTTP owner budget applies to every definition operation.
 const AUTOMATION_HTTP_TIMEOUT_MS = 15_000;
-
-export type AutomationRunSummary = z.infer<typeof AutomationRunSummarySchema>;
 
 export async function listAutomationDefinitions(params: Readonly<Partial<AutomationDefinitionListRequest> & {
   token: string;
@@ -61,11 +52,12 @@ export async function listAutomationDefinitions(params: Readonly<Partial<Automat
   return AutomationDefinitionListResponseSchema.parse(response.data);
 }
 
-export async function runAutomationNow(params: Readonly<{
+/** Admission preserves the explicit Workflow correspondence supplied by the saved Automation owner. */
+export async function runAutomationNowReceipt(params: Readonly<{
   token: string;
   automationId: string;
   idempotencyKey?: string | null;
-}>): Promise<AutomationRunSummary> {
+}>): Promise<AutomationV3RunMutationResponse> {
   const response = await axios.post(
     `${resolveServerHttpBaseUrl()}/v3/automations/${encodeURIComponent(params.automationId)}/run-now`,
     undefined,
@@ -77,7 +69,9 @@ export async function runAutomationNow(params: Readonly<{
       timeout: AUTOMATION_HTTP_TIMEOUT_MS,
       validateStatus: () => true,
     },
-  );
+  ).catch((cause: unknown) => {
+    throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
+  });
 
   if (isAuthenticationStatus(response.status)) {
     throw createAuthenticationHttpStatusError(response.status, 'Authentication failed while running automation');
@@ -90,7 +84,11 @@ export async function runAutomationNow(params: Readonly<{
       errorCode,
     );
   }
-  return RunAutomationNowResponseSchema.parse(response.data).run;
+  try {
+    return AutomationV3RunMutationResponseSchema.parse(response.data);
+  } catch (cause) {
+    throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
+  }
 }
 
 /** Account trigger writes use the current Automation owner, never a daemon-private store. */

@@ -1,4 +1,5 @@
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
+import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { invalidateSessionReviewProjectionsForAutomationInTx } from './sessionReviewProjectionInvalidation';
 import {
@@ -1257,6 +1258,7 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
             accountId: params.accountId,
             automationId: run.automationId,
         });
+        if (shouldRetry) await publishManagedRunWakeInTx(tx, { accountId: params.accountId, runId: run.id, cursor });
         afterTx(tx, () => {
             emitAutomationRunTransition({
                 accountId: params.accountId,

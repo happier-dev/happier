@@ -7,6 +7,7 @@ import {
     AutomationConversationActionHttpRequestSchemasV1,
     AutomationConversationActionOutputSchemasV1,
     AutomationConversationAdmitResultV1Schema,
+    AutomationStoredDefinitionExecutionRecipeV1Schema,
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     deriveSessionCreationTagV1,
     normalizePluginReleaseFactsV1,
@@ -20,7 +21,6 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { claimAutomationRun } from "./automationClaimService";
-import { createAutomation } from "./automationCrudService";
 import { startAutomationRun, succeedAutomationRun } from "./automationRunService";
 
 const ACCOUNT_ID = "account-conversation-host-action";
@@ -213,13 +213,17 @@ describe("Conversation admission through the real host Action executor (integrat
     }
 
     async function seedConversationAutomation(): Promise<void> {
-        const created = await createAutomation({
-            accountId: ACCOUNT_ID,
-            input: {
-                automationId: randomUUID(),
+        // This historical strict V1 row exercises its retained Conversation settlement reader.
+        // Current Workflow final-result custody is covered by the canonical composed Workflow lane.
+        const created = await db.automation.create({
+            data: {
+                id: randomUUID(),
+                accountId: ACCOUNT_ID,
                 name: "Conversation host action loop",
                 enabled: true,
-                executionRecipe: {
+                targetType: "new_session",
+                templateVersion: 1,
+                templateCiphertext: JSON.stringify(AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
                     v: 1,
                     templateVersion: 1,
                     template: { t: "plain", v: { v: 1, prompt: "Conversation prompt" } },
@@ -235,9 +239,8 @@ describe("Conversation admission through the real host Action executor (integrat
                             },
                         },
                     },
-                },
-                assignments: [{ machineId: MACHINE_ID, enabled: true, priority: 1 }],
-                triggers: [],
+                })),
+                assignments: { create: { machineId: MACHINE_ID, enabled: true, priority: 1 } },
             },
         });
         automationId = created.id;

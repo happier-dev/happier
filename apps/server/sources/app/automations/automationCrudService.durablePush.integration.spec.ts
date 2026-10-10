@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import {
-    AutomationStoredDefinitionExecutionRecipeV1Schema,
     AutomationEventTriggerDefinitionStoredPayloadV1Schema,
     AutomationSourceSelectorIdV1Schema,
     AutomationTriggerIdSchema,
@@ -15,6 +14,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { eventRouter } from "@/app/events/eventRouter";
 import { ensurePluginWebhookEndpointV1 } from "@/app/plugins/webhooks/endpointStore";
 
@@ -59,26 +59,9 @@ const RESOLVED_CONTRIBUTION = {
     routingKind: "accountEndpoint" as const,
 };
 
-const NEW_SESSION_TARGET = {
-    kind: "newSession",
-    spawn: {
-        executionTarget: { serverId: "server", machineId: MACHINE_ID },
-        directory: "/tmp/automation-durable-push",
-        agentTarget: {
-            kind: "agent",
-            identity: { pluginId: "happier.agent.codex", localId: "codex" },
-        },
-    },
-} as const;
-
 function executionRecipe(templateVersion: number) {
-    return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
-        v: 1,
-        templateVersion,
-        template: { t: "plain", v: { v: 1, prompt: `Push recipe ${templateVersion}` } },
-        triggerEvidence: null,
-        target: NEW_SESSION_TARGET,
-    });
+    return createAutomationWorkflowRecipeFixture({ templateVersion,
+        directory: "/tmp/automation-durable-push", prompt: `Push recipe ${templateVersion}` });
 }
 
 function releaseFacts(params: Readonly<{ supportsDurablePush: boolean }>) {

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import {
-    AutomationStoredDefinitionExecutionRecipeV1Schema,
     AutomationSourceSelectorIdV1Schema,
     AutomationTriggerIdSchema,
     normalizePluginReleaseFactsV1,
@@ -14,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { db, initDbMysql, initDbPostgres } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 
 import {
     AutomationTriggerMutationConflictError,
@@ -120,32 +120,8 @@ function eventExecutionRecipe(params: Readonly<{
     templateVersion: number;
     machineId: string;
 }>) {
-    return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
-        v: 1,
-        templateVersion: params.templateVersion,
-        template: {
-            t: "plain",
-            v: { v: 1, prompt: `Event CRUD DB contract ${params.templateVersion}` },
-        },
-        triggerEvidence: null,
-        target: {
-            kind: "newSession",
-            spawn: {
-                executionTarget: {
-                    serverId: SERVER_IDENTITY_ID,
-                    machineId: params.machineId,
-                },
-                directory: "/tmp/event-crud-dbcontract",
-                agentTarget: {
-                    kind: "agent",
-                    identity: {
-                        pluginId: "happier.agent.codex",
-                        localId: "codex",
-                    },
-                },
-            },
-        },
-    });
+    return createAutomationWorkflowRecipeFixture({ templateVersion: params.templateVersion,
+        directory: "/tmp/event-crud-dbcontract", prompt: `Event CRUD DB contract ${params.templateVersion}` });
 }
 
 function eventWriterTrigger(

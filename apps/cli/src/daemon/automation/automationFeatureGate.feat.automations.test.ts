@@ -5,27 +5,27 @@ import { getWorkflowRuntimeFeatureDecision, isWorkflowRuntimeEnabled } from './w
 
 describe('isAutomationWorkerEnabled', () => {
   it('defaults to enabled when env is unset', () => {
-    expect(isAutomationWorkerEnabled({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test' })).toBe(true);
   });
 
   it('supports explicit disabled values', () => {
-    expect(isAutomationWorkerEnabled({ HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0' } as NodeJS.ProcessEnv)).toBe(false);
-    expect(isAutomationWorkerEnabled({ HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'false' } as NodeJS.ProcessEnv)).toBe(false);
-    expect(isAutomationWorkerEnabled({ HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'no' } as NodeJS.ProcessEnv)).toBe(false);
+    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0' })).toBe(false);
+    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'false' })).toBe(false);
+    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'no' })).toBe(false);
   });
 
   it('supports explicit enabled values', () => {
-    expect(isAutomationWorkerEnabled({ HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } as NodeJS.ProcessEnv)).toBe(true);
-    expect(isAutomationWorkerEnabled({ HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'true' } as NodeJS.ProcessEnv)).toBe(true);
-    expect(isAutomationWorkerEnabled({ HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'yes' } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' })).toBe(true);
+    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'true' })).toBe(true);
+    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'yes' })).toBe(true);
   });
 
   it('respects build policy deny list', () => {
     expect(
-      isAutomationWorkerEnabled({
+      isAutomationWorkerEnabled({ NODE_ENV: 'test',
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
         HAPPIER_BUILD_FEATURES_DENY: 'automations',
-      } as NodeJS.ProcessEnv),
+      }),
     ).toBe(false);
   });
 });
@@ -33,8 +33,8 @@ describe('isAutomationWorkerEnabled', () => {
 describe('Workflow runtime activation', () => {
   it('fails closed when the server bit is missing or malformed', () => {
     const ready = (features: unknown) => ({ status: 'ready' as const, features: features as never });
-    expect(isWorkflowRuntimeEnabled({} as NodeJS.ProcessEnv, ready({ features: { automations: { enabled: true } }, capabilities: {} }))).toBe(false);
-    expect(isWorkflowRuntimeEnabled({} as NodeJS.ProcessEnv, ready({ features: { automations: { enabled: true }, workflows: { enabled: 'yes' } }, capabilities: {} }))).toBe(false);
+    expect(isWorkflowRuntimeEnabled({ NODE_ENV: 'test' }, ready({ features: { automations: { enabled: true } }, capabilities: {} }))).toBe(false);
+    expect(isWorkflowRuntimeEnabled({ NODE_ENV: 'test' }, ready({ features: { automations: { enabled: true }, workflows: { enabled: 'yes' } }, capabilities: {} }))).toBe(false);
   });
 
   it('requires the canonical Workflow bit and its Automations dependency', () => {
@@ -42,18 +42,18 @@ describe('Workflow runtime activation', () => {
       status: 'ready' as const,
       features: { features: { automations: { enabled: automations }, workflows: { enabled: workflows } }, capabilities: {} } as never,
     });
-    expect(isWorkflowRuntimeEnabled({} as NodeJS.ProcessEnv, ready(true, true))).toBe(true);
-    expect(isWorkflowRuntimeEnabled({} as NodeJS.ProcessEnv, ready(false, true))).toBe(false);
-    expect(getWorkflowRuntimeFeatureDecision({} as NodeJS.ProcessEnv, ready(false, true)).blockedBy).toBe('dependency');
+    expect(isWorkflowRuntimeEnabled({ NODE_ENV: 'test' }, ready(true, true))).toBe(true);
+    expect(isWorkflowRuntimeEnabled({ NODE_ENV: 'test' }, ready(false, true))).toBe(false);
+    expect(getWorkflowRuntimeFeatureDecision({ NODE_ENV: 'test' }, ready(false, true)).blockedBy).toBe('dependency');
   });
 });
 
 describe('getAutomationWorkerFeatureDecision', () => {
   it('reports build_policy block when denied', () => {
-    const decision = getAutomationWorkerFeatureDecision({
+    const decision = getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',
       HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
       HAPPIER_BUILD_FEATURES_DENY: 'automations',
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(decision.featureId).toBe('automations');
     expect(decision.state).toBe('disabled');

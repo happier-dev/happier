@@ -36,6 +36,7 @@ import type {
 } from "./automationTypes";
 import { decodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { decodeAutomationRunLifecycleConfiguration } from "./automationRunLifecycleConfigurationCodec";
+import { assertWorkflowStoredEnvelopeOuterForMode, WorkflowStoredContentError } from "@/app/workflows/runs/storedContent";
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
     AutomationValidationError,
@@ -342,6 +343,23 @@ export function toAutomationRunV3DetailApiDto(
         executionNativeSidechainId: item.executionNativeSidechainId,
         events: projectRunEvents("events" in item ? item.events : undefined),
     };
+    if (item.workflowCustodyState != null) {
+        if (item.resultEnvelope !== null) {
+            try {
+                assertWorkflowStoredEnvelopeOuterForMode({ raw: item.resultEnvelope, mode,
+                    binding: { v: 1, purpose: "final_result", accountId: item.accountId, runId: item.id } });
+            } catch (error) {
+                if (!(error instanceof WorkflowStoredContentError)) throw error;
+                throw new AutomationStoredContentReadError(error.code === "content_unavailable" ? "modeMismatch" : "contentInvalid");
+            }
+        }
+        return AutomationV3RunDetailSchema.parse({
+            ...common, workflowRun: { recipeKind: "workflow-v2", workflowRunId: item.id },
+            triggerEvidenceEnvelope: null, executionInputEnvelope: null,
+            resultEnvelope: item.resultEnvelope, legacySummaryCiphertext: null,
+            errorDetailEnvelope: storedFailureDetail(item.errorMessage, mode),
+        });
+    }
     assertAutomationStoredContentEnvelopeOuterForMode({ raw: item.triggerEvidenceEnvelope, mode });
     assertAutomationExecutionInputEnvelopeOuterForMode({
         raw: item.executionInputEnvelope, mode,

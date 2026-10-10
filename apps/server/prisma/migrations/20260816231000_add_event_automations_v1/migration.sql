@@ -1,15 +1,18 @@
--- The released V2 writer could create queued/claimed/running Runs without a
--- frozen execution recipe. Those opaque bytes cannot be reconstructed by a
--- migration. Activation therefore requires the released worker to drain or
--- cancel every open predecessor Run before this transition is applied.
+-- Pre-effect V2 queued/claimed Runs acquire their first frozen input at claim.
+-- Effectful open history cannot safely be reconstructed or replayed.
 DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM "AutomationRun"
-        WHERE "state" IN ('queued', 'claimed', 'running')
+        WHERE "state" IN ('queued', 'claimed', 'running') AND (
+            "state" = 'running' OR "startedAt" IS NOT NULL OR "finishedAt" IS NOT NULL
+            OR "producedSessionId" IS NOT NULL OR "summaryCiphertext" IS NOT NULL
+            OR EXISTS (SELECT 1 FROM "AutomationRunEvent" event
+                WHERE event."runId" = "AutomationRun"."id" AND event."type" = 'run_started')
+        )
     ) THEN
         RAISE EXCEPTION
-            'Automation activation requires zero open predecessor AutomationRun rows; keep the released worker active and drain or cancel them first';
+            'Automation activation requires zero effectful open predecessor AutomationRun rows; keep the released worker active and drain or cancel them first';
     END IF;
 END $$;
 
@@ -311,6 +314,13 @@ ALTER TABLE "AutomationRun"
     ADD CONSTRAINT "AutomationRun_execution_input_arm_check" CHECK (
         "state" NOT IN ('queued', 'claimed', 'running')
         OR "executionInputEnvelope" IS NOT NULL
+        OR ("state" IN ('queued', 'claimed') AND "startedAt" IS NULL
+            AND "finishedAt" IS NULL AND "producedSessionId" IS NULL
+            AND "summaryCiphertext" IS NULL AND "resultEnvelope" IS NULL
+            AND "executionAttempt" = 0 AND "executionDispatchCommittedAt" IS NULL
+            AND ("executionDispatchState" IS NULL OR "executionDispatchState" = 'notStarted')
+            AND "executionNativeRunId" IS NULL AND "executionNativeCallId" IS NULL
+            AND "executionNativeSidechainId" IS NULL)
     );
 
 ALTER TABLE "AutomationRun"

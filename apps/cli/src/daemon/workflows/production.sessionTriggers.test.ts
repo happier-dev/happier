@@ -110,7 +110,7 @@ describe('scoped workflow claim admission', () => {
     const read = vi.spyOn(scm, 'readWorktreeChangeFingerprint').mockImplementation(async (directory) => directory === '/home/reviewer/repo'
       ? { kind: 'available', fingerprint: 'F-b' } : { kind: 'unavailable' });
     const harness = admissionHarness((input) => prepareWorkflowAcceptedWorkspaceTarget({ ...input,
-      env: { HOME: '/home/reviewer' }, platform: 'linux', pathIsDirectory: async () => true,
+      env: { NODE_ENV: 'test', HOME: '/home/reviewer' }, platform: 'linux', pathIsDirectory: async () => true,
       inspectLocation: async () => ({ inspection: { rootPath: '/home/reviewer/repo' } }),
     }));
     const occurrence = claim({ ...definition, inputs: [{ name: 'diffFingerprint', valueType: 'string', required: false }] }, previousCheckpoint('F-b'));

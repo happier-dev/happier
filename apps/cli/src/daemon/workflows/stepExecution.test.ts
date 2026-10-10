@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+const machineRpc = vi.hoisted(() => ({ callMachineRpc: vi.fn() }));
 vi.mock('axios', () => ({ default: { ...http, isAxiosError: () => false } }));
+vi.mock('@/session/transport/rpc/machineRpc', () => machineRpc);
 
 const sessionId = 'c123456789012345678901234';
 
@@ -12,9 +15,11 @@ import {
 
   sendWorkflowDetachedExecutionRunInput,
 } from './stepExecution';
+import { createProductionWorkflowSessionStepExecutor } from './sessionStepExecutor';
 
 describe('Workflow Session step execution', () => {
   beforeEach(() => {
+    machineRpc.callMachineRpc.mockReset();
     http.get.mockReset();
     http.post.mockReset();
     http.get.mockImplementation(async (url: string) => {
@@ -33,6 +38,119 @@ describe('Workflow Session step execution', () => {
       };
       throw new Error(`Unexpected read: ${url}`);
     });
+  });
+
+  it('resumes an offline Workflow target with frozen native launch intent through Session input admission', async () => {
+    const model = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'incoming-model' };
+    const previousGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => url.includes(`/v2/sessions/${sessionId}`)
+      ? { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, active: false,
+          encryptionMode: 'plain', machineId: 'machine-1', path: '/repo',
+          metadata: JSON.stringify({ machineId: 'machine-1', path: '/repo',
+            runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} }, claudeSessionId: 'saved-native',
+            permissionMode: 'read-only', permissionModeUpdatedAt: 200 }),
+        }) } }
+      : previousGet(url));
+    machineRpc.callMachineRpc.mockResolvedValue({ type: 'success', sessionId });
+    const admission = await enqueueWorkflowSessionInput({ credentials: { token: 'token', encryption: null }, sessionId,
+      workflow: { purpose: 'invocation', runId: 'run-1', invocationRecordId: 'invocation-1' }, text: 'Work',
+      permissionMode: 'default', modelSelectionInput: model, modelSelectionUpdatedAt: 200,
+      incomingResumeOptions: { permissionMode: 'default', permissionModeUpdatedAt: 200,
+        modelSelection: { v: 1, ref: model, updatedAt: 200 },
+        resume: 'incoming-native', environmentVariables: { PREDECESSOR_RUN: 'literal value' } },
+      machineAdmissionTransport: async request => ({ status: 'accepted', localId: request.localId }),
+    });
+    expect(admission).toMatchObject({ status: 'accepted' });
+    expect(machineRpc.callMachineRpc.mock.calls[0]?.[0]?.request).toMatchObject({
+      type: 'resume-session', sessionId, resume: 'incoming-native',
+      environmentVariables: { PREDECESSOR_RUN: 'literal value' }, permissionMode: 'default', permissionModeUpdatedAt: 200,
+      modelSelection: { v: 1, ref: model, updatedAt: 200 },
+    });
+  });
+
+  it('readies an existing offline Session without inventing a Workflow input', async () => {
+    const previousGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => url.includes(`/v2/sessions/${sessionId}`)
+      ? { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, active: false,
+          encryptionMode: 'plain', machineId: 'machine-1', path: '/repo', metadata: JSON.stringify({
+            machineId: 'machine-1', path: '/repo', runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+            claudeSessionId: 'saved-native',
+          }) }) } } : previousGet(url));
+    machineRpc.callMachineRpc.mockResolvedValue({ type: 'success', sessionId });
+    machineRpc.callMachineRpc.mockImplementation(async ({ method }: Readonly<{ method: string }>) => method === RPC_METHODS.SPAWN_HAPPY_SESSION
+      ? { type: 'success', sessionId } : { status: 'success', sessionId });
+    const ready: unknown[] = [];
+    const execute = createProductionWorkflowSessionStepExecutor({ credentials: { token: 'token', encryption: null },
+      machineId: 'machine-1', machineAdmissionTransport: async () => { throw new Error('No Session input exists'); },
+      createFreshConversation: async () => { throw new Error('An existing Session cannot be replaced'); },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => ({ sessionId, machineId: 'machine-1', directory: '/repo' }),
+    });
+    await expect(execute({ runId: 'run-1', invocationRecordId: 'invocation-1',
+      step: { kind: 'step', id: 'ready', inputMode: 'none', document: { text: '', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'ready', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
+      input: { text: '', references: [], attachments: [], values: [] },
+      execution: { conversation: { kind: 'existing_session', sessionId, machineId: 'machine-1' },
+        launchEnvironment: { values: { PREDECESSOR_RUN: 'literal value' }, unset: [] }, providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'incoming-native' },
+        profileId: 'incoming-profile', acpSessionModeId: 'incoming-mode', transcriptStorage: 'persisted',
+        terminal: { mode: 'plain' }, windowsRemoteSessionLaunchMode: 'windows_terminal', windowsTerminalWindowName: 'Incoming window',
+        mcpSelection: { v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] },
+        connectedServices: { v: 2, bindingsByServiceId: {} },
+      },
+      executionTarget: { kind: 'session' }, workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+      authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' }, beforeInputAdmission: async () => {},
+      onInputAccepted: async () => { throw new Error('No input receipt exists'); }, onSessionReady: async value => { ready.push(value); },
+    })).resolves.toEqual({ kind: 'completed', result: '' });
+    expect(ready).toEqual([{ kind: 'session_ready', sessionId }]);
+    expect(machineRpc.callMachineRpc.mock.calls[0]?.[0]?.request).toMatchObject({ type: 'resume-session', sessionId,
+      resume: 'incoming-native', environmentVariables: { PREDECESSOR_RUN: 'literal value' }, profileId: 'incoming-profile',
+      agentModeId: 'incoming-mode', transcriptStorage: 'persisted', terminal: { mode: 'plain' },
+      windowsRemoteSessionLaunchMode: 'windows_terminal', windowsTerminalWindowName: 'Incoming window',
+      mcpSelection: { v: 1, managedServersEnabled: false, forceIncludeServerIds: [], forceExcludeServerIds: [] },
+      connectedServices: { v: 2, bindingsByServiceId: {} },
+    });
+    expect(http.post).not.toHaveBeenCalled();
+  });
+
+  it('rejects failed explicit existing Session readiness before Pending admission or an input receipt', async () => {
+    const previousGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => url.includes(`/v2/sessions/${sessionId}`)
+      ? { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, active: false,
+          encryptionMode: 'plain', machineId: 'machine-1', path: '/repo', metadata: JSON.stringify({
+            machineId: 'machine-1', path: '/repo', runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+            claudeSessionId: 'saved-native',
+          }) }) } } : previousGet(url));
+    machineRpc.callMachineRpc.mockResolvedValue({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'Runner launch rejected' });
+    const pending: unknown[] = [];
+    const receipts: unknown[] = [];
+    const interruption = new AbortController();
+    const execute = createProductionWorkflowSessionStepExecutor({ credentials: { token: 'token', encryption: null },
+      machineId: 'machine-1', machineAdmissionTransport: async request => {
+        pending.push(request); return { status: 'accepted', localId: request.localId };
+      },
+      createFreshConversation: async () => { throw new Error('An existing Session cannot be replaced'); },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => ({ sessionId, machineId: 'machine-1', directory: '/repo' }),
+    });
+    const outcome = await execute({ runId: 'run-1', invocationRecordId: 'invocation-1',
+      step: { kind: 'step', id: 'work', document: { text: 'Work', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
+      input: { text: 'Work', references: [], attachments: [], values: [] },
+      execution: { conversation: { kind: 'existing_session', sessionId, machineId: 'machine-1' },
+        launchEnvironment: { values: { PREDECESSOR_RUN: 'literal value' }, unset: [] } },
+      executionTarget: { kind: 'session' }, workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+      authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' }, beforeInputAdmission: async () => {},
+      signal: interruption.signal,
+      onInputAccepted: async receipt => {
+        receipts.push(receipt);
+        // Interrupt only an incorrect queue-first implementation after its real
+        // accepted receipt so the test never waits on an offline Agent turn.
+        interruption.abort('test_claim_interrupted');
+      },
+    }).catch(error => error);
+    expect(pending).toEqual([]);
+    expect(receipts).toEqual([]);
+    expect(outcome).toEqual({ kind: 'failed', code: 'resume_failed' });
   });
 
   it('admits the current Workflow input without an older-daemon capability declaration', async () => {

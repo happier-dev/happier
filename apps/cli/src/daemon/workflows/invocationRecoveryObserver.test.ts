@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { createSessionRecordFixture } from '@/testkit';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows';
-import { createWorkflowInvocationRecoveryObserver } from './invocationRecoveryObserver';
-import { freezeActionCompletionContractV1, getActionSpec } from '@happier-dev/protocol/actions';
+import { createWorkflowInvocationRecoveryObserver, observeWorkflowInvocationRecoveryEvidence } from './invocationRecoveryObserver';
+import { freezeActionCompletionContractV1, getActionSpec, projectCommandActionCompletionV1 } from '@happier-dev/protocol/actions';
 
 const progress: WorkflowProgressEnvelopeV1 = {
   kind: 'happier.workflow-progress.v1', blockKind: 'step',
@@ -10,7 +15,126 @@ const progress: WorkflowProgressEnvelopeV1 = {
   execution: { kind: 'detached_run', runId: 'native-run', localInputId: 'input-1', runtimeSelection: {} },
 };
 
+// Only the Session socket transport is replaced; recovery and input observation remain real.
+vi.mock('@/api/session/sockets', async () => {
+  const { createApiSessionSocketStub } = await import('@/testkit/backends/apiSessionSocketHarness');
+  const { createSocketTransportAdapter } = await import('@happier-dev/sync-client');
+  return { createSessionScopedSocketConnection: () => {
+    const socket = createApiSessionSocketStub();
+    return { socket, transport: createSocketTransportAdapter(socket) };
+  } };
+});
+afterEach(() => vi.restoreAllMocks());
+
 describe('exact Workflow recovery observation', () => {
+  it('recovers Session continuation from the selected Agent projection without awaiting unrelated families', async () => {
+    const sessionId = 'c111111111111111111111111';
+    const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true,
+      metadata: JSON.stringify({ machineId: 'machine-1', path: '/repo', flavor: 'codex' }) });
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session } };
+      if (path.includes('/messages/by-local-id/')) throw Object.assign(new Error('Message not found'), {
+        isAxiosError: true, response: { status: 404, data: { error: 'Message not found' } },
+      });
+      if (path.endsWith('/pending')) return { status: 200, data: { pending: [], version: 0 } };
+      throw new Error(`Unexpected HTTP boundary: ${path}`);
+    });
+    const roster = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projection: { v: 2, generation: 1, agentsById: { codex: { id: 'codex', capabilities: {
+        sessions: { open: ['resume'], delivery: ['newTurn'], cancel: true },
+      } } } } });
+    vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async (request) => {
+      if (request.method === RPC_METHODS.SESSION_CONTINUATION_INSPECT) return { type: 'available', protocolVersion: 1, sameSessionTransition: true };
+      if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+        // An Agent-only daemon reply is available even when unrelated contribution work cannot finish.
+        if (!request.request || typeof request.request !== 'object' || !('selection' in request.request)
+          || request.request.selection !== 'agents') throw new Error('Unrelated contribution projection unavailable');
+        return roster;
+      }
+      throw new Error('Unexpected machine RPC');
+    });
+    expect(await observeWorkflowInvocationRecoveryEvidence({ credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      progress: { ...progress, execution: { kind: 'session', sessionId, localInputId: 'input-1' } },
+      getRun: async () => { throw new Error('No invented Run'); },
+    })).toEqual({ activity: 'unknown', canReattach: true, canContinueConversation: true });
+  });
+  it('recovers strict no-effect setup review without settling or replaying the retained command', async () => {
+    const contract = freezeActionCompletionContractV1(projectCommandActionCompletionV1);
+    const target = { key: 'command', serverId: 'home', machineId: 'worker', operationId: 'finite-op' };
+    const accepted = { version: 1 as const, operationId: target.operationId, revision: 1, actionId: 'projects.script.run',
+      scope: { accountId: 'account', machineId: target.machineId }, title: 'Script', state: 'accepted' as const,
+      cancellation: 'supported' as const, createdAt: 1, domainRef: { kind: 'projectCommand' as const,
+        purpose: 'script' as const, serverId: 'home', machineId: 'worker', workspaceRefId: 'workspace', cwd: '/workspace' } };
+    const held = { ...accepted, revision: 2, setupReview: { kind: 'pendingApproval' as const,
+      code: 'project_setup_consent_required' as const, reviewedEffectDigest: 'setup', reviewedEffect: { commands: [] } } };
+    const observe = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId: 'controller',
+      actionExecutor: { execute: async () => { throw new Error('No replay'); } },
+      nativeActionOperations: { get: async () => ({ kind: 'found', operation: held }),
+        cancel: async () => { throw new Error('Observation is not Stop'); },
+        wait: async () => { throw new Error('Known human review must not start a terminal wait'); } },
+    });
+    expect(await observe({ progress: { ...progress, blockKind: 'action', execution: { kind: 'action',
+      actionId: accepted.actionId, actionRequestId: 'original', localInputId: 'original', input: {},
+      output: { operation: accepted }, awaitedOperations: [target] } },
+      frozenActionContract: { inputSchema: {}, outputSchema: contract.terminalOutputSchema, completion: contract },
+      terminalParent: false, cancellationRequested: false,
+    })).toMatchObject({ kind: 'unresolved', code: held.setupReview.code, setupConsentOutput: { operation: held } });
+  });
+  it('retains finite cancellation custody until the exact operation has a terminal outcome', async () => {
+    const contract = freezeActionCompletionContractV1(projectCommandActionCompletionV1);
+    const target = { key: 'command', serverId: 'home', machineId: 'worker', operationId: 'finite-op' };
+    const accepted = { version: 1 as const, operationId: target.operationId, revision: 2, actionId: 'projects.script.run',
+      scope: { accountId: 'account', machineId: target.machineId }, title: 'Script', state: 'accepted' as const,
+      cancellation: 'supported' as const, createdAt: 1,
+      domainRef: { kind: 'projectCommand' as const, purpose: 'script' as const, serverId: 'output-home',
+        machineId: 'output-worker', workspaceRefId: 'workspace', cwd: '/workspace' } };
+    let terminal = false;
+    let stops = 0;
+    const observe = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId: 'controller',
+      actionExecutor: { execute: async () => { throw new Error('No replay'); } },
+      nativeActionOperations: {
+        get: async (address) => { expect(address).toEqual(target); return { kind: 'found', operation: terminal
+          ? { ...accepted, revision: 3, state: 'cancelled', startedAt: 1, settledAt: 2 } : accepted }; },
+        cancel: async () => { stops++; return { kind: 'requested' }; },
+        wait: async () => { terminal = true; return { kind: 'found', operation: { ...accepted, revision: 3,
+          state: 'cancelled', startedAt: 1, settledAt: 2 } }; },
+      },
+    });
+    const request = { progress: { ...progress, blockKind: 'action' as const, execution: { kind: 'action' as const,
+      actionId: accepted.actionId, actionRequestId: 'request', localInputId: 'request', input: {},
+      output: { operation: accepted }, awaitedOperations: [target] } },
+      frozenActionContract: { inputSchema: {}, outputSchema: contract.terminalOutputSchema, completion: contract },
+      terminalParent: false, cancellationRequested: true };
+    expect(await observeWorkflowInvocationRecoveryEvidence({ credentials: { token: 'token', encryption: null },
+      machineId: 'controller', progress: request.progress, getRun: async () => { throw new Error('No invented Execution Run'); },
+      getOperation: async (address) => { expect(address).toEqual(target); return { kind: 'found', operation: accepted }; } }))
+      .toEqual({ activity: 'unknown', canReattach: true, canContinueConversation: false });
+    const observing = await observe({ ...request, observationOnly: true });
+    expect(observing).toMatchObject({ kind: 'unresolved' });
+    expect(stops).toBe(0);
+    const pending = await observe(request);
+    expect(pending).toMatchObject({ kind: 'unresolved' });
+    expect(stops).toBe(1);
+    if (pending.kind !== 'unresolved' || !pending.waitForCompletion) throw new Error('Missing exact terminal observation');
+    await pending.waitForCompletion();
+    expect(await observe(request)).toEqual({ kind: 'cancelled', code: 'cancelled' });
+    expect(stops).toBe(1);
+  });
+  it('settles a recorded inputless Session creation without observing or cancelling an invented turn', async () => {
+    const observe = createWorkflowInvocationRecoveryObserver({
+      credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      actionExecutor: { execute: async () => { throw new Error('Creation has no native Run'); } },
+      observeSession: async () => { throw new Error('Creation has no input'); },
+      cancelSession: async () => { throw new Error('Creation has no turn to cancel'); },
+    });
+    await expect(observe({ progress: { ...progress, execution: { kind: 'session_ready', sessionId: 'created-session' } },
+      terminalParent: false, cancellationRequested: false })).resolves.toEqual({ kind: 'completed', result: '' });
+  });
+
   it.each(['writing', 'complete', 'failed', 'admission_unknown'] as const)('reattaches %s narration without waiting for the retained process to terminate', async (scenario) => {
     const state = scenario === 'admission_unknown' ? 'writing' : scenario;
     const descriptor = { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1' };

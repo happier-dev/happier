@@ -230,41 +230,39 @@ export function createWorkflowAcceptedAuthorizationCurrentness(params: Readonly<
     authorization: WorkflowAcceptedAuthorizationV1;
     signal?: AbortSignal;
   }>): Promise<boolean> => {
-    try {
-      const principal = authorization.principal;
-      if (authorization.sourceAuthority) {
-        // The authoritative plugin-runtime lease proves that the admitted
-        // mediator still exists before this Run may release another leaf.
-        const sourceMediatorOccurrenceId = await params.resolveCurrentPluginOccurrenceId(
-          authorization.sourceAuthority.mediatorPluginId,
-        );
-        if (sourceMediatorOccurrenceId === null) return false;
-        if (!(await params.isMediatedSourceCurrent(authorization.sourceAuthority, signal))) {
-          return false;
-        }
-      }
-      // Session is immutable acceptance attribution, not a revocable grant
-      // from the originating process. The accepted Run outlives that Session.
-      if (principal.kind === 'host' || principal.kind === 'session') {
-        return true;
-      }
-      if (principal.kind === 'api') {
-        if (principal.accountId !== params.accountId || principal.principalId !== params.accountId) {
-          return false;
-        }
-        const current = await params.listAccountApiTokens(signal);
-        const token = current.tokens.find((candidate) => candidate.tokenId === principal.credentialId);
-        return token !== undefined
-          && (token.expiresAt === null || Date.parse(token.expiresAt) > now());
-      }
-      const sourceCustody = await params.resolveCurrentPluginSourceCustody(
-        principal.pluginId,
+    // A failed authority read is unknown, not revocation. Propagate it to the
+    // claim owner's interruption/reclaim path; only verified negatives return false.
+    const principal = authorization.principal;
+    if (authorization.sourceAuthority) {
+      // The authoritative plugin-runtime lease proves that the admitted
+      // mediator still exists before this Run may release another leaf.
+      const sourceMediatorOccurrenceId = await params.resolveCurrentPluginOccurrenceId(
+        authorization.sourceAuthority.mediatorPluginId,
       );
-      return sourceCustody !== null
-        && pluginSourceCustodyV1Equal(sourceCustody, principal.sourceCustody);
-    } catch {
-      return false;
+      if (sourceMediatorOccurrenceId === null) return false;
+      if (!(await params.isMediatedSourceCurrent(authorization.sourceAuthority, signal))) {
+        return false;
+      }
     }
+    // Session is immutable acceptance attribution, not a revocable grant
+    // from the originating process. The accepted Run outlives that Session.
+    if (principal.kind === 'host' || principal.kind === 'session') {
+      return true;
+    }
+    if (principal.kind === 'api') {
+      if (principal.accountId !== params.accountId || principal.principalId !== params.accountId) {
+        return false;
+      }
+      const current = await params.listAccountApiTokens(signal);
+      const token = current.tokens.find((candidate) => candidate.tokenId === principal.credentialId);
+      return token !== undefined
+        && (token.expiresAt === null || Date.parse(token.expiresAt) > now());
+    }
+    const sourceCustody = await params.resolveCurrentPluginSourceCustody(
+      principal.pluginId,
+    );
+    return sourceCustody !== null
+      && pluginSourceCustodyV1Equal(sourceCustody, principal.sourceCustody);
   };
 }
 
@@ -337,11 +335,12 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             ...(signal ? { signal } : {}),
           },
         });
-        if (!result.matched || !result.result.ok) return false;
+        if (!result.matched || !result.result.ok) throw new Error('workflow_source_currentness_unavailable');
         const parsed = ConversationPermissionMediationSourceCurrentnessResultV1Schema.safeParse(
           result.result.result,
         );
-        return parsed.success && parsed.data.current;
+        if (!parsed.success) throw new Error('workflow_source_currentness_unavailable');
+        return parsed.data.current;
       } finally {
         await lease.release();
       }

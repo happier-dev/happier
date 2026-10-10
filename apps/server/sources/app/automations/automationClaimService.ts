@@ -26,13 +26,16 @@ import { emitAutomationRunTransition, emitAutomationRunUpdatedToMachineOnly } fr
 import { lockScopedAutomationTriggerInTx } from "./automationScopedTrigger";
 import { AUTOMATION_RUN_TERMINAL_STATES } from "./automationTypes";
 import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
+import { freezeAutomationRunInput } from "./automationRunAdmissionService";
 import {
     automationRunCauseSelect,
     automationRunWithAutomationSelect,
+    automationRunWithoutExecutionWhere,
 } from "./automationPersistenceSelect";
 import {
     validateAutomationStoredContentEnvelopeOuterForMode,
     validateRetainedAutomationRunExecutionInputV2OuterForMode,
+    readRetainedAutomationRunExecutionInputForWorkflowAdmission,
 } from "./automationStoredContentRead";
 import {
     decodeAutomationRunCause,
@@ -431,7 +434,12 @@ async function findClaimCandidates(params: {
         where: {
             accountId: params.accountId,
             ...(params.scope === "session_scoped" ? { automation: { is: { scopeSessionId: { not: null } } } } : {}),
-            ...(params.scope === "workflow" ? { workflowCustodyState: { not: null } } : {}),
+            ...(params.scope === "workflow" ? { AND: [{ OR: [
+                { workflowCustodyState: { not: null } },
+                { workflowCustodyState: null, originKind: "automation",
+                    ...automationRunWithoutExecutionWhere,
+                    OR: [{ causeKind: "manual" }, { causeKind: "trigger", causeTriggerKind: "schedule" }] },
+            ] }] } : {}),
             dueAt: { lte: params.now },
             ...expectedRunTriggerCauseWhere(params.expectedTriggerKind),
             ...(!params.recipeFeaturePolicy.workflowsEnabled
@@ -467,12 +475,49 @@ async function findClaimCandidates(params: {
     });
 }
 
+/** Prepares first-freeze bytes; only the existing claim CAS may commit them. */
+async function prepareUnstartedPredecessorInputTx(tx: Tx, params: Readonly<{
+    accountId: string;
+    candidate: Prisma.AutomationRunGetPayload<{ select: typeof automationClaimCandidateSelect }>;
+    accountCurrentness: AutomationAccountCurrentnessWitnessV1;
+    recipeFeaturePolicy: AutomationRecipeFeaturePolicy;
+}>) {
+    const candidate = params.candidate;
+    if (!isAutomationCauseRow(candidate)) return null;
+    const cause = decodeAutomationRunCause(candidate);
+    if (!cause) return null;
+    const definition = await tx.automation.findFirst({
+        where: { id: candidate.automationId, accountId: params.accountId },
+        select: { targetType: true, templateVersion: true, templateCiphertext: true },
+    });
+    if (!definition) return null;
+    const frozen = freezeAutomationRunInput({
+        definition,
+        cause,
+        assignmentMachineIds: candidate.assignments.map(assignment => assignment.machineId),
+        triggerEvidenceEnvelope: null,
+        recipeFeaturePolicy: params.recipeFeaturePolicy,
+    });
+    if (frozen.kind !== "available") return null;
+    const available = frozen.workflowDefinitionEnvelope !== null
+        ? validateAutomationStoredContentEnvelopeOuterForMode({
+            raw: frozen.workflowDefinitionEnvelope, mode: params.accountCurrentness.mode,
+        }).kind === "available"
+        : readRetainedAutomationRunExecutionInputForWorkflowAdmission({
+            raw: frozen.executionInputEnvelope, mode: params.accountCurrentness.mode,
+            retainedV2OriginKind: retainedV2OriginKindForRun(candidate),
+        }) !== null;
+    if (!available) return null;
+    return frozen;
+}
+
 async function tryClaimRun(params: {
     tx: Tx;
     runId: string;
     previousState: string;
     expectedRunRevision: number;
     executionInputEnvelope: string | null;
+    firstFreeze?: Readonly<{ executionInputEnvelope: string; workflowDefinitionEnvelope: string | null }>;
     now: Date;
     machineId: string;
     leaseExpiresAt: Date;
@@ -482,6 +527,7 @@ async function tryClaimRun(params: {
     if (params.previousState === "queued") {
         return await params.tx.automationRun.updateMany({
             where: {
+                ...(params.firstFreeze ? { ...automationRunWithoutExecutionWhere, workflowCustodyState: null } : {}),
                 id: params.runId,
                 state: "queued",
                 revision: params.expectedRunRevision,
@@ -490,6 +536,8 @@ async function tryClaimRun(params: {
                 assignments: runAssignmentClaimWhere(params.machineId),
             },
             data: {
+                ...(params.firstFreeze ? { executionInputEnvelope: params.firstFreeze.executionInputEnvelope,
+                    ...(params.firstFreeze.workflowDefinitionEnvelope !== null ? { workflowCustodyState: "pending" } : {}) } : {}),
                 state: "claimed",
                 workflowResumeRequestedRevision: null,
                 claimedAt: params.now,
@@ -506,6 +554,7 @@ async function tryClaimRun(params: {
         : params.previousState === "running" ? "running" : "claimed";
     return await params.tx.automationRun.updateMany({
         where: {
+            ...(params.firstFreeze ? { ...automationRunWithoutExecutionWhere, workflowCustodyState: null } : {}),
             id: params.runId,
             state: previousState,
             leaseExpiresAt: { lt: params.now },
@@ -518,6 +567,8 @@ async function tryClaimRun(params: {
             assignments: runAssignmentClaimWhere(params.machineId),
         },
         data: {
+            ...(params.firstFreeze ? { executionInputEnvelope: params.firstFreeze.executionInputEnvelope,
+                ...(params.firstFreeze.workflowDefinitionEnvelope !== null ? { workflowCustodyState: "pending" } : {}) } : {}),
             state: previousState === "pause_requested" ? "pause_requested" : "claimed",
             workflowResumeRequestedRevision: null,
             claimedAt: params.now,
@@ -885,10 +936,11 @@ export async function claimAutomationRun(params: {
             scope: params.scope,
         });
 
-        for (const candidate of candidates) {
+        for (let candidate of candidates) {
+            const candidateState = candidate.state;
             if (candidate.triggerId) {
                 const scoped = await lockScopedAutomationTriggerInTx(tx, params.accountId, candidate.triggerId);
-                if (scoped && candidate.state === "queued") {
+                if (scoped && candidateState === "queued") {
                     const active = await tx.automationRun.findFirst({ where: {
                         accountId: params.accountId, triggerId: candidate.triggerId,
                         state: { notIn: ["queued", ...AUTOMATION_RUN_TERMINAL_STATES] },
@@ -896,11 +948,11 @@ export async function claimAutomationRun(params: {
                     if (active) continue;
                 }
             }
-            if (!isClaimCandidateState(candidate.state)) {
+            if (!isClaimCandidateState(candidateState)) {
                 continue;
             }
             if (!isRunClaimableState({
-                state: candidate.state,
+                state: candidateState,
                 leaseExpiresAt: candidate.leaseExpiresAt,
                 now,
             })) {
@@ -910,13 +962,33 @@ export async function claimAutomationRun(params: {
             if (!preclaimCurrentness) {
                 return await settleClaimRequest({ run: null, accountCurrentness: null });
             }
-            const causeWorkDepth = await readAutomationCauseWorkDepthTx(tx, { ...candidate, accountId: params.accountId });
+            const originalExecutionInputEnvelope = candidate.executionInputEnvelope;
+            let firstFreeze: Awaited<ReturnType<typeof prepareUnstartedPredecessorInputTx>> = null;
+            if (params.scope === "workflow" && candidate.workflowCustodyState === null && candidate.executionInputEnvelope === null) {
+                firstFreeze = await prepareUnstartedPredecessorInputTx(tx, {
+                    accountId: params.accountId, candidate, accountCurrentness: preclaimCurrentness, recipeFeaturePolicy,
+                });
+                if (!firstFreeze) continue;
+                candidate = { ...candidate, executionInputEnvelope: firstFreeze.executionInputEnvelope,
+                    workflowCustodyState: firstFreeze.workflowDefinitionEnvelope !== null ? "pending" : null };
+            }
+            // Frozen template bridges may enter the same Workflow admission
+            // owner. Retained Session ciphertext stays held without opening or
+            // inferring consent from the Automation's now-mutable definition.
+            const predecessorInput = candidate.workflowCustodyState === null && candidate.executionInputEnvelope !== null && params.scope === "workflow"
+                ? readRetainedAutomationRunExecutionInputForWorkflowAdmission({ raw: candidate.executionInputEnvelope,
+                    mode: preclaimCurrentness.mode, retainedV2OriginKind: retainedV2OriginKindForRun(candidate) }) : null;
+            if (candidate.workflowCustodyState === null && params.scope === "workflow" && !predecessorInput) continue;
+            const causeWorkDepth = await readAutomationCauseWorkDepthTx(tx, { ...candidate, accountId: params.accountId,
+                // Template bridge occurrences were Account-scoped. Their
+                // immutable cause cannot acquire a later mutable Session scope.
+                ...(predecessorInput ? { automation: { scopeSessionId: null } } : {}) });
             if (causeWorkDepth.kind === "unavailable") {
-                if (candidate.state === "queued" && candidate.automationId !== null
+                if (candidateState === "queued" && candidate.automationId !== null
                     && (candidate.workflowCustodyState === null || candidate.workflowCustodyState === "pending")) {
                     await failInvalidAutomationRunBeforeClaimTx({
                         tx, accountId: params.accountId, automationId: candidate.automationId,
-                        runId: candidate.id, state: candidate.state, runRevision: candidate.revision,
+                        runId: candidate.id, state: candidateState, runRevision: candidate.revision,
                         executionInputEnvelope: candidate.executionInputEnvelope,
                         workflowCustodyState: candidate.workflowCustodyState,
                         errorCode: causeWorkDepth.errorCode, accountCurrentness: preclaimCurrentness, now,
@@ -926,13 +998,13 @@ export async function claimAutomationRun(params: {
                 continue;
             }
             if (!hasExactDerivedAssignmentIndex(candidate)) {
-                if (candidate.state === "queued" && candidate.automationId !== null) {
+                if (candidateState === "queued" && candidate.automationId !== null) {
                     await failInvalidAutomationRunBeforeClaimTx({
                         tx,
                         accountId: params.accountId,
                         automationId: candidate.automationId,
                         runId: candidate.id,
-                        state: candidate.state,
+                        state: candidateState,
                         runRevision: candidate.revision,
                         executionInputEnvelope: candidate.executionInputEnvelope,
                         accountCurrentness: preclaimCurrentness,
@@ -947,12 +1019,12 @@ export async function claimAutomationRun(params: {
                 && parsedCandidateRecipe.recipe.target.kind === "executionRun";
 
             if (
-                candidate.state !== "queued" && candidate.state !== "pause_requested"
+                candidateState !== "queued" && candidateState !== "pause_requested"
                 && (
                     candidate.executionDispatchState === "dispatchPermitted"
                     || (
                         isExecutionRun
-                        && candidate.state === "running"
+                        && candidateState === "running"
                         && candidate.executionDispatchState === null
                     )
                 )
@@ -963,7 +1035,7 @@ export async function claimAutomationRun(params: {
                     accountId: params.accountId,
                     automationId: candidate.automationId,
                     runId: candidate.id,
-                    state: candidate.state,
+                    state: candidateState,
                     runRevision: candidate.revision,
                     executionInputEnvelope: candidate.executionInputEnvelope,
                     expectedExecutionDispatchState: candidate.executionDispatchState,
@@ -986,12 +1058,12 @@ export async function claimAutomationRun(params: {
                     accountCurrentness: preclaimCurrentness,
                 })
             ) {
-                if (candidate.automationId !== null && candidate.state !== "pause_requested") await failInvalidAutomationRunBeforeClaimTx({
+                if (candidate.automationId !== null && candidateState !== "pause_requested") await failInvalidAutomationRunBeforeClaimTx({
                     tx,
                     accountId: params.accountId,
                     automationId: candidate.automationId,
                     runId: candidate.id,
-                    state: candidate.state,
+                    state: candidateState,
                     runRevision: candidate.revision,
                     executionInputEnvelope: candidate.executionInputEnvelope,
                     accountCurrentness: preclaimCurrentness,
@@ -1003,14 +1075,15 @@ export async function claimAutomationRun(params: {
             const updated = await tryClaimRun({
                 tx,
                 runId: candidate.id,
-                previousState: candidate.state,
+                previousState: candidateState,
                 expectedRunRevision: candidate.revision,
-                executionInputEnvelope: candidate.executionInputEnvelope,
+                executionInputEnvelope: originalExecutionInputEnvelope,
+                ...(firstFreeze ? { firstFreeze } : {}),
                 now,
                 machineId: params.machineId,
                 leaseExpiresAt,
                 normalizeNullExecutionDispatchState: isExecutionRun
-                    && candidate.state === "claimed"
+                    && candidateState === "claimed"
                     && candidate.executionDispatchState === null,
                 expectedTriggerKind: params.expectedTriggerKind,
             });
@@ -1046,7 +1119,7 @@ export async function claimAutomationRun(params: {
                 throw new Error("Automation Account currentness became unavailable during claim");
             }
 
-            if (candidate.state === "pause_requested") {
+            if (candidateState === "pause_requested") {
                 // Workflow control states use the existing machine-only
                 // projection; they are not Automation lifecycle enum members.
                 afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({
@@ -1058,7 +1131,7 @@ export async function claimAutomationRun(params: {
             } else if (run.originKind === "automation") {
                 const automationRun = projectAutomationOriginRun(projectedRun);
                 if (!automationRun) throw new Error("Claimed Automation Run has invalid origin correspondence");
-                const previousState = candidate.state;
+                const previousState = candidateState;
                 afterTx(tx, () => {
                     emitAutomationRunTransition({
                         accountId: params.accountId,

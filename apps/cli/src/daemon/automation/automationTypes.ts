@@ -82,6 +82,8 @@ export type AutomationWorkerAssignmentsResponse = Readonly<{
     machineId: string;
     automationId: string;
     nextClaimAt: number | null;
+    /** Null/omission is unclassified, not a claim that the stored recipe is legacy. */
+    executionRecipeVersion?: 2 | null;
   }>;
   /** Current server-owned execution capacity. */
   settings: Readonly<{

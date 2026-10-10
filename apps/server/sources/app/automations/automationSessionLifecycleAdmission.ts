@@ -19,7 +19,7 @@ import {
 import { decodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { automationPortableQueryChunks } from "./automationPortableQueryChunks";
 import { lockScopedAutomationTriggerInTx } from "./automationScopedTrigger";
-import { readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
+import { readAutomationLifecycleOriginRunIdTx, readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
 
 export type SessionLifecycleAdmissionResult = Readonly<{
     triggerId: string;
@@ -98,6 +98,7 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
     accountId: string;
     occurrence: SessionLifecycleOccurrence;
     sourceTurnFacts?: SessionTurnFactsV1;
+    /** Authenticated write actor, distinct from immutable turn admission facts. */
 }>): Promise<ReadonlyArray<SessionLifecycleAdmissionResult>> {
     const occurrence = AutomationSessionLifecycleOccurrenceEvidenceV1Schema.parse(
         params.occurrence,
@@ -158,8 +159,9 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
         },
     });
 
+    const originRunId = rows.length > 0 ? await readAutomationLifecycleOriginRunIdTx(params.tx, occurrence) : null;
     const originTriggerIds = rows.length > 0
-        ? await readAutomationOriginTriggerIdsTx(params.tx, occurrence) : new Set<string>();
+        ? await readAutomationOriginTriggerIdsTx(params.tx, occurrence, originRunId ?? undefined) : new Set<string>();
     const candidates: Array<{
         row: typeof rows[number];
         cause: ReturnType<typeof buildLifecycleCause>;

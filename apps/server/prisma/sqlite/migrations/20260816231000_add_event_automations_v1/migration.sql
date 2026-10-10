@@ -1,13 +1,17 @@
--- Released V2 open Runs have no frozen recipe bytes. Refuse activation rather
--- than inventing them; the operator keeps the released worker active and
--- drains or cancels these rows before retrying the migration.
+-- Pre-effect V2 queued/claimed Runs acquire their first frozen input at claim.
+-- Effectful open history cannot safely be reconstructed or replayed.
 CREATE TEMP TABLE "_AutomationRun_open_frozen_input_preflight" (
     "ok" INTEGER NOT NULL,
     CONSTRAINT "AutomationRun_open_frozen_input_activation_required" CHECK ("ok" = 1)
 );
 INSERT INTO "_AutomationRun_open_frozen_input_preflight" ("ok")
 SELECT CASE WHEN EXISTS (
-    SELECT 1 FROM "AutomationRun" WHERE "state" IN ('queued', 'claimed', 'running')
+    SELECT 1 FROM "AutomationRun" WHERE "state" IN ('queued', 'claimed', 'running') AND (
+        "state" = 'running' OR "startedAt" IS NOT NULL OR "finishedAt" IS NOT NULL
+        OR "producedSessionId" IS NOT NULL OR "summaryCiphertext" IS NOT NULL
+        OR EXISTS (SELECT 1 FROM "AutomationRunEvent" event
+            WHERE event."runId" = "AutomationRun"."id" AND event."type" = 'run_started')
+    )
 ) THEN 0 ELSE 1 END;
 DROP TABLE "_AutomationRun_open_frozen_input_preflight";
 
@@ -286,6 +290,13 @@ CREATE TABLE "new_AutomationRun" (
     ),
     CONSTRAINT "AutomationRun_execution_input_arm_check" CHECK (
         "state" NOT IN ('queued', 'claimed', 'running') OR "executionInputEnvelope" IS NOT NULL
+        OR ("state" IN ('queued', 'claimed') AND "startedAt" IS NULL
+            AND "finishedAt" IS NULL AND "producedSessionId" IS NULL
+            AND "summaryCiphertext" IS NULL AND "resultEnvelope" IS NULL
+            AND "executionAttempt" = 0 AND "executionDispatchCommittedAt" IS NULL
+            AND ("executionDispatchState" IS NULL OR "executionDispatchState" = 'notStarted')
+            AND "executionNativeRunId" IS NULL AND "executionNativeCallId" IS NULL
+            AND "executionNativeSidechainId" IS NULL)
     ),
     CONSTRAINT "AutomationRun_reply_handoff_arm_check" CHECK (
         ("causeKind" = 'conversation' AND "replyContextEnvelope" IS NOT NULL AND "replyHandoffActionPluginId" IS NOT NULL AND "replyHandoffActionLocalId" IS NOT NULL AND "replyHandoffTargetMachineId" IS NOT NULL AND "replyHandoffTargetMachineInstallationId" IS NOT NULL AND "replyHandoffTargetMaterializationId" IS NOT NULL AND "replyHandoffId" IS NOT NULL AND "replyHandoffState" <> 'none')

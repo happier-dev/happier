@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as persistence from '@/persistence';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+
+const readiness = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), callMachineRpc: vi.fn() }));
+vi.mock('axios', () => ({ default: { get: readiness.get, post: readiness.post, isAxiosError: () => false } }));
+vi.mock('@/session/transport/rpc/machineRpc', () => ({ callMachineRpc: readiness.callMachineRpc }));
 
 import {
   WORKFLOW_CANCEL_REQUESTED_ABORT_REASON,
@@ -14,7 +21,7 @@ import {
 
 
 const sessionCreation = vi.hoisted(() => ({
-  createSpawnedSession: vi.fn(async () => ({ sessionId: 'new-session' })),
+  createSpawnedSession: vi.fn(async (_request: Parameters<typeof import('@/session/services/createSpawnedSession').createSpawnedSession>[0]) => ({ sessionId: 'new-session' })),
   prepareSessionCreationTarget: vi.fn(async () => ({
     ok: true as const,
     directory: '/repo',
@@ -22,14 +29,10 @@ const sessionCreation = vi.hoisted(() => ({
     checkout: null,
   })),
 }));
-const accountSettingsBootstrap = vi.hoisted(() => ({
-  bootstrapAccountSettingsContext: vi.fn(),
-}));
 vi.mock('@/session/services/createSpawnedSession', () => sessionCreation);
 vi.mock('@/session/creation/prepareSessionCreationTarget', () => ({
   prepareSessionCreationTarget: sessionCreation.prepareSessionCreationTarget,
 }));
-vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => accountSettingsBootstrap);
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return {
@@ -44,6 +47,126 @@ vi.mock('node:fs', async (importOriginal) => {
 
 
 describe('workflow Session step executor', () => {
+  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    // HTTP and machine process launch are the external readiness boundaries;
+    // authorization, resume normalization and conversation ownership stay real.
+    let readySessionId = '';
+    readiness.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+      } };
+      const id = /\/v2\/sessions\/([^/?]+)/.exec(url)?.[1];
+      if (!id) throw new Error(`Unexpected readiness read: ${url}`);
+      return { status: 200, data: { session: createSessionRecordFixture({ id, active: true,
+        encryptionMode: 'plain', machineId: 'machine-1', metadata: JSON.stringify({ machineId: 'machine-1',
+          path: id === 'existing-session' ? '/repo/subdir' : '/repo', claudeSessionId: 'native-session',
+          runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+        }) }) } };
+    });
+    readiness.callMachineRpc.mockImplementation(async ({ method, request }: { method: string; request: { sessionId?: string } }) => {
+      if (method === RPC_METHODS.SPAWN_HAPPY_SESSION) {
+        readySessionId = request.sessionId!;
+        return { type: 'success', sessionId: readySessionId };
+      }
+      return { status: 'success', sessionId: readySessionId };
+    });
+    readiness.post.mockImplementation(async (url: string, body: { tags: string[] }) => {
+      if (!url.endsWith('/v2/sessions/lookup-by-tags')) throw new Error(`Unexpected readiness write: ${url}`);
+      const response = await readiness.get(`/v2/sessions/${body.tags[0]}`);
+      return { status: 200, data: { sessions: [response.data.session] } };
+    });
+  });
+  it('records inputless Session creation and rejoins it without fabricating an input', async () => {
+    const creations: unknown[] = [];
+    const createdFacts: unknown[] = [];
+    const execute = createProductionWorkflowSessionStepExecutor({
+      credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      machineAdmissionTransport: vi.fn(),
+      createFreshConversation: async (request) => { creations.push(request); return {
+        sessionId: 'created-session', machineId: 'machine-1', directory: '/repo',
+      }; },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async ({ sessionId, machineId }) => ({ sessionId, machineId, directory: '/repo' }),
+      sessionInput: {
+        enqueue: async () => { throw new Error('Inputless creation cannot enqueue'); },
+        observe: async () => { throw new Error('Inputless creation has no input to observe'); },
+      },
+    });
+    const base = {
+      runId: 'run-inputless', invocationRecordId: 'inv-inputless',
+      step: { kind: 'step' as const, id: 'create', inputMode: 'none' as const,
+        document: { text: '', references: [], attachments: [] }, input: [], result: { kind: 'text' as const } },
+      invocation: { kind: 'happier.workflow-progress.v1' as const, blockKind: 'step' as const,
+        invocationPath: { blockId: 'create', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
+      input: { text: '', references: [], attachments: [], values: [] },
+      execution: { conversation: { kind: 'fresh' as const },
+        agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+      executionTarget: { kind: 'session' as const },
+      authorization: { admittedPermissionCeiling: 'default' as const, principal: { kind: 'host' as const } },
+      workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+      beforeInputAdmission: async () => {},
+      onInputAccepted: async () => { throw new Error('No input was accepted'); },
+      onSessionReady: async (value: unknown) => { createdFacts.push(value); },
+    };
+    await expect(execute(base)).resolves.toEqual({ kind: 'completed', result: '' });
+    expect(createdFacts).toEqual([{ kind: 'session_ready', sessionId: 'created-session' }]);
+    await expect(execute({ ...base, invocation: { ...base.invocation,
+      execution: { kind: 'session_ready', sessionId: 'created-session' } } })).resolves.toEqual({ kind: 'completed', result: '' });
+    expect(creations).toHaveLength(1);
+  });
+
+  it('recovers inputless creation before its Workflow fact through observation-only Session creation custody', async () => {
+    const request = { selection: { agentTarget: { kind: 'agent' as const,
+      identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, connectedServices: { v: 2 as const, bindingsByServiceId: {} } },
+      workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+      creationKey: 'workflow:run-inputless:inv-inputless', observationOnly: true,
+    };
+    sessionCreation.createSpawnedSession.mockClear();
+    await createProductionFreshWorkflowSessionConversation({ credentials: { token: 'token', encryption: null },
+      serverId: 'server-1', machineId: 'machine-1', workDepth: 0, originRunId: 'run-inputless', machineAdmissionTransport: vi.fn() })(request);
+    expect(sessionCreation.createSpawnedSession.mock.calls[0]?.[0]).toMatchObject({ spawnNonce: request.creationKey, resumeOnly: true });
+  });
+
+  it.each([
+    { incomingAt: 100, savedClear: false }, { incomingAt: 200, savedClear: false },
+    { incomingAt: 300, savedClear: false }, { incomingAt: null, savedClear: false },
+    { incomingAt: 100, savedClear: true }, { incomingAt: 200, savedClear: true },
+    { incomingAt: 300, savedClear: true },
+  ])('resolves existing Session controls by predecessor timestamps (%j)', async ({ incomingAt, savedClear }) => {
+    const admitted: unknown[] = [];
+    const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+    const model = (modelId: string) => ({ agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId });
+    const execute = createProductionWorkflowSessionStepExecutor({
+      credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      machineAdmissionTransport: vi.fn(), createFreshConversation: async () => { throw new Error('Existing target'); },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => ({ sessionId: 'retained', machineId: 'machine-1', directory: '/repo', agentTarget: target,
+        runtimeSnapshot: { permissionMode: { value: 'read-only' as const, updatedAt: 200 }, modelSelection: { value: savedClear ? null : model('saved-model'), updatedAt: 200 } },
+      }),
+      sessionInput: { enqueue: async (request) => { admitted.push(request); return { status: 'accepted', localId: 'input' }; },
+        observe: async ({ sessionId, localId }) => ({ ok: true, sessionId, localId, result: { kind: 'final_text', text: 'done' } }),
+      },
+    });
+    await execute({ runId: 'run',
+      step: { kind: 'step', id: 'work', document: { text: 'work', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
+      input: { text: 'work', references: [], attachments: [], values: [] },
+      execution: { conversation: { kind: 'existing_session', sessionId: 'retained', machineId: 'machine-1' }, agentTarget: target,
+        permissionMode: incomingAt === null ? null : 'default', permissionModeUpdatedAt: incomingAt ?? undefined,
+        modelSelection: incomingAt === null ? null : { v: 1, ref: model('incoming-model'), updatedAt: incomingAt } },
+      executionTarget: { kind: 'session' }, authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+      workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+      beforeInputAdmission: async () => {}, onInputAccepted: async () => {},
+    });
+    expect(admitted).toEqual([expect.objectContaining({ permissionMode: incomingAt === null ? null : incomingAt < 200 ? 'read-only' : 'default',
+      modelSelectionInput: expect.objectContaining({ modelId: incomingAt === null || (savedClear && incomingAt < 200)
+        ? null : incomingAt < 200 ? 'saved-model' : 'incoming-model' }),
+      ...(incomingAt === null ? {} : { modelSelectionUpdatedAt: incomingAt < 200 ? 200 : incomingAt }),
+    })]);
+  });
+
   it('anchors an unmaterialized generation timeout to the exact host input across rejoin', async () => {
     const acceptedTimes: number[] = [];
     const execute = createWorkflowSessionStepExecutor({
@@ -373,7 +496,7 @@ describe('workflow Session step executor', () => {
   it('checks the actual retained Session Agent before materialization, while an existing Session keeps its own Agent', async () => {
     const createFreshConversation = vi.fn();
     const conversations = createProductionWorkflowConversationOwner({
-      machineId: 'machine-1', createFreshConversation,
+      credentials: { token: 'token', encryption: null }, machineId: 'machine-1', createFreshConversation,
       resolveSharedRunConversation: async () => ({ sessionId: 'retained', machineId: 'machine-1', directory: '/repo' }),
       resolveProducerConversation: async () => null,
       resolveExistingSessionConversation: async ({ sessionId, machineId }) => ({
@@ -464,7 +587,7 @@ describe('workflow Session step executor', () => {
       agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
       runtimeSelection: { connectedServices: { v: 2 as const, bindingsByServiceId: {} } } };
     const conversations = createProductionWorkflowConversationOwner({
-      machineId: 'machine-1', createFreshConversation,
+      credentials: { token: 'token', encryption: null }, machineId: 'machine-1', createFreshConversation,
       resolveSharedRunConversation: async () => ({ sessionId: 'shared', machineId: 'machine-1', directory: '/repo',
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
         runtimeSelection: { connectedServices: { v: 2, bindingsByServiceId: {} } } }),
@@ -474,7 +597,7 @@ describe('workflow Session step executor', () => {
       resolveExistingSessionConversation: async () => personallyRenamed,
     });
     const base = {
-      runId: 'run-1', memberOrdinal: '2',
+      runId: 'run-1', stepOrdinal: '3',
       step: { kind: 'step', id: 'work', name: 'Implement', document: { text: 'A different prompt', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
       invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
       input: { text: 'Implement', references: [], attachments: [], values: [] },
@@ -610,7 +733,7 @@ describe('workflow Session step executor', () => {
     } as Parameters<typeof createWorkflowSessionStepExecutor>[0]);
 
     await expect(execute({
-      runId: 'run-1', step: {}, invocation: { logicalInvocationRecordId: 'inv-1' },
+      runId: 'run-1', stepOrdinal: '5', step: {}, invocation: { logicalInvocationRecordId: 'inv-1' },
       input: { text: 'work', references: [], attachments: [], values: [] }, execution: {},
       authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
       workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
@@ -618,6 +741,8 @@ describe('workflow Session step executor', () => {
     } as never)).resolves.toEqual({ kind: 'completed', result: 'done' });
     expect(materializeConversation).toHaveBeenCalledOnce();
     expect(enqueue).toHaveBeenCalledOnce();
+    // The step's visible number is stamped on its input's provenance at write time.
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ workflow: expect.objectContaining({ stepOrdinal: '5' }) }));
   });
 
   it('persists exact input correspondence after admission and before observation', async () => {
@@ -1029,6 +1154,7 @@ describe('workflow Session step executor', () => {
     expect(prepared).toMatchObject({ existing: { sessionId: 'shared-session' } });
     await expect(conversations.materialize(prepared, {
       runId: 'run-1', invocation: { logicalInvocationRecordId: 'inv-1' },
+      step: { kind: 'step', id: 'work', document: { text: 'Work', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
       execution: { conversation: { kind: 'shared_run' } },
       workspace: {
         machineId: 'machine-1',
@@ -1125,24 +1251,23 @@ describe('workflow Session step executor', () => {
 
   it('resolves fresh Team resource defaults through the injected current Home catalog', async () => {
     sessionCreation.createSpawnedSession.mockClear();
-    accountSettingsBootstrap.bootstrapAccountSettingsContext.mockResolvedValueOnce({
-      settings: {
-        connectedServicesDefaultAuthByAgentIdV1: {
-          v: 1,
-          bindingsByAgentId: {
-            codex: {
-              v: 2,
-              bindingsByServiceId: {
-                'happier.agent.codex/openai-codex': {
-                  source: 'team_resource', serverId: 'server-1', accountId: 'account-1',
-                  teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 4,
-                  deliveryMode: 'brokered',
-                },
-              },
-            },
-          },
-        },
-      },
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
+    // Account identity/currentness and catalog opening stay real; only persisted
+    // credentials and Home HTTP responses are supplied at their boundaries.
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    const readinessRead = readiness.get.getMockImplementation()!;
+    readiness.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
+      if (url.endsWith('/v1/account/entity-rows/connected-accounts/purposes')) return { status: 200, data: {
+        status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes', value: {
+          v: 1, bindings: [], teamResourceSelections: [{
+            purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+            teamId: 'team-1', selection: { source: 'team_resource', resourceId: 'resource-1', deliveryMode: 'brokered' },
+          }],
+        } } },
+      } };
+      return readinessRead(url);
     });
     const resolveTeamCredentialResourceCatalog = vi.fn(async () => ({
       serverId: 'server-1', accountId: 'account-1',
@@ -1161,7 +1286,7 @@ describe('workflow Session step executor', () => {
       }],
     }));
     const create = createProductionFreshWorkflowSessionConversation({
-      credentials: { token: 'token', encryption: null },
+      credentials,
       serverId: 'server-1',
       machineId: 'machine-1',
       machineAdmissionTransport: vi.fn(),

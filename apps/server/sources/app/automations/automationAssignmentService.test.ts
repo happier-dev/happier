@@ -22,6 +22,7 @@ import {
     resolveAutomationAssignmentNextClaimAt,
 } from "./automationAssignmentService";
 import { AutomationValidationError } from "./automationValidation";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 
 const LEGACY_AUTOMATION_RUN_STATES = [
     "queued", "claimed", "running", "succeeded", "failed", "cancelled",
@@ -262,6 +263,20 @@ describe("resolveAutomationAssignmentNextClaimAt", () => {
                 executionDispatchState: "retryWaiting",
             }],
         })).toBeNull();
+    });
+
+    it.each(["workflow", "unclassified"] as const)("projects the canonical %s recipe version on both active and frozen assignment inventory", async (kind) => {
+        const now = new Date("2026-08-10T12:01:00.000Z");
+        const automation = { id: "automation-current", name: "Current", enabled: true, targetType: null,
+            templateCiphertext: kind === "workflow" ? JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: "/repo", prompt: "Work" })) : "{}",
+            templateVersion: 1, lastRunAt: null, updatedAt: now, triggers: [], runs: [] };
+        dbMocks.definitionAssignments.mockResolvedValue([{ id: "assignment-current", machineId: "machine-1", enabled: true, priority: 0, updatedAt: now, automation }]);
+        dbMocks.runAssignments.mockResolvedValue([{ machineId: "machine-1", priority: 0, run: { id: "run-frozen", automationId: "automation-frozen", updatedAt: now,
+            triggerId: null, causeKind: "manual", causeTriggerKind: null, state: "queued", dueAt: now, leaseExpiresAt: null, executionDispatchState: null } }]);
+        dbMocks.automations.mockResolvedValue([{ ...automation, id: "automation-frozen", enabled: false }]);
+        const rows = await listDaemonAssignments({ accountId: "account-1", machineId: "machine-1" });
+        expect(rows).toHaveLength(2);
+        expect(rows.map(row => row.executionRecipeVersion)).toEqual([kind === "workflow" ? 2 : null, kind === "workflow" ? 2 : null]);
     });
 
     it("loads each frozen Run's Automation projection once without nesting its complete open-Run set", async () => {

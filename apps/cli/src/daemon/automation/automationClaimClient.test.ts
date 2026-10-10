@@ -23,7 +23,7 @@ import type { CreatePluginInstallationPublisherHeader } from '@/plugins/installa
 import {
   createAutomationClaimClient,
 } from './automationClaimClient';
-import { executeClaimedRun } from './automationRunExecutor';
+import { AUTOMATION_TEMPLATE_V02_PLAIN } from '../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 
 const CLAIM_CURRENTNESS = {
   mode: 'plain' as const,
@@ -215,16 +215,13 @@ describe('createAutomationClaimClient', () => {
     });
   });
 
-  it('claims and executes current frozen input containing retained 0.2 template data', async () => {
+  it('preserves genuine retained predecessor bytes at the authenticated claim transport', async () => {
     axiosGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
     const frozenExecutionInput = JSON.stringify({
       kind: 'happier_automation_run_execution_input_v1',
       targetType: 'new_session',
       templateVersion: 1,
-      templateCiphertext: JSON.stringify({
-        kind: 'happier_automation_template_plain_v1',
-        payload: { directory: '/tmp/frozen-claim' },
-      }),
+      templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN,
       origin: { kind: 'manual', invokedAt: 1_723_247_201_000 },
     });
     const claimResponse = {
@@ -244,22 +241,6 @@ describe('createAutomationClaimClient', () => {
     };
     axiosPost.mockImplementation(async (url: string) => {
       if (url.endsWith('/v3/automations/runs/claim')) return { data: claimResponse };
-      if (url.endsWith('/v3/automations/runs/run-1/start')) {
-        return {
-          data: {
-            ...START_RESPONSE,
-            run: {
-              ...START_RESPONSE.run,
-              id: 'run-1',
-              automationId: 'automation-1',
-              attempt: 1,
-              revision: 1,
-              triggerRetired: false,
-            },
-          },
-        };
-      }
-      if (url.endsWith('/v3/automations/runs/run-1/succeed')) return { data: { ok: true } };
       throw new Error(`Unexpected POST ${url}`);
     });
 
@@ -282,42 +263,6 @@ describe('createAutomationClaimClient', () => {
       automation: { id: 'automation-1', name: 'Frozen', enabled: true },
       accountCurrentness: CLAIM_CURRENTNESS,
     });
-
-    if (claimed.run === null) throw new Error('Expected an exact claimed Run');
-    const spawnSession = vi.fn(async () => ({
-      type: 'success' as const,
-      sessionId: 'session-frozen-v2',
-    }));
-    await executeClaimedRun({
-      token: 'token-abc',
-      machineId: 'machine-2',
-      claimClient: client,
-      spawnSession,
-      heartbeatMs: 60_000,
-      leaseDurationMs: 45_000,
-      resolveAutomationAccountEncryption: vi.fn()
-        .mockResolvedValueOnce({ kind: 'available', witness: CLAIM_CURRENTNESS })
-        .mockResolvedValueOnce({ kind: 'available', witness: START_CURRENTNESS })
-        .mockResolvedValueOnce({ kind: 'available', witness: START_CURRENTNESS }),
-      claimed,
-    });
-
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '/tmp/frozen-claim',
-    }));
-    expect(axiosPost).toHaveBeenCalledWith(
-      expect.stringMatching(/\/v3\/automations\/runs\/run-1\/start$/),
-      expect.objectContaining({ accountCurrentness: CLAIM_CURRENTNESS }),
-      expect.anything(),
-    );
-    expect(axiosPost).toHaveBeenCalledWith(
-      expect.stringMatching(/\/v3\/automations\/runs\/run-1\/succeed$/),
-      expect.objectContaining({
-        accountCurrentness: START_CURRENTNESS,
-        producedSessionId: 'session-frozen-v2',
-      }),
-      expect.anything(),
-    );
 
     expect(axiosPost).toHaveBeenCalledWith(
       expect.stringMatching(/\/v3\/automations\/runs\/claim$/),

@@ -1,6 +1,7 @@
 import {
     AutomationReplyHandoffTargetV1Schema,
     validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
+    validateWorkflowStoredEnvelopeOuterForModeV1,
 } from "@happier-dev/protocol";
 
 /**
@@ -10,7 +11,10 @@ import {
  * read.
  */
 export type AutomationReplyHandoffImmutableFacts = Readonly<{
+    id: string;
     accountId: string;
+    /** The existing Run lifecycle discriminator; no second result format is written. */
+    workflowCustodyState?: string | null;
     occurrenceKey: string | null;
     replyHandoffId: string | null;
     replyHandoffActionPluginId: string | null;
@@ -67,11 +71,17 @@ export function classifyAutomationReplyHandoffDispatchability(input: Readonly<{
     });
     if (!target.success) return "immutableHandoffInvalid";
 
-    const result = validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1({
-        content: "result",
-        mode: input.mode,
-        envelope: parseJson(facts.resultEnvelope),
-    });
+    const result = facts.workflowCustodyState != null
+        ? validateWorkflowStoredEnvelopeOuterForModeV1({
+            mode: input.mode,
+            binding: { v: 1, purpose: "final_result", accountId: facts.accountId, runId: facts.id },
+            envelope: parseJson(facts.resultEnvelope),
+        })
+        : validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1({
+            content: "result",
+            mode: input.mode,
+            envelope: parseJson(facts.resultEnvelope),
+        });
     if (result.kind !== "available") return "immutableHandoffInvalid";
 
     const replyContext = validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1({

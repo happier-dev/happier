@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sealWorkflowFinalResultStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from "@happier-dev/protocol/workflows";
 import {
     AutomationSourceSelectorIdV1Schema,
     AutomationTriggerIdSchema,
@@ -13,6 +14,7 @@ import {
     toAutomationRunV3DetailApiDto,
     toAutomationRunV3ListApiDto,
 } from "./automationApiProjection";
+import { AutomationStoredContentReadError } from "./automationStoredContentRead";
 
 const DATE = new Date("2026-08-10T12:00:00.000Z");
 const EVENT_OCCURRED_AT = new Date("2026-08-09T12:00:00.000Z");
@@ -615,6 +617,29 @@ describe("Automation API projections", () => {
         ]);
         expect(() => toAutomationDefinitionListItemApiDto(automation))
             .toThrow("Automation row has no sessionLifecycle status for its declared arm");
+    });
+
+    it.each(["plain", "e2ee"] as const)("preserves a %s Workflow result on the bound Automation recovery detail", (mode) => {
+        const resultEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowFinalResultStoredEnvelopeV1({
+            ...(mode === "plain" ? { mode } : { mode, runDataKey: new Uint8Array(32).fill(3),
+                randomBytes: (length: number) => new Uint8Array(length).fill(7) }),
+            binding: { v: 1, purpose: "final_result", accountId: "account-1", runId: "run-event" },
+            finalResult: { kind: "happier.workflow-final-result.v1", result: { kind: "text", value: "Workflow reply" },
+                producerInvocation: { recordId: "prompt-invocation" } },
+        }));
+        const run = { ...eventRun(), state: "succeeded" as const, workflowCustodyState: "settled" as const,
+            // Automation Workflow admission freezes its Account definition body here;
+            // accepted snapshot and result custody remain on the canonical Run reader.
+            executionInputEnvelope: JSON.stringify(mode === "plain" ? { t: "plain", v: { workspace: { directory: "/repo" }, executionTarget: { kind: "session" } } }
+                : { t: "encrypted", c: "opaque-account-definition" }),
+            triggerEvidenceEnvelope: null, resultEnvelope,
+        };
+        expect(toAutomationRunV3DetailApiDto(run, mode)).toEqual(expect.objectContaining({
+            automationId: "automation-event", resultEnvelope,
+            workflowRun: { recipeKind: "workflow-v2", workflowRunId: "run-event" },
+        }));
+        expect(() => toAutomationRunV3DetailApiDto(run, mode === "plain" ? "e2ee" : "plain")).toThrow(AutomationStoredContentReadError);
+        if (mode === "plain") expect(() => toAutomationRunV3DetailApiDto({ ...run, id: "different-run" }, mode)).toThrow();
     });
 
     it("exposes a strict Event Run frozen recipe to current detail", () => {

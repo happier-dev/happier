@@ -1,17 +1,18 @@
 import { randomUUID } from "node:crypto";
 
 import {
-    AutomationStoredDefinitionExecutionRecipeV1Schema,
     AutomationTriggerIdSchema,
 } from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
+import { cancelWorkflowRunTx } from "@/app/workflows/workflowRunService";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 
 import { claimAutomationRun } from "./automationClaimService";
 import { createAutomation } from "./automationCrudService";
-import { failAutomationRun, startAutomationRun } from "./automationRunService";
 import { runAutomationScheduleWorkerPass, startAutomationScheduleWorker } from "./automationScheduleWorker";
 
 const MACHINE_ID = "machine-schedule-firing";
@@ -21,23 +22,8 @@ function executionRecipe() {
     // object that createAutomation itself serializes when it seals the
     // stored definition (same pattern as the automationCrudService
     // integration fixtures).
-    return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
-        v: 1,
-        templateVersion: 1,
-        template: { t: "plain", v: { v: 1, prompt: "Two schedule firing recipe" } },
-        triggerEvidence: null,
-        target: {
-            kind: "newSession",
-            spawn: {
-                executionTarget: { serverId: "server-schedule-firing", machineId: MACHINE_ID },
-                directory: "/tmp/schedule-firing",
-                agentTarget: {
-                    kind: "agent",
-                    identity: { pluginId: "happier.agent.codex", localId: "codex" },
-                },
-            },
-        },
-    });
+    return createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+        directory: "/tmp/schedule-firing", prompt: "Two schedule firing recipe" });
 }
 
 function intervalTrigger(everyMs: number, enabled = true) {
@@ -263,23 +249,14 @@ describe("Automation schedule trigger firing (integration)", () => {
         const otherRun = firstRuns.find((run) => run.triggerId === otherTriggerId)!;
         expect(otherRun.state).toBe("queued");
 
-        const started = await startAutomationRun({
+        // Before root admission the canonical Workflow cancellation owner
+        // terminal-settles custody and applies the Automation terminal effects.
+        const cancelled = await inTx((tx) => cancelWorkflowRunTx(tx, {
             accountId,
             runId: claim.run!.id,
-            machineId: MACHINE_ID,
-            attempt: claim.run!.attempt,
-            accountCurrentness: claim.accountCurrentness!,
-        });
-        expect(started).not.toBeNull();
-        const failed = await failAutomationRun({
-            accountId,
-            runId: claim.run!.id,
-            machineId: MACHINE_ID,
-            attempt: claim.run!.attempt,
-            accountCurrentness: started!.accountCurrentness,
-            errorCode: "test_terminal_settlement",
-        });
-        expect(failed).toMatchObject({ id: claim.run!.id, state: "failed" });
+            expectedRevision: claim.run!.revision,
+        }));
+        expect(cancelled.run).toMatchObject({ id: claim.run!.id, state: "cancelled" });
 
         // At the next joint due moment the terminal trigger admits its own
         // second occurrence while the open sibling stays suppressed.
@@ -300,7 +277,7 @@ describe("Automation schedule trigger firing (integration)", () => {
         const settledTriggerRuns = allRuns.filter((run) => run.triggerId === settledTriggerId);
         const otherTriggerRuns = allRuns.filter((run) => run.triggerId === otherTriggerId);
         expect(settledTriggerRuns).toHaveLength(2);
-        expect(settledTriggerRuns.map((run) => run.state).sort()).toEqual(["failed", "queued"]);
+        expect(settledTriggerRuns.map((run) => run.state).sort()).toEqual(["cancelled", "queued"]);
         expect(otherTriggerRuns).toEqual([otherRun]);
         expect(otherRun.state).toBe("queued");
         expect(new Set(settledTriggerRuns.map((run) => run.occurrenceKey)).size).toBe(2);

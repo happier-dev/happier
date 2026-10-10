@@ -1,37 +1,37 @@
 import chalk from 'chalk';
+import { randomUUID } from 'node:crypto';
 import { AutomationManualIdempotencyKeyV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 
-import {
-  listAutomationDefinitions,
-  runAutomationNow,
-  type AutomationRunSummary,
-} from '@/api/automations';
+import { listAutomationDefinitions } from '@/api/automations';
+import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { AutomationDefinitionListResponse } from '@happier-dev/protocol';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { assertCommandArguments, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';
-import { readCredentials } from '@/persistence';
+import { readCredentials, readStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
+import { configuration } from '@/configuration';
+import type { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { fail } from '@happier-dev/cli-common/output';
 
 type AutomationCommandDeps = Readonly<{
-  readCredentialsFn: typeof readCredentials;
+  readCredentialsFn: (serverId?: string) => Promise<StoredCredentials | null>;
   listAutomationDefinitionsFn: (params: Readonly<{
     token: string;
     limit?: number;
     cursor?: string;
   }>) => Promise<AutomationDefinitionListResponse>;
-  runAutomationNowFn: (params: Readonly<{
-    token: string;
-    automationId: string;
-    idempotencyKey?: string | null;
-  }>) => Promise<AutomationRunSummary>;
+  createExecutorFn: (params: Parameters<typeof createCliActionExecutorFromCredentials>[0]) =>
+    Pick<ReturnType<typeof createCliActionExecutorFromCredentials>, 'execute'> |
+    Promise<Pick<ReturnType<typeof createCliActionExecutorFromCredentials>, 'execute'>>;
 }>;
 
 const DEFAULT_DEPS: AutomationCommandDeps = {
-  readCredentialsFn: readCredentials,
+  readCredentialsFn: (serverId) => serverId ? readStoredCredentialsForServerId(serverId) : readCredentials(),
   listAutomationDefinitionsFn: listAutomationDefinitions,
-  runAutomationNowFn: runAutomationNow,
+  createExecutorFn: async (params) => (await import('@/session/actions/createCliActionExecutorFromCredentials'))
+    .createCliActionExecutorFromCredentials(params),
 };
 
 function showAutomationHelp(): void {
@@ -151,22 +151,30 @@ export async function handleAutomationCommand(
   }
 
   const parsed = parseRunArgs(args);
-  const credentials = await deps.readCredentialsFn();
+  const serverId = configuration.activeServerId;
+  const serverApiUrl = configuration.apiServerUrl;
+  const credentials = await deps.readCredentialsFn(serverId);
   if (!credentials) {
     const error = new Error('Not authenticated. Run "happier auth login" first.');
     (error as Error & { code?: string }).code = 'not_authenticated';
     throw error;
   }
-  const run = await deps.runAutomationNowFn({
-    token: credentials.token,
+  const executor = await deps.createExecutorFn({ credentials, serverId, serverApiUrl });
+  const outcome = await executor.execute('workflow.trigger.run_now', {
     automationId: parsed.automationId,
     ...(parsed.idempotencyKey ? { idempotencyKey: parsed.idempotencyKey } : {}),
-  });
+  }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, actionRequestId: randomUUID() });
+  if (!outcome.ok) {
+    throw Object.assign(new Error(outcome.error), { code: outcome.errorCode, actionFailure: true,
+      ...(outcome.details === undefined ? {} : { details: outcome.details }) });
+  }
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'automation_run', json: wantsJson(args), result: outcome.result })) return;
+  const receipt = WorkflowActionOutputSchemasV1['workflow.trigger.run_now'].parse(outcome.result);
   if (wantsJson(args)) {
-    await printJsonEnvelope({ ok: true, kind: 'automation_run', data: { run } });
+    await printJsonEnvelope({ ok: true, kind: 'automation_run', data: receipt });
     return;
   }
-  console.log(chalk.green(`Queued automation run ${run.id}`));
+  console.log(chalk.green(`Queued automation run ${receipt.run.id}`));
 }
 
 export async function handleAutomationCliCommand(context: CommandContext): Promise<void> {
@@ -176,11 +184,14 @@ export async function handleAutomationCliCommand(context: CommandContext): Promi
   } catch (error) {
     if (wantsJson(args)) {
       const mapped = mapUnknownErrorToControlError(error);
+      const failure = error !== null && typeof error === 'object' && 'actionFailure' in error && error.actionFailure === true
+        && 'code' in error && typeof error.code === 'string' ? error : null;
       await printJsonEnvelope({
         ok: false,
         kind: args[0] === 'list' ? 'automation_list' : 'automation_run',
-        error: { code: mapped.code, ...(mapped.message ? { message: mapped.message } : {}) },
-      }, { exitCode: mapped.unexpected ? 2 : 1 });
+        error: { code: failure?.code ?? mapped.code, ...(mapped.message ? { message: mapped.message } : {}),
+          ...(failure && 'details' in failure ? { details: failure.details } : {}) },
+      }, { exitCode: failure ? 1 : mapped.unexpected ? 2 : 1 });
       return;
     }
     console.error(fail(error instanceof Error ? error.message : 'Unknown error'));

@@ -1,5 +1,5 @@
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   WorkflowCheckpointEnvelopeV1Schema, sealWorkflowCheckpointStoredEnvelopeV1,
   sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
@@ -12,7 +12,8 @@ import {
 } from '@happier-dev/protocol';
 import { DurableWorkflowCoordinatorStore, createProductionWorkflowRunCoordinator } from './production';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import {  workflowInvocationKey } from './coordinator';
+import { classifyWorkflowAbort, workflowInvocationKey } from './coordinator';
+import { executeClaimedRun } from '../automation/automationRunExecutor';
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 import { createWorkflowAcceptedAuthorizationCurrentness } from './daemonRuntime';
 
@@ -43,6 +44,63 @@ async function harness(acceptedEnvelope = 'opaque', paused = false) {
 }
 
 describe('durable review coordinator', () => {
+  it.each(['transport', 'revoked'] as const)('keeps heartbeat uncertainty reclaimable and distinguishes authoritative revocation (%s)', async outcome => {
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
+      { kind: 'wait', id: 'human', document: { text: 'Continue', references: [], attachments: [] } },
+    ] };
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
+        authoredDefinition: definition, definition, startedBy: 'user', workDepth: 0, metadata: null, frozenChildren: {},
+        materializedLeaves: [{ sourceKey: '$root', blockId: 'human', kind: 'wait', selection: {},
+          authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' } }],
+        source: { kind: 'inline' }, inputs: {}, machineId: 'machine', executionTarget: { kind: 'session' },
+        workspaceTarget: { project: workspace }, origin: { kind: 'direct' },
+        authorization: { admittedPermissionCeiling: 'default', principal: {
+          kind: 'api', accountId, principalId: accountId, credentialId: 'missing-token',
+        } },
+      } }));
+    const boundary = createWorkflowRunStorageTestkit({ runId, machineId: 'machine', origin: { kind: 'direct' }, acceptedEnvelope, state: 'claimed' });
+    let entered!: () => void;
+    let release!: () => void;
+    const initialized = new Promise<void>(resolve => { entered = resolve; });
+    const response = new Promise<void>(resolve => { release = resolve; });
+    let executionSignal: AbortSignal | undefined;
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine',
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'default' }),
+      resolveAccountEncryption: async signal => { executionSignal = signal; return { kind: 'available', witness: encryption.witness }; },
+      isAcceptedAuthorizationCurrent: createWorkflowAcceptedAuthorizationCurrentness({ accountId,
+        listAccountApiTokens: async () => { if (outcome === 'transport') throw new Error('transport disconnected'); return { tokens: [] }; },
+        resolveCurrentPluginOccurrenceId: async () => null, resolveCurrentPluginSourceCustody: async () => null,
+        isMediatedSourceCurrent: async () => false,
+      }), onCommittedTransition: async () => {}, onReviewEntered: async () => {},
+      storage: { observeChanges: boundary.observeChanges, execute: async (operation, options) => {
+        // Delay one genuine Home response after registration so the real claim
+        // heartbeat probes accepted authorization before any leaf is released.
+        if (operation.operation === 'initialize') { entered(); await response; }
+        return boundary.execute(operation, options);
+      } }, execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
+        machineAdmissionTransport: async () => { throw new Error('Wait cannot admit input'); },
+        resolveExistingSessionConversation: async () => null,
+        detachedRun: { actionExecutor: createActionExecutor({} as ActionExecutorDeps),
+          buildActionContext: () => ({ surface: 'agent', authority: 'account_automation' }) },
+      } });
+    vi.useFakeTimers();
+    try {
+      const execution = executeClaimedRun({ machineId: 'machine', heartbeatMs: 1_000, leaseDurationMs: 10_000,
+        claimClient: { heartbeatRun: async () => {}, failRun: async () => { throw new Error('Must not settle unknown custody'); } },
+        coordinateWorkflowRun: coordinate, claimed: { protocol: 'v3', automation: null, accountCurrentness: encryption.witness,
+          run: { id: runId, automationId: null, attempt: 0, revision: 0, triggerId: null,
+            origin: { kind: 'direct' }, workflowAcceptedSnapshotEnvelope: acceptedEnvelope } },
+      });
+      await initialized;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(classifyWorkflowAbort(executionSignal)).toBe(outcome === 'transport' ? 'interrupted' : 'authorization_revoked');
+      release();
+      await execution;
+      expect(boundary.run()).toMatchObject({ workflowCustodyState: 'pending' });
+      expect(boundary.rows()).toHaveLength(1); // No downstream leaf gained authority.
+    } finally { release(); vi.useRealTimers(); }
+  });
   it.each(['narrower_controller', 'revoked_authority', 'narrowed_during_preparation'] as const)('reholds Generate with typed authority refusal before input (%s)', async denial => {
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
@@ -246,6 +304,60 @@ describe('durable review coordinator', () => {
       expect(boundary.rows()).toHaveLength(1);
       expect(entries).toBe(0);
     }
+  });
+
+  it.each([false, true])('retains unresolved child custody on denied Resume when Stop is %s', async (stop) => {
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { agentTarget: generationAgentTarget }, blocks: [step] };
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
+        authoredDefinition: definition, definition, startedBy: 'user', workDepth: 0, metadata: null, frozenChildren: {},
+        materializedLeaves: [{ sourceKey: '$root', blockId: step.id, kind: 'step', selection: { agentTarget: generationAgentTarget },
+          authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' } }],
+        source: { kind: 'inline' }, inputs: {}, machineId: 'machine', executionTarget: { kind: 'session' },
+        workspaceTarget: { project: workspace }, origin: { kind: 'direct' },
+        authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' } },
+      } }));
+    const h = await harness(acceptedEnvelope, true);
+    const childId = '33333333-3333-4333-8333-333333333333';
+    const key = workflowInvocationKey({ runId, blockId: step.id, scope: [], attempt: 0 });
+    await h.store.ensureIntent({ key, recordId: childId, runId, blockId: step.id, blockKind: 'step',
+      path: { blockId: step.id, scope: [] }, memberOrdinal: '0', attempt: 0, acceptedAtMs: 1, lifecycle: 'pending' });
+    await h.store.commitFact({ key, lifecycle: 'running', workspace: { descriptor: workspace },
+      execution: { kind: 'session', sessionId: 'unresolved-session', localInputId: 'unresolved-input' } });
+    await h.storage.execute({ operation: 'transition', runId, parentAttempt: 0, expectedRevision: h.storage.run().revision,
+      state: 'paused', checkpointEnvelope: h.storage.checkpointEnvelope()! });
+    await h.storage.execute({ operation: 'resume', runId, expectedRevision: h.storage.run().revision });
+    const workflowResumeRequestedRevision = h.storage.run().revision;
+    let resumedEffect = false;
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine', storage: h.storage,
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
+      // The controller/network read observes a narrower authority; a concurrent
+      // human Stop reaches the storage boundary before the coordinator reads control.
+      resolveControllerContext: async () => {
+        if (stop) h.storage.requestControl('cancel_requested');
+        return { surface: 'cli', authority: 'account_automation', callerPermissionMode: 'default' };
+      },
+      isAcceptedAuthorizationCurrent: async () => true, onCommittedTransition: async () => {}, onReviewEntered: async () => {},
+      execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
+        machineAdmissionTransport: async () => { resumedEffect = true; throw new Error('denied_resume_cannot_admit'); },
+        resolveExistingSessionConversation: async () => { resumedEffect = true; throw new Error('denied_resume_cannot_prepare'); },
+        sessionInput: {
+          enqueue: async () => { resumedEffect = true; throw new Error('denied_resume_cannot_enqueue'); },
+          observe: async () => { resumedEffect = true; throw new Error('denied_resume_cannot_observe'); },
+        },
+        detachedRun: { actionExecutor: createActionExecutor({} as ActionExecutorDeps),
+          buildActionContext: () => ({ surface: 'agent', authority: 'account_automation' }) },
+      } });
+    expect(await coordinate({ runId, attempt: 0, expectedRevision: h.storage.run().revision,
+      workflowResumeRequestedRevision, acceptedEnvelope, accountCurrentness: encryption.witness }))
+      .toMatchObject({ state: stop ? 'cancelled' : 'interrupted', reason: 'run_access_denied' });
+    expect(h.storage.run()).toMatchObject({ state: stop ? 'cancelled' : 'interrupted', workflowCustodyState: 'pending' });
+    expect(h.storage.rowById(rootId)?.index.lifecycle).toBe(stop ? 'cancelled' : 'pending');
+    expect(await (await h.load()).readByLogicalInvocation(childId)).toMatchObject({
+      lifecycle: stop ? 'cancel_requested' : 'running',
+      execution: { sessionId: 'unresolved-session', localInputId: 'unresolved-input' },
+    });
+    expect(resumedEffect).toBe(false);
   });
 
   it('does not apply Resume dominance to an initial claim or a review wake', async () => {
