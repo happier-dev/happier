@@ -59,6 +59,8 @@ import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/m
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
 import { executeManagedMachinePolicyAction } from './managedMachinePolicyAction';
 import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 
 const approvalWire = vi.hoisted(() => {
     const sockets: Array<{ wake(): void }> = [];
@@ -1074,6 +1076,57 @@ describe('daemon managed Machine Action factory', () => {
         await storeHome('srv_different_home');
         await expect(managedMachineAction({ actionId: 'machines.provisioners.list', input: { homeId: 'srv_home' },
             context: { actionRequestId: 'request' } })).rejects.toMatchObject({ code: 'controller_unavailable' });
+    });
+    it.each(['cli', 'agent', 'mcp'] as const)('invokes installed provisioner checks and managed retention through the real %s executor', async surface => {
+        const native = nativeFixture({ privateNative: true });
+        const signing = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+        const managedMachineAction = createDaemonManagedMachineActionAdapter({ credentials,
+            machineId: 'controller', serverBaseUrl: serverUrl, serverId: configuration.activeServerId,
+            installationIdentity: { installationId: 'installation', privateKey: signing.secretKey },
+            managedProviderOperationAuthority: authority,
+            resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
+                serverUrl, resolveCurrentMachineId: () => 'controller',
+            }),
+            // Only installed module acquisition is substituted. The fixture
+            // contains the real contribution registry and invocation owner.
+            acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
+        });
+        const policy = normalizeActionsSettingsV1({ v: 1, actions: {},
+            approvalWaivedSurfaces: { 'machines.managed.retention.update': ['cli', 'agent', 'mcp'] } });
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({ actionsSettingsV1: policy }),
+            settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (new URL(String(url)).pathname !== '/v1/account/encryption') throw new Error(`Unexpected Account read: ${url}`);
+            return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        });
+        const cli = createCliActionExecutor({ token: credentials.token, credentials, sessionId: 'parity-session',
+            serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            mode: 'plain', ctx: null, managedMachineAction, pluginActionExecutionOwner: 'current_process' });
+        const bridge = createActionToolExecutorBridge({ executor: cli, surface, actionsSettings: policy });
+        const invoke = (actionId: 'machines.provisioners.check' | 'machines.managed.retention.update', input: unknown) => surface === 'cli'
+            ? cli.execute(actionId, input, { surface, actionsSettings: policy, authority: 'account_automation', actionRequestId: 'parity-request' })
+            : bridge.executeActionByToolName(surface === 'agent' ? 'action_execute' : actionId.replaceAll('.', '_'),
+                surface === 'agent' ? { actionId, input } : input, 'parity-session', { actionRequestId: 'parity-request' });
+        const probe = { homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
+            contribution: { pluginId: 'acme.compute', localId: 'vm' } };
+        await expect(invoke('machines.provisioners.check', probe)).resolves.toEqual({ ok: true, result: { available: true } });
+        expect(native.effects()).toBe(1);
+        const changed = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
+            controller: probe.controller, launch: { provider: probe.contribution, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', resource: { contributionRef: probe.contribution, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
+        const seen: unknown[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (new URL(String(url)).pathname !== '/v1/machines/managed/controller/admit-control') throw new Error(`Unexpected native lifecycle request: ${url}`);
+            seen.push(body);
+            return { status: 200, data: { machine: changed, replayed: false } };
+        });
+        const update = { homeId: 'srv_home', managedId: 'managed', expectedIntentRevision: 1,
+            retention: changed.retention, wakeOnAcceptedMessage: true };
+        await expect(invoke('machines.managed.retention.update', update)).resolves.toEqual({ ok: true, result: changed });
+        expect(seen).toEqual([{ action: 'machines.managed.retention.update', requestId: 'parity-request', input: update }]);
+        expect(native.effects()).toBe(1);
     });
     it('refuses a continuation whose original external credential cannot authorize a new enrolled Machine', async () => {
         const post = vi.spyOn(axios, 'post');
