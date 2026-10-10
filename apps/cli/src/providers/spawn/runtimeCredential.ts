@@ -7,7 +7,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import type { ProviderProbeCredential } from '../probe/client';
 import type { ResolvedProviderConnectionRecord } from '../registry/types';
 import { awaitWithinProviderOperation, ProviderOperationAbandonedError, type ProviderOperationLifetime } from '../operationLifetime';
-import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { refreshSavedSecretCatalogForOperation, type SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import {
   resolveProviderCredentialPlaintext,
   resolveProviderCredentialPlaintextAsync,
@@ -18,11 +18,12 @@ import { createProviderRedactionLease } from './redaction';
 
 /** Refresh only the selected shared credential at a new Provider operation's admission. */
 export async function admitRuntimeProviderSavedSecret(input: Readonly<{
-  connection: ResolvedProviderConnectionRecord;
+  connection: Pick<ResolvedProviderConnectionRecord, 'connectionId' | 'machineId' | 'authorization' | 'deployment' | 'source'>;
   providerSettings: ProviderSettingsV1;
   snapshot: ActiveAccountSettingsSnapshot;
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
   lifetime: ProviderOperationLifetime;
+  operationContext?: SavedSecretOperationContextV1;
 }>): Promise<Readonly<
   | { ok: true; snapshot: ActiveAccountSettingsSnapshot }
   | { ok: false; error: ProviderErrorV1 }
@@ -50,13 +51,16 @@ export async function admitRuntimeProviderSavedSecret(input: Readonly<{
     const admitted = await awaitWithinProviderOperation(refreshSavedSecretCatalogForOperation({
       expectedScopeKey: snapshot.scopeKey,
       references: [{ ref }],
+      ...(input.operationContext ? { operationContext: input.operationContext } : {}),
       ...(input.lifetime.signal ? { signal: input.lifetime.signal } : {}),
     }), input.lifetime);
     const current = input.getAccountSettingsSnapshot();
     if (!current || current.scopeKey !== snapshot.scopeKey
       || current.settingsVersion !== snapshot.settingsVersion
       || admitted.settingsVersion !== snapshot.settingsVersion
-      || admitted.settings !== snapshot.settings || current.settings !== snapshot.settings) {
+      || admitted.settings !== snapshot.settings || current.settings !== snapshot.settings
+      || admitted.providerConnectionsCatalog !== snapshot.providerConnectionsCatalog
+      || current.providerConnectionsCatalog !== snapshot.providerConnectionsCatalog) {
       return { ok: false, error: createProviderErrorV1('provider_authorization_changed', context) };
     }
     return { ok: true, snapshot: admitted };

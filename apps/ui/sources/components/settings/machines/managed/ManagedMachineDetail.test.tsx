@@ -55,6 +55,7 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { Item } from '@/components/ui/lists/Item';
 import { MachineProvisionersListResultV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, V2SessionRecordSchema, encodeV2SessionListCursorV1 } from '@happier-dev/protocol';
 
 const operationRpcBoundary = vi.hoisted(() => ({ answer: null as unknown, registryAnswer: null as unknown, schemaAnswer: null as unknown,
     requests: [] as Array<Readonly<{ serverId?: string | null; accountId?: string | null; machineId: string; method: string }>> }));
@@ -171,7 +172,10 @@ describe('managed Machine detail', () => {
             params: expect.objectContaining({ serverId, machineId: machine.controller.machineId }) }));
         await screen.unmount();
     });
-    it.each(['owned', 'shared', 'moved', 'different-home', 'fin-read-failed', 'other-focused-home', 'other-focused-bound'] as const)('shows a birth-provenance archive rule only from known FIN facts in the exact Account/Home (%s)', async ownership => {
+    it.each(['owned', 'shared', 'moved', 'different-home', 'fin-read-failed', 'other-focused-home', 'other-focused-bound',
+        'unloaded-keep', 'unloaded-stop', 'unloaded-delete', 'unloaded-archived', 'unloaded-other-home'] as const)('shows a birth-provenance archive rule only from known FIN facts in the exact Account/Home (%s)', async ownership => {
+        const unloaded = ownership.startsWith('unloaded-');
+        const bound = ownership === 'other-focused-bound' || ownership === 'unloaded-stop' || ownership === 'unloaded-delete';
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-birth-${ownership}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, `srv_managed_birth_${ownership}`);
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
@@ -192,16 +196,17 @@ describe('managed Machine detail', () => {
                     managedCreation: { homeId: ownership === 'different-home' ? 'unrelated-home' : machine.homeId,
                         managedId: machine.id, controller: { machineId: 'controller', installationId: 'installation' } } } } } });
         let triggerReads = 0;
-        const boundRule = ownership === 'other-focused-bound' ? AutomationDefinitionDetailSchema.parse({
+        const boundRule = bound ? AutomationDefinitionDetailSchema.parse({
             id: 'birth-archive-rule', name: 'Archive rule', description: null, enabled: true, workflowDefinitionId: null,
             scopeSessionId: null, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null,
             createdAt: 1, updatedAt: 1, assignments: [{ machineId: machine.controller.machineId, enabled: true, priority: 0, updatedAt: 1 }],
             executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
                 workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' }, inlineDefinition: {
                     version: 1, defaults: {}, inputs: [], blocks: [{ kind: 'action', id: 'managed-scope-end',
-                        actionId: 'machines.managed.power.set', input: { homeId: { kind: 'literal', value: machine.homeId },
+                        actionId: ownership === 'unloaded-delete' ? 'machines.managed.delete' : 'machines.managed.power.set', input: { homeId: { kind: 'literal', value: machine.homeId },
                             managedId: { kind: 'literal', value: machine.id }, when: { kind: 'literal', value: 'after-idle' },
-                            intent: { kind: 'literal', value: 'stop' } } }],
+                            intent: { kind: 'literal', value: ownership === 'unloaded-delete' ? 'delete' : 'stop' },
+                            ...(ownership === 'unloaded-delete' ? { reviewedDependencies: { kind: 'literal', value: true } } : {}) } }],
                 },
             } } },
             triggers: [{ id: 'birth-trigger', revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'sessionLifecycle',
@@ -209,6 +214,14 @@ describe('managed Machine detail', () => {
                 remainingOccurrences: null, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null }],
         }) : null;
         const finRequests: string[] = [];
+        const ownerMetadata = createSessionOwnerMetadataV1({ metadata: source.metadata! });
+        if (!ownerMetadata.ok) throw new Error('Source fixture must have canonical owner metadata');
+        const sourceRecord = V2SessionRecordSchema.parse({ id: source.id, seq: source.seq, createdAt: source.createdAt,
+            updatedAt: source.updatedAt, active: false, activeAt: source.activeAt, encryptionMode: 'plain',
+            metadataLayoutVersion: 1, metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: source.metadata! })),
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata.ownerMetadata), metadataVersion: 1,
+            agentState: null, agentStateVersion: 1, dataEncryptionKey: null, share: null });
+        const cursor = encodeV2SessionListCursorV1('first-page');
         const request: Parameters<typeof setRuntimeFetch>[0] = async input => {
             const url = new URL(String(input));
             finRequests.push(url.pathname);
@@ -217,6 +230,15 @@ describe('managed Machine detail', () => {
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (url.pathname === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'owner' });
+            if (url.pathname === '/v2/sessions' || url.pathname === '/v2/sessions/archived') {
+                expect(url.origin).toBe(target.serverUrl);
+                const archived = url.pathname.endsWith('/archived');
+                const containsSource = archived === (ownership === 'unloaded-archived');
+                // Cold Keep discovery must reach beyond the first page, without publishing list membership.
+                if (containsSource && unloaded && !bound && !url.searchParams.has('cursor'))
+                    return Response.json({ sessions: [], nextCursor: cursor, hasNext: true });
+                return Response.json({ sessions: containsSource ? [sourceRecord] : [], nextCursor: null, hasNext: false });
+            }
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated')
                 return Response.json(createRootLayoutFeaturesResponse({ features: { workflows: { enabled: true } } }));
             if (url.pathname === '/v3/automations') {
@@ -237,9 +259,9 @@ describe('managed Machine detail', () => {
             accountId: 'owner', credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) }, request });
         storage.setState({ profileScope: { serverId: target.id, accountId: 'owner' }, isDataReady: true,
             sessionLocalStateScope: { serverId: target.id, accountId: 'owner' },
-            sessions: { [source.id]: source, earlier: createSessionFixture({ id: 'earlier', serverId: target.id, createdAt: 0,
+            sessions: { ...(unloaded ? {} : { [source.id]: source }), earlier: createSessionFixture({ id: 'earlier', serverId: target.id, createdAt: 0,
                 metadata: { path: '/repo', host: 'guest', machineId: 'guest' } }) } });
-        if (ownership === 'other-focused-home' || ownership === 'other-focused-bound') {
+        if (ownership === 'other-focused-home' || ownership === 'other-focused-bound' || ownership === 'unloaded-other-home') {
             const focused = await upsertAndActivateServer({ serverUrl: 'https://managed-birth-ambient.test', scope: 'tab' });
             storage.setState({ profileScope: { serverId: focused.id, accountId: 'ambient-owner' } });
         }
@@ -252,13 +274,15 @@ describe('managed Machine detail', () => {
             const rows = screen.tree.findAllByType(ManagedScopeRuleRow);
             if (ownership === 'different-home') expect(rows).toHaveLength(0);
             else {
-                expect(rows).toHaveLength(1);
+                expect(rows, JSON.stringify(finRequests)).toHaveLength(1);
                 expect(triggerReads, JSON.stringify(finRequests)).toBeGreaterThan(0);
                 expect(rows[0]!.props.rule.summary, JSON.stringify(finRequests)).toBe(ownership === 'fin-read-failed'
-                    ? t('managedMachines.options.unavailable') : ownership === 'other-focused-bound'
-                        ? t('managedRetention.scopeRuleChosen', { rule: t('managedRetention.scopeRuleStopIdle', { name: machine.launch.name }), name: machine.launch.name })
+                    ? t('managedMachines.options.unavailable') : bound
+                        ? t('managedRetention.scopeRuleChosen', { rule: t(ownership === 'unloaded-delete'
+                            ? 'managedRetention.scopeRuleDeleteIdle' : 'managedRetention.scopeRuleStopIdle', { name: machine.launch.name }), name: machine.launch.name })
                         : t('common.keep'));
-                expect(screen.getTextContent()).toContain('Original source Session');
+                if (!unloaded) expect(screen.getTextContent()).toContain('Original source Session');
+                else expect(storage.getState().sessions[source.id]).toBeUndefined();
                 expect(typeof rows[0]!.props.rule.onOpen).toBe(ownership === 'shared' || ownership === 'fin-read-failed' ? 'undefined' : 'function');
                 if (ownership !== 'shared' && ownership !== 'fin-read-failed') {
                     const router = (await import('expo-router')).router;

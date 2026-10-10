@@ -23,6 +23,7 @@ import { promoteForegroundDaemonServiceAuthority } from './promoteForegroundDaem
 import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
 import type { TrackedSession } from '../types';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import { ProfileRecordV1Schema, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 
 describe('foreground requester Account admission through protected custody', () => {
   it('claims Bob Profile material without publishing Bob as Alice, and refuses lost admission before claiming material', async () => {
@@ -64,10 +65,14 @@ describe('foreground requester Account admission through protected custody', () 
       let granted = true;
       const keyPair = tweetnacl.sign.keyPair();
       const reads: Array<{ path: string; bearer?: string }> = [];
-      const settings = AccountSettingsSchema.parse({ profiles: [{ id: 'bob-profile', name: 'Bob Profile',
-        envVarRequirements: [{ name: 'BOB_PROFILE_SECRET', kind: 'secret', required: true }], environmentVariables: [],
-        defaultPermissionModeByTargetKey: {}, compatibilityByTargetKey: {}, isBuiltIn: false, createdAt: 1, updatedAt: 1, version: '1.0.0' }],
-        secretBindingsByProfileId: { 'bob-profile': { BOB_PROFILE_SECRET: reference } } });
+      const settings = AccountSettingsSchema.parse({});
+      const profile = ProfileRecordV1Schema.parse({ v: 1, id: 'bob-profile', enabled: true, promptStack: [],
+        secretBindings: { BOB_PROFILE_SECRET: reference }, definition: { kind: 'legacy', profile: {
+          id: 'bob-profile', name: 'Bob Profile',
+          envVarRequirements: [{ name: 'BOB_PROFILE_SECRET', kind: 'secret', required: true }], environmentVariables: [],
+          defaultPermissionModeByTargetKey: {}, compatibilityByTargetKey: {}, isBuiltIn: false,
+          createdAt: 1, updatedAt: 1, version: '1.0.0',
+        } } });
       const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} });
       app.addHook('onRequest', async request => { reads.push({ path: request.url, bearer: request.headers.authorization }); });
       app.get('/v1/features', async () => features);
@@ -78,10 +83,11 @@ describe('foreground requester Account admission through protected custody', () 
         signingKeyFingerprint: null, contentKeyFingerprint: null }));
       app.get('/v2/account/settings', async () => ({ version: 1, content: { t: 'plain', v: settings } }));
       app.get('/v1/artifacts', async () => []);
-      app.get('/v1/account/entity-rows/profiles/reference-guard', async () => ({ status: 'ready', revision: 'absent' }));
+      app.get('/v1/account/entity-rows/profiles/reference-guard', async () => ({ status: 'ready', revision: 1 }));
       app.get('/v1/account/entity-rows/profiles/transfer', async () => ({ status: 'absent' }));
-      app.get('/v1/account/entity-rows/profiles', async () => ({ status: 'listed', rows: [], nextCursor: null,
-        complete: true, diagnostics: [], referenceGuardRevision: 'absent', transferControl: { status: 'absent' } }));
+      app.get('/v1/account/entity-rows/profiles', async () => ({ status: 'listed', rows: [{ id: profile.id, revision: 1,
+        content: sealProfileRecordContentV1({ mode: 'plain', material: null, record: profile }) }], nextCursor: null,
+        complete: true, diagnostics: [], referenceGuardRevision: 1, transferControl: { status: 'absent' } }));
       app.get('/v1/machines/machine-1/access', async (_request, reply) => granted ? { machineId: 'machine-1',
         custodian: { accountId: 'alice', displayName: 'Alice' }, access: { custodian: { accountId: 'alice', displayName: 'Alice' },
           role: 'use', resourceMode: 'plain', accessState: 'ready' }, canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [] }
@@ -128,16 +134,18 @@ describe('foreground requester Account admission through protected custody', () 
           settings: AccountSettingsSchema.parse({}), settingsVersion: 7, settingsSecretsReadKeys: [], loadedAtMs: 1 }).snapshot;
         const snapshot = bootstrap.savedSecretOperationContext.readSnapshot();
         if (!snapshot?.scopeKey) throw new Error('Real private Bob settings unavailable');
+        expect(snapshot.profileCatalog).toBeUndefined();
         const dependencies: PrepareForegroundAgentRuntimeAdmissionDependencies = { requesterSessionBootstrap: bootstrap, connectedAccountsOwner: bobPurpose.owner,
           activateSessionPurposeBindings: bobPurpose.owner.activateSessionPurposeBindings,
           resolveExternalAgentSessionPurposeBindingSnapshot: async ({ authorizedPurposes, signal }) =>
             await bobPurpose.owner.resolveCurrentSessionPurposeBindingSnapshot({ authorizedPurposes, signal }),
           connectedServicesMaterializationBaseDir: join(fixture.home, 'bob-materialized') };
-        const request = { ...agentRequest, sessionId, existingSessionId: sessionId, profileId: 'bob-profile',
+        const request = { ...agentRequest, sessionId, existingSessionId: sessionId, profileId: 'bob-profile', profileRecordRevision: 1,
           accountSettingsScopeKey: snapshot.scopeKey, accountSettingsVersion: snapshot.settingsVersion };
         const prepared = await fixture.prepare(request, dependencies);
-        expect(prepared.ok).toBe(true);
+        expect(prepared.ok, prepared.ok ? undefined : JSON.stringify(prepared.error)).toBe(true);
         if (!prepared.ok) throw new Error(`Bob foreground refused: ${prepared.error.code}`);
+        expect(bootstrap.savedSecretOperationContext.readSnapshot()?.profileCatalog).toMatchObject({ status: 'ready', source: 'destination' });
         const claim = await prepared.prepared.claim({ canonicalSessionId: sessionId, httpPort: 43127,
           foregroundSatisfiedProfileSecretRequirementNames: [], nativeHomeSourceEnvironmentValue: aliceNativeHome });
         expect(claim, claim.ok ? undefined : JSON.stringify(claim)).toMatchObject({
@@ -149,6 +157,8 @@ describe('foreground requester Account admission through protected custody', () 
         await expect(readFile(join(nativeHome, 'config.toml'))).rejects.toMatchObject({ code: 'ENOENT' });
         expect(await readFile(join(aliceNativeHome, 'config.toml'), 'utf8')).toBe('alice-private-config');
         expect(getActiveAccountSettingsSnapshot()).toBe(alice);
+        expect(await fixture.prepare({ ...request, attemptId: 'stale-profile-selection', profileRecordRevision: 2 }, dependencies))
+          .toMatchObject({ ok: false, error: { code: 'provider_agent_runtime_unsupported' } });
         const wrongTarget = await fixture.prepare({ ...request, attemptId: 'other-session-claim' }, dependencies);
         expect(wrongTarget.ok).toBe(true);
         if (!wrongTarget.ok) throw new Error('Current Bob foreground preparation failed');

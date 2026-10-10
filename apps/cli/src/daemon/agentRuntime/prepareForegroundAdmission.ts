@@ -17,6 +17,9 @@ import type { ProviderErrorV1, QualifiedConnectedAccountRef, ArtifactSharingReso
 
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import { configuration } from '@/configuration';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { readStoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
@@ -32,7 +35,8 @@ import {
   refreshSavedSecretCatalogForOperation,
   SavedSecretOperationAdmissionError,
 } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import { loadAccountLaunchProfileArtifacts, readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
+import { loadAccountLaunchProfileArtifacts, ProfileCatalogUnavailableError, readProfilesFromAccountSettings, readProfileSettingsFromAccountSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
+import { resolveCanonicalSpawnProfile } from '@/settings/profiles/validateSpawnProfile';
 import {
   ForegroundProfileSecretRecoveryRequiredError,
   LaunchSecretReferenceOverlayError,
@@ -123,33 +127,61 @@ function refusal(
   return { ok: false, error };
 }
 
+class ForegroundSessionAccountAdmissionError extends Error {}
+
+function readForegroundAccountSnapshot(dependencies: PrepareForegroundAgentRuntimeAdmissionDependencies) {
+  try {
+    return dependencies.requesterSessionRuntimeContext
+      ? dependencies.requesterSessionRuntimeContext.readAccountSettingsSnapshot()
+      : dependencies.requesterSessionBootstrap
+        ? dependencies.requesterSessionBootstrap.savedSecretOperationContext.readSnapshot()
+        : getActiveAccountSettingsSnapshot();
+  } catch { return null; }
+}
+
 function readExactForegroundProfileSnapshot(
   request: ForegroundAgentRuntimeAdmissionOwnerRequestV1,
   artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>,
+  readAccountSettingsSnapshot = getActiveAccountSettingsSnapshot,
 ) {
   if (!request.profileId) return null;
-  const settingsSnapshot = getActiveAccountSettingsSnapshot();
+  const settingsSnapshot = readAccountSettingsSnapshot();
   if (
     !settingsSnapshot
     || typeof settingsSnapshot.scopeKey !== 'string'
     || settingsSnapshot.scopeKey.length === 0
     || settingsSnapshot.scopeKey !== request.accountSettingsScopeKey
     || settingsSnapshot.settingsVersion !== request.accountSettingsVersion
+    || (settingsSnapshot.profileCatalog && settingsSnapshot.profileCatalog.status !== 'ready')
   ) {
     return null;
   }
-  const profile = readProfilesFromAccountSettings(
-    settingsSnapshot.settings,
-    artifactsById,
-  ).visibleProfiles.find(
-    (candidate) => candidate.id === request.profileId,
-  );
-  return profile
+  let profile;
+  try {
+    const source = readProfileSettingsFromAccountSnapshot(settingsSnapshot);
+    const resolved = resolveCanonicalSpawnProfile({ rawSettings: source,
+      profileId: request.profileId, artifactsById, profileCatalog: settingsSnapshot.profileCatalog,
+      expectedProfileRecordRevision: request.profileRecordRevision });
+    if (!resolved.ok) return null;
+    profile = readProfilesFromAccountSettings(source, artifactsById, undefined, settingsSnapshot.profileCatalog)
+      .visibleProfiles.find((candidate) => candidate.id === request.profileId);
+  } catch (error) {
+    if (!(error instanceof ProfileCatalogUnavailableError)) throw error;
+    return null;
+  }
+  return profile && profile.enabled !== false
     ? Object.freeze({ settingsSnapshot, profile, scopeKey: settingsSnapshot.scopeKey })
     : null;
 }
 
 export type PrepareForegroundAgentRuntimeAdmissionDependencies = Readonly<{
+  /** Host-private admitted Account ports; never accepted from the foreground request body. */
+  requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
+  requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
+  connectedAccountsOwner?: StablePluginConnectedAccountsOwner;
+  subscribeAccountSettingsSnapshot?: RequesterSessionRuntimeContext['subscribeAccountSettingsSnapshot'];
+  resolveManagedPurposeBindingIntent?: RequesterSessionRuntimeContext['resolveManagedPurposeBindingIntent'];
+  isSessionAccountCurrent?: (canonicalSessionId?: string) => Promise<boolean>;
   refreshSavedSecretCatalogForOperation?: typeof refreshSavedSecretCatalogForOperation;
   activateSessionPurposeBindings?:
     ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings'];
@@ -341,11 +373,13 @@ function hasExactQualifiedPurposeSnapshot(
 
 async function prepareForegroundProviderLaunch(input: Readonly<{
   request: ForegroundAgentRuntimeAdmissionOwnerRequestV1;
+  dependencies: PrepareForegroundAgentRuntimeAdmissionDependencies;
   lease: Awaited<ReturnType<
     typeof acquireAuthoritativePluginRuntimeRegistryLease
   >>;
 }>): Promise<Awaited<ReturnType<typeof prepareDirectProviderLaunch>> | null> {
-  const { request, lease } = input;
+  const { request, lease, dependencies } = input;
+  const requester = dependencies.requesterSessionBootstrap;
   // Only an explicitly native request without a prior Provider binding may
   // bypass the canonical launch owner. An orphaned binding must reach
   // `prepareProviderLaunch`, which owns the typed continuity refusal before
@@ -355,7 +389,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
     await resolveCliFeatureDecisionForServer({
       featureId: 'providers',
       env: process.env,
-      serverUrl: configuration.serverUrl,
+      serverUrl: requester?.serverHttpBaseUrl ?? configuration.serverUrl,
     })
   ).decision.state === 'enabled';
   return await prepareDirectProviderLaunch({
@@ -421,15 +455,18 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
       agentTargetKey,
       agentId,
       lease,
-      getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
-      subscribeAccountSettingsSnapshot: (listener) =>
-        subscribeActiveAccountSettingsSnapshot(() => listener()),
+      getAccountSettingsSnapshot: () => readForegroundAccountSnapshot(dependencies),
+      subscribeAccountSettingsSnapshot: dependencies.subscribeAccountSettingsSnapshot
+        ?? (requester ? undefined : (listener) => subscribeActiveAccountSettingsSnapshot(() => listener())),
+      ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
+      ...(dependencies.resolveManagedPurposeBindingIntent
+        ? { resolveManagedPurposeBindingIntent: dependencies.resolveManagedPurposeBindingIntent } : {}),
       runtimeStateStore: createProviderRuntimeStateStore({
-        happyHomeDir: configuration.happyHomeDir,
+        happyHomeDir: requester ? dependencies.connectedServicesMaterializationBaseDir! : configuration.happyHomeDir,
         machineId,
       }),
       materializationBaseDir: join(
-        configuration.happyHomeDir,
+        requester ? dependencies.connectedServicesMaterializationBaseDir! : configuration.happyHomeDir,
         'providers',
         'materialized',
       ),
@@ -445,14 +482,50 @@ export async function prepareForegroundAgentRuntimeAdmission(
   | Readonly<{ ok: true; prepared: PreparedForegroundAgentRuntimeAdmission }>
   | Extract<ForegroundAgentRuntimeAdmissionResponseV1, { ok: false }>
 > {
+  const requester = dependencies.requesterSessionBootstrap;
+  if (dependencies.requesterSessionRuntimeContext && dependencies.requesterSessionRuntimeContext.bootstrap !== requester) {
+    return refusal(createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }));
+  }
+  const readAccountSettingsSnapshot = () => readForegroundAccountSnapshot(dependencies);
+  const withAccountHome = <T>(operation: () => Promise<T>): Promise<T> => requester
+    ? runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, operation) : operation();
+  const isSessionAccountCurrent = async (canonicalSessionId?: string): Promise<boolean> => {
+    try {
+      if (requester && (!readAccountSettingsSnapshot()
+        || requester.getBoundSessionId() !== (request.existingSessionId ?? request.sessionId)
+        || requester.attribution.machineId !== request.machineId
+        || !await requester.savedSecretOperationContext.isCurrent())) return false;
+      return !dependencies.isSessionAccountCurrent || await dependencies.isSessionAccountCurrent(canonicalSessionId);
+    } catch { return false; }
+  };
+  const assertSessionAccountCurrent = async (canonicalSessionId?: string) => {
+    if (!await isSessionAccountCurrent(canonicalSessionId)) throw new ForegroundSessionAccountAdmissionError('requester_session_not_current');
+  };
+  if (!await isSessionAccountCurrent()
+    || requester && (request.selection || request.previousBinding)
+      && (!dependencies.subscribeAccountSettingsSnapshot || !dependencies.connectedServicesMaterializationBaseDir)) {
+    return refusal(createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }));
+  }
   let launchProfileArtifacts: ReadonlyMap<string, ArtifactSharingResourceV1> | undefined;
   if (request.profileId) {
-    const credentials = await readStoredCredentials();
+    const credentials = requester ? requester.credentials : await readStoredCredentials();
     if (credentials && resolveAccountSettingsScopeKey(credentials) === request.accountSettingsScopeKey) {
-      launchProfileArtifacts = await loadAccountLaunchProfileArtifacts(getActiveAccountSettingsSnapshot()?.settings, credentials);
+      // A cold requester bootstrap has Settings, not a demanded Profile catalog.
+      // Hydrate through its existing private Account owner before exact selection.
+      if (requester && !readAccountSettingsSnapshot()?.profileCatalog) {
+        const { refreshActiveProfileCatalog } = await import('@/settings/profiles/hydrateProfileCatalog');
+        await refreshActiveProfileCatalog({ credentials, operationContext: requester.savedSecretOperationContext });
+        if (!await isSessionAccountCurrent()) {
+          return refusal(createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }));
+        }
+      }
+      const accountSnapshot = readAccountSettingsSnapshot();
+      if (!accountSnapshot?.profileCatalog || accountSnapshot.profileCatalog.status === 'ready') {
+        launchProfileArtifacts = await withAccountHome(() => loadAccountLaunchProfileArtifacts(readProfileSettingsFromAccountSnapshot(accountSnapshot), credentials, undefined, accountSnapshot?.profileCatalog));
+      }
     }
   }
-  const initialExactProfileSnapshot = readExactForegroundProfileSnapshot(request, launchProfileArtifacts);
+  const initialExactProfileSnapshot = readExactForegroundProfileSnapshot(request, launchProfileArtifacts, readAccountSettingsSnapshot);
   if (request.profileId && !initialExactProfileSnapshot) {
     return refusal(createProviderErrorV1(
       'provider_agent_runtime_unsupported',
@@ -489,6 +562,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       )({
         expectedScopeKey,
         references,
+        ...(requester ? { operationContext: requester.savedSecretOperationContext } : {}),
       });
     } catch (error) {
       return refusal(createProviderErrorV1(
@@ -594,6 +668,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
     const providerLaunch = await prepareForegroundProviderLaunch({
       request,
       lease,
+      dependencies,
     });
     if (providerLaunch && !providerLaunch.ok) {
       return refusal(providerLaunch.error);
@@ -617,6 +692,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       transferProviderLaunchMaterializationCleanupOwnership =
         activeProviderLaunch.transferLaunchMaterializationCleanupOwnership;
     }
+    await assertSessionAccountCurrent();
     const bridge = await prepareForegroundAgentRuntimeBootstrapForLease({
       target: request.backendTarget,
       lease,
@@ -967,7 +1043,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       effectiveConnectedServices || requestAuthMaterializedRoot,
     );
     const readExactProfileSnapshot = () =>
-      readExactForegroundProfileSnapshot(request, launchProfileArtifacts);
+      readExactForegroundProfileSnapshot(request, launchProfileArtifacts, readAccountSettingsSnapshot);
     const stateSharingCatalogEntry = lease.registry.acquireAgentCatalogEntry
       ? await lease.registry.acquireAgentCatalogEntry(request.agentId)
       : lease.registry.contributes.catalogEntriesById[request.agentId] ?? null;
@@ -978,6 +1054,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
     return {
       ok: true,
       prepared: {
+        ...(dependencies.requesterSessionRuntimeContext
+          ? { requesterSessionRuntimeContext: dependencies.requesterSessionRuntimeContext } : {}),
         authorization: bridge.authorization,
         ...(sessionTeamCredentialBindings && sessionTeamCredentialBindings.length > 0
           ? { teamCredentialBindings: sessionTeamCredentialBindings }
@@ -995,7 +1073,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   : {}),
               })
             : Object.freeze([]),
-        ...(stateSharingDescriptor?.providerSupportStatus === 'supported'
+        ...(!requester && stateSharingDescriptor?.providerSupportStatus === 'supported'
           && stateSharingDescriptor.nativeHome
           ? {
               nativeHomeSourceEnvironmentKey:
@@ -1005,6 +1083,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
         retirementSignal: registration.retirementSignal,
         isCurrent: () => (
           registration.isCurrent() && connectedAccountLaunchCurrent
+          && (!requester || readAccountSettingsSnapshot() !== null)
         ),
         ...(stateSharingCatalogEntry?.resolveSessionRuntimePreferences
           ? {
@@ -1013,11 +1092,12 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   registration.retirementSignal.aborted
                   || !registration.isCurrent()
                   || !connectedAccountLaunchCurrent
+                  || !await isSessionAccountCurrent()
                 ) {
                   return {};
                 }
                 const result = await stateSharingCatalogEntry.resolveSessionRuntimePreferences!(input);
-                return registration.isCurrent() && connectedAccountLaunchCurrent
+                return registration.isCurrent() && connectedAccountLaunchCurrent && await isSessionAccountCurrent()
                   ? result
                   : {};
               },
@@ -1031,6 +1111,10 @@ export async function prepareForegroundAgentRuntimeAdmission(
         }) => {
           let connectedServiceClaimSucceeded = false;
           try {
+            if (requester && canonicalSessionId !== requester.getBoundSessionId()) {
+              return { ok: false as const, error: createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }) };
+            }
+            await assertSessionAccountCurrent(canonicalSessionId);
             if (activeProviderLaunch) {
               const current =
                 await activeProviderLaunch.revalidateBeforeCommit();
@@ -1119,8 +1203,10 @@ export async function prepareForegroundAgentRuntimeAdmission(
             const expectedConnectedAccountByPurposeKey =
               new Map<string, QualifiedConnectedAccountRef>();
             const connectedAccountsOwner =
-              lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+              dependencies.connectedAccountsOwner
+              ?? (requester ? undefined : lease.registry.resolveConnectedAccountPurposeBindingOwner?.());
             const assertExpectedConnectedAccountsCurrent = async (): Promise<void> => {
+              await assertSessionAccountCurrent(canonicalSessionId);
               if (!connectedAccountLaunchCurrent) {
                 throw new Error(
                   'Foreground Connected Account binding changed during preparation',
@@ -1347,7 +1433,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
               }
               let stateSharingEnvironment: Readonly<Record<string, string>> =
                 Object.freeze({});
-              if (!existingMaterializedRoot) {
+              if (!existingMaterializedRoot && !requester) {
                 const policy = resolveNativeAgentSessionStateSharingPolicy(
                   request.agentId,
                 );
@@ -1405,7 +1491,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 : boundNativeHomeFilePurposes;
               if (boundFilePurposes.length > 0) {
                 const connectedAccountsOwner =
-                  lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+                  dependencies.connectedAccountsOwner
+                  ?? (requester ? undefined : lease.registry.resolveConnectedAccountPurposeBindingOwner?.());
                 if (!sessionPurposeBindingLease || !connectedAccountsOwner) {
                   throw new Error(
                     'Foreground Connected Account native-home credential authority is unavailable',
@@ -1435,6 +1522,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                     }),
                     signal: registration.retirementSignal,
                   });
+                  await assertSessionAccountCurrent(canonicalSessionId);
                   if (materialization.kind !== 'files') {
                     throw new Error(
                       'Connected Account native-home credential returned the wrong materialization kind',
@@ -1507,6 +1595,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
 
             const currentIdentity =
               await readProcessIdentityByPid(request.foregroundPid);
+            await assertSessionAccountCurrent(canonicalSessionId);
             const processStartTimeMs =
               currentIdentity?.processStartTimeMs;
             const snapshot = currentIdentity
@@ -1628,6 +1717,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                     ? [retainedAgent.sourceCustody.immutableGenerationId]
                     : [],
                 attach: async () => {
+                  await assertSessionAccountCurrent(canonicalSessionId);
                   authorityState.authority =
                     await publishAgentRuntimeDaemonServiceAuthority({
                       happyHomeDir: configuration.happyHomeDir,
@@ -1728,7 +1818,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
             return {
               ok: false as const,
               error: createProviderErrorV1(
-                'provider_agent_runtime_unsupported',
+                error instanceof ForegroundSessionAccountAdmissionError ? 'provider_authorization_changed' : 'provider_agent_runtime_unsupported',
                 {
                   connectionId:
                     request.selection?.ref.providerConnectionId
@@ -1746,9 +1836,9 @@ export async function prepareForegroundAgentRuntimeAdmission(
         cleanup,
       },
     };
-  } catch {
+  } catch (error) {
     return refusal(createProviderErrorV1(
-      'provider_agent_runtime_unsupported',
+      error instanceof ForegroundSessionAccountAdmissionError ? 'provider_authorization_changed' : 'provider_agent_runtime_unsupported',
       {
         connectionId:
           request.selection?.ref.providerConnectionId ?? undefined,

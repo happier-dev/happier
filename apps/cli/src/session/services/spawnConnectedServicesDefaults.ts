@@ -2,7 +2,7 @@ import {
   resolveConnectedServiceSessionSelection,
 } from '@happier-dev/agents';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
 import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
@@ -10,13 +10,17 @@ import type { ActionExecutorDeps, AgentConnectedAccountPurposeDefault, Qualified
 import { SessionTeamCredentialBindingIntentsV1Schema, sessionTeamCredentialSlotKeyV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams';
 
-import type { StoredCredentials } from '@/persistence';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { refreshActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import { isAccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
 export function agentSupportsSpawnConnectedServicesDefaults(agentId: string): boolean {
@@ -118,7 +122,8 @@ export class ConnectedServicesDefaultUnavailableError extends Error {
  * substitute an in-process settings snapshot for this resolution: a second settings surface is
  * exactly the stale-snapshot split-brain that silently killed run defaulting live (QA2-F02).
  * Consumed by session spawn (createCliActionDeps) AND execution-run start (connectedServicesEnv).
- * Ordinary bootstrap failures retain the legacy no-default behavior. A
+ * Network bootstrap failures retain the legacy no-default behavior. Invalid settings
+ * content refuses defaulting rather than selecting native authentication. A
  * persisted Team-resource default is different: it is an explicit selection,
  * so missing or stale current-resource evidence throws the typed unavailable
  * error instead of silently falling back to native authentication.
@@ -126,6 +131,7 @@ export class ConnectedServicesDefaultUnavailableError extends Error {
 export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params: Readonly<{
   agentId: string;
   credentials: StoredCredentials;
+  operationContext?: SavedSecretOperationContextV1;
   resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
 }>): Promise<Readonly<{
   connectedServices: ConnectedServiceBindingsV2;
@@ -141,15 +147,36 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
   const agentId = params.agentId.trim();
   if (!agentSupportsSpawnConnectedServicesDefaults(agentId)) return null;
 
+  const resolve = async () => {
+  const serverHttpBaseUrl = params.operationContext?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   try {
     const accountSettingsContext = await bootstrapAccountSettingsContext({
       credentials: params.credentials,
       mode: 'blocking',
+      publication: 'invocation',
       deps: { applySideEffects: () => undefined },
     });
+    const operationContext = params.operationContext ?? createInvocationSavedSecretOperationContextV1({
+      credentials: params.credentials, snapshot: accountSettingsContext, serverHttpBaseUrl,
+      isCurrent: async () => resolveServerHttpBaseUrl() === serverHttpBaseUrl
+        && (await readStoredCredentials())?.token === params.credentials.token,
+    });
+    if (params.operationContext && !await operationContext.replaceAccountSettings(accountSettingsContext)) {
+      throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+    }
+    const purposeCatalog = await refreshActiveConnectedAccountCatalog({ credentials: params.credentials,
+      key: 'purposes', operationContext });
+    if (purposeCatalog.status !== 'ready' || purposeCatalog.record.key !== 'purposes') {
+      throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+    }
+    const admittedSnapshot = operationContext.readSnapshot();
+    if (!admittedSnapshot || !await operationContext.isCurrent()) {
+      throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+    }
+    const accountSettings = admittedSnapshot.settings;
     const teamIds = readTeamResourceDefaultTeamIds({
-      accountSettings: accountSettingsContext.settings,
-      agentId,
+      accountSettings,
+      agentId, purposeCatalog,
     });
     let teamCredentialResourceCatalog: SpawnConnectedServicesTeamResourceCatalog | undefined;
     if (teamIds.length > 0) {
@@ -167,8 +194,8 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
       }
     }
     const disposition = resolveSpawnConnectedServicesDefaultDisposition({
-      accountSettings: accountSettingsContext.settings,
-      agentId,
+      accountSettings,
+      agentId, purposeCatalog,
       ...(teamCredentialResourceCatalog ? { teamCredentialResourceCatalog } : {}),
     });
     if (disposition.kind === 'unavailable') {
@@ -176,7 +203,7 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
     }
     if (disposition.kind === 'native') return null;
     const teamCredentialBindings = resolvePurposeTeamCredentialBindingIntents({
-      teamResourceSelections: readAgentPurposeDefaults({ accountSettings: accountSettingsContext.settings, agentId })
+      teamResourceSelections: readAgentPurposeDefaults({ accountSettings, agentId, purposeCatalog })
         .flatMap((entry) => (
           entry.teamResource
             ? [{ purpose: entry.purpose, services: [entry.service], ...entry.teamResource }]
@@ -184,26 +211,35 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
         )),
       teamCredentialResourceCatalog,
     });
+    if (!await operationContext.isCurrent()) {
+      throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+    }
     return {
       connectedServices: disposition.bindings,
       connectedServicesUpdatedAt: Date.now(),
       ...(teamCredentialBindings.length > 0 ? { teamCredentialBindings } : {}),
     };
   } catch (error) {
+    if (isAccountSettingsContentInvalidError(error)) {
+      throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+    }
     if (error instanceof ConnectedServicesDefaultUnavailableError) throw error;
     return null;
   }
+  };
+  return params.operationContext ? runWithServerHttpBaseUrl(params.operationContext.serverHttpBaseUrl, resolve) : resolve();
 }
 
 /**
  * The Agent's default authentication, read through the one owner
- * (`connectedAccountPurposeBindingsV1`, with released service-keyed defaults
- * migrated forward on read). The Agent's purposes come from its current
+ * (the opened purpose catalog, with released service-keyed defaults migrated
+ * forward on read). The Agent's purposes come from its current
  * contribution projection — the same declarations its Session materializes.
  */
 function readAgentPurposeDefaults(params: Readonly<{
   accountSettings: unknown;
   agentId: string;
+  purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
 }>): readonly AgentConnectedAccountPurposeDefault[] {
   const snapshot = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
     agentId: params.agentId,
@@ -216,6 +252,8 @@ function readAgentPurposeDefaults(params: Readonly<{
     : {};
   return resolveAgentConnectedAccountPurposeDefaults({
     settings,
+    ...(params.purposeCatalog?.status === 'ready' && params.purposeCatalog.record.key === 'purposes'
+      ? { purposeBindings: params.purposeCatalog.record.value } : {}),
     agentId: params.agentId,
     consumer,
     declarations: snapshot.authorizedPurposes.flatMap((scope) => (
@@ -227,6 +265,7 @@ function readAgentPurposeDefaults(params: Readonly<{
 function readTeamResourceDefaultTeamIds(params: Readonly<{
   accountSettings: unknown;
   agentId: string;
+  purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
 }>): readonly string[] {
   return Array.from(new Set(readAgentPurposeDefaults(params).flatMap((entry) => (
     entry.teamResource ? [entry.teamResource.teamId] : []
@@ -390,25 +429,20 @@ export async function resolvePurposeTeamCredentialBindingIntentsFromHome(params:
 export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly<{
   accountSettings: unknown;
   agentId: string;
+  purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   teamCredentialResourceCatalog?: SpawnConnectedServicesTeamResourceCatalog;
 }>): SpawnConnectedServicesDefaultDisposition {
   const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(params.agentId);
   if (supportedServiceIds.length === 0) return { kind: 'native' };
 
-  const settingsRecord = params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
-    ? params.accountSettings as { connectedAccountPurposeBindingsV1?: unknown }
-    : {};
-  if (
-    settingsRecord.connectedAccountPurposeBindingsV1 !== undefined
-    && !QualifiedConnectedAccountPurposeBindingsV1Schema.safeParse(settingsRecord.connectedAccountPurposeBindingsV1).success
-  ) {
+  if (params.purposeCatalog && (params.purposeCatalog.status !== 'ready' || params.purposeCatalog.record.key !== 'purposes')) {
     return {
       kind: 'unavailable',
       reason: 'connected_services_default_settings_invalid',
     };
   }
 
-  const defaults = readAgentPurposeDefaults({ accountSettings: params.accountSettings, agentId: params.agentId });
+  const defaults = readAgentPurposeDefaults(params);
   const configuredBindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)
     ?.bindingsByServiceId ?? {};
   const teamIdByServiceId = new Map(defaults.flatMap((entry) => (
@@ -464,6 +498,7 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
 export function resolveSpawnConnectedServicesDefaults(params: Readonly<{
   accountSettings: unknown;
   agentId: string;
+  purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   teamCredentialResourceCatalog?: SpawnConnectedServicesTeamResourceCatalog;
 }>): ConnectedServiceBindingsV2 | null {
   const disposition = resolveSpawnConnectedServicesDefaultDisposition(params);

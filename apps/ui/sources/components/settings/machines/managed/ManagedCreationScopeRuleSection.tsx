@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -15,10 +14,11 @@ import {
   useSession,
   getStorage,
 } from '@/sync/domains/state/storage';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
   readManagedCreationScopeRule,
+  isManagedCreationScopeBirthSession,
+  readManagedCreationScopeBirthSessionId,
   type ManagedCreationScopeRule,
 } from '@/sync/ops/actions/managedCreationScopeBinding';
 import {
@@ -55,10 +55,7 @@ function ScopeRuleReader(
     const matches: string[] = [];
     for (const session of Object.values(state.sessions)) {
       if (session.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, props.serverId)) continue;
-      const parsed = SessionCreationCorrespondenceV1ReadSchema.safeParse(readSessionOwnerMetadataView(session)?.sessionCreationCorrespondenceV1);
-      const birth = parsed.success ? parsed.data.recipe.managedCreation : undefined;
-      // Birth Controller identity is immutable evidence, not current authority; Move does not rewrite it.
-      if (birth?.homeId === props.machine.homeId && birth.managedId === props.machine.id) matches.push(session.id);
+      if (isManagedCreationScopeBirthSession(session, props.machine)) matches.push(session.id);
     }
     return matches.length === 1 ? matches[0]! : null;
   }, [props.serverId, props.accountId, props.machine.homeId, props.machine.id]));
@@ -66,7 +63,23 @@ function ScopeRuleReader(
     () => readManagedCreationScopeRule(sets, props.machine),
     [sets, props.machine.homeId, props.machine.id],
   );
-  const source = rule?.binding.source ?? (sourceSessionId ? { kind: 'session' as const, sessionId: sourceSessionId } : null);
+  const identity = React.useMemo(() => ({}), [props.binding, props.machine.homeId, props.machine.id]);
+  const [birthRead, setBirthRead] = React.useState<Readonly<{ identity: object; sessionId: string | null }> | null>(null);
+  React.useEffect(() => {
+    if (sourceSessionId || rule || !props.binding.isCurrent()) return;
+    const controller = new AbortController();
+    const retirement = props.binding.onRetire(() => controller.abort());
+    readManagedCreationScopeBirthSessionId({ machine: { homeId: props.machine.homeId, id: props.machine.id },
+      accountLifetime: props.binding, signal: controller.signal }).then(sessionId => {
+      if (!controller.signal.aborted && props.binding.isCurrent()) setBirthRead({ identity, sessionId });
+    }).catch(() => {
+      if (!controller.signal.aborted && props.binding.isCurrent()) setBirthRead(previous =>
+        previous?.identity === identity ? previous : { identity, sessionId: null });
+    });
+    return () => { controller.abort(); retirement.dispose(); };
+  }, [identity, sourceSessionId, rule, sets, props.binding, props.machine.homeId, props.machine.id]);
+  const birthSessionId = sourceSessionId ?? (birthRead?.identity === identity && props.binding.isCurrent() ? birthRead.sessionId : null);
+  const source = rule?.binding.source ?? (birthSessionId ? { kind: 'session' as const, sessionId: birthSessionId } : null);
   if (!source) return null;
   return (
     <ScopeRuleSection

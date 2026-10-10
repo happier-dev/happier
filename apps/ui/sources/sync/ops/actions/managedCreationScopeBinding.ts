@@ -7,9 +7,19 @@ import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/work
 import { SessionTriggerAddRequestV1Schema, SessionTriggerUpdateRequestV1Schema, SessionTriggerListResultV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerListResultV1Schema,
     WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveUiClientEncryptionRequirementForScope } from '@/sync/domains/settings/clientEncryptionRequirement';
+import { getStorage } from '@/sync/domains/state/storage';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
+import { serverFetch } from '@/sync/http/client';
+import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
@@ -23,6 +33,58 @@ export type ManagedCreationScopeBindingResult = Readonly<{ kind: 'kept' }>
     | Readonly<{ kind: 'bound'; binding: ManagedCreationScopeBinding }>
     | Readonly<{ kind: 'unavailable'; availability: ManagedMachineArchiveChoiceAvailability }>
     | Readonly<{ kind: 'incomplete'; code: string; artifactId?: string }>;
+
+/** Birth provenance stays independent of today's controller after a Move. */
+export function isManagedCreationScopeBirthSession(session: Pick<Session, 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'>,
+    machine: Readonly<{ homeId: string; id: string }>): boolean {
+    const parsed = SessionCreationCorrespondenceV1ReadSchema.safeParse(readSessionOwnerMetadataView(session)?.sessionCreationCorrespondenceV1);
+    const birth = parsed.success ? parsed.data.recipe.managedCreation : undefined;
+    return birth?.homeId === machine.homeId && birth.managedId === machine.id;
+}
+
+/**
+ * Keep has no FIN trigger to name its source. Read the addressed Home's existing active and
+ * archived Session pages, including owner metadata, without publishing Sessions or list membership.
+ */
+export async function readManagedCreationScopeBirthSessionId(input: Readonly<{
+    machine: Readonly<{ homeId: string; id: string }>;
+    accountLifetime: ServerAccountScopeLifetime;
+    signal: AbortSignal;
+}>): Promise<string | null> {
+    const current = () => !input.signal.aborted && input.accountLifetime.isCurrent();
+    if (!current()) throw new Error('action_account_scope_changed');
+    return runWithServerRequestAuthorityForServerAccountScope({ scope: input.accountLifetime.scope,
+        activeRequest: (path, init) => serverFetch(path, init, { includeAuth: false }) }, async authority => {
+        const credentials = authority.context.credentials;
+        if (!credentials || !current()) throw new Error('action_account_scope_changed');
+        const accountCurrentness = await fetchAccountEncryptionCurrentness(credentials, { request: authority.request, signal: input.signal });
+        const encryption = accountCurrentness.mode === 'plain' ? null : await createEncryptionFromAuthCredentials(credentials);
+        const matches = new Set<string>();
+        const sessionDataKeys = new Map<string, Uint8Array>();
+        const sessionDataKeyEnvelopes = new Map<string, string>();
+        for (const path of ['/v2/sessions', '/v2/sessions/archived']) {
+            let cursor: string | null = null;
+            do {
+                const page = await fetchAndApplySessions({ serverId: authority.scope.serverId,
+                    source: { kind: 'ordinary', path, allowV1Fallback: false }, sessionListCursor: cursor,
+                    credentials, accountCurrentness, encryption, sessionDataKeys, sessionDataKeyEnvelopes,
+                    request: authority.request, signal: input.signal, shouldContinue: current,
+                    clientEncryptionRequirement: resolveUiClientEncryptionRequirementForScope({ scope: authority.scope,
+                        focusedSettings: getStorage().getState().settings }),
+                    awaitSessionListHydration: true,
+                    applySessions: sessions => {
+                        if (!current()) return;
+                        for (const session of sessions) if (isManagedCreationScopeBirthSession(session, input.machine)) matches.add(session.id);
+                    }, log: { log: () => {} } });
+                if (!page.current || !current()) throw new Error('action_account_scope_changed');
+                if (page.metadataUpgradeRequiredCount) throw new Error('session_owner_metadata_unavailable');
+                for (const id of matches) if (page.isSessionCurrent?.(id) === false) matches.delete(id);
+                cursor = page.hasNext ? page.nextCursor : null;
+            } while (cursor !== null);
+        }
+        return matches.size === 1 ? [...matches][0]! : null;
+    });
+}
 
 /**
  * The one recognizer of a managed creation-scope rule inside FIN's trigger sets: an inline Stop/Delete
