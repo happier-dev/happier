@@ -1,11 +1,14 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ScmDiffSummaryResultClearInputSchema, ScmDiffSummaryResultClearResponseSchema, ScmDiffSummaryResultResponseSchema, type ScmDiffSummaryResultClearResponse } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import { ScmComparisonCaptureOutputSchema, ScmReviewedMarkInputSchema, buildScmReviewedMarksKey, createScmReviewedMarksRecordPort } from '@happier-dev/protocol/scm';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { runMachineScmRpcWithFallback } from '@/sync/ops/scm/machineScm';
 import { runSessionScmRpc } from '@/sync/ops/sessionScm';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import { createAccountKvJsonTransport } from '@/sync/ops/account/accountKvJsonTransport';
+import { scmReviewComparisonMatchesSource } from '@/sync/domains/scm/diffSummary/selection';
 
 /** Admission and schemas belong to Actions; repository policy belongs to SCM. */
 export function createUiScmAction(account?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['scmActionExecute']> {
@@ -20,6 +23,45 @@ export function createUiScmAction(account?: LazyActionAccountContext): NonNullab
         const serverId = account?.serverId ?? context.serverId;
         const accountId = account?.accountId ?? context.runtimeAccountId;
         const target = context.externalActionTarget;
+        if (actionId === 'scm.diffSummary.reviewed.mark' || actionId === 'scm.diffSummary.reviewed.unmark') {
+            if (!account) return { success: false, errorCode: 'reviewed_marks_unavailable', error: 'Captured Account credentials are required for personal reviewed marks.' };
+            const selection = ScmReviewedMarkInputSchema.parse(input);
+            const sessionId = target?.kind === 'session' ? target.sessionId : target?.kind === 'machine' ? undefined : context.defaultSessionId;
+            if (!sessionId && target?.kind !== 'machine') return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+            if ('v' in selection && sessionId && selection.sessionId && selection.sessionId !== sessionId) {
+                return { success: false, errorCode: 'reviewed_marks_unavailable', error: 'The captured comparison does not belong to the selected Session.' };
+            }
+            const read = <T extends Readonly<{ cwd: string }>>(readMethod: string, payload: T) => target?.kind === 'machine'
+                ? runMachineScmRpcWithFallback(target.machineId, readMethod, payload, { serverId, accountId, signal: context.signal })
+                : runSessionScmRpc(sessionId!, readMethod, { ...payload, cwd: undefined }, serverId, context.signal, accountId);
+            const comparison = await (async () => {
+                if ('v' in selection) {
+                    const captured = ScmComparisonCaptureOutputSchema.safeParse(await read(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, {
+                        cwd: selection.cwd, comparisonId: selection.comparisonId, source: selection.source,
+                        ...(sessionId ?? selection.sessionId ? { sessionId: sessionId ?? selection.sessionId } : {}),
+                    }));
+                    account.assertCurrent();
+                    if (!captured.success || !captured.data.success || captured.data.comparison.id !== selection.comparisonId
+                        || captured.data.comparison.repository.rootPath !== selection.cwd
+                        || !scmReviewComparisonMatchesSource(selection.source, captured.data.comparison.source, captured.data.comparison)) return null;
+                    return captured.data.comparison;
+                }
+                const saved = ScmDiffSummaryResultResponseSchema.safeParse(await read(RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ,
+                    { cwd: selection.cwd, resultId: selection.resultId }));
+                account.assertCurrent();
+                return saved.success && saved.data.success && saved.data.result.resultId === selection.resultId
+                    && saved.data.result.output.comparison?.repository.rootPath === selection.cwd ? saved.data.result.output.comparison : null;
+            })();
+            if (!comparison) return { success: false, errorCode: 'reviewed_marks_unavailable', error: 'The exact captured comparison is unavailable for this caller.' };
+            const { encryption } = await account.resolveAccountEncryption();
+            account.assertCurrent();
+            const shouldContinue = () => { try { account.assertCurrent(); context.signal?.throwIfAborted(); return true; } catch { return false; } };
+            const transport = createAccountKvJsonTransport({ key: buildScmReviewedMarksKey(comparison.id), credentials: account.credentials,
+                request: account.request, encryption, shouldContinue });
+            const result = await createScmReviewedMarksRecordPort({ comparison, transport }).setReviewed(selection.changeRefs, actionId === 'scm.diffSummary.reviewed.mark');
+            account.assertResultCurrent(getActionSpec(actionId).sideEffectClass);
+            return result;
+        }
         const machineInventory = actionId === 'scm.diffSummary.result.list' || actionId === 'scm.diffSummary.result.clear'
             || actionId === 'scm.hostingRepository.resolveAddress';
         if (machineInventory && target?.kind !== 'machine') return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };

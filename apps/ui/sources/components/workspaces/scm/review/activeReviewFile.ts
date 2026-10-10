@@ -20,17 +20,20 @@ export type ActiveReviewFileState = Readonly<{
 
 const EMPTY: ActiveReviewFileState = Object.freeze({ presented: false, activePath: null, focusRequest: null });
 
-const states = new Map<string, ActiveReviewFileState>();
+// Each mounted presentation retires only itself; live selection still has one scope owner.
+const states = new Map<string, { state: ActiveReviewFileState; presenters: Set<string> }>();
 const listeners = new Map<string, Set<() => void>>();
 let nextNonce = 1;
 
 function write(key: string, next: ActiveReviewFileState): void {
-    states.set(key, next);
+    const entry = states.get(key) ?? { state: EMPTY, presenters: new Set<string>() };
+    entry.state = next;
+    states.set(key, entry);
     for (const listener of listeners.get(key) ?? []) listener();
 }
 
 export function readActiveReviewFile(key: string): ActiveReviewFileState {
-    const state = states.get(key) ?? EMPTY;
+    const state = states.get(key)?.state ?? EMPTY;
     if (state.focusRequest?.isCurrent && !state.focusRequest.isCurrent()) return { ...state, focusRequest: null };
     return state;
 }
@@ -49,12 +52,18 @@ export function subscribeActiveReviewFile(key: string, listener: () => void): ()
 }
 
 /** Review reports whether it is on screen and which file it is on. Unchanged facts notify nobody. */
-export function publishActiveReviewFile(key: string, input: Readonly<{ presented: boolean; activePath: string | null }>): void {
+export function publishActiveReviewFile(key: string, input: Readonly<{ presented: boolean; activePath: string | null; presenterId?: string }>): void {
     const current = readActiveReviewFile(key);
-    const activePath = input.presented ? input.activePath : null;
-    if (current.presented === input.presented && current.activePath === activePath) return;
-    write(key, { presented: input.presented, activePath,
-        focusRequest: input.presented || current.focusRequest?.comparison ? current.focusRequest : null });
+    const entry = states.get(key) ?? { state: EMPTY, presenters: new Set<string>() };
+    const presenterId = input.presenterId ?? 'legacy';
+    if (input.presented) entry.presenters.add(presenterId);
+    else entry.presenters.delete(presenterId);
+    states.set(key, entry);
+    const presented = entry.presenters.size > 0;
+    const activePath = presented ? input.presented ? input.activePath : current.activePath : null;
+    if (current.presented === presented && current.activePath === activePath) return;
+    write(key, { presented, activePath,
+        focusRequest: presented || current.focusRequest?.comparison ? current.focusRequest : null });
 }
 
 /**

@@ -1,10 +1,8 @@
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
-import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
-import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
+import { invokeWorkspaceFileSystemMutation, type WorkspaceFileSystemMutationResponse } from './actionInvocation';
 
 import type { WorkspaceFileSystemTarget } from './directoryBrowsing';
 
@@ -21,30 +19,19 @@ function resolveAbsoluteWorkspacePath(params: Readonly<{
     });
 }
 
-type WorkspaceRenamePathRequest = Readonly<{ rootPath: string; from: string; to: string; overwrite: boolean }>;
-
-export type WorkspaceRenamePathResponse =
-    | Readonly<{ success: true }>
-    | Readonly<{ success: false; error: string; errorCode?: string }>;
+export type WorkspaceRenamePathResponse = WorkspaceFileSystemMutationResponse;
 
 export async function workspaceRenamePath(
     target: WorkspaceFileSystemTarget,
     input: Readonly<{ from: string; to: string; overwrite?: boolean }>,
 ): Promise<WorkspaceRenamePathResponse> {
     try {
-        const response = await callGuardedMachineRpcWithPolicy<unknown, WorkspaceRenamePathRequest>({
-            machineId: target.machineId,
-            serverId: target.serverId,
-            method: getActionSpec('daemon.filesystem.rename').bindings!.rpcMethod!,
-            payload: {
-                rootPath: target.rootPath,
-                from: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.from }),
-                to: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.to }),
-                overwrite: input.overwrite === true,
-            },
+        return await invokeWorkspaceFileSystemMutation(target, 'daemon.filesystem.rename', {
+            rootPath: target.rootPath,
+            from: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.from }),
+            to: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.to }),
+            overwrite: input.overwrite === true,
         });
-
-        return assertRpcResponseWithSuccess<WorkspaceRenamePathResponse>(response);
     } catch (error) {
         return {
             success: false,
@@ -54,29 +41,18 @@ export async function workspaceRenamePath(
     }
 }
 
-type WorkspaceDeletePathRequest = Readonly<{ rootPath: string; path: string; recursive: boolean }>;
-
-export type WorkspaceDeletePathResponse =
-    | Readonly<{ success: true }>
-    | Readonly<{ success: false; error: string; errorCode?: string }>;
+export type WorkspaceDeletePathResponse = WorkspaceFileSystemMutationResponse;
 
 export async function workspaceDeletePath(
     target: WorkspaceFileSystemTarget,
     input: Readonly<{ path: string; recursive?: boolean }>,
 ): Promise<WorkspaceDeletePathResponse> {
     try {
-        const response = await callGuardedMachineRpcWithPolicy<unknown, WorkspaceDeletePathRequest>({
-            machineId: target.machineId,
-            serverId: target.serverId,
-            method: getActionSpec('daemon.filesystem.delete').bindings!.rpcMethod!,
-            payload: {
-                rootPath: target.rootPath,
-                path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.path }),
-                recursive: input.recursive === true,
-            },
+        return await invokeWorkspaceFileSystemMutation(target, 'daemon.filesystem.delete', {
+            rootPath: target.rootPath,
+            path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.path }),
+            recursive: input.recursive === true,
         });
-
-        return assertRpcResponseWithSuccess<WorkspaceDeletePathResponse>(response);
     } catch (error) {
         return {
             success: false,

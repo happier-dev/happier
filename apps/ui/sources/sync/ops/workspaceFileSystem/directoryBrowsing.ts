@@ -1,10 +1,10 @@
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { assertRpcResponseWithSuccess } from '@/sync/runtime/assertRpcResponseWithSuccess';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
+import { invokeWorkspaceFileSystemMutation, type WorkspaceFileSystemMutationResponse } from './actionInvocation';
 
 export type WorkspaceFileSystemTarget = Readonly<{
     machineId: string;
@@ -26,28 +26,17 @@ function resolveAbsoluteWorkspacePath(params: Readonly<{
     });
 }
 
-type WorkspaceCreateDirectoryRequest = Readonly<{ rootPath: string; path: string }>;
-
-export type WorkspaceCreateDirectoryResponse =
-    | Readonly<{ success: true }>
-    | Readonly<{ success: false; error: string; errorCode?: string }>;
+export type WorkspaceCreateDirectoryResponse = WorkspaceFileSystemMutationResponse;
 
 export async function workspaceCreateDirectory(
     target: WorkspaceFileSystemTarget,
     path: string,
 ): Promise<WorkspaceCreateDirectoryResponse> {
     try {
-        const response = await callGuardedMachineRpcWithPolicy<unknown, WorkspaceCreateDirectoryRequest>({
-            machineId: target.machineId,
-            serverId: target.serverId,
-            method: getActionSpec('daemon.filesystem.createDirectory').bindings!.rpcMethod!,
-            payload: {
-                rootPath: target.rootPath,
-                path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
-            },
+        return await invokeWorkspaceFileSystemMutation(target, 'daemon.filesystem.createDirectory', {
+            rootPath: target.rootPath,
+            path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
         });
-
-        return assertRpcResponseWithSuccess<WorkspaceCreateDirectoryResponse>(response);
     } catch (error) {
         return {
             success: false,

@@ -1,9 +1,45 @@
 import * as React from 'react';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createSessionScmReviewDetailsTab, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewTarget } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { requestActiveReviewFileForComparison, useActiveReviewFilePath } from '@/components/workspaces/scm/review/activeReviewFile';
+import { scmComparisonKey } from './filesComparison';
+import type { SessionScmReviewComparison, SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 const SCROLL_PERSIST_DEBOUNCE_MS = 250;
 const SCROLL_PERSIST_EPSILON_PX = 1;
+
+/** Hidden Review retains selection in its incumbent pane, not in the public on-screen projection. */
+export function useScmReviewActiveFileSelection(params: Readonly<{
+    pane: ReturnType<typeof useAppPaneScope>; hostKey: string; activeFileKey: string;
+    comparison: SessionScmReviewComparison | null; view: SessionScmReviewView; presented: boolean;
+    isCurrent?: () => boolean;
+}>) {
+    const tabKey = `${SESSION_DETAILS_SCM_REVIEW_TAB_KEY}:activeFile`;
+    const selectionKey = JSON.stringify([params.hostKey, params.comparison ? scmComparisonKey(params.comparison) : null]);
+    const raw = params.pane.scopeState?.details.tabState[tabKey];
+    const saved = raw && typeof raw === 'object' ? raw as { selectionKey?: unknown; path?: unknown } : null;
+    const initial = React.useRef<Readonly<{ key: string; path: string | null; restored: boolean }> | null>(null);
+    if (!initial.current || initial.current.key !== selectionKey) initial.current = { key: selectionKey,
+        path: saved?.selectionKey === selectionKey && typeof saved.path === 'string' ? saved.path : null, restored: false };
+    const activePath = useActiveReviewFilePath(params.activeFileKey);
+    const setDetailsTabState = params.pane.setDetailsTabState;
+    React.useEffect(() => {
+        if (!initial.current) return;
+        if (!params.presented || params.view !== 'files') {
+            initial.current = { ...initial.current, restored: false };
+            return;
+        }
+        if (!params.comparison || initial.current.restored) return;
+        const path = initial.current.path;
+        if (path && !requestActiveReviewFileForComparison(params.activeFileKey, path, params.comparison, params.isCurrent)) return;
+        initial.current = { ...initial.current, restored: true };
+    }, [params.activeFileKey, params.comparison, params.isCurrent, params.presented, params.view, selectionKey]);
+    React.useEffect(() => {
+        if (!params.presented || params.view !== 'files' || !activePath) return;
+        if (initial.current) initial.current = { ...initial.current, path: activePath };
+        if (saved?.selectionKey !== selectionKey || saved?.path !== activePath) setDetailsTabState(tabKey, { selectionKey, path: activePath });
+    }, [activePath, params.presented, params.view, saved?.selectionKey, saved?.path, selectionKey, setDetailsTabState, tabKey]);
+}
 
 function scrollPositionsEqual(previous: unknown, next: unknown): boolean {
     if (Object.is(previous, next)) return true;

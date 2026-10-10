@@ -65,13 +65,14 @@ const COMPARISON_STACKED_MAX_WIDTH_PX = 560;
 /** One comparison's Files/Walkthrough presentation. Hosts supply admitted evidence and effects. */
 export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody(props: WorkspaceScmReviewBodyProps) {
     const activeKey = props.activeReviewFile?.key ?? null;
+    const presenterId = React.useId();
     const presented = props.activeReviewFile?.presented === true;
     const focus = useActiveReviewFileRequest(activeKey);
     React.useEffect(() => {
         if (!activeKey) return;
-        publishActiveReviewFile(activeKey, { presented, activePath: readActiveReviewFile(activeKey).activePath });
-        return () => { publishActiveReviewFile(activeKey, { presented: false, activePath: null }); };
-    }, [activeKey, presented]);
+        publishActiveReviewFile(activeKey, { presented, activePath: readActiveReviewFile(activeKey).activePath, presenterId });
+        return () => { publishActiveReviewFile(activeKey, { presented: false, activePath: null, presenterId }); };
+    }, [activeKey, presented, presenterId]);
     const handledFocus = React.useRef(focus?.comparison ? null : focus?.nonce ?? null);
     React.useEffect(() => {
         if (!focus || !presented || handledFocus.current === focus.nonce) return;

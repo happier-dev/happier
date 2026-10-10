@@ -979,14 +979,15 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     }, [activeReviewPath]);
 
     const activeReviewFileKey = props.activeReviewFile?.key ?? null;
+    const reviewPresenterId = React.useId();
     const activeReviewFilePresented = props.activeReviewFile?.presented === true;
     React.useEffect(() => {
         if (!activeReviewFileKey) return;
-        publishActiveReviewFile(activeReviewFileKey, { presented: activeReviewFilePresented, activePath: activeReviewPath });
-    }, [activeReviewFileKey, activeReviewFilePresented, activeReviewPath]);
+        publishActiveReviewFile(activeReviewFileKey, { presented: activeReviewFilePresented, activePath: activeReviewPath, presenterId: reviewPresenterId });
+    }, [activeReviewFileKey, activeReviewFilePresented, activeReviewPath, reviewPresenterId]);
     React.useEffect(() => () => {
-        if (activeReviewFileKey && !props.activeReviewFile?.externalLifecycle) publishActiveReviewFile(activeReviewFileKey, { presented: false, activePath: null });
-    }, [activeReviewFileKey, props.activeReviewFile?.externalLifecycle]);
+        if (activeReviewFileKey) publishActiveReviewFile(activeReviewFileKey, { presented: false, activePath: null, presenterId: reviewPresenterId });
+    }, [activeReviewFileKey, reviewPresenterId]);
     const activeReviewFileRequest = useActiveReviewFileRequest(activeReviewFileKey);
     const handledRequestNonceRef = React.useRef<number | null>(props.activeReviewFile?.externalLifecycle ? null : activeReviewFileRequest?.nonce ?? null);
     React.useEffect(() => {
