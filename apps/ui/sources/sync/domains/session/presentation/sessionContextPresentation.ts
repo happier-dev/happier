@@ -240,7 +240,7 @@ export function buildSessionContextFacts(params: Readonly<{
     const freshness: SessionHomeFreshnessPresentation = {
         ...observed,
         label: resolveFreshnessLabel(observed.state),
-        lastUpdatedLabel: resolveLastUpdatedLabel(observed, params.nowMs),
+        lastUpdatedLabel: resolveSessionHomeLastUpdatedLabel(observed, params.nowMs),
     };
     return {
         address: params.address,
@@ -262,7 +262,7 @@ export function buildSessionContextFacts(params: Readonly<{
  * "Last updated 18m ago", when the caller supplied a render clock and the Home actually succeeded
  * once. A Home that never succeeded has nothing to date, and a reachable Home needs no timestamp.
  */
-function resolveLastUpdatedLabel(
+export function resolveSessionHomeLastUpdatedLabel(
     freshness: Pick<SessionHomeFreshnessPresentation, 'state' | 'lastSuccessAt'>,
     nowMs: number | null | undefined,
 ): string | null {

@@ -14,6 +14,11 @@ import {
 
 import { TranscriptLayoutCommitObserver } from './TranscriptLayoutCommitObserver';
 import {
+    createTranscriptRendererContentDemand,
+    TranscriptRendererContentDemandProvider,
+    TranscriptRendererRowContentDemandProvider,
+} from '../../visibility/TranscriptRowContentDemand';
+import {
     resolveWebTranscriptScrollMetrics,
     type WebTranscriptScrollMetrics,
 } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
@@ -95,6 +100,7 @@ function LegendListTranscriptRendererInner<TItem>(
     ref: React.ForwardedRef<TranscriptListShellRef<TItem>>,
 ): React.ReactElement {
     const legendListRef = React.useRef<LegendListRef | null>(null);
+    const contentDemand = React.useMemo(createTranscriptRendererContentDemand, [props.dataKey]);
     const identityHostRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const visualBottomSlotHostRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const latestNativePhysicalViewportCaptureRef =
@@ -1225,30 +1231,36 @@ function LegendListTranscriptRendererInner<TItem>(
         },
     }), [advanceMovementEpoch, armVisibleAnchorHold, beginExplicitJumpTakeover, dataLength, hasActiveEntryPlacement, hasLiveWebHold, holdIndexTarget, holdWebEntryAnchor, invalidateNativePhysicalViewportCapture, invalidateUserInertiaContinuation, notifyViewportInput, observeInitialPresentationSettlement, observeNativePhysicalViewport, projectChronologicalIndex, readVisibleSourceIndexRange, readWebScrollMetrics, requestHeldIntentSettle, revalidateViewportAfterReveal, scrollRendererToEnd]);
 
-    const renderItem: LegendListProps<TItem>['renderItem'] = (info) => props.renderItem({
-        item: info.item,
-        index: toSourceIndex(info.index, dataLength, projectChronologicalIndex),
-        separators: {
-            highlight: () => undefined,
-            unhighlight: () => undefined,
-            updateProps: () => undefined,
-        },
-    });
-    const handleLegendViewableItemsChanged: LegendListProps<TItem>['onViewableItemsChanged'] =
-        props.onViewableItemsChanged
-            ? (info) => props.onViewableItemsChanged?.({
-                viewableItems: toSourceViewabilityTokens(
-                    info.viewableItems,
-                    props.data,
-                    projectChronologicalIndex,
-                ),
-                changed: toSourceViewabilityTokens(
-                    info.changed,
-                    props.data,
-                    projectChronologicalIndex,
-                ),
-            })
-            : undefined;
+    const renderItem: LegendListProps<TItem>['renderItem'] = (info) => (
+        <TranscriptRendererRowContentDemandProvider itemKey={props.keyExtractor(
+            info.item, toSourceIndex(info.index, dataLength, projectChronologicalIndex),
+        )}>
+            {props.renderItem({
+                item: info.item,
+                index: toSourceIndex(info.index, dataLength, projectChronologicalIndex),
+                separators: {
+                    highlight: () => undefined,
+                    unhighlight: () => undefined,
+                    updateProps: () => undefined,
+                },
+            })}
+        </TranscriptRendererRowContentDemandProvider>
+    );
+    const handleLegendViewableItemsChanged = React.useCallback<NonNullable<LegendListProps<TItem>['onViewableItemsChanged']>>((info) => {
+        contentDemand.publish(info.viewableItems.filter((token) => token.isViewable).map((token) => token.key));
+        props.onViewableItemsChanged?.({
+            viewableItems: toSourceViewabilityTokens(
+                info.viewableItems,
+                props.data,
+                projectChronologicalIndex,
+            ),
+            changed: toSourceViewabilityTokens(
+                info.changed,
+                props.data,
+                projectChronologicalIndex,
+            ),
+        });
+    }, [contentDemand, props.data, props.onViewableItemsChanged, projectChronologicalIndex]);
 
     const handleLegendStartReached = React.useCallback(() => {
         // A live PLACEMENT hold keeps its identity through the prepend this trigger loads: a
@@ -1494,31 +1506,33 @@ function LegendListTranscriptRendererInner<TItem>(
     };
 
     return (
-        <View
-            ref={identityHostRef}
-            nativeID={props.frame.rendererOptions.identity.nativeID}
-            onLayout={handleLegendLayout}
-            testID={props.frame.rendererOptions.identity.testID}
-            style={LEGEND_IDENTITY_HOST_STYLE}
-        >
-            {/* Layout-commit signalling for the viewport ownership stack. The same commit signal
-                drives synthesized content size and finally the shell callback, after the child
-                layout effects for this commit have run. Held-intent settlement is requested only
-                by the renderer's data/measurement/viewport signals, never by a content-free
-                React commit. */}
-            <TranscriptLayoutCommitObserver
-                onCommitLayoutEffect={() => {
-                    invalidateNativePhysicalViewportCapture();
-                    emitSynthesizedContentSize();
-                    props.onCommitLayoutEffect?.();
-                }}
+        <TranscriptRendererContentDemandProvider demand={contentDemand}>
+            <View
+                ref={identityHostRef}
+                nativeID={props.frame.rendererOptions.identity.nativeID}
+                onLayout={handleLegendLayout}
+                testID={props.frame.rendererOptions.identity.testID}
+                style={LEGEND_IDENTITY_HOST_STYLE}
             >
-                <LegendList
-                    ref={legendListRef}
-                    {...legendProps}
-                />
-            </TranscriptLayoutCommitObserver>
-        </View>
+                {/* Layout-commit signalling for the viewport ownership stack. The same commit signal
+                    drives synthesized content size and finally the shell callback, after the child
+                    layout effects for this commit have run. Held-intent settlement is requested only
+                    by the renderer's data/measurement/viewport signals, never by a content-free
+                    React commit. */}
+                <TranscriptLayoutCommitObserver
+                    onCommitLayoutEffect={() => {
+                        invalidateNativePhysicalViewportCapture();
+                        emitSynthesizedContentSize();
+                        props.onCommitLayoutEffect?.();
+                    }}
+                >
+                    <LegendList
+                        ref={legendListRef}
+                        {...legendProps}
+                    />
+                </TranscriptLayoutCommitObserver>
+            </View>
+        </TranscriptRendererContentDemandProvider>
     );
 }
 

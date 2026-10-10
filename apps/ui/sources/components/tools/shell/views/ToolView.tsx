@@ -1,4 +1,5 @@
-import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useSessionTranscriptSource, useTranscriptVisualContext } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useTranscriptRowContentDemand } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
 import * as React from 'react';
 import { View, TouchableOpacity, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -113,6 +114,8 @@ const ToolViewWithStoreSettings = React.memo<ToolViewProps>((props) => {
 
 const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDisplaySettings }>((props) => {
     const { tool, onPress, sessionId, messageId } = props;
+    const contentDemand = useTranscriptRowContentDemand();
+    const visualContext = useTranscriptVisualContext();
     // The canonical transcript row sequence. It already reaches this component
     // for jump targeting; historical Agent attribution is its second reader, and
     // it is published to the whole tool subtree so the body, the permission
@@ -542,6 +545,8 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                 tool={toolForRendering}
                 sessionId={sessionId}
                 serverId={props.serverId}
+                contentDemand={contentDemand}
+                visualContext={visualContext}
             />
             {/*
               * The managed workflow Run this call admitted, if it admitted one:

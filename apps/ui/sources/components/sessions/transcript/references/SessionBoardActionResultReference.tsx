@@ -18,8 +18,9 @@ import { SessionWidgetHost } from '@/components/sessions/board/SessionWidgetHost
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ToolCall } from "@happier-dev/session-core/messages";
-import { resolveSessionBoardReferenceProjection } from '@/sync/domains/session/board';
 import { resolveSessionBoardExecutableCurrentness } from '@/sync/domains/session/board';
+import { useSessionSurfaceItem } from '@/sync/domains/session/board/useSessionSurfaceItem';
+import { resolveSessionForkVisualReferenceTargetV1, type SessionForkVisualContextV1 } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { t } from '@/text';
 
@@ -29,23 +30,9 @@ import {
 } from './transcriptSessionBoardItemReference';
 
 /**
- * The transcript's inline Board result — the last mile of Composer -> Agent
- * Action -> item -> inline result.
- *
- * It is a REFERENCE, not a placement. It mounts the one durable
- * `SessionWidgetHost` with `host='inlineTranscript'`, reading the exact-Session
- * Board the shell already observes, so there is no second Board fetch, cache,
- * renderer registry, transcript message type or persisted inline placement
- * anywhere in it. Everything visible — the title, provenance, the typed
- * loading/locked/malformed/missing/removed/unavailable cards and whether the item
- * runs here — comes from the Board's canonical owners.
- *
- * Executability is the shell's answer, never this row's: the shell publishes its
- * derived primary placement and this host passes it through. The Session shell's
- * visibility owner does not publish `inlineTranscript` as a candidate, so today an
- * executable source is always an inert preview here and a declarative document
- * renders live with no Action dispatch bound. If that shell ever does publish
- * this placement, the same pass-through turns it executable with no change here.
+ * A reference, never a placement or a second content store. The exact-address
+ * Session record owner supplies content independently of the Board. A mounted
+ * shell may supply presentation/execution policy, but never admits this read.
  */
 
 const INLINE_HEIGHT_BOUNDS = Object.freeze({ min: 72, max: 320 });
@@ -61,6 +48,8 @@ export const SessionBoardActionResultReference = React.memo(function SessionBoar
         sessionId?: string;
         /** The row's captured Home. Absent means no reference; never an ambient Home. */
         serverId?: string | null;
+        contentDemand?: boolean;
+        visualContext?: SessionForkVisualContextV1;
     }>,
 ): React.ReactElement | null {
     const address = React.useMemo(
@@ -72,16 +61,34 @@ export const SessionBoardActionResultReference = React.memo(function SessionBoar
         state: props.tool.state,
         input: props.tool.input,
         result: props.tool.result,
-        address,
-    }), [address, props.tool.input, props.tool.name, props.tool.result, props.tool.state]);
+        address: props.visualContext?.originAddress ?? address,
+    }), [address, props.visualContext?.originAddress, props.tool.input, props.tool.name, props.tool.result, props.tool.state]);
 
     // Only a row that truthfully acknowledged a Board item subscribes to anything.
-    if (!reference) return null;
-    return <MountedSessionBoardReference reference={reference} />;
+    if (!reference || !address) return null;
+    const childAddress = props.visualContext && address
+        ? { serverId: address.serverId, sessionId: props.visualContext.sessionId } : null;
+    const inherited = childAddress && (reference.address.serverId !== childAddress.serverId
+        || reference.address.sessionId !== childAddress.sessionId);
+    const target = inherited && props.visualContext ? resolveSessionForkVisualReferenceTargetV1({
+        reference, childAddress, copies: props.visualContext.copies,
+    }) : null;
+    if (target?.status === 'not_copied') return (
+        <View style={stylesheet.root} testID={`transcript-board-item-${reference.itemId}`}>
+            <SurfaceStateCard testID={`transcript-board-item-${reference.itemId}-not-copied`}
+                kind="unavailable" title={t('sessionBoard.item.notCopied.title')}
+                reason={t('sessionBoard.item.notCopied.reason')} accessibilitySemantics="status" />
+        </View>
+    );
+    if (!inherited && reference.itemDestination === 'board') return null;
+    const resolved = target?.status === 'copied' ? { ...reference, address: target.address, itemId: target.itemId } : reference;
+    return <MountedSessionBoardReference key={`${resolved.address.serverId}:${resolved.address.sessionId}:${resolved.itemId}`}
+        reference={resolved} contentDemand={props.contentDemand !== false} />;
 });
 
 function MountedSessionBoardReference(props: Readonly<{
     reference: TranscriptSessionBoardItemReference;
+    contentDemand: boolean;
 }>): React.ReactElement | null {
     const styles = stylesheet;
     const { address, itemId } = props.reference;
@@ -89,33 +96,27 @@ function MountedSessionBoardReference(props: Readonly<{
     // `null`, so the same local Session id on two Homes can never cross here.
     const mounted = useMountedSessionBoardController(address);
     const companionReveal = useSessionCompanionRevealPort(address);
+    const binding = useSessionSurfaceItem({ ...address, itemId, enabled: props.contentDemand });
+    const [retainedHeight, setRetainedHeight] = React.useState(INLINE_HEIGHT_BOUNDS.min);
+    const onLayout = React.useCallback((event: Readonly<{ nativeEvent: { layout: { height: number } } }>) => {
+        const height = event.nativeEvent.layout.height;
+        if (height > 0) setRetainedHeight(previous => previous === height ? previous : height);
+    }, []);
 
     const pluginRuntime = mounted?.pluginRuntime;
     const callerHostedHtmlRuntime = mounted?.callerHostedHtmlRuntime ?? null;
     const resolveSourceAvailability = mounted?.controller.resolveSourceAvailability;
-    const binding = mounted?.binding ?? null;
-    const item = React.useMemo(
-        () => (binding?.status === 'ready'
-            ? resolveSessionBoardReferenceProjection(binding.snapshot, itemId)
-            : null),
-        [binding, itemId],
-    );
-
-    // No Board owner for this exact Session on this client: there is nothing to
-    // mirror and nowhere to open. A transcript row is not the place to explain it.
-    if (!mounted || !binding) return null;
+    // Dispose the body and observation while retaining its last measured slot.
+    // The incumbent row visibility owner decides demand; this is not a viewport.
+    if (!props.contentDemand) return <View style={[styles.root, { height: retainedHeight }]}
+        testID={`transcript-board-item-${itemId}`} />;
 
     if (binding.status === 'unavailable') {
-        // The Board feature being off, or an address this client cannot form, is
-        // the absence of a Board rather than a broken item. Everything else —
-        // revoked access, an unreachable Home, a refused read — is a truthful
-        // state the person should see beside the Agent's claim.
-        if (binding.reason === 'board_feature_disabled' || binding.reason === 'invalid_address') return null;
         const retryable = binding.reason === 'offline'
             || binding.reason === 'server_error'
             || binding.reason === 'invalid_response';
         return (
-            <View style={styles.root} testID={`transcript-board-item-${itemId}`}>
+            <View style={styles.root} onLayout={onLayout} testID={`transcript-board-item-${itemId}`}>
                 <SurfaceStateCard
                     testID={`transcript-board-item-${itemId}-unavailable`}
                     kind="unavailable"
@@ -131,29 +132,32 @@ function MountedSessionBoardReference(props: Readonly<{
         );
     }
 
-    if (!item) return null;
+    const item = binding.item;
+    if (item.state.kind === 'ready' && item.state.item.destination === 'board') return null;
     const title = resolveSessionBoardItemTitle(item.state);
+    const currentness = resolveSessionBoardExecutableCurrentness({
+        capabilities: { readTranscript: true, editSessionRecords: false },
+        reachability: binding.reachability, freshness: binding.freshness,
+        itemsById: new Map([[itemId, item]]),
+    }, item, pluginRuntime);
 
     return (
-        <View style={styles.root} testID={`transcript-board-item-${itemId}`}>
+        <View style={styles.root} onLayout={onLayout} testID={`transcript-board-item-${itemId}`}>
             {companionReveal ? (
                 <MountedInlineBoardWidget
                     address={address}
                     itemId={itemId}
                     revealPort={companionReveal}
-                    addAvailable={binding.snapshot.reachability === 'reachable'}
+                    addAvailable={binding.reachability === 'reachable'}
                     widgetProps={{
                         sessionId: address.sessionId,
+                        serverId: address.serverId,
                         item,
                         host: 'inlineTranscript',
-                        primaryHost: mounted.resolvePrimaryHost(itemId),
+                        primaryHost: mounted?.resolvePrimaryHost(itemId) ?? null,
                         density: 'compact',
                         canEdit: false,
-                        executableCurrentness: resolveSessionBoardExecutableCurrentness(
-                            binding.snapshot,
-                            item,
-                            pluginRuntime,
-                        ),
+                        executableCurrentness: currentness,
                         heightBounds: INLINE_HEIGHT_BOUNDS,
                         resolveSourceAvailability,
                         ...(pluginRuntime ? { pluginRuntime } : {}),
@@ -164,16 +168,13 @@ function MountedSessionBoardReference(props: Readonly<{
             ) : (
                 <SessionWidgetHost
                     sessionId={address.sessionId}
+                    serverId={address.serverId}
                     item={item}
                     host="inlineTranscript"
-                    primaryHost={mounted.resolvePrimaryHost(itemId)}
+                    primaryHost={mounted?.resolvePrimaryHost(itemId) ?? null}
                     density="compact"
                     canEdit={false}
-                    executableCurrentness={resolveSessionBoardExecutableCurrentness(
-                        binding.snapshot,
-                        item,
-                        pluginRuntime,
-                    )}
+                    executableCurrentness={currentness}
                     heightBounds={INLINE_HEIGHT_BOUNDS}
                     resolveSourceAvailability={resolveSourceAvailability}
                     {...(pluginRuntime ? { pluginRuntime } : {})}

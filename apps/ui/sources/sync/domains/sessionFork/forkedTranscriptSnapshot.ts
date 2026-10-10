@@ -190,6 +190,7 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
   const importedStorageOrigins = new Map<string, string>();
   for (const segment of segmentDrafts) {
     const projectedIds: string[] = [];
+    let replacementMessages: Record<string, Message> | null = null;
     for (const id of segment.messageIdsOldestFirst) {
       const message = segment.allMessagesById[id];
       const origin = SessionForkVisualOriginV1Schema.safeParse(message?.meta?.forkVisualOriginV1);
@@ -206,9 +207,13 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
       if (placedImportedOrigins.has(key)) continue;
       placedImportedOrigins.add(key);
       projectedIds.push(imported.id);
-      segment.allMessagesById = { ...segment.allMessagesById, [imported.id]: imported.message };
+      if (segment.allMessagesById[imported.id] !== imported.message) {
+        replacementMessages ??= { ...segment.allMessagesById };
+        replacementMessages[imported.id] = imported.message;
+      }
       importedStorageOrigins.set(imported.id, imported.storageSessionId);
     }
+    if (replacementMessages) segment.allMessagesById = replacementMessages;
     segment.messageIdsOldestFirst = projectedIds;
     if (!segment.isReadOnlyContext) {
       const inherited = segment.messageIdsOldestFirst.filter(id => SessionForkVisualOriginV1Schema.safeParse(segment.allMessagesById[id]?.meta?.forkVisualOriginV1).success);

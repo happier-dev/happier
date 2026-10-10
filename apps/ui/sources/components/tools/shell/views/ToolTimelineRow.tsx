@@ -1,4 +1,5 @@
-import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useSessionTranscriptSource, useTranscriptVisualContext } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useTranscriptRowContentDemand } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -104,6 +105,8 @@ const ToolTimelineRowWithStoreSettings = React.memo((props: ToolTimelineRowProps
 });
 
 const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displaySettings: ToolViewDisplaySettings }) => {
+    const contentDemand = useTranscriptRowContentDemand();
+    const visualContext = useTranscriptVisualContext();
     const { theme } = useUnistyles();
     const transcriptSource = useSessionTranscriptSource();
     const sourceInteraction = transcriptSource.useInteraction();
@@ -525,6 +528,8 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                 tool={toolForRendering}
                 sessionId={props.sessionId}
                 serverId={props.serverId}
+                contentDemand={contentDemand}
+                visualContext={visualContext}
             />
             <WorkflowRunActionResultReference
                 tool={toolForRendering}
