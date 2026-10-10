@@ -65,6 +65,7 @@ const ProfileCollectionLanding = React.memo(function ProfileCollectionLanding(pr
         keys: [
             ...model.groups.favoriteProfiles,
             ...model.groups.customProfiles,
+            ...model.groups.sharedProfiles,
             ...model.groups.builtInProfiles,
         ].map((profile) => profile.id),
         lastVisited: readLastVisitedProfileId(),

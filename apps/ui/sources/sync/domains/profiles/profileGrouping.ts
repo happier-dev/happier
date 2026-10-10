@@ -7,7 +7,10 @@ export { toggleFavoriteProfileId } from '@happier-dev/protocol/profiles/profileO
 
 export interface ProfileGroups {
     favoriteProfiles: AIBackendProfile[];
+    /** The reader's own saved profiles. */
     customProfiles: AIBackendProfile[];
+    /** Profiles people and Teams share with the reader (ORC §3.10 "Shared with you"), unless a favorite. */
+    sharedProfiles: AIBackendProfile[];
     builtInProfiles: AIBackendProfile[];
     favoriteIds: Set<string>;
     builtInIds: Set<string>;
@@ -15,6 +18,11 @@ export interface ProfileGroups {
 
 function isProfile(profile: AIBackendProfile | null | undefined): profile is AIBackendProfile {
     return Boolean(profile);
+}
+
+/** A profile another Account shares with the reader (its Artifact grant, read by the profile reader). */
+function isSharedWithReader(profile: AIBackendProfile): boolean {
+    return 'shared' in profile && profile.shared === true;
 }
 
 export function buildProfileGroups({
@@ -60,6 +68,8 @@ export function buildProfileGroups({
     const nonFavoriteCustomProfiles = customProfiles
         .filter(isVisible)
         .filter((profile) => !favoriteIds.has(profile.id));
+    const ownProfiles = nonFavoriteCustomProfiles.filter((profile) => !isSharedWithReader(profile));
+    const sharedProfiles = nonFavoriteCustomProfiles.filter(isSharedWithReader);
 
     const nonFavoriteBuiltInProfiles = resolvedBuiltInProfiles
         .filter(isVisible)
@@ -67,7 +77,8 @@ export function buildProfileGroups({
 
     return {
         favoriteProfiles: visibleFavoriteProfiles,
-        customProfiles: nonFavoriteCustomProfiles,
+        customProfiles: ownProfiles,
+        sharedProfiles,
         builtInProfiles: nonFavoriteBuiltInProfiles,
         favoriteIds,
         builtInIds,

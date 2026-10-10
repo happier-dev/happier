@@ -246,12 +246,14 @@ export function ProfilesList(props: ProfilesListProps) {
 
         for (const p of groups.favoriteProfiles) build(p);
         for (const p of groups.customProfiles) build(p);
+        for (const p of groups.sharedProfiles) build(p);
         for (const p of groups.builtInProfiles) build(p);
 
         return map;
     }, [
         groups.builtInProfiles,
         groups.customProfiles,
+        groups.sharedProfiles,
         groups.favoriteIds,
         groups.favoriteProfiles,
         extraActions,
@@ -342,6 +344,47 @@ export function ProfilesList(props: ProfilesListProps) {
         selectedIndicatorColor,
     ]);
 
+    /** A saved profile row: your own, or one shared with you (same anatomy, same actions). */
+    const renderSavedProfileRow = (profile: AIBackendProfile, isLast: boolean) => {
+        const displayName = getProfileDisplayName(profile);
+        const isFavorite = groups.favoriteIds.has(profile.id);
+        const isSelected = showsSelection && props.selectedProfileId === profile.id;
+        const isDisabled = props.getProfileDisabled ? props.getProfileDisabled(profile) : false;
+        const baseSubtitle = getProfileSubtitle({
+            profile,
+            enabledAgentIds,
+            backendEntries: resolvedBackendEntries,
+            strings,
+        });
+        const extra = props.getProfileSubtitleExtra?.(profile);
+        const subtitleText = extra ? `${baseSubtitle} · ${extra}` : baseSubtitle;
+        const showMobileBadge = isMobile && hasRequiredSecret(profile) && Boolean(props.onSecretBadgePress);
+        return (
+            <ProfileRow
+                key={profile.id}
+                testID={`profiles-list-row:${profile.id}`}
+                profile={profile}
+                backendEntries={resolvedBackendEntries}
+                displayName={displayName}
+                isSelected={isSelected}
+                isFavorite={isFavorite}
+                isDisabled={isDisabled}
+                showDivider={!isLast}
+                isMobile={isMobile}
+                machineId={props.machineId}
+                serverId={props.serverId}
+                subtitleText={subtitleText}
+                showMobileBadge={showMobileBadge}
+                onPressProfile={props.onPressProfile}
+                onSecretBadgePress={props.onSecretBadgePress}
+                rightElement={renderProfileRightElement(profile, displayName, isSelected, isFavorite)}
+                ignoreRowPressRef={ignoreRowPressRef}
+                getSecretOverrideReady={props.getSecretOverrideReady}
+                getSecretMachineEnvOverride={props.getSecretMachineEnvOverride}
+            />
+        );
+    };
+
     return (
         <ItemList style={{ paddingTop: 0 }} presentation={props.presentation ?? 'grouped'}>
             {props.header}
@@ -421,46 +464,10 @@ export function ProfilesList(props: ProfilesListProps) {
                     description={props.groupDescriptions?.custom}
                     selectableItemCountOverride={Math.max(2, groups.customProfiles.length + (addsInCustomGroup ? 1 : 0))}
                 >
-                    {groups.customProfiles.map((profile, index) => {
-                        const displayName = getProfileDisplayName(profile);
-                        const isLast = index === groups.customProfiles.length - 1 && !addsInCustomGroup;
-                        const isFavorite = groups.favoriteIds.has(profile.id);
-                        const isSelected = showsSelection && props.selectedProfileId === profile.id;
-                        const isDisabled = props.getProfileDisabled ? props.getProfileDisabled(profile) : false;
-                        const baseSubtitle = getProfileSubtitle({
-                            profile,
-                            enabledAgentIds,
-                            backendEntries: resolvedBackendEntries,
-                            strings,
-                        });
-                        const extra = props.getProfileSubtitleExtra?.(profile);
-                        const subtitleText = extra ? `${baseSubtitle} · ${extra}` : baseSubtitle;
-                        const showMobileBadge = isMobile && hasRequiredSecret(profile) && Boolean(props.onSecretBadgePress);
-                        return (
-                            <ProfileRow
-                                key={profile.id}
-                                testID={`profiles-list-row:${profile.id}`}
-                                profile={profile}
-                                backendEntries={resolvedBackendEntries}
-                                displayName={displayName}
-                                isSelected={isSelected}
-                                isFavorite={isFavorite}
-                                isDisabled={isDisabled}
-                                showDivider={!isLast}
-                                isMobile={isMobile}
-                                machineId={props.machineId}
-                                serverId={props.serverId}
-                                subtitleText={subtitleText}
-                                showMobileBadge={showMobileBadge}
-                                onPressProfile={props.onPressProfile}
-                                onSecretBadgePress={props.onSecretBadgePress}
-                                rightElement={renderProfileRightElement(profile, displayName, isSelected, isFavorite)}
-                                ignoreRowPressRef={ignoreRowPressRef}
-                                getSecretOverrideReady={props.getSecretOverrideReady}
-                                getSecretMachineEnvOverride={props.getSecretMachineEnvOverride}
-                            />
-                        );
-                    })}
+                    {groups.customProfiles.map((profile, index) => renderSavedProfileRow(
+                        profile,
+                        index === groups.customProfiles.length - 1 && !addsInCustomGroup,
+                    ))}
                     {addsInCustomGroup ? (
                         <Item
                             testID="profiles-list-add-profile"
@@ -471,6 +478,16 @@ export function ProfilesList(props: ProfilesListProps) {
                     ) : null}
                 </ItemGroup>
             )}
+
+            {groups.sharedProfiles.length > 0 ? (
+                <ItemGroup
+                    title={t('roles.profiles.sharedWithYouTitle')}
+                    description={props.presentation === 'page' ? t('roles.profiles.sharedWithYouDescription') : undefined}
+                    selectableItemCountOverride={Math.max(2, groups.sharedProfiles.length)}
+                >
+                    {groups.sharedProfiles.map((profile, index) => renderSavedProfileRow(profile, index === groups.sharedProfiles.length - 1))}
+                </ItemGroup>
+            ) : null}
 
             <ItemGroup
                 title={props.groupTitles?.builtIn ?? t('profiles.groups.builtIn')}
