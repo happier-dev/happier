@@ -4,6 +4,8 @@ import type { LocalServicePublicExposureV1, LocalServicePublicPreviewSnapshotV1 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 
 import { createLocalServicePublicPreviewServerRoutes } from './routes';
+import { DaemonLocalServicePublicPreviewCreateRequestV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 const exposure: LocalServicePublicExposureV1 = {
     exposureId: 'public_preview_1',
@@ -39,6 +41,56 @@ const snapshot: LocalServicePublicPreviewSnapshotV1 = {
 };
 
 describe('createLocalServicePublicPreviewServerRoutes', () => {
+    it('refuses foreign Machine actors before reading or mutating with the custodian credential', async () => {
+        let httpReached = false;
+        const input = { accountId: 'custodian', token: 'custodian-token', serverBaseUrl: 'https://home.example.test', http: {
+            async post() { httpReached = true; return { data: { protocolVersion: 1, snapshot } }; },
+            async delete() { httpReached = true; return { data: { ok: true } }; },
+        } };
+        const routes = createLocalServicePublicPreviewServerRoutes(input);
+        const context: RpcHandlerContext = { signal: new AbortController().signal, machineAdmission: {
+            actorAccountId: 'foreign-viewer', custodianAccountId: 'custodian', machineId: exposure.machineId,
+            installationId: 'installation-1', role: 'use', encryptionMode: 'plain' } };
+        await expect(routes.getStatus({ machineId: exposure.machineId, sessionId: exposure.sessionId }, context))
+            .rejects.toThrow('requester_credentials_unavailable');
+        await expect(routes.copyUrl({ machineId: exposure.machineId, sessionId: exposure.sessionId,
+            previewId: exposure.previewId, exposureId: exposure.exposureId }, context)).rejects.toThrow('requester_credentials_unavailable');
+        await expect(routes.revokeExposure({ machineId: exposure.machineId, sessionId: exposure.sessionId,
+            previewId: exposure.previewId, exposureId: exposure.exposureId }, context)).rejects.toThrow('requester_credentials_unavailable');
+        expect(httpReached).toBe(false);
+        const ownContext: RpcHandlerContext = { ...context,
+            machineAdmission: { ...context.machineAdmission!, actorAccountId: 'custodian' },
+            verifyMachineAdmissionCurrent: async () => true };
+        await expect(routes.getStatus({ machineId: exposure.machineId, sessionId: exposure.sessionId }, ownContext))
+            .resolves.toEqual(snapshot);
+        httpReached = false;
+        await expect(routes.getStatus({ machineId: exposure.machineId, sessionId: exposure.sessionId },
+            { ...ownContext, verifyMachineAdmissionCurrent: async () => false }))
+            .rejects.toThrow('requester_credentials_unavailable');
+        expect(httpReached).toBe(false);
+    });
+    it('transports the actual sessionless service binding and copies only its server-returned public URL', async () => {
+        const serviceTarget = { kind: 'managed_service' as const, machineId: exposure.machineId, managedServiceId: 'instance_1', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const nativeExposure = { ...exposure, sessionId: undefined, serviceTarget };
+        const nativeSnapshot = { ...snapshot, sessionId: undefined, exposures: [nativeExposure] };
+        let responseExposure = nativeExposure;
+        const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', serverBaseUrl: 'https://app.happier.test', http: {
+            async post(url, body) {
+                if (url.endsWith('/status')) return { data: { protocolVersion: 1, snapshot: nativeSnapshot } };
+                // The HTTP peer enforces the real wire schema, not an internal daemon implementation.
+                DaemonLocalServicePublicPreviewCreateRequestV1Schema.parse(body);
+                return { data: { exposure: responseExposure } };
+            }, async delete() { return { data: { ok: true } }; },
+        } });
+        const request = { machineId: nativeExposure.machineId, previewId: nativeExposure.previewId, serviceTarget,
+            mode: 'secret_link' as const, ttlMs: 60_000, confirmation: { acknowledged: true as const } };
+        await expect(routes.createExposure(request)).resolves.toMatchObject({ exposure: nativeExposure });
+        await expect(routes.copyUrl({ machineId: request.machineId, previewId: request.previewId,
+            serviceTarget, exposureId: nativeExposure.exposureId })).resolves.toMatchObject({ publicUrl: nativeExposure.publicUrl, serviceTarget });
+        responseExposure = { ...nativeExposure, serviceTarget: { ...serviceTarget, managedServiceId: 'another_instance' } };
+        await expect(routes.createExposure(request)).rejects.toThrow('local_services_public_preview_binding_mismatch');
+    });
     it('loads status through the authenticated server status route', async () => {
         const post = vi.fn(async () => ({
             data: {

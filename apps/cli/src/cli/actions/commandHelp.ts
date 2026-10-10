@@ -37,7 +37,7 @@ type ActionCliInvokeHelpOptions = Readonly<{
 function buildCliOptionRows(command: CompiledActionCliCommand): readonly ActionCliHelpRow[] {
   return Object.freeze([
     ...(command.routesByTransportMachineId
-      ? [{ label: `${ACTION_CLI_MACHINE_ID_FLAG} <machineId>`, description: 'Route this invocation to an exact machine' }]
+      ? [{ label: `${command.transportMachineIdFlags.join(', ')} <machineId>`, description: 'Route this invocation to an exact machine' }]
       : []),
     ...(command.acceptsServerId
       ? [{

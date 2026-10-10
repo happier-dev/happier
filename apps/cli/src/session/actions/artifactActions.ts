@@ -1,4 +1,4 @@
-import { ArtifactActionInputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionInputSchemasV1, projectArtifactHeaderV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { ActionExecutorContext, ArtifactActionIdV1, ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
@@ -10,6 +10,7 @@ type ArtifactPublishCaller = Readonly<{ sessionId: string; machineId: string; di
 /** Account content stays in the existing Artifact store; only the host resolves publication authority. */
 export function createCliArtifactActions(params: Readonly<{
   store: ReturnType<typeof createAccountArtifactStore>;
+  beforeDelete: (input: Readonly<{ artifactId: string; signal?: AbortSignal }>) => Promise<void>;
   resolvePublishCaller: (context: ActionExecutorContext) => Promise<ArtifactPublishCaller | null>;
   onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
 }>) {
@@ -41,25 +42,25 @@ export function createCliArtifactActions(params: Readonly<{
         }
         case 'artifact.get': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
-          const artifact = await params.store.read(input.artifactId, signal ? { signal } : undefined);
-          return { artifact, ...(artifact ? await params.store.htmlPreview(artifact, signal) : {}) };
+          const artifact = await params.store.read(input.artifactId, { signal, includeSharedAudience: false });
+          return { artifact };
         }
         case 'artifact.list': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           const page = await params.store.list({ ...input, sort: input.sort ?? 'updated_desc', ...(signal ? { signal } : {}) });
-          return { items: page.items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+          const items = page.items.map(projectArtifactHeaderV1);
+          return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
         }
         case 'artifact.update': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           const content = 'uploadPath' in input ? await readUpload(args.context, input, signal) : { body: input.body };
           const result = await params.store.update({ artifactId: input.artifactId, header: input.header,
             expectedRevision: input.expectedRevision, ...content, savedBy, ...(signal ? { signal } : {}) });
-          return result.ok ? { artifactId: input.artifactId, revision: result.revision,
-            ...(result.previewUrl ? { previewUrl: result.previewUrl } : {}),
-            ...(result.previewError ? { previewError: result.previewError } : {}) } : result;
+          return result.ok ? { artifactId: input.artifactId, revision: result.revision } : result;
         }
         case 'artifact.delete': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
+          await params.beforeDelete({ artifactId: input.artifactId, ...(signal ? { signal } : {}) });
           const result = await params.store.delete(input.artifactId, { expectedRevision: input.expectedRevision, ...(signal ? { signal } : {}) });
           return result.ok ? { artifactId: input.artifactId, deleted: true } : result;
         }

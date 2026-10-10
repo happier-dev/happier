@@ -10,13 +10,27 @@ import {
   createConnectedServiceCredentialApi,
   type ConnectedServiceAccountEncryptionMode,
 } from '@/api/client/connectedServiceCredentialApi';
-import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createAccountArtifactStore, encodeAccountArtifactListCursor, type AccountArtifact } from '@/api/artifacts/accountArtifactStore';
+import type { PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { createCliPromptLibraryStore } from '@/settings/prompts/promptLibraryStore';
+import { configuration } from '@/configuration';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { ArtifactFolderActionPortV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
 
 import { targetActionApprovalRequestsEqual, targetActionApprovalSubjectsEqual } from './targetActionApprovalSubject';
 import {
   executionRunHostActionApprovalRequestsEqual,
   executionRunHostActionApprovalSubjectsEqual,
 } from './executionRunHostActionApprovalSubject';
+
+/** One adaptation of an already-readable Account Artifact for the Prompt owner. */
+export function projectAccountArtifactToPromptLibraryStoredArtifact(artifact: AccountArtifact | null): PromptLibraryStoredArtifact | null {
+  if (!artifact || typeof artifact.body !== 'string') return null;
+  return { id: artifact.artifactId, revision: artifact.revision, header: artifact.header, body: artifact.body };
+}
 
 function parseApprovalStatus(value: unknown): ApprovalRequest['status'] | null {
   if (
@@ -69,6 +83,7 @@ function readExecutionRunHostActionApprovalArtifact(header: Record<string, unkno
 
 export function createCliApprovalsArtifactStore(params: Readonly<{
   credentials: StoredCredentials;
+  serverId?: string;
   getAccountEncryptionMode?: () => Promise<ConnectedServiceAccountEncryptionMode>;
 }>): Readonly<{
   approvalsList: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsList']>;
@@ -92,24 +107,71 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
     credentials: params.credentials,
     getAccountEncryptionMode,
   });
+  const folderBaseUrl = resolveServerHttpBaseUrl();
+  const folderStore = createCliPromptLibraryStore({ credentials: params.credentials });
+  const folderScopeKey = resolveAccountSettingsScopeKey(params.credentials);
+  const folderLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  const organization: ArtifactFolderActionPortV1 = {
+    serverId: params.serverId ?? configuration.activeServerId,
+    assertCurrent: folderStore.assertCurrent,
+    readCatalog: async (signal) => runWithServerHttpBaseUrl(folderBaseUrl, async () => {
+      folderStore.assertCurrent(); signal?.throwIfAborted();
+      const transport = createCliPromptLibraryStore({ credentials: params.credentials, signal });
+      const catalog = await transport.readPromptLibraryCatalog();
+      folderStore.assertCurrent(); signal?.throwIfAborted();
+      const occupied = (catalog.status === 'ready' || catalog.status === 'partial') &&
+        (catalog.rows.some(row => row.record.key === 'folders') || catalog.tombstones.some(row => row.key === 'folders') ||
+          catalog.diagnostics.some(row => row.key === 'folders'));
+      if (catalog.status !== 'ready' && catalog.status !== 'partial' || occupied) return { catalog };
+      const source = await transport.readSourceSnapshot();
+      folderStore.assertCurrent(); signal?.throwIfAborted();
+      return { catalog, rawSettings: source.raw, sourceSettingsVersion: source.version };
+    }),
+    writeRecord: async (input, signal) => runWithServerHttpBaseUrl(folderBaseUrl, async () => {
+      folderStore.assertCurrent(); signal?.throwIfAborted();
+      const transport = createCliPromptLibraryStore({ credentials: params.credentials, signal });
+      const result = await transport.writeRecord(input);
+      if (result.status === 'updated') {
+        try {
+          const { refreshActivePromptLibraryCatalogAfterChange } = await import('@/settings/prompts/hydratePromptLibraryCatalog');
+          await refreshActivePromptLibraryCatalogAfterChange({ credentials: params.credentials, scopeKey: folderScopeKey,
+            lifetimeToken: folderLifetimeToken });
+        } catch { /* A durable row receipt survives publication failure or caller cancellation. */ }
+      }
+      return result;
+    }),
+    listArtifactHeaders: async (signal) => runWithServerHttpBaseUrl(folderBaseUrl, async () => {
+      const page = await listArtifactHeadersV1({ options: { includeBody: false, signal },
+        readPage: async options => {
+          folderStore.assertCurrent(); signal?.throwIfAborted();
+          const page = await accountArtifactStore.list(options);
+          folderStore.assertCurrent(); signal?.throwIfAborted();
+          return page;
+        }, encodeCursor: encodeAccountArtifactListCursor });
+      folderStore.assertCurrent(); signal?.throwIfAborted();
+      return { items: page.items.map(artifact => ({ artifactId: artifact.artifactId, header: artifact.header, owned: artifact.access === 'owner' })),
+        coverage: page.nextCursor ? 'partial' : page.coverage };
+    }),
+    readArtifactHeader: async (artifactId, signal) => {
+      const inventory = await organization.listArtifactHeaders(signal);
+      const artifact = inventory.items.find(item => item.artifactId === artifactId);
+      if (artifact) return { header: artifact.header, owned: artifact.owned };
+      if (inventory.coverage !== 'complete') throw Object.assign(new Error('artifact_inventory_incomplete'), { code: 'artifact_inventory_incomplete' });
+      return null;
+    },
+  };
 
   return {
     promptLibraryStore: {
+      organization,
       list: async (options) => {
         const page = await accountArtifactStore.list(options);
-        return { items: page.items.map((artifact) => ({ id: artifact.artifactId, header: artifact.header, updatedAtMs: artifact.updatedAt })),
+        return { items: page.items.map((artifact) => ({ id: artifact.artifactId, header: artifact.header, updatedAtMs: artifact.updatedAt, owned: artifact.access === 'owner' })),
           coverage: page.coverage, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
       },
       read: async (artifactId, options) => {
         const artifact = await accountArtifactStore.read(artifactId, options);
-        if (!artifact) return null;
-        if (typeof artifact.body !== 'string') return null;
-        return {
-          id: artifact.artifactId,
-          revision: artifact.revision,
-          header: artifact.header,
-          body: artifact.body,
-        };
+        return projectAccountArtifactToPromptLibraryStoredArtifact(artifact);
       },
       create: async ({ header, body, signal }) => {
         const created = await accountArtifactStore.create({ header, body, signal });

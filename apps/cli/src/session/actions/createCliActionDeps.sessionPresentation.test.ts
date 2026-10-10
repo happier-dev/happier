@@ -95,7 +95,7 @@ describe('CLI current-Session presentation Action producer', () => {
     }, undefined);
   });
 
-  it('uses the exact live Session binding and host-stamped request identity end to end', async () => {
+  it.each(['agent', 'cli'] as const)('uses the exact live Session binding and host-stamped request identity end to end on %s', async (surface) => {
     const present = vi.fn<HostCurrentSessionPresentationService['present']>(async () => ({
       status: 'applied',
       revision: 'host-a:3',
@@ -112,7 +112,7 @@ describe('CLI current-Session presentation Action producer', () => {
     await expect(harness.executor.execute('session.presentation.apply', {
       intent: { kind: 'board.open', mode: 'beside_chat' },
     }, {
-      surface: 'agent',
+      surface,
       authority: 'account_automation',
       defaultSessionId: 'session-a',
       actionRequestId: 'tool-call-a',
@@ -128,7 +128,7 @@ describe('CLI current-Session presentation Action producer', () => {
     }, { signal });
   });
 
-  it('fails closed when the exact Session binding is absent, retired, or unstamped', async () => {
+  it.each(['agent', 'cli'] as const)('fails closed when the exact Session binding is absent, retired, or unstamped on %s', async (surface) => {
     const present = vi.fn<HostCurrentSessionPresentationService['present']>(async () => ({
       status: 'applied',
       revision: 'host-a:3',
@@ -144,7 +144,7 @@ describe('CLI current-Session presentation Action producer', () => {
     await expect(harness.executor.execute('session.presentation.apply', {
       intent: { kind: 'companion.show' },
     }, {
-      surface: 'agent',
+      surface,
       authority: 'account_automation',
       defaultSessionId: 'session-b',
       actionRequestId: 'tool-call-a',
@@ -154,7 +154,7 @@ describe('CLI current-Session presentation Action producer', () => {
     await expect(harness.executor.execute('session.presentation.apply', {
       intent: { kind: 'companion.show' },
     }, {
-      surface: 'agent',
+      surface,
       authority: 'account_automation',
       defaultSessionId: 'session-a',
       actionRequestId: 'tool-call-a',
@@ -163,7 +163,7 @@ describe('CLI current-Session presentation Action producer', () => {
     await expect(harness.executor.execute('session.presentation.apply', {
       intent: { kind: 'companion.show' },
     }, {
-      surface: 'agent',
+      surface,
       authority: 'account_automation',
       defaultSessionId: 'session-a',
     })).resolves.toMatchObject({ ok: false, errorCode: 'action_request_id_required' });

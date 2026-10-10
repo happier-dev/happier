@@ -281,6 +281,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         || !origin.principalId
         || !origin.credentialId
         || !origin.target
+        || !('grant' in origin.externalActionExecutionAuthorization.binding)
       ) {
         executionResult = targetActionReplayFailure('approval_stale');
       } else {

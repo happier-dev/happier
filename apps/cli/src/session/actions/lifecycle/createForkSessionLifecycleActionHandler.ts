@@ -6,6 +6,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
+import { seedForkVisualsBestEffort } from '@/session/fork/seedForkVisuals';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
@@ -28,6 +29,7 @@ import type {
     SessionLifecycleMachineDeps,
     SessionLifecycleMachineHandlers,
 } from './sessionLifecycleTypes';
+import { runRequesterSessionLifecycle } from './requesterSessionLifecycle';
 
 export function createForkSessionLifecycleActionHandler(params: Readonly<{
     sessionHostBridge: ReturnType<typeof getSessionHostBridge>;
@@ -70,7 +72,12 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             }
         }
 
-        const credentials = await readStoredCredentials().catch(() => null);
+        return await runRequesterSessionLifecycle<unknown>({ sessionId: parentSessionId, context,
+            spawnSession: params.handlers.spawnSession,
+            refused: () => ({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Session authority is unavailable' }),
+            run: async ({ requester, spawnSession, isCurrent }) => {
+        const credentials = requester?.credentials ?? await readStoredCredentials().catch(() => null);
         if (!credentials) {
             return {
                 ok: false,
@@ -95,6 +102,8 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             };
         }
         if (context?.signal?.aborted) return cancelled();
+        if (!await isCurrent()) return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+            errorMessage: 'Requester Session authority is unavailable' };
         if (!parentSession) {
             return {
                 ok: false,
@@ -227,7 +236,8 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 replayMaxSeedChars: parsed.data.replayMaxSeedChars ?? null,
                 replaySummaryRunner: parsed.data.replaySummaryRunner ?? null,
             };
-        const forkSingleFlightKey = JSON.stringify(forkAttemptIdentity);
+        const forkSingleFlightKey = JSON.stringify({ ...forkAttemptIdentity,
+            ...(requester ? { requester: requester.attribution } : {}) });
         const existingFork = inFlightForks.get(forkSingleFlightKey);
         if (existingFork) {
             return await existingFork;
@@ -235,6 +245,8 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         if (context?.signal?.aborted) return cancelled();
 
         const forkPromise = (async (): Promise<ForkLifecycleResult> => {
+            if (!await isCurrent()) return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Session authority is unavailable' };
             const spawnNonce = createStableSpawnNonce('session.fork', forkAttemptIdentity);
             // `native` is the generic user intent the fork strategy modal sends.
             // It enables exactly the native attempts `auto` enables, in the same
@@ -269,7 +281,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                     spawnNonce: `${spawnNonce}:native-open`,
                     forkBackendResolution,
                     inheritedForkOverrides,
-                    spawnSession: params.handlers.spawnSession,
+                    spawnSession,
                     stopSession: params.handlers.stopSession,
                     ...(params.deps?.awaitAgentSessionOpen
                         ? { awaitAgentSessionOpen: params.deps.awaitAgentSessionOpen }
@@ -306,7 +318,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                     forkBackendResolution,
                     inheritedForkOverrides,
                     forkSurface,
-                    spawnSession: params.handlers.spawnSession,
+                    spawnSession,
                     stopSession: params.handlers.stopSession,
                 });
                 if (providerNativeFork) return providerNativeFork;
@@ -326,7 +338,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                     forkBackendResolution,
                     inheritedForkOverrides,
                     forkSurface,
-                    spawnSession: params.handlers.spawnSession,
+                    spawnSession,
                     stopSession: params.handlers.stopSession,
                 });
                 if (acpLatestFork) return acpLatestFork;
@@ -358,10 +370,15 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 forkBackendResolution,
                 inheritedForkOverrides,
                 forkSurface,
-                spawnSession: params.handlers.spawnSession,
+                spawnSession,
                 deps: params.deps,
             });
-        })().catch((error: unknown): ForkLifecycleResult => {
+        })().then(async result => {
+            if (result.ok) await seedForkVisualsBestEffort({ credentials, sourceSessionId: parentSessionId,
+                cutoffSeqInclusive: effectiveCutoffSeqInclusive, childSessionId: result.childSessionId,
+                sourceRawSession: parentSession, sourceMetadata: parentMetadata });
+            return result;
+        }).catch((error: unknown): ForkLifecycleResult => {
             if (
                 context?.signal?.aborted === true
                 && error instanceof Error
@@ -379,5 +396,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 inFlightForks.delete(forkSingleFlightKey);
             }
         }
+            },
+        });
     };
 }

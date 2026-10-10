@@ -33,8 +33,8 @@ export function createCliMcpServerActionExecuteV1(params: Readonly<{
         await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' });
       }
       const store = params.operationContext
-        ? createCliMcpServerStoreForOperation({ operationContext: params.operationContext, signal: context.signal })
-        : createCliMcpServerStore({ credentials: params.credentials, signal: context.signal });
+        ? createCliMcpServerStoreForOperation({ operationContext: params.operationContext, serverId: params.serverId, signal: context.signal })
+        : createCliMcpServerStore({ credentials: params.credentials, serverId: params.serverId, signal: context.signal });
       store.assertCurrent();
       const assertCurrent = async () => {
         store.assertCurrent();

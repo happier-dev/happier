@@ -236,6 +236,7 @@ export async function attemptNativeForkOpen(params: Readonly<{
                 ...inheritedForkOverrides.metadata,
                 ...params.forkBackendResolution.metadataOverlay,
                 forkV1: {
+                    ...(metadata.forkV1?.parentSessionId === params.parentSessionId ? metadata.forkV1 : {}),
                     v: 1,
                     parentSessionId: params.parentSessionId,
                     parentCutoffSeqInclusive: resolveEstablishedForkLineageCutoff({

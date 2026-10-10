@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { projectCurrentSessionPresentationActionResult } from '@/session/presentation/currentSessionPresentationService';
 import { flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';
 import axios from 'axios';
@@ -37,7 +38,7 @@ import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVi
 import { postWebhookJsonAsync, WebhookDestinationAdmissionError } from '@/notifications/activity/sendWebhookActivityNotification';
 import { createCliSettingsDeclarationAction } from './settingsDeclarationAction';
 import { createCliPromptLibraryStore } from '@/settings/prompts/promptLibraryStore';
-import { getServerProfile } from '@/server/serverProfiles';
+import { getServerProfile, isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { MachineAdministrationTargetV1Schema } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { readCliMemoryInheritedContext, readCliMemoryScopeContext } from './readCliMemoryInheritedContext';
 import { createCliProjectTrustAction } from './projectTrustAction';
@@ -45,7 +46,7 @@ import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1, PROJ
 import { resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
 import { createCliProjectSourceActionDeps } from './projectSourceActionDeps';
 import { admitSessionContextIntentV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
-import { admitDeclaredSessionVoicePreferenceV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
+import { admitDeclaredSessionVoicePreferenceV1, readBuiltInSessionVoiceDeclarationV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { withCliPromptLibraryArtifactReader, resolveCliPromptStackSystemAppendBlocks } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
@@ -84,7 +85,12 @@ import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/
 import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
-import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
+import { parseLocalServiceDomainActionRpcRequest, resolveLocalServiceDomainActionRpcBinding,
+  resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
+import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema,
+  LocalServicePublicPreviewSnapshotV1Schema, redactLocalServicePublicPreviewCreateResponseForAgentEgress,
+  redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress } from '@happier-dev/protocol/local/services/public/v1';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { resolveCwd } from '@/scm/runtime';
@@ -136,6 +142,7 @@ import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '@happier-dev/protocol
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { PromptExternalLinksV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 import { exportPromptLibraryArtifact, installPromptRegistryItemInLibrary, updatePromptBundleInLibrary, updatePromptDocInLibrary, readPromptDocInLibrary, createPromptDocInLibrary, setPromptDocFavorite, listPromptLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { resolvePromptDocCreateActionInputV1 } from '@happier-dev/protocol/prompts/library/promptDocV2';
 import { listPromptInvocationsInLibrary, resolvePromptInvocationInLibrary } from '@happier-dev/protocol/prompts/library/promptInvocationActionOperations';
 import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
@@ -766,6 +773,8 @@ export function createCliActionDeps(params: Readonly<{
   requesterSessionBootstrap?: AdmittedRequesterSessionBootstrap;
   /** Private invocation custody, never a daemon Account snapshot or a fake Session. */
   savedSecretOperationContext?: SavedSecretOperationContextV1;
+  /** Memory-only prompted Provider credential, promoted only by the admitted connection owner. */
+  providerPreparedSavedSecret?: Parameters<typeof createCliProviderActionExecuteV1>[0]['preparedSavedSecret'];
   /** Installed exact-target Project producer; absent hosts retain Trust-only behavior. */
   projectAction?: ActionExecutorDeps['projectAction'];
   /** Machine-owned policy intersects the selected Session's confined SCM root. */
@@ -1422,8 +1431,8 @@ export function createCliActionDeps(params: Readonly<{
 
   const sessionTransportCache = new Map<string, ResolvedSessionTransport>();
   const ambiguousSpawnActionRequestIds = new Set<string>();
-  const isMachineActionServerScopeCurrent = (serverId?: string | null): boolean =>
-    !serverId || serverId === (params.serverId ?? configuration.activeServerId);
+  const isMachineActionServerScopeCurrent = async (serverId?: string | null): Promise<boolean> =>
+    !serverId || await isServerProfileHomeIdentity(params.serverId ?? configuration.activeServerId, serverId);
   const callMachineAction = async (input: Readonly<{
     machineId: string;
     authority?: ActionExecutorContext['authority'];
@@ -1437,7 +1446,7 @@ export function createCliActionDeps(params: Readonly<{
     context?: ActionExecutorContext & Pick<RpcLocalActionContext, 'requesterWorkAttributionV1' | 'operationReview'>;
     effectActionId?: string;
   }>): Promise<unknown> => {
-    if (!isMachineActionServerScopeCurrent(input.serverId)) {
+    if (!await isMachineActionServerScopeCurrent(input.serverId)) {
       throw Object.assign(new Error('server_scope_mismatch'), { code: 'server_scope_mismatch' });
     }
     const direct = params.machineActionDirectTargetTransport;
@@ -2595,9 +2604,9 @@ export function createCliActionDeps(params: Readonly<{
     context,
     executeCanonicalAction,
   }) => {
-    const localReviewHomeCurrent = () => {
-      if (context.serverId && context.serverId !== configuration.activeServerId) return false;
-      if (params.serverId && params.serverId !== configuration.activeServerId) return false;
+    const localReviewHomeCurrent = async () => {
+      if (context.serverId && !await isServerProfileHomeIdentity(configuration.activeServerId, context.serverId)) return false;
+      if (params.serverId && !await isServerProfileHomeIdentity(configuration.activeServerId, params.serverId)) return false;
       if (!params.serverHttpBaseUrl) return true;
       try {
         const selected = createServerUrlComparableKey(params.serverHttpBaseUrl);
@@ -2605,7 +2614,7 @@ export function createCliActionDeps(params: Readonly<{
           .some(url => createServerUrlComparableKey(url) === selected));
       } catch { return false; }
     };
-    const localReviewContext = { ...context, serverId: params.serverId ?? configuration.activeServerId };
+    const localReviewContext = { ...context, serverId: configuration.activeServerId };
     const requesterAccountId = context.externalActionCredential?.accountId ?? context.runtimeAccountId;
     const accountMarksDeps = params.credentials ? {
       executeReviewedMarks: (comparison: import('@happier-dev/protocol').ScmComparison, request: import('@happier-dev/protocol').ScmReviewedMarkInput, reviewed: boolean) => createCliScmReviewedMarkAction({
@@ -2692,11 +2701,11 @@ export function createCliActionDeps(params: Readonly<{
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
-      if (!isMachineActionServerScopeCurrent(context.serverId)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+      if (!await isMachineActionServerScopeCurrent(context.serverId)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
       if (params.credentials && actionId.startsWith('scm.diffSummary.')) {
         const currentMachine = await readCurrentMachineControlIdentity();
         if (currentMachine.machineId === machineId) {
-          if (!localReviewHomeCurrent()) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+          if (!await localReviewHomeCurrent()) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           return executeScmActionOperation({ actionId, input: inputRecord, workingDirectory: cwd ?? process.cwd(),
             accessPolicy: params.scmFilesystemAccessPolicy ?? resolveFilesystemAccessPolicy(),
             ...(readComparisonTranscriptPage ? { readComparisonTranscriptPage } : {}), readPullRequestComparisonPage,
@@ -2823,7 +2832,7 @@ export function createCliActionDeps(params: Readonly<{
           };
     const backendTarget = actionId === 'scm.diffSummary.generate' ? resolveScmBackendTarget(metadata) : null;
 
-    if (actionId.startsWith('scm.diffSummary.') && !localReviewHomeCurrent()) {
+    if (actionId.startsWith('scm.diffSummary.') && !await localReviewHomeCurrent()) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
     }
 
@@ -3005,8 +3014,15 @@ export function createCliActionDeps(params: Readonly<{
     return { ok: true, preparedTarget: preparedTarget.data };
   };
 
+  const resolveWorkspacePublishCaller = async (context: ActionExecutorContext) => {
+    const caller = await resolveActionCallerSession(context);
+    if (!caller?.directory || !caller.machineId || !(await requireLocalPromptActionMachine(caller.machineId)).ok) return null;
+    return { sessionId: caller.sessionId, machineId: caller.machineId, directory: caller.directory,
+      ...(context.runtimeRunId ? { runId: context.runtimeRunId } : {}) };
+  };
   const widgetBoardDeps = params.credentials ? createSessionBoardActionDeps({
     credentials: params.credentials,
+    resolvePublishCaller: resolveWorkspacePublishCaller,
     ...(params.resolveExactSessionEncryptionMaterial ? { resolveExactSessionEncryptionMaterial: params.resolveExactSessionEncryptionMaterial } : {}),
     ...(params.resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot } : {}),
     ...exactHome,
@@ -3015,23 +3031,39 @@ export function createCliActionDeps(params: Readonly<{
     ...(params.externalActionMachineInstallationId ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId } : {}),
   }) : null;
   const actionDeps: ActionExecutorDeps = {
+    homeRuntimeTaskRpc: async ({ machineId, method, request, context }) => {
+      try {
+        return await callMachineAction({ machineId, serverId: context.serverId ?? params.serverId,
+          method: method === 'detect' ? RPC_METHODS.CAPABILITIES_DETECT : RPC_METHODS.CAPABILITIES_INVOKE,
+          request, context, effectActionId: 'home.runtime.restart', exactMachine: true, timeoutMs: null,
+          ...(context.authority ? { authority: context.authority } : {}),
+          ...(context.signal ? { signal: context.signal } : {}),
+        });
+      } catch (error) {
+        if (readMachineRpcRequestDisposition(error) === 'notSent') {
+          return { ok: false, errorCode: 'request_not_sent', error: 'request_not_sent' };
+        }
+        throw error;
+      }
+    },
     ...(approvalsStore?.promptLibraryStore.organization ? { artifactFolders: approvalsStore.promptLibraryStore.organization,
       promptStacks: approvalsStore.promptLibraryStore.organization } : {}),
     runtimeActionExecute: async (args) => {
       const isStart = args.actionId === 'localServices.launcher.start';
       const controlKind = resolveLocalServiceActionKindForRuntimeActionId(args.actionId);
+      const domainRpc = resolveLocalServiceDomainActionRpcBinding(args.actionId);
       // The daemon's Copy/Open receipt grants eligibility; it does not perform
       // the answering client's clipboard/navigation effect. This host is headless.
-      if (!isStart && (!controlKind || controlKind === 'copy_url' || controlKind === 'open_preview')) {
+      if (!isStart && !domainRpc && (!controlKind || controlKind === 'copy_url' || controlKind === 'open_preview')) {
         return createUnavailableRuntimeActionExecutor()(args);
       }
       const spec = getActionSpec(args.actionId);
       const admittedInput = spec.inputSchema.safeParse(args.input);
       if (!admittedInput.success) return executionRunActionFailure('invalid_parameters');
-      const parsed = isStart
+      const parsed = domainRpc ? parseLocalServiceDomainActionRpcRequest(args.actionId, admittedInput.data) : isStart
         ? DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(admittedInput.data)
         : LocalServiceActionRequestV1Schema.safeParse(admittedInput.data);
-      if (!parsed.success) return executionRunActionFailure('invalid_parameters');
+      if (!parsed?.success) return executionRunActionFailure('invalid_parameters');
       const request = parsed.data;
       const machineId = 'target' in request ? request.target.machineId : request.machineId;
       const denied = projectHomeAdmission('workspace' in request ? request.workspace?.serverId : undefined, args.context);
@@ -3042,13 +3074,23 @@ export function createCliActionDeps(params: Readonly<{
         return executionRunActionFailure('not_authenticated');
       }
       args.context.signal?.throwIfAborted();
-      return await withProjectHome(() => callMachineAction({ machineId, serverId: projectHomeId,
-        method, request: createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId },
+      const response = await withProjectHome(() => callMachineAction({ machineId, serverId: projectHomeId,
+        method, request: domainRpc ? request : createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId },
           { defaultSessionId: args.context.defaultSessionId }),
         authority: args.context.authority, authorization: args.context.rpcSessionAuthorization,
         context: args.context, effectActionId: args.actionId, exactMachine: true, timeoutMs: null,
         ...(args.context.signal ? { signal: args.context.signal } : {}),
       }));
+      const failure = ActionExecuteFailureSchema.safeParse(response);
+      if (failure.success) return failure.data;
+      const result = domainRpc && 'snapshotResponseSchema' in domainRpc
+        ? domainRpc.snapshotResponseSchema.parse(response).snapshot : response;
+      if (requiresAgentEgressRedaction(args.context)) {
+        if (args.actionId === 'localServices.publicPreview.status') return redactLocalServicePublicPreviewSnapshotForAgentEgress(LocalServicePublicPreviewSnapshotV1Schema.parse(result));
+        if (args.actionId === 'localServices.publicPreview.create') return redactLocalServicePublicPreviewCreateResponseForAgentEgress(DaemonLocalServicePublicPreviewCreateResponseV1Schema.parse(result));
+        if (args.actionId === 'localServices.publicPreview.revoke') return redactLocalServicePublicPreviewRevokeResponseForAgentEgress(DaemonLocalServicePublicPreviewRevokeResponseV1Schema.parse(result));
+      }
+      return result;
     },
     ...(approvalsStore ? { memoryLibrary: {
       serverId: params.serverId ?? configuration.activeServerId,
@@ -3316,12 +3358,7 @@ export function createCliActionDeps(params: Readonly<{
               assertCurrent();
               return typeof artifact?.header.kind === 'string' ? artifact.header.kind : undefined;
             } });
-        }, resolvePublishCaller: async (context) => {
-        const caller = await resolveActionCallerSession(context);
-        if (!caller?.directory || !caller.machineId || !(await requireLocalPromptActionMachine(caller.machineId)).ok) return null;
-        return { sessionId: caller.sessionId, machineId: caller.machineId, directory: caller.directory,
-          ...(context.runtimeRunId ? { runId: context.runtimeRunId } : {}) };
-      } });
+        }, resolvePublishCaller: resolveWorkspacePublishCaller });
       return params.serverHttpBaseUrl
         ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => execute({ ...args, context: artifactCallerContext(args.context) }))
         : execute({ ...args, context: artifactCallerContext(args.context) });
@@ -3352,6 +3389,7 @@ export function createCliActionDeps(params: Readonly<{
       credentials: params.credentials, serverId: projectHomeId,
       serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
       ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),
+      ...(params.providerPreparedSavedSecret ? { preparedSavedSecret: params.providerPreparedSavedSecret } : {}),
       ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
       callMachineAction,
     }) : undefined,
@@ -3484,7 +3522,7 @@ export function createCliActionDeps(params: Readonly<{
       if (target?.kind !== 'machine' || !target.project || target.project.machineId !== target.machineId) {
         return { ok: false, errorCode: 'command_target_required', error: 'Command machine and workspace are required' };
       }
-      if (!isMachineActionServerScopeCurrent(context.serverId ?? undefined)) {
+      if (!await isMachineActionServerScopeCurrent(context.serverId ?? undefined)) {
         return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
       }
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== target.machineId) {
@@ -3936,7 +3974,7 @@ export function createCliActionDeps(params: Readonly<{
       });
     },
     executionRunPermissionRespond: async (request, context) => {
-      if (!isMachineActionServerScopeCurrent(context.serverId ?? undefined)) {
+      if (!await isMachineActionServerScopeCurrent(context.serverId ?? undefined)) {
         return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
       }
       const target = await resolveExecutionRunMachineTarget(null, {
@@ -4039,7 +4077,7 @@ export function createCliActionDeps(params: Readonly<{
       const credentials = params.credentials;
       if (!credentials) return notSupported();
       const documentsRequested = query.corpora?.includes('documents') === true;
-      if (documentsRequested && !isMachineActionServerScopeCurrent(serverId ?? undefined)) {
+      if (documentsRequested && !await isMachineActionServerScopeCurrent(serverId ?? undefined)) {
         return { v: 1, ok: false, errorCode: 'memory_invalid_query', error: 'Exact Home scope is unavailable.' };
       }
       // A capability on one daemon cannot authorize a successor or another
@@ -4098,7 +4136,7 @@ export function createCliActionDeps(params: Readonly<{
     daemonMemoryGetWindow: async ({ machineId, serverId, signal, ...request }) => {
       if (!params.credentials) return notSupported();
       if (request.source !== undefined) {
-        if (!isMachineActionServerScopeCurrent(serverId ?? undefined)) throw Object.assign(
+        if (!await isMachineActionServerScopeCurrent(serverId ?? undefined)) throw Object.assign(
           new Error('Exact Home scope is unavailable.'), { code: 'not_authenticated' as const });
         return MemoryWindowV1Schema.parse(await callExactMachineRpc({ credentials: params.credentials,
           machineId, serverUrl: params.serverHttpBaseUrl ?? configuration.serverUrl,
@@ -4286,11 +4324,15 @@ export function createCliActionDeps(params: Readonly<{
       const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
       if (!parsed.success) return executionRunActionFailure('invalid_parameters');
       const workspace = parsed.data.workspace;
-      if (!isMachineActionServerScopeCurrent(workspace.serverId) || !isMachineActionServerScopeCurrent(context.serverId)) {
+      if (!await isMachineActionServerScopeCurrent(workspace.serverId) || !await isMachineActionServerScopeCurrent(context.serverId)) {
         return executionRunActionFailure('server_scope_mismatch');
       }
+      const originalAccount = params.credentials && !params.machineActionDirectTargetTransport
+        && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+        && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host');
       const placement = await resolveProjectActionMachineV1({ actionId, input: parsed.data, context,
-        executeCanonicalAction: args.executeCanonicalAction, createRequestKey: randomUUID });
+        executeCanonicalAction: args.executeCanonicalAction, createRequestKey: randomUUID,
+        ...(originalAccount && params.serverIdentityId ? { homeId: params.serverIdentityId } : {}) });
       if (!placement.ok) return placement;
       const { machineId } = placement;
       if (context.externalActionTarget && (context.externalActionTarget.kind !== 'machine'
@@ -4299,9 +4341,6 @@ export function createCliActionDeps(params: Readonly<{
         return executionRunActionFailure('not_authenticated');
       }
       context.signal?.throwIfAborted();
-      const originalAccount = params.credentials && !params.machineActionDirectTargetTransport
-        && !context.externalActionCredential && !context.externalActionExecutionAuthorization
-        && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host');
       if (originalAccount) {
         if (context.surface !== 'cli' || !context.actionRequestId
           || (context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)) {
@@ -4347,7 +4386,7 @@ export function createCliActionDeps(params: Readonly<{
     },
     promptDocCreate: async ({ signal, ...request }) => {
       if (!approvalsStore) return notSupported();
-      return createPromptDocInLibrary({ store: approvalsStore.promptLibraryStore, request, signal });
+      return createPromptDocInLibrary({ store: approvalsStore.promptLibraryStore, request: resolvePromptDocCreateActionInputV1(request), signal });
     },
     promptDocFavoriteSet: async ({ signal, ...request }) => {
       if (!approvalsStore) return notSupported();
@@ -4754,6 +4793,7 @@ export function createCliActionDeps(params: Readonly<{
       targetMachineId,
       targetPath,
       targetSessionStorageMode,
+      stateTransfer,
       workspaceAction,
       serverId,
       actionRequestId,
@@ -4790,6 +4830,7 @@ export function createCliActionDeps(params: Readonly<{
           sessionStorageMode: source.sessionStorageMode,
           ...(targetPath ? { targetPath } : {}),
           ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
+          ...(stateTransfer ? { stateTransfer } : {}),
           preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
           ...(workspaceAction ? { workspaceAction } : {}),
           ...(serverId ? { accountServerId: serverId } : {}),
@@ -5613,13 +5654,13 @@ export function createCliActionDeps(params: Readonly<{
     },
     projectWorkerAction: async (args) => {
       const { actionId, input, context, signal } = args;
-      if (actionId !== 'projects.worker.status' && actionId !== 'projects.worker.copy.retire') {
+      if (actionId !== 'projects.worker.status' && actionId !== 'projects.worker.copy.inspect' && actionId !== 'projects.worker.copy.retire') {
         return params.projectWorkerAccountAction ? await params.projectWorkerAccountAction(args)
           : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       }
       const request = ProjectWorkerActionInputSchemasV1[actionId].parse(input);
       const machineId = 'destination' in request ? request.destination.machineId : request.machineId;
-      if (!isMachineActionServerScopeCurrent(request.workspace.serverId) || !isMachineActionServerScopeCurrent(context.serverId)) {
+      if (!await isMachineActionServerScopeCurrent(request.workspace.serverId) || !await isMachineActionServerScopeCurrent(context.serverId)) {
         return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
       }
       if (context.externalActionTarget && (context.externalActionTarget.kind !== 'machine'
@@ -5638,14 +5679,16 @@ export function createCliActionDeps(params: Readonly<{
         ...(signal ? { signal } : {}) });
       const raw = await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, call) : call());
       // Cancellation retires a read, not an already received write acknowledgement.
-      if (actionId === 'projects.worker.status') signal?.throwIfAborted();
+      if (spec.sideEffectClass === 'read') signal?.throwIfAborted();
       const failure = ActionExecuteFailureSchema.safeParse(raw);
       if (failure.success) return failure.data;
       const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(raw);
       if (deferred.success && deferred.data.actionId === actionId) return deferred.data;
       const output = ProjectWorkerActionOutputSchemasV1[actionId].safeParse(raw);
       if (!output.success || ('candidate' in output.data && output.data.eligible
-        && (output.data.candidate.serverId !== request.workspace.serverId || output.data.candidate.machineId !== machineId))) {
+        && (output.data.candidate.serverId !== request.workspace.serverId || output.data.candidate.machineId !== machineId))
+        || ('targetMachineId' in request && 'preview' in output.data && output.data.ok
+          && (output.data.preview.targetMachineId !== request.targetMachineId || output.data.preview.workspaceRefId !== request.targetWorkspaceRefId))) {
         const errorCode = actionId === 'projects.worker.copy.retire' ? 'outcome_unknown' : 'invalid_action_output';
         return { ok: false, errorCode, error: errorCode };
       }
@@ -5655,7 +5698,7 @@ export function createCliActionDeps(params: Readonly<{
       const parsed = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS[actionId].safeParse(input);
       if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       const workspace = parsed.data.workspace;
-      if (!isMachineActionServerScopeCurrent(workspace.serverId) || !isMachineActionServerScopeCurrent(context.serverId)) {
+      if (!await isMachineActionServerScopeCurrent(workspace.serverId) || !await isMachineActionServerScopeCurrent(context.serverId)) {
         return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
       }
       if (context.externalActionTarget && (context.externalActionTarget.kind !== 'machine'
@@ -5736,7 +5779,7 @@ export function createCliActionDeps(params: Readonly<{
       if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
-      if (!isMachineActionServerScopeCurrent(context.serverId)) {
+      if (!await isMachineActionServerScopeCurrent(context.serverId)) {
         return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
       }
       const method = getActionSpec(actionId).bindings?.rpcMethod;
@@ -5767,6 +5810,32 @@ export function createCliActionDeps(params: Readonly<{
           ...(context.signal ? { signal: context.signal } : {}),
         }));
         return await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, search) : search());
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'server_scope_mismatch') {
+          return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+        }
+        throw error;
+      }
+    },
+    workflowEventsList: async (args, context) => {
+      if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== args.machineId) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      try {
+        const readCatalog = async () => {
+          const response = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(await callMachineAction({
+            machineId: args.machineId, serverId: args.serverId,
+            method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+            request: { machineId: args.machineId },
+            ...(context.signal ? { signal: context.signal } : {}),
+          }));
+          if (!response.success || response.data.automationEligibleEvents === undefined) {
+            return { ok: false as const, errorCode: 'workflow_event_catalog_unavailable', error: 'workflow_event_catalog_unavailable' };
+          }
+          return { machineId: args.machineId, events: projectAutomationEligibleEventsCatalogV1(response.data.automationEligibleEvents) };
+        };
+        return await (params.serverHttpBaseUrl
+          ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, readCatalog) : readCatalog());
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'server_scope_mismatch') {
           return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
@@ -6288,6 +6357,64 @@ export function createCliActionDeps(params: Readonly<{
       return admissionResult;
     },
 
+    sessionTurnCancel: async ({ sessionId, serverId, context, signal: callerSignal }) => {
+      if (!params.credentials) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      const credentials = params.credentials;
+      const signal = callerSignal ?? context.signal;
+      signal?.throwIfAborted();
+      const homeServerId = params.serverId ?? configuration.activeServerId;
+      const homeServerHttpBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+      if ((serverId && !await isServerProfileHomeIdentity(homeServerId, serverId))
+        || (context.serverId && !await isServerProfileHomeIdentity(homeServerId, context.serverId))) {
+        return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+      }
+      const externalRequest = context.externalActionCredential !== undefined
+        || context.externalActionExecutionAuthorization !== undefined;
+      const resolveAuthorizationHeaders = externalRequest
+        ? (request: Readonly<{ method: string; path: string; body?: unknown }>) =>
+            resolveServerRequestHeaders(context, 'session.turn.cancel', request)
+        : undefined;
+      if (externalRequest && (!params.externalActionMachineRequestPrivateKey
+        || !params.externalActionMachineInstallationId
+        || !resolveAuthorizationHeaders?.({ method: 'GET', path: '/v1/account/encryption/currentness' }))) {
+        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      }
+      return await runWithServerHttpBaseUrl(homeServerHttpBaseUrl, async () => {
+        const serverFeaturesSnapshot = await readServerFeaturesSnapshot();
+        const transport = await resolveSessionTransportContext({
+          credentials, idOrPrefix: sessionId,
+          ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
+          ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
+          ...(signal ? { signal } : {}),
+        });
+        if (!transport.ok) {
+          return { ok: false, errorCode: transport.code, error: transport.code,
+            ...(transport.candidates ? { candidates: transport.candidates } : {}) };
+        }
+        try {
+          return await callSessionRpc({
+            ...transport, token: credentials.token, sessionId: transport.sessionId,
+            method: `${transport.sessionId}:abort`,
+            request: { reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.` },
+            ...(context.authority !== 'present_user' ? { authorityCeiling: 'account_automation' as const } : {}),
+            ...(externalRequest && params.externalActionMachineRequestPrivateKey
+              && params.externalActionMachineInstallationId ? { externalAction: {
+                context, effectActionId: 'session.turn.cancel',
+                installationId: params.externalActionMachineInstallationId,
+                privateKey: params.externalActionMachineRequestPrivateKey,
+              } } : {}),
+            ...(signal ? { signal } : {}),
+          });
+        } catch (error) {
+          const errorCode = readRpcErrorCode(error) ?? 'session_rpc_failed';
+          return { ok: false, errorCode, error: errorCode,
+            errorMessage: error instanceof Error ? error.message : errorCode, sessionId: transport.sessionId };
+        }
+      });
+    },
+
     sessionStop: async ({ sessionId }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -6419,17 +6546,19 @@ export function createCliActionDeps(params: Readonly<{
       if (fieldId === 'intent.voicePreference' && value !== null) {
         // Running hosts consume their admitted lease. Standalone CLI uses the
         // same current manifest projection owner without activating plugins.
-        const voiceProviders = params.readPluginVoiceProviders
+        const builtIn = readBuiltInSessionVoiceDeclarationV1(value.providerContributionId);
+        const voiceProviders = builtIn ? [] : params.readPluginVoiceProviders
           ? params.readPluginVoiceProviders()
           : (await (await import('@/plugins/projection/registry/createResolvedContributionRegistry'))
             .resolveMergedContributionRegistry({ happyHomeDir: params.happyHomeDir })).voiceProviders;
         context.signal?.throwIfAborted();
         const entry = voiceProviders.find(entry => buildQualifiedPluginContributionKey(entry.identity) === value.providerContributionId);
         const parsed = VoiceProviderContributionSchema.safeParse(entry?.definition);
-        if (!parsed.success) return { ok: false, errorCode: 'override_unsupported', error: 'override_unsupported' };
-        const providerConfig = Object.fromEntries((parsed.data.settings?.fields ?? []).map(field => [field.id, field.default ?? null]));
+        const declaration = builtIn ?? (parsed.success ? parsed.data : null);
+        if (!declaration) return { ok: false, errorCode: 'override_unsupported', error: 'override_unsupported' };
+        const providerConfig = Object.fromEntries((declaration.settings?.fields ?? []).map(field => [field.id, field.default ?? null]));
         const admitted = admitDeclaredSessionVoicePreferenceV1({ providerContributionId: value.providerContributionId,
-          declaration: parsed.data, providerConfig, preference: value });
+          declaration, providerConfig, preference: value });
         if (admitted.kind === 'unavailable') return { ok: false, errorCode: admitted.reason, error: admitted.reason };
       }
       const mutate = () => updateSessionStateFieldForTarget({
@@ -6452,7 +6581,12 @@ export function createCliActionDeps(params: Readonly<{
         : fieldId === 'intent.context' ? { work: res.metadata.work } : { showToolCalls: value }), version: res.version };
     },
 
-    sessionPermissionModeSet: async ({ context, callerInputConstraints, sessionId, permissionMode }) => {
+    sessionPermissionModeSet: async ({ context, callerInputConstraints, sessionId, permissionMode, applyTiming }) => {
+      // Next-prompt intent belongs to the invoking client's next input. This
+      // headless metadata owner cannot apply it without changing that timing.
+      if (applyTiming === 'next_prompt') {
+        return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+      }
       const credentials = params.credentials;
       if (!credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -7623,7 +7757,26 @@ export function createCliActionDeps(params: Readonly<{
     },
 
     settingsDeclarationAction: createCliSettingsDeclarationAction({ credentials: params.credentials,
-      serverHttpBaseUrl: params.serverHttpBaseUrl }),
+      serverId: params.serverId ?? configuration.activeServerId,
+      serverHttpBaseUrl: params.serverHttpBaseUrl, isCredentialCurrent: params.isCredentialCurrent,
+      readMachineAgentProjection: async (machineId, context) => {
+        const readProjection = async () => {
+          let raw: unknown;
+          try {
+            raw = await callMachineAction({ machineId, serverId: params.serverId ?? configuration.activeServerId,
+              method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+              request: { machineId, selection: 'agents' }, exactMachine: true,
+              context, authority: context.authority, ...(context.signal ? { signal: context.signal } : {}),
+            });
+          } catch {
+            context.signal?.throwIfAborted();
+            return null;
+          }
+          const response = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(raw);
+          return response.success ? response.data.projection : null;
+        };
+        return await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, readProjection) : readProjection());
+      } }),
     resetGlobalVoiceAgent: () => {},
   };
   return actionDeps;

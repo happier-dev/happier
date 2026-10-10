@@ -5,6 +5,7 @@ import { createCliActionExecutor } from './createCliActionExecutor';
 import { createCliActionDeps } from './createCliActionDeps';
 import { getActionSpec, ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const input = { workspace: { serverId: 'home', refId: 'checkout' },
   destination: { kind: 'machine' as const, machineId: 'worker' }, purpose: 'finite' as const };
@@ -13,6 +14,25 @@ const params = { token: 'requester-token', credentials: { token: 'requester-toke
 afterEach(() => vi.restoreAllMocks());
 
 describe('worker Actions through requester CLI composition', () => {
+  it('reads the current exact-copy removal identity through the public Action and refuses another target', async () => {
+    const retirement = JSON.parse(getActionSpec('projects.worker.copy.retire').examples!.voice!.argsExample!);
+    const request = { ...retirement, kind: 'preview', targetMachineId: 'worker', targetWorkspaceRefId: 'copy' };
+    const preview = { ok: true, preview: { targetMachineId: 'worker', workspaceRefId: 'copy', rootFingerprint: 'b'.repeat(64), sizeBytes: 42 } };
+    const transport = vi.spyOn(machineTransport, 'callExactMachineRpc').mockResolvedValueOnce(preview);
+    const owner = createCliActionExecutor({ ...params, accountServerActionDeps: createAccountServerActionDeps(params) });
+    expect(await owner.execute('projects.worker.copy.inspect', request, { surface: 'agent' }))
+      .toEqual({ ok: true, result: preview });
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'controller',
+      method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT, request }));
+    transport.mockResolvedValueOnce({ ...preview, preview: { ...preview.preview, workspaceRefId: 'unrelated' } });
+    expect(await owner.execute('projects.worker.copy.inspect', request, { surface: 'cli' }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+    transport.mockResolvedValueOnce({ ok: false, errorCode: 'workspace_copy_not_owned' });
+    expect(await owner.execute('projects.worker.copy.inspect', request, { surface: 'cli' }))
+      .toEqual({ ok: true, result: { ok: false, errorCode: 'workspace_copy_not_owned' } });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
   it('uses exact Machine transport even when Account preference ports are installed and retains unknown load', async () => {
     const status = { eligible: true, candidate: { serverId: 'home', machineId: 'worker' }, load: { kind: 'unknown' }, explanation: 'load_unknown' };
     const addressedHomes: string[] = [];

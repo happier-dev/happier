@@ -6,11 +6,14 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { setDefaultProviderModelSelection } from '@/providers/connections/service/settings';
+import { createCliAccountProviderActionExecuteV1 } from '@/providers/connections/accountActions';
 
-/** Provider Actions share the admitted CLI Home and its incumbent exact-Machine RPC transport. */
+/** Provider Actions share admitted Account custody; only machine effects use exact-Machine RPC. */
 export function createCliProviderActionExecuteV1(params: Readonly<{
   credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string;
   operationContext?: SavedSecretOperationContextV1;
+  preparedSavedSecret?: Parameters<typeof createCliAccountProviderActionExecuteV1>[0]['preparedSavedSecret'];
+  isCredentialCurrent?(): boolean | Promise<boolean>;
   callMachineAction(input: Readonly<{
     machineId: string; serverId?: string; method: string; request: unknown; signal?: AbortSignal;
     authority?: ActionExecutorContext['authority']; authorization?: ActionExecutorContext['rpcSessionAuthorization'];
@@ -31,6 +34,7 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
       context, effectActionId: request.actionId, exactMachine: true,
     }),
     setDefault: (input, context) => setDefaultProviderModelSelection({ credentials: params.credentials, ...input, signal: context.signal }),
+    account: createCliAccountProviderActionExecuteV1(params),
   });
   return (request, context) => runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => execute(request, context));
 }

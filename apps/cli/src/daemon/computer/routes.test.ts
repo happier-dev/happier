@@ -66,7 +66,7 @@ describe('native computer route authority', () => {
   });
   it('resolves the native route owner at dispatch without unrelated feature refresh', async () => {
     const routes = createComputerRoutes({ machineId: 'machine', registry: createMachineLiveStreamCaptureRegistry() });
-    const execute = createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ computer: routes }), resolveServerFeaturesSnapshot: () => undefined });
+    const execute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' }, resolveRouteOwners: () => ({ computer: routes }), resolveServerFeaturesSnapshot: () => undefined });
     expect(await execute({ actionId: 'computer.capture', input: { machineId: 'machine', target: { kind: 'window', displayId: ':fixture', pid: 42, windowId: 7 } }, context: { authority: 'account_automation' } })).toMatchObject({ ok: false, errorCode: 'computer_session_required' });
     await routes.dispose();
   });
@@ -85,7 +85,7 @@ describe('native computer route authority', () => {
     const registry = createMachineLiveStreamCaptureRegistry();
     selectUnsupportedTarget(registry);
     const routes = createComputerRoutes({ machineId: 'machine', registry });
-    const execute = createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ computer: routes }), resolveServerFeaturesSnapshot: () => undefined });
+    const execute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' }, resolveRouteOwners: () => ({ computer: routes }), resolveServerFeaturesSnapshot: () => undefined });
     const result = await execute({ actionId: 'computer.capture', input: { machineId: 'machine',
       target: { kind: 'window', displayId: ':not-an-x11-display', pid: 42, windowId: 7 } },
     context: { authority: 'account_automation', defaultSessionId: 'session', bypassApprovals: true } });

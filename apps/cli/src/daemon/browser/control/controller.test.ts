@@ -76,6 +76,22 @@ function navigationHarness(input: Readonly<{ cleanupFails?: boolean; navigationF
 }
 
 describe('daemon browser controller commands', () => {
+  it('focuses the view without interrupting active agent input or changing its controller', async () => {
+    const harness = navigationHarness();
+    try {
+      await harness.open();
+      const active = harness.automation.execute(harness.request);
+      await harness.pressed.promise;
+      const focus = harness.routes.dispatchCommand({ ...harness.view, kind: 'focusView', commandId: 'focus-active' },
+        { authority: 'present_user' });
+      expect(harness.automation.getStatus(harness.view)).toMatchObject({ controller: 'agent', interruptionSettling: false });
+      harness.resumeInput();
+      expect(await focus).toMatchObject({ status: 'dispatched' });
+      expect(await active).toMatchObject({ status: 'succeeded' });
+      expect(harness.automation.getStatus(harness.view)).toMatchObject({ controller: 'none', uncertain: false });
+    } finally { harness.dispose(); }
+  });
+
   it('keeps human navigation admitted until its actual acknowledgement before hand back and agent resume', async () => {
     const harness = navigationHarness();
     try {

@@ -17,9 +17,11 @@ export { createMachineSessionStopLifecycleActionExecutor };
 /** The private machine spawn transport uses the existing lifecycle owner directly. */
 export function createMachineSessionSpawnRpcHandler(params: Readonly<{
     handlers: Pick<SessionLifecycleMachineHandlers, 'spawnSession'>;
+    serverId?: string;
 }>): SessionLifecycleActionHandler {
     return createSpawnNewSessionLifecycleActionHandler({
         spawnSession: params.handlers.spawnSession,
+        ...(params.serverId ? { serverId: params.serverId } : {}),
     });
 }
 

@@ -11,6 +11,11 @@ import {
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createCliActionDeps } from './createCliActionDeps';
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { reloadConfiguration } from '@/configuration';
+import { updateSettings } from '@/persistence';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 const ref = { id: 'workspace-a', serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo', projectKey: 'anchor-a', createdAtMs: 1 };
@@ -69,6 +74,59 @@ function graphRow(): ProjectAccountRowV1 {
 }
 
 describe('credentialed Session Project mutation and Sync row ports', () => {
+  it('admits portable Home Account listing and exact Workspace reads while refusing lost bindings', async () => {
+    await withTempDir('project-rows-portable-', async home => {
+      const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+      const profileId = 'rows-local-profile';
+      const homeId = 'srv_portableRows';
+      const serverUrl = 'https://rows-home.test';
+      try {
+        scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: profileId });
+        reloadConfiguration();
+        const profile = { id: profileId, name: 'Rows Home', serverUrl, webappUrl: serverUrl,
+          createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
+          homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: homeId,
+            canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }) };
+        await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: profile } }));
+        const portableRef = { ...ref, serverId: homeId };
+        const boundary = accountRows([refRow(portableRef), refRow({ ...refB, serverId: homeId }), graphRow()]);
+        const invoke = vi.fn().mockImplementation(async method => method.startsWith('usage.sources.') ? { sources: [] }
+          : method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE ? { created: true, relationshipId: 'rel-portable' }
+          : { status: 'page', relationshipId: 'rel-ab', conflicts: [], totalCount: 0, nextCursor: null });
+        const actions = createCliActionDeps({ token, credentials: { token, encryption: null },
+          serverId: profileId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, sessionId: 'session-a', mode: 'plain', ctx: null,
+          machineActionDirectTargetTransport: { machineId: 'machine-a', invoke } });
+        const executor = createActionExecutor(actions);
+        const context = { surface: 'cli' as const, serverId: homeId, bypassApprovals: true };
+        const syncResult = await actions.workspaceSyncRelationshipCreate!({ serverId: homeId, operationId: 'portable-sync',
+          input: { v: 1, sourceWorkspaceRefId: ref.id, targetMachineId: refB.machineId, targetPath: refB.rootPath,
+            mode: 'keep_both_in_sync', contentPolicy: relationship().contentPolicy, destinationIntent: 'use_existing' } });
+        expect.soft(syncResult).toMatchObject({ created: true, relationshipId: 'rel-portable' });
+        const syncRead = await actions.workspaceSyncConflictsList!({ input: { workspaceRefId: refB.id, relationshipId: 'rel-ab', limit: 50 } })
+          .catch(error => ({ errorCode: error.code }));
+        expect.soft(syncRead).toMatchObject({ status: 'page', relationshipId: 'rel-ab' });
+        const usage = await actions.usageSourceAction!({ actionId: 'usage.sources.discover', input: { serverId: homeId, machineId: 'machine-a' } }, context)
+          .catch(error => ({ errorCode: error.code }));
+        expect.soft(usage).toEqual({ sources: [] });
+        expect(await executor.execute('projects.list', { serverId: homeId }, context))
+          .toMatchObject({ ok: true, result: { items: [expect.objectContaining({ serverId: homeId })] } });
+        expect(await executor.execute('projects.workspace.update', { serverId: homeId, workspaceId: ref.id, label: 'Portable' }, context))
+          .toMatchObject({ ok: true, result: { workspaceRef: { ...portableRef, label: 'Portable' } } });
+        expect(boundary.writes()[0]?.[1]).toMatchObject({ mutations: [{ key: { serverId: homeId } }] });
+        for (const scenario of ['wrong', 'ambiguous', 'retired'] as const) {
+          await updateSettings(settings => ({ ...settings, servers: scenario === 'retired' ? {} : scenario === 'ambiguous'
+            ? { [profileId]: profile, duplicate: { ...profile, id: 'duplicate' } } : { [profileId]: profile } }));
+          const rejectedHome = scenario === 'wrong' ? 'srv_wrongRows' : homeId;
+          expect(await executor.execute('projects.list', { serverId: rejectedHome }, { ...context, serverId: rejectedHome }))
+            .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+          expect(await executor.execute('projects.workspace.update', { serverId: rejectedHome, workspaceId: ref.id, label: 'Rejected' },
+            { ...context, serverId: rejectedHome })).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+        }
+        expect(boundary.writes()).toHaveLength(1);
+      } finally { scope.restore(); reloadConfiguration(); }
+    });
+  });
+
   it('dispatches public Safe metadata updates and Danger Forget through the real row owner', async () => {
     const boundary = accountRows([refRow()]);
     const update = ActionIdSchema.parse('projects.workspace.update');

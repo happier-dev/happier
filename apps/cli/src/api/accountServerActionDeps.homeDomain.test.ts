@@ -9,6 +9,11 @@ import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
 
 /**
  * The CLI reaches the Home it is already bound to. It never chooses a Home from
@@ -25,6 +30,100 @@ describe('Home family CLI adapter', () => {
     restore = installAxiosFastifyAdapter({ app, origin: 'http://home.test' });
   });
   afterEach(async () => { restore(); await app.close(); });
+
+  it.each(['secrets.shared.promote', 'secrets.shared.grants.set'] as const)(
+    'keeps %s MCP approval bound to its Home and settles without secret disclosure', async actionId => {
+      const cipher = Buffer.alloc(40, 7).toString('base64');
+      const audience = { accountGrants: ['account-2'], teamGrants: ['team-1'], groupGrants: ['group-1'] };
+      const input = actionId === 'secrets.shared.promote'
+        ? { resourceId: 'secret-1', displayName: 'CI token', kind: 'token', encryptionMode: 'e2ee',
+            storedContent: { t: 'encrypted', c: cipher }, ...audience, expectedSettingsVersion: 7,
+            nextSettings: { t: 'encrypted', c: cipher },
+            referenceCensus: { accountMode: 'e2ee', profiles: { referenceGuardRevision: 0, rows: [] } },
+            profileMutations: [] }
+        : { resourceId: 'secret-1', expectedRevision: 2, ...audience };
+      const output = actionId === 'secrets.shared.promote'
+        ? { resourceId: 'secret-1', settingsVersion: 8 }
+        : { resourceId: 'secret-1', revision: 3 };
+      let returned: unknown = output;
+      const requests: unknown[] = [];
+      app.post(getActionSpec(actionId).serverTransport!.path, async request => {
+        expect(request.headers.authorization).toBe('Bearer bound');
+        requests.push(request.body);
+        return returned;
+      });
+      let stored: ApprovalRequest | null = null;
+      const observations: unknown[] = [];
+      // HTTP and Artifact persistence are the only substituted system boundaries.
+      const { executor } = createCliActionExecutorHarness({ token: 'bound', sessionId: 'cli-global',
+        serverId: 'home', serverHttpBaseUrl: 'http://home.test', mode: 'plain', ctx: null,
+      }, {
+        ...createAccountServerActionDeps({ token: 'bound', serverId: 'home', serverHttpBaseUrl: 'http://home.test' }),
+        approvalsCreate: async ({ request }) => {
+          stored = ApprovalRequestV2Schema.parse(request);
+          return { artifactId: 'secret-approval' };
+        },
+        approvalsGet: async () => stored,
+        approvalsUpdate: async ({ request }) => {
+          if (!stored) return { ok: false, errorCode: 'not_found', error: 'not_found' };
+          const transition = decideApprovalRequestTransition(stored, request);
+          if (!transition.ok) return transition;
+          stored = ApprovalRequestV2Schema.parse(request);
+          return { ok: true };
+        },
+        isApprovalExecutionOriginCurrent: async () => true,
+        observeActionExecution: async observation => { observations.push(observation); },
+      });
+      const context = { surface: 'mcp', authority: 'account_automation', serverId: 'home',
+        runtimeAccountId: 'account-1', actionRequestId: 'secret-request', actionCaller: { kind: 'host' } } as const;
+      const requested = await executor.execute(actionId, input, context);
+      expect(requested.ok ? null : requested.errorCode).toBeNull();
+      expect(requested).toMatchObject({ ok: true,
+        result: { kind: 'approval_request_created', artifactId: 'secret-approval' } });
+      expect(isActionDirectToolExposedOn(getActionSpec(actionId), 'mcp')).toBe(true);
+      expect(requests).toEqual([]);
+      expect(stored).toMatchObject({ status: 'open', actionArgs: input,
+        executionOriginV1: { surface: 'mcp', serverId: 'home', accountId: 'account-1' } });
+      const pending = ApprovalRequestV2Schema.parse(stored);
+      expect(JSON.stringify(pending.preview)).not.toContain(cipher);
+      expect(await executor.execute('approval.request.decide', { artifactId: 'secret-approval', decision: 'approve' },
+        context)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      const result = await executor.execute('approval.request.decide', { artifactId: 'secret-approval', decision: 'approve' },
+        { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account-1', actionCaller: { kind: 'host' } });
+      expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(requests).toEqual([getActionSpec(actionId).inputSchema.parse(input)]);
+      expect(JSON.stringify(result)).not.toContain(cipher);
+      expect(JSON.stringify(stored)).not.toContain(cipher);
+      expect(JSON.stringify(observations)).not.toContain(cipher);
+      const decided = ApprovalRequestV2Schema.parse(stored);
+      expect(decided.execution).toMatchObject({ ok: true, result: output });
+      expect(await executor.execute(actionId, input, { ...context, serverId: 'another-home', bypassApprovals: true }))
+        .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+      expect(requests).toHaveLength(1);
+      returned = { ...output, value: 'unexpected-secret-plaintext' };
+      const malformed = await executor.execute(actionId, input, { ...context, bypassApprovals: true });
+      expect(malformed).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+      expect(JSON.stringify(malformed)).not.toContain('unexpected-secret-plaintext');
+      expect(JSON.stringify(observations)).not.toContain('unexpected-secret-plaintext');
+    },
+  );
+
+  it('rebuilds only the bound Personal Home index through Action admission and retains server refusals', async () => {
+    let rebuilt = false;
+    app.post('/v1/home/search/rebuild', async () => { rebuilt = true; return { ok: true }; });
+    const { executor } = createCliActionExecutorHarness({ token: 'bound', sessionId: '',
+      serverId: 'home', serverHttpBaseUrl: 'http://home.test', mode: 'plain', ctx: null,
+    }, createAccountServerActionDeps({ token: 'bound', serverId: 'home', serverHttpBaseUrl: 'http://home.test' }));
+    expect(await executor.execute('home.search.rebuild', {}, { surface: 'cli', authority: 'present_user',
+      serverId: 'home', presentUserConfirmation: { actionId: 'home.search.rebuild' },
+    })).toEqual({ ok: true, result: { ok: true } });
+    expect(rebuilt).toBe(true);
+    rebuilt = false;
+    expect(await executor.execute('home.search.rebuild', {}, { surface: 'cli', authority: 'account_automation',
+      serverId: 'home',
+    })).toMatchObject({ ok: false });
+    expect(rebuilt).toBe(false);
+  });
 
   const summary = {
     id: 'team-1',
@@ -45,7 +144,59 @@ describe('Home family CLI adapter', () => {
     viewerRole: 'owner',
     capabilities: NO_TEAM_CAPABILITIES_V1,
     admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+    counts: null,
   };
+
+  it('reads and writes headless declared Home and Team settings through their canonical domain Actions', async () => {
+    const key = 'HAPPIER_API_CORS_MAX_AGE_SECONDS';
+    const anchor = `homeAdministration.serverSettings.${key}`;
+    let homeValue = 600;
+    let revision = 3;
+    const projection = () => ({ revision, startedAt: null, entries: [{ key, value: homeValue,
+      fixed: false, source: 'default', editable: 'home', apply: 'restart',
+      declaration: { type: 'int', section: 'server', bounds: { min: 0 } } }] });
+    app.post('/v1/home/settings/get', async () => projection());
+    app.post('/v1/home/settings/set', async request => {
+      expect(request.body).toEqual({ expectedRevision: revision, values: { [key]: 700 } });
+      homeValue = 700; revision += 1;
+      return projection();
+    });
+    let admissionMode: 'invite_only' | 'jit' = 'invite_only';
+    app.post('/v1/teams/get', async () => ({ ...summary, policy: { ...summary.policy, admissionMode } }));
+    app.post('/v1/teams/policy/set', async request => {
+      expect(request.body).toEqual({ v: 1, teamId: 'team-1', admissionMode: 'jit' });
+      admissionMode = 'jit';
+      return { ...summary, policy: { ...summary.policy, admissionMode } };
+    });
+    const credentials = { token: 'bound', encryption: null } as const;
+    const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials,
+      sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'http://home.test', mode: 'plain', ctx: null,
+    }, createAccountServerActionDeps({ token: credentials.token, credentials, serverId: 'home', serverHttpBaseUrl: 'http://home.test' }));
+    const context = { surface: 'cli', authority: 'present_user', serverId: 'home',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { enabled: true } },
+        approvalWaivedSurfaces: { 'home.settings.set': ['cli'], 'teams.policy.set': ['cli'] } }),
+      presentUserConfirmation: { actionId: 'settings.set' },
+    } as const;
+    expect(await executor.execute('settings.get', { anchor, target: { kind: 'home', serverId: 'home' } }, context))
+      .toMatchObject({ ok: true, result: { anchor, value: 600 } });
+    expect(await executor.execute('settings.set', { anchor, value: 700, target: { kind: 'home', serverId: 'home' } }, context))
+      .toMatchObject({ ok: true, result: { anchor, value: 700 } });
+    const teamAnchor = 'teams.authentication.admissionJit';
+    const target = { kind: 'team', serverId: 'home', teamId: 'team-1' };
+    expect(await executor.execute('settings.get', { anchor: teamAnchor, target }, context))
+      .toMatchObject({ ok: true, result: { anchor: teamAnchor, value: false } });
+    expect(await executor.execute('settings.set', { anchor: teamAnchor, target, value: true }, context))
+      .toMatchObject({ ok: true, result: { anchor: teamAnchor, value: true } });
+    expect(await executor.execute('settings.get', { anchor: teamAnchor, target }, context))
+      .toMatchObject({ ok: true, result: { value: true } });
+    expect(await executor.execute('settings.get', { anchor: teamAnchor, target: { ...target, serverId: 'other-home' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'setting_target_mismatch' });
+    // Root Settings admission cannot widen a narrow caller grant into domain authority.
+    expect(await executor.execute('settings.get', { anchor: teamAnchor, target }, { ...context,
+      externalActionCredential: { accountId: 'requester', principalId: 'principal', credentialId: 'credential',
+        grant: { ...API_TOKEN_FULL_GRANT_V1, actions: ['settings.get'] } },
+    })).toMatchObject({ ok: false, errorCode: 'token_scope_denied' });
+  });
 
   it('posts a Team intent to the path its Action row declares with the bound Account bearer', async () => {
     const seen: Array<{ url: string; body: unknown; authorization?: string }> = [];

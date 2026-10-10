@@ -1,6 +1,7 @@
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { AccountSettings, AgentBackendInventoryItem } from '@happier-dev/protocol';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot'
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle'
@@ -19,7 +20,10 @@ function buildCatalogBackendInventoryItems(
   return Object.keys(catalogEntriesById)
     .map((agentId) => {
       const contribution = agentDefinitionsById.get(agentId)
-      const targetKey = buildBackendTargetKeyV2({
+      const targetKey = buildBackendTargetKeyV2(contribution?.identity ? {
+        kind: 'agent',
+        identity: contribution.identity,
+      } : {
         kind: 'backend',
         backendId: agentId,
         sourceKind: 'built_in',
@@ -36,9 +40,11 @@ function buildCatalogBackendInventoryItems(
 
 export async function buildConfiguredAcpBackendInventoryItems(
   accountSettings: AccountSettings | null,
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1,
 ): Promise<AgentBackendInventoryItem[]> {
   const configuredBackends = await listConfiguredAcpBackendsFromAccountSettings({
     settings: accountSettings ?? {},
+    catalogSnapshot: acpCatalogSnapshot,
   })
 
   return configuredBackends.map((backend) => {
@@ -64,12 +70,14 @@ export async function buildAgentBackendInventoryItems(params: Readonly<{
   limit?: unknown;
   includeDisabled?: boolean;
   accountSettings?: AccountSettings | null;
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
 }>): Promise<AgentBackendInventoryItem[]> {
   const accountSettings = params.accountSettings ?? null
   const includeDisabled = params.includeDisabled === true
   const limit = normalizeLimit(params.limit)
   const configuredAcpBackends = await buildConfiguredAcpBackendInventoryItems(
     accountSettings,
+    params.acpCatalogSnapshot,
   )
   const items = [
     ...buildCatalogBackendInventoryItems(accountSettings),

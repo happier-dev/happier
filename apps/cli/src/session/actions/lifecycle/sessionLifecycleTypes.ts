@@ -6,10 +6,12 @@ import type { runReplaySummaryForDialog } from '@/session/replay/summary/runRepl
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import type { StopSessionResult } from '@/daemon/sessions/stopSessionContract';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 export type SessionLifecycleActionHandler = (
     rawParams: unknown,
-    context?: Readonly<{ signal?: AbortSignal }> & Pick<SpawnSessionOptions, 'creationAuthorization' | 'callerInputConstraints'>,
+    context?: Readonly<{ signal?: AbortSignal }> & Pick<SpawnSessionOptions, 'creationAuthorization' | 'callerInputConstraints'>
+        & Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap' | 'beforeSessionRunnerLaunch'>,
 ) => Promise<unknown>;
 
 export type SessionLifecycleMachineHandlers = Readonly<{

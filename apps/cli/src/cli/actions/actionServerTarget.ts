@@ -1,5 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
 import type { ServerProfile } from '@/server/serverProfiles';
+import { configuration } from '@/configuration';
 import { ACTION_CLI_SERVER_ID_FLAG } from './parseCommandInput';
 
 export { ACTION_CLI_SERVER_ID_FLAG } from './parseCommandInput';
@@ -48,6 +49,12 @@ export function readActionCliServerId(argv: readonly string[], acceptsServerId: 
   return selected;
 }
 
+function readExactHomeIdentity(profile: ServerProfile | null): string | undefined {
+  return profile?.homeConnectionDescriptorAuthority === 'exact'
+    ? profile.homeConnectionDescriptor?.homeServerIdentityId
+    : undefined;
+}
+
 /**
  * Resolves credentials and endpoint as one qualified Home target. Callers may
  * parse argv differently, but none may pair an explicit URL with ambient Home
@@ -60,14 +67,16 @@ export async function resolveActionCliCredentialTarget(params: Readonly<{
 }>): Promise<Readonly<{
   credentials: StoredCredentials | null;
   fixedServer: ActionCliFixedServerTarget | null;
+  serverIdentityId?: string;
 }>> {
   if (params.requestedServerId === null) {
-    return { credentials: await params.deps.readCredentialsFn(), fixedServer: null };
+    const profile = await params.deps.getServerProfileFn(configuration.activeServerId).catch(() => null);
+    const serverIdentityId = readExactHomeIdentity(profile);
+    return { credentials: await params.deps.readCredentialsFn(), fixedServer: null,
+      ...(serverIdentityId ? { serverIdentityId } : {}) };
   }
   const profile = await params.deps.getServerProfileFn(params.requestedServerId);
-  const serverIdentityId = profile.homeConnectionDescriptorAuthority === 'exact'
-    ? profile.homeConnectionDescriptor?.homeServerIdentityId
-    : undefined;
+  const serverIdentityId = readExactHomeIdentity(profile);
   if (params.requireServerIdentityId && !serverIdentityId) {
     throw Object.assign(
       new Error(`Saved Home "${profile.id}" has no verified server identity. Re-add or refresh it before retrying.`),
@@ -76,6 +85,7 @@ export async function resolveActionCliCredentialTarget(params: Readonly<{
   }
   return {
     credentials: await params.deps.readCredentialsForServerIdFn(profile.id),
+    ...(serverIdentityId ? { serverIdentityId } : {}),
     fixedServer: {
       serverId: profile.id,
       ...(serverIdentityId ? { serverIdentityId } : {}),

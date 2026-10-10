@@ -436,6 +436,7 @@ describe('Account API token HTTP adapter', () => {
     app.get('/v1/machines/:id', async request => {
       const id = (request.params as { id: string }).id;
       return { machine: { id, active: true, installationId: `${id}-installation`, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        devcontainerChild: kind !== 'ordinary' && id === child.machineId ? projection : null,
         metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
         metadata: encodePlainMachineStoredContent({ host: id, platform: 'linux', homeDir: '/home/coder', username: 'coder',
           happyCliVersion: 'test', happyHomeDir: '/home/coder/.happier', ...(id === child.machineId ? { devcontainerChild: projection } : {}) }) } };
@@ -471,7 +472,7 @@ describe('Account API token HTTP adapter', () => {
           workspaceId: source.id, workspace: { serverId: homeId, workspaceId: source.id, machineId: source.machineId, rootPath: source.rootPath },
           cwd: source.rootPath, declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } } }] : [] } };
     });
-    const executor = createActionExecutor(createAccountProjectWorkerActionDeps({ token: 'interactive', serverId: homeId, serverHttpBaseUrl: 'http://account.test' }));
+    const executor = createActionExecutor(createAccountProjectWorkerActionDeps({ token: 'interactive', serverId: homeId, serverHttpBaseUrl: 'https://account.test' }));
     const get = () => executor.execute('projects.service.placement.get', { workspace: { serverId: homeId, refId: source.id }, serviceName: 'web' },
       { surface: 'cli', serverId: homeId });
     try {

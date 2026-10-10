@@ -5,10 +5,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactBlobWriteV1Schema, decodePlainArtifactStoredContent, decodeBase64, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { ARTIFACT_HTML_BUNDLE_MIME_V1, ArtifactHtmlBundleV1Schema } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { decryptWithDataKey } from '@/api/encryption';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
-import { publishArtifactFromWorkspaceFile } from './publishArtifactFromWorkspaceFile';
+import { publishArtifactFromWorkspaceFile, readArtifactWorkspaceFile } from './publishArtifactFromWorkspaceFile';
 
 const http = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
 vi.mock('axios', () => ({ default: http }));
@@ -41,7 +42,7 @@ describe('explicit Artifact publication from the caller workspace', () => {
     http.get.mockImplementation(async (url: string) => ({ status: 200,
       data: { url: `https://isolated.example/a/${url.split('/').at(-2)}` } }));
     const result = await publishArtifactFromWorkspaceFile({ store: store(), caller: { sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace') }, input: { path: 'document', mime } });
-    expect(result).toMatchObject({ previewUrl: expect.stringContaining('#d=') });
+    expect(result).toEqual({ artifactId: expect.any(String), revision: { headerVersion: 1, bodyVersion: 1 } });
     const payload = readCarrierMutation(http.post.mock.calls[0]?.[1]);
     expect(decodePlainArtifactStoredContent(String(payload.header))).toMatchObject({ kind: 'html', mime });
     if (mime === 'text/html') expect(decodePlainArtifactStoredContent(String(payload.body))).toEqual({ body: text });
@@ -59,8 +60,75 @@ describe('explicit Artifact publication from the caller workspace', () => {
       const header = decodePlainArtifactStoredContent(http.post.mock.calls.at(-1)?.[1].header);
       const isHtml = !('kind' in input) && (!('mime' in input) || input.mime?.startsWith('text/html'));
       expect(header).toMatchObject({ kind: isHtml ? 'html' : 'published.v1' });
-      expect(Reflect.has(result, 'previewUrl')).toBe(isHtml);
+      expect(result).not.toHaveProperty('previewUrl');
+      expect(result).not.toHaveProperty('previewError');
     }
+  });
+
+  it('acquires a declared folder entrypoint with exact JS, CSS, image, font and resource bytes and publishes the same bundle', async () => {
+    const directory = join(root, 'workspace', 'site');
+    await mkdir(join(directory, 'pages'), { recursive: true });
+    await mkdir(join(directory, 'assets'));
+    const assets = {
+      'pages/index.html': { mime: 'text/html', bytes: Buffer.from('<script type="module" src="../assets/main.mjs"></script>') },
+      'assets/main.mjs': { mime: 'text/javascript', bytes: Buffer.from('import "./dep.js"; fetch("../data.json")') },
+      'assets/dep.js': { mime: 'text/javascript', bytes: Buffer.from('document.body.dataset.loaded = "yes"') },
+      'assets/style.css': { mime: 'text/css', bytes: Buffer.from('@font-face {src:url("./font.woff2")}') },
+      'assets/icon.png': { mime: 'image/png', bytes: Buffer.from([137, 80, 78, 71, 0, 255]) },
+      'assets/font.woff2': { mime: 'font/woff2', bytes: Buffer.from([119, 79, 70, 50, 0, 255]) },
+      'data.json': { mime: 'application/json', bytes: Buffer.from('{"result":42}') },
+    };
+    for (const [path, asset] of Object.entries(assets)) await writeFile(join(directory, path), asset.bytes);
+    const caller = { sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace') };
+    const acquired = await readArtifactWorkspaceFile({ caller, path: 'site', entrypoint: 'pages/index.html' });
+    const expected = { v: 1, entrypoint: 'pages/index.html', files: Object.fromEntries(Object.entries(assets)
+      .map(([path, asset]) => [path, { mime: asset.mime, contentBase64: asset.bytes.toString('base64') }])) };
+    expect(acquired.bundle).toEqual(expected);
+    expect(acquired.path).toBe('site');
+    http.get.mockImplementation(async (url: string) => ({ status: 200,
+      data: { url: `https://isolated.example/a/${url.split('/').at(-2)}` } }));
+    const result = await publishArtifactFromWorkspaceFile({ store: store(), caller,
+      input: { path: 'site', entrypoint: 'pages/index.html', title: 'Experiment' } });
+    expect(result).toEqual({ artifactId: expect.any(String), revision: { headerVersion: 1, bodyVersion: 1 } });
+    const payload = readCarrierMutation(http.post.mock.calls[0]?.[1]);
+    expect(decodePlainArtifactStoredContent(String(payload.header))).toMatchObject({ title: 'Experiment', kind: 'html', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 });
+    const blob = ArtifactBlobWriteV1Schema.parse(payload.blob);
+    expect(blob.content.t === 'plain' && ArtifactHtmlBundleV1Schema.parse(JSON.parse(Buffer.from(blob.content.v, 'base64').toString('utf8')))).toEqual(expected);
+  });
+
+  it('returns the canonical one-file bundle when acquiring HTML without creating an Artifact', async () => {
+    await writeFile(join(root, 'workspace', 'index.html'), '<h1>Hello</h1>');
+    const acquired = await readArtifactWorkspaceFile({ caller: { sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace') }, path: 'index.html' });
+    expect(acquired.bundle).toEqual({ v: 1, entrypoint: 'index.html', files: { 'index.html': {
+      mime: 'text/html', contentBase64: Buffer.from('<h1>Hello</h1>').toString('base64'),
+    } } });
+    expect(http.post).not.toHaveBeenCalled();
+  });
+
+  it('refuses a missing or invalid folder entrypoint before publication', async () => {
+    await mkdir(join(root, 'workspace', 'site'));
+    await writeFile(join(root, 'workspace', 'site', 'index.html'), '<h1>Hello</h1>');
+    await writeFile(join(root, 'workspace', 'site', 'main.js'), 'export {}');
+    const caller = { sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace') };
+    for (const entrypoint of [undefined, '../site/index.html', '/index.html', 'pages\\index.html', 'missing.html', 'main.js']) {
+      await expect(publishArtifactFromWorkspaceFile({ store: store(), caller, input: { path: 'site', entrypoint } }))
+        .rejects.toMatchObject({ code: 'artifact_source_forbidden' });
+    }
+    expect(http.post).not.toHaveBeenCalled();
+  });
+
+  it('refuses folder symlinks, asset symlinks and symlink ancestors even when their destinations stay inside the workspace', async () => {
+    await mkdir(join(root, 'workspace', 'site'));
+    await writeFile(join(root, 'workspace', 'site', 'index.html'), '<h1>Hello</h1>');
+    await symlink(join(root, 'workspace', 'site'), join(root, 'workspace', 'linked-site'), process.platform === 'win32' ? 'junction' : 'dir');
+    const caller = { sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace') };
+    for (const input of [{ path: 'linked-site', entrypoint: 'index.html' }, { path: 'linked-site/index.html' }]) {
+      await expect(publishArtifactFromWorkspaceFile({ store: store(), caller, input })).rejects.toMatchObject({ code: 'artifact_source_forbidden' });
+    }
+    await symlink(join(root, 'workspace', 'site', 'index.html'), join(root, 'workspace', 'site', 'linked.html'));
+    await expect(publishArtifactFromWorkspaceFile({ store: store(), caller, input: { path: 'site', entrypoint: 'index.html' } }))
+      .rejects.toMatchObject({ code: 'artifact_source_forbidden' });
+    expect(http.post).not.toHaveBeenCalled();
   });
 
   it.each(['plain', 'e2ee'] as const)('publishes a completed %s multi-chunk text copy without public source disclosure', async mode => {

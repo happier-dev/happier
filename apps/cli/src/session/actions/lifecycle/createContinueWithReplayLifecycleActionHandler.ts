@@ -11,13 +11,14 @@ import type {
     SessionLifecycleMachineDeps,
     SessionLifecycleMachineHandlers,
 } from './sessionLifecycleTypes';
+import { runRequesterSessionLifecycle } from './requesterSessionLifecycle';
 
 export function createContinueWithReplayLifecycleActionHandler(params: Readonly<{
     sessionHostBridge: ReturnType<typeof getSessionHostBridge>;
     spawnSession: SessionLifecycleMachineHandlers['spawnSession'];
     deps?: SessionLifecycleMachineDeps;
 }>): SessionLifecycleActionHandler {
-    return async (raw: unknown) => {
+    return async (raw: unknown, context) => {
         const parsed = parseSessionContinueWithReplayRpcParamsCompatIngress(raw);
         if (!parsed.success) {
             return {
@@ -27,6 +28,11 @@ export function createContinueWithReplayLifecycleActionHandler(params: Readonly<
             };
         }
 
+        return await runRequesterSessionLifecycle<unknown>({ sessionId: parsed.data.replay.previousSessionId, context,
+            spawnSession: params.spawnSession,
+            refused: () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Session authority is unavailable' }),
+            run: async ({ requester, spawnSession, isCurrent }) => {
         const parsedData = parsed.data as typeof parsed.data & { spawnNonce?: unknown };
         const resolvedBackend = params.sessionHostBridge.resolveContinueWithReplayBackendTarget({
             backendTarget: parsedData.backendTarget,
@@ -51,11 +57,14 @@ export function createContinueWithReplayLifecycleActionHandler(params: Readonly<
                 replay: parsed.data.replay,
             },
             {
-                spawnSession: params.spawnSession,
+                spawnSession,
+                ...(requester ? { credentials: requester.credentials, isCurrent } : {}),
                 ...(params.deps?.runReplaySummaryForDialog
                     ? { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog }
                     : {}),
             },
         );
+            },
+        });
     };
 }

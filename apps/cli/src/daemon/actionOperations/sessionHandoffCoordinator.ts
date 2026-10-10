@@ -1,4 +1,4 @@
-import { SessionHandoffPrepareTargetResponseSchema, SessionHandoffPrepareTargetResultGetSuccessResponseSchema, SessionHandoffAbortResponseSchema, SessionHandoffCommitResponseSchema, SessionHandoffStartResponseSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { SessionHandoffPrepareTargetResponseSchema, SessionHandoffPrepareTargetResultGetSuccessResponseSchema, SessionHandoffAbortResponseSchema, SessionHandoffCommitResponseSchema, SessionHandoffStartResponseSchema, SessionHandoffExistingStateCheckResponseV3Schema, type SessionHandoffExistingStateCheckRequestV3 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { SessionHandoffStatusSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 import { HandoffWorkspaceOutcomeV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ActionExecuteResult, HandoffWorkspaceOutcomeV1, WorkspaceSyncCleanupWarningV1, SessionHandoffPrepareTargetResponse, SessionHandoffStatus, SessionHandoffStorageMode, HandoffWorkspaceActionV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
@@ -21,6 +21,7 @@ type HandoffInput = Readonly<{
   targetPath?: string;
   targetDirectory?: Readonly<{ kind: 'managed' }>;
   targetSessionStorageMode?: SessionHandoffStorageMode;
+  stateTransfer?: 'transfer' | 'existing';
   /** Canonical wire action. */
   workspaceAction?: HandoffWorkspaceActionV1;
   accountServerId?: string;
@@ -48,6 +49,7 @@ type CoordinatorInput = Readonly<{
   signal: AbortSignal;
   start: () => Promise<ActionExecuteResult>;
   resolveSource: (sessionId: string, signal: AbortSignal) => Promise<SourceContext>;
+  checkExistingTarget: (request: SessionHandoffExistingStateCheckRequestV3, signal: AbortSignal) => Promise<RpcResult>;
   prepareTarget: (request: Readonly<Record<string, unknown>>, signal: AbortSignal) => Promise<RpcResult>;
   getPreparedTargetResult: (request: Readonly<{ handoffId: string }>, signal: AbortSignal) => Promise<RpcResult>;
   getTargetStatus: (request: Readonly<{ handoffId: string }>, signal: AbortSignal) => Promise<RpcResult>;
@@ -71,6 +73,7 @@ type CoordinatorInput = Readonly<{
   publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
   wait?: (signal: AbortSignal) => Promise<void>;
   workspaceSyncAdapter: WorkspaceSyncHandoffAdapter;
+  callWorkspaceSourcePhase?: PrepareWorkspaceSyncHandoffInput['callWorkspaceSourcePhase'];
 }>;
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -212,10 +215,10 @@ async function abortBoth(
   handoffId: string,
   reason: string,
 ): Promise<boolean> {
-  const responses = await Promise.allSettled([
-    input.abort({ machineId: input.input.targetMachineId, handoffId, reason }),
-    input.abort({ machineId: sourceMachineId, handoffId, reason }),
-  ]);
+  const machineIds = new Set([input.input.targetMachineId, sourceMachineId]);
+  const responses = await Promise.allSettled([...machineIds].map((machineId) =>
+    input.abort({ machineId, handoffId, reason }),
+  ));
   return responses.every((response) => {
     if (response.status !== 'fulfilled') return false;
     const parsed = SessionHandoffAbortResponseSchema.safeParse(response.value);
@@ -282,6 +285,7 @@ export async function coordinateTrackedSessionHandoff(
 ): Promise<ActionExecuteResult> {
   let cancellationSourceMachineId: string | null = null;
   let cancellationHandoffId: string | null = null;
+  let cancellationClosed = false;
   let preparedWorkspace: WorkspaceSyncHandoffPrepared | undefined;
   let finalizedWorkspace: WorkspaceSyncHandoffCommitted | undefined;
   let committedTarget: Readonly<{ handoffId: string; status: SessionHandoffStatus }> | null = null;
@@ -316,6 +320,33 @@ export async function coordinateTrackedSessionHandoff(
   // receives this same canonical action; no legacy workspace-transfer shape is
   // interpreted or forwarded.
   const workspaceSyncAction = input.input.workspaceAction;
+
+  if (input.input.stateTransfer === 'existing') {
+    if (workspaceSyncAction && workspaceSyncAction.kind !== 'none') {
+      return { ok: false, errorCode: 'invalid_input', error: 'Existing session state requires no workspace transfer.' };
+    }
+    // The source start owner defaults an omitted path to owner metadata's path.
+    // Managed allocation cannot provide an existing target directory before start.
+    const existingTargetPath = input.input.targetDirectory?.kind === 'managed'
+      ? undefined : input.input.targetPath ?? source.sourceRootPath;
+    if (!existingTargetPath) {
+      return { ok: false, errorCode: 'existing_session_state_unavailable', error: 'The target session directory is unavailable. Turn session data transfer on.' };
+    }
+    input.signal.throwIfAborted();
+    const checked = SessionHandoffExistingStateCheckResponseV3Schema.safeParse(await input.checkExistingTarget({
+      sessionId: input.input.sessionId,
+      sourceMachineId: source.sourceMachineId,
+      targetMachineId: input.input.targetMachineId,
+      targetPath: existingTargetPath,
+      sourceSessionStorageMode: source.sessionStorageMode,
+      ...(input.input.targetSessionStorageMode ? { targetSessionStorageMode: input.input.targetSessionStorageMode } : {}),
+    }, input.signal));
+    input.signal.throwIfAborted();
+    if (!checked.success) {
+      return { ok: false, errorCode: 'session_handoff_existing_state_check_invalid', error: 'The target could not verify existing session state. Turn session data transfer on.' };
+    }
+    if (!checked.data.ok) return { ok: false, errorCode: checked.data.errorCode, error: checked.data.error ?? checked.data.errorCode };
+  }
 
   // Workspace preparation is intentionally before source stop (start()). The adapter owns
   // bootstrap/readiness and never falls back to the retired replication engine.
@@ -354,12 +385,14 @@ export async function coordinateTrackedSessionHandoff(
       } : {}),
       action: workspaceSyncAction,
       sourceMachineId: source.sourceMachineId,
+      sourceSessionId: input.input.sessionId,
       targetMachineId: input.input.targetMachineId,
       ...(sourceWorkspaceRefId ? { sourceWorkspaceRefId } : {}),
       ...(targetWorkspaceRefId ? { targetWorkspaceRefId } : {}),
       sourceRootPath,
       targetRootPath,
       signal: input.signal,
+      ...(input.callWorkspaceSourcePhase ? { callWorkspaceSourcePhase: input.callWorkspaceSourcePhase } : {}),
     };
     try {
       if (workspaceSyncAction.kind === 'linked_workspace') {
@@ -432,6 +465,8 @@ export async function coordinateTrackedSessionHandoff(
 
   const preparedRaw = await input.prepareTarget({
     handoffId,
+    ...(input.input.stateTransfer ? { stateTransfer: input.input.stateTransfer } : {}),
+    ...(input.input.stateTransfer === 'existing' ? { sessionId: input.input.sessionId } : {}),
     sourceMachineId: source.sourceMachineId,
     targetMachineId: input.input.targetMachineId,
     ...(input.input.targetDirectory?.kind === 'managed'
@@ -513,11 +548,16 @@ export async function coordinateTrackedSessionHandoff(
   }
 
   publishPhase(input.publishOwnerUpdate, 'resuming_target', 'Resuming target session');
+  input.signal.throwIfAborted();
+  // Resume publishes replacement runtime metadata during startup. There is no rollback
+  // contract after binding begins, so late cancellation must finish custody and commit.
+  cancellationClosed = true;
+  const completionSignal = new AbortController().signal;
   const resumed = await input.resumeTarget({
     sessionId: input.input.sessionId,
     targetMachineId: input.input.targetMachineId,
     prepared: prepared.data,
-  }, input.signal);
+  }, completionSignal);
   const resumeFailure = readFailure(resumed, 'session_handoff_resume_failed');
   if (resumeFailure || asRecord(resumed)?.ok !== true) {
     const failure = resumeFailure ?? {
@@ -535,7 +575,7 @@ export async function coordinateTrackedSessionHandoff(
     sessionId: input.input.sessionId,
     targetMachineId: input.input.targetMachineId,
     handoffId,
-  }, input.signal);
+  }, completionSignal);
   const confirmFailure = readFailure(confirmed, 'session_handoff_target_unconfirmed');
   if (confirmFailure || asRecord(confirmed)?.ok !== true) {
     const failure = confirmFailure ?? {
@@ -553,7 +593,7 @@ export async function coordinateTrackedSessionHandoff(
     machineId: input.input.targetMachineId,
     handoffId,
     mode: 'target',
-  }, input.signal);
+  }, completionSignal);
   const commitFailure = readFailure(committed, 'session_handoff_commit_failed');
   const committedResponse = SessionHandoffCommitResponseSchema.safeParse(committed);
   if (commitFailure || !committedResponse.success) {
@@ -575,7 +615,7 @@ export async function coordinateTrackedSessionHandoff(
       workspaceCommitted = await input.workspaceSyncAdapter.commit({
         operationId: workspaceOperationId,
         prepared: preparedWorkspace,
-        signal: input.signal,
+        signal: completionSignal,
       });
     } catch (error) {
       workspaceCleanupFailure = readThrownFailure(error, 'workspace_sync_commit_failed');
@@ -595,7 +635,7 @@ export async function coordinateTrackedSessionHandoff(
       machineId: source.sourceMachineId,
       handoffId,
       mode: 'source_cleanup',
-    }, input.signal);
+    }, completionSignal);
     const cleanupFailure = readFailure(cleanup, 'session_handoff_source_cleanup_failed');
     const cleanupResponse = SessionHandoffCommitResponseSchema.safeParse(cleanup);
     cleanupWarning = cleanupFailure ?? (!cleanupResponse.success
@@ -655,7 +695,7 @@ export async function coordinateTrackedSessionHandoff(
         },
       };
     }
-    if (!input.signal.aborted) {
+    if (!input.signal.aborted || cancellationClosed) {
       await abortWorkspace();
       if (workspaceAbortFailure !== undefined) {
         throw Object.assign(

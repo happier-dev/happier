@@ -8,6 +8,9 @@ import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/acti
 import { getActionSpec, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionDefinitionV1, ActionExecuteFailure, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
+import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { createCredentialedFilesystemTransferClient } from '@/machines/transfer/createCredentialedFilesystemTransferClient';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
 import {
   compileActionCliFields,
@@ -22,6 +25,7 @@ import {
 } from '@/cli/actions/commandHelp';
 import {
   runCompiledActionCliCommand,
+  confirmCliRequesterCredentialDisclosure,
   type ActionCliExecutionDeps,
 } from '@/cli/actions/executeCommand';
 import {
@@ -36,7 +40,7 @@ import {
   stripCliOwnedFlags,
 } from '@/cli/actions/parseCommandInput';
 import type { CommandContext } from '@/cli/commandRegistry';
-import { assertCommandArguments, readFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
+import { assertCommandArguments, argvBeforeOptionTerminator, readFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
@@ -50,6 +54,8 @@ import {
 
 const ACTION_CLI_PROJECT_DIRECTORY_FLAG = '--project-directory' as const;
 const ACTION_CLI_WORKSPACE_REF_ID_FLAG = '--workspace-ref-id' as const;
+const ACTION_CLI_SOURCE_PATH_FLAG = '--source-path' as const;
+const ACTION_CLI_DESTINATION_PATH_FLAG = '--destination-path' as const;
 const INVOKE_USAGE = 'Usage: happier actions invoke <action-id> [--<field> <value>...] [--input-json <json>] [--request-id <id>] [--server-id <id>] [--machine-id <id>] [--project-directory <path>] [--workspace-ref-id <id>] [--json]';
 
 /** CLI-owned transport flags; they never become Action input. */
@@ -59,6 +65,8 @@ const INVOKE_TRANSPORT_VALUE_FLAGS = [
   ACTION_CLI_SERVER_ID_FLAG,
   ACTION_CLI_PROJECT_DIRECTORY_FLAG,
   ACTION_CLI_WORKSPACE_REF_ID_FLAG,
+  ACTION_CLI_SOURCE_PATH_FLAG,
+  ACTION_CLI_DESTINATION_PATH_FLAG,
 ] as const;
 
 type ActionsDeps = ActionCliExecutionDeps;
@@ -99,6 +107,8 @@ function showHelp(): void {
         { label: '--machine-id <id>', description: 'Target an exact machine' },
         { label: '--project-directory <path>', description: 'Bind a Machine-local Workflow project directory' },
         { label: '--workspace-ref-id <id>', description: 'Bind the saved Workspace reference for the project' },
+        { label: '--source-path <path>', description: 'Local prepared filesystem upload source (never sent as Action input)' },
+        { label: '--destination-path <path>', description: 'Local prepared filesystem download destination (never sent as Action input)' },
         { label: '--<field> <value>', description: 'Ordinary Action input field for invoke' },
         { label: '--<field>-json <json>', description: 'One nested Action input field for invoke' },
         { label: '--input-json <json>', description: 'Whole Action input for invoke' },
@@ -159,6 +169,7 @@ function resolveInvokeActionInput(
     startIndex: 1,
     booleanFlags: [ACTION_CLI_JSON_OUTPUT_FLAG, ...flags.booleanFlags],
     valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS, ACTION_CLI_WHOLE_INPUT_FLAG, ...flags.valueFlags],
+    literalValueFlags: [ACTION_CLI_SOURCE_PATH_FLAG, ACTION_CLI_DESTINATION_PATH_FLAG],
     maxPositionals: 1,
   });
   const stripped = stripCliOwnedFlags(args.slice(1), { valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS] });
@@ -239,9 +250,10 @@ export async function resolveActionDefinitionForCliCompletion(
     }
     if (!parseQualifiedPluginActionId(actionId)) return null;
     const requestedServerId = readActionCliServerId(argv, true);
-    const { credentials, fixedServer } = await resolveActionCliCredentialTarget({ requestedServerId, deps });
+    const { credentials, fixedServer, serverIdentityId } = await resolveActionCliCredentialTarget({ requestedServerId, deps });
     if (!credentials) return null;
-    const executorOptions = { credentials, externalActionClient: true as const };
+    const executorOptions = { credentials, externalActionClient: true as const,
+      ...(serverIdentityId ? { serverIdentityId } : {}) };
     const executor = await deps.createExecutorFn(fixedServer
       ? { ...executorOptions, ...fixedServer }
       : executorOptions);
@@ -249,7 +261,8 @@ export async function resolveActionDefinitionForCliCompletion(
       await executor.execute(
         'action.spec.get',
         { id: actionId },
-        actionContext(),
+        { ...actionContext(), ...(fixedServer ? { serverId: fixedServer.serverId } : {}),
+          ...(serverIdentityId ? { serverIdentityId } : {}) },
       ),
       actionId,
     );
@@ -366,18 +379,37 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
       })();
   if (!contributed && localInvocation === null) return;
 
+  const localPath = (flag: string) => {
+    const options = argvBeforeOptionTerminator(args);
+    const occurrences = options.filter(value => value === flag || value.startsWith(`${flag}=`));
+    if (occurrences.length > 1) invalidInvokeArguments(`Provide ${flag} once.`);
+    const value = readRawFlagValue(options, flag);
+    return value === null ? null : expandHomeDirPath(value);
+  };
+  const sourcePath = localPath(ACTION_CLI_SOURCE_PATH_FLAG);
+  const destinationPath = localPath(ACTION_CLI_DESTINATION_PATH_FLAG);
+  const isUpload = localInvocation?.actionId === 'daemon.filesystem.upload';
+  const isDownload = localInvocation?.actionId === 'daemon.filesystem.download';
+  if (sourcePath !== null && !isUpload) invalidInvokeArguments(`${ACTION_CLI_SOURCE_PATH_FLAG} is only valid for filesystem upload.`);
+  if (destinationPath !== null && !isDownload) invalidInvokeArguments(`${ACTION_CLI_DESTINATION_PATH_FLAG} is only valid for filesystem download.`);
+  if (isUpload && !sourcePath) invalidInvokeArguments(`${ACTION_CLI_SOURCE_PATH_FLAG} is required for filesystem upload.`);
+  if (isDownload && !destinationPath) invalidInvokeArguments(`${ACTION_CLI_DESTINATION_PATH_FLAG} is required for filesystem download.`);
+  if ((isUpload || isDownload) && !readFlagValue(args, ACTION_CLI_MACHINE_ID_FLAG)) invalidInvokeArguments(`${ACTION_CLI_MACHINE_ID_FLAG} is required for filesystem transfer.`);
+
   const requestedServerId = readActionCliServerId(args, true);
+  if ((isUpload || isDownload) && requestedServerId === null) invalidInvokeArguments(`${ACTION_CLI_SERVER_ID_FLAG} is required for filesystem transfer.`);
   if (localInvocation?.requiresServerId && requestedServerId === null) {
     throw Object.assign(
       new Error(`Option ${ACTION_CLI_SERVER_ID_FLAG} is required for this Home-scoped Action.`),
       { code: 'invalid_arguments' },
     );
   }
-  const { credentials, fixedServer } = await resolveActionCliCredentialTarget({
+  const { credentials, fixedServer, serverIdentityId } = await resolveActionCliCredentialTarget({
     requestedServerId,
     requireServerIdentityId: localInvocation?.requiresServerId === true,
     deps,
   });
+  if ((isUpload || isDownload) && !fixedServer) invalidInvokeArguments(`${ACTION_CLI_SERVER_ID_FLAG} is required for filesystem transfer.`);
   if (!credentials) throw Object.assign(new Error('Not authenticated. Run "happier auth login" first.'), { code: 'not_authenticated' });
   const machineId = readFlagValue(args, ACTION_CLI_MACHINE_ID_FLAG) ?? undefined;
   const projectDirectory = readFlagValue(args, ACTION_CLI_PROJECT_DIRECTORY_FLAG) ?? undefined;
@@ -390,6 +422,9 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
   }
   const executorOptions = {
     credentials,
+    ...(serverIdentityId ? { serverIdentityId } : {}),
+    onRequesterSessionCredentialDisclosure: (disclosure: Parameters<typeof confirmCliRequesterCredentialDisclosure>[0]) =>
+      confirmCliRequesterCredentialDisclosure(disclosure, { json, ...(signal ? { signal } : {}) }),
     readCredentials: fixedServer
       ? () => deps.readCredentialsForServerIdFn(fixedServer.serverId)
       : deps.readCredentialsFn,
@@ -399,12 +434,15 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
   const executor = await deps.createExecutorFn(fixedServer
     ? { ...executorOptions, ...fixedServer }
     : executorOptions);
+  const context = { ...actionContext(signal),
+    ...(fixedServer ? { serverId: fixedServer.serverId } : {}),
+    ...(serverIdentityId ? { serverIdentityId } : {}) };
   let invocation: Readonly<{ actionId: SignedRootActionId; input: unknown; requestId: string }>;
   if (contributed) {
     const discovery = await executor.execute(
       'action.spec.get',
       { id: requested },
-      { ...actionContext(signal), actionRequestId: requestId },
+      { ...context, actionRequestId: requestId },
     );
     let compiled: InvokeCompiledFields;
     let input: unknown;
@@ -452,7 +490,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
     }
   }
   const invocationOptions = {
-    ...actionContext(signal),
+    ...context,
     actionRequestId: invocation.requestId,
     ...(defaultSessionId ? { defaultSessionId } : {}),
     ...(machineId ? {
@@ -469,9 +507,24 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal):
       },
     } : {}),
   };
-  const data = unwrapOuterActionResult(
-    await executor.execute(invocation.actionId, resolvedInput, invocationOptions),
-  );
+  let data: unknown;
+  if ((isUpload || isDownload) && machineId && fixedServer) {
+    const transfer = await createCredentialedFilesystemTransferClient({ credentials, ...fixedServer,
+      executeAction: async (actionId, input, context) => await executor.execute(actionId, input, { ...invocationOptions, ...context }),
+      ...(signal ? { signal } : {}),
+    });
+    try {
+      const outcome = isUpload
+        ? await transfer.client.upload({ ...FilesystemUploadInputSchema.parse(resolvedInput), sourcePath: sourcePath!, targetMachineId: machineId,
+            serverId: fixedServer.serverId, ...(signal ? { signal } : {}) })
+        : await transfer.client.download({ ...FilesystemDownloadInputSchema.parse(resolvedInput), destinationId: FilesystemDownloadInputSchema.parse(resolvedInput).destination.destinationId,
+            destinationPath: destinationPath!, targetMachineId: machineId, serverId: fixedServer.serverId, ...(signal ? { signal } : {}) });
+      data = unwrapOuterActionResult('kind' in outcome || outcome.success ? { ok: true, result: outcome }
+        : { ok: false, error: outcome.error, errorCode: outcome.errorCode ?? 'filesystem_transfer_failed', details: outcome });
+    } finally { await transfer.close(); }
+  } else {
+    data = unwrapOuterActionResult(await executor.execute(invocation.actionId, resolvedInput, invocationOptions));
+  }
   if (json) await printJsonEnvelope({ ok: true, kind: 'actions_invoke', data }); else await writeJsonStdout(data, { pretty: true });
 }
 

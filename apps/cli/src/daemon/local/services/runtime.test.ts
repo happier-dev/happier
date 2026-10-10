@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AxiosError, AxiosHeaders } from 'axios';
-import { createLocalServiceActionConfirmationNonceV1, FeaturesResponseSchema, type LocalServiceActionRequestV1 } from '@happier-dev/protocol';
+import { createLocalServiceActionConfirmationNonceV1, type LocalServiceActionRequestV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { buildPluginHostedWebStaticAssetPreviewId } from '@happier-dev/protocol/plugins/ui';
 
 import { createLocalServicesDaemonRuntime } from './runtime';
@@ -89,6 +93,65 @@ function buildSnapshot(
 }
 
 describe('createLocalServicesDaemonRuntime', () => {
+    it('projects manifest and detected native services from actual accepted WorkspaceRefs without a Session', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-local-service-declarations-'));
+        await mkdir(join(root, '.happier'));
+        await writeFile(join(root, '.happier', 'project.json'), JSON.stringify({
+            version: 1, services: { worker: { source: { kind: 'command', command: 'worker-command' } } },
+        }));
+        await writeFile(join(root, 'compose.yaml'), 'services:\n  web:\n    image: nginx\n');
+        const workspace = { id: 'accepted-workspace', serverId: 'home-a', machineId: 'machine-a',
+            rootPath: root, projectKey: 'project-a', createdAtMs: 1 };
+        const runtime = createLocalServicesDaemonRuntime({
+            machineId: 'machine-a', startLoop: false, inventoryEnabled: () => true,
+            workspaceFacts: () => ({ facts: [{ id: workspace.id, path: root }],
+                acceptedWorkspaceRefs: [workspace], diagnostics: [] }),
+            scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }),
+        });
+        try {
+            const snapshot = await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
+            expect(snapshot.targets.map(target => ({
+                cwd: target.cwd, workspaceId: target.workspaceId, declaration: target.declaration,
+            }))).toEqual(expect.arrayContaining([
+                { cwd: root, workspaceId: workspace.id, declaration: {
+                    workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'worker' },
+                } },
+                { cwd: root, workspaceId: workspace.id, declaration: {
+                    workspaceRefId: workspace.id, selection: { kind: 'native', source: {
+                        kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'web',
+                    } },
+                } },
+            ]));
+            expect(snapshot).not.toHaveProperty('sessionId');
+            expect(snapshot.targets.every(target => !target.actions.includes('start'))).toBe(true);
+        } finally {
+            await runtime.stop();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+    it('discovers a sessionless workspace through the same workspace facts used by inventory', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-local-service-workspace-'));
+        await writeFile(join(root, 'package.json'), JSON.stringify({
+            name: 'sessionless-project', scripts: { dev: 'vite' },
+        }));
+        // Scan and workspace facts are OS/storage boundaries. Discovery and feed projection stay real.
+        const runtime = createLocalServicesDaemonRuntime({
+            machineId: 'machine-a', startLoop: false, inventoryEnabled: () => true,
+            workspaceFacts: () => [{ id: 'accepted-workspace', path: root }],
+            scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }),
+        });
+        try {
+            const snapshot = await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
+            expect(snapshot.targets).toEqual([expect.objectContaining({
+                id: 'package:sessionless-project:dev', source: 'package_script', cwd: root,
+            })]);
+            expect(snapshot).not.toHaveProperty('sessionId');
+        } finally {
+            await runtime.stop();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('never projects an unavailable scan or a disabled feature as a ready zero', async () => {
         const failed = createLocalServicesDaemonRuntime({
             machineId: 'machine-a', startLoop: false, inventoryEnabled: () => true,
@@ -478,7 +541,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         expect(scan).toHaveBeenCalledTimes(2);
     });
 
-    it('adds daemon-owned workspace facts to scanner results before normalizing provenance', async () => {
+    it('preserves accepted workspace identity over scanner context while normalizing provenance', async () => {
         const runtime = createLocalServicesDaemonRuntime({
             machineId: 'machine-a',
             inventoryEnabled: () => true,
@@ -488,10 +551,10 @@ describe('createLocalServicesDaemonRuntime', () => {
                     [400, { pid: 400, ppid: 300, command: 'node ./node_modules/vite/bin/vite.js', cwd: '/repo/app' }],
                     [300, { pid: 300, ppid: 1, command: 'npm run dev -- --token raw-secret', cwd: '/repo/app' }],
                 ]),
-                workspaces: [],
+                workspaces: [{ path: '/repo' }],
                 diagnostics: [],
             }),
-            workspaceFacts: () => [{ path: '/repo' }],
+            workspaceFacts: () => [{ id: 'accepted-workspace', path: '/repo' }],
             now: () => 2_000,
             startLoop: false,
         });
@@ -502,6 +565,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             workspaceAssociationConfidence: 'high',
             provenance: {
                 workspace: {
+                    id: 'accepted-workspace',
                     path: '/repo',
                     association: 'cwd_containment',
                 },

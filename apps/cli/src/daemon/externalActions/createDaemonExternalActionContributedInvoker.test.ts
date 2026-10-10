@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -285,6 +286,7 @@ function createExternalActionRuntime(
     activateContributionsOnDemand: async () => { activationOnly?.(); return []; },
     createAgentInvocationServices: async () => createUnavailablePluginServices(),
     resolveCaptureSource: unexpectedCaptureSourceResolution,
+    resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
     resolvePromptAssetBlocks: async () => [],
     retireConsumers: () => {},
     retainPluginActivationComponent: () => null,
@@ -1662,7 +1664,9 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       const actionInvocationRelease = new Promise<void>((resolve) => {
         releaseActionInvocation = resolve;
       });
-      const runtime = createExternalActionRuntime('global', 'acme.external', async () => {
+      const invocationIds: (string | undefined)[] = [];
+      const runtime = createExternalActionRuntime('global', 'acme.external', async (context) => {
+        invocationIds.push(context.invocationId);
         actionInvocations += 1;
         if (actionInvocations === 1) firstActionInvocationStarted();
         await actionInvocationRelease;
@@ -1764,6 +1768,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       await expect(createReplay()({ artifactId: 'approval-api-concurrent-1', decision: 'approve' }))
         .resolves.toEqual({ ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' });
       expect(actionInvocations).toBe(2);
+      expect(invocationIds).toEqual(['approval-api-concurrent-1', 'approval-api-concurrent-1']);
       expect(persisted).toMatchObject({ status: 'executing' });
       await expect(createReplay()({ artifactId: 'approval-api-concurrent-1', decision: 'approve' }))
         .resolves.toEqual({ ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' });

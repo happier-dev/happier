@@ -4,7 +4,10 @@ import { createCliActionExecutor } from './createCliActionExecutor';
 
 const { request } = vi.hoisted(() => ({ request: vi.fn() }));
 // Daemon control RPC is the system boundary; the CLI and Action owners stay real.
-vi.mock('@/daemon/controlClient', () => ({ requestDaemonPluginActionExecution: request }));
+vi.mock('@/daemon/controlClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/controlClient')>(),
+  requestDaemonPluginActionExecution: request,
+}));
 
 it('generic plugin wait reaches the existing daemon contributed-Action admission', async () => {
   request.mockImplementation(async (value: { actionId: string; input: unknown }) => {

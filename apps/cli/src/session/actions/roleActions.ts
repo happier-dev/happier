@@ -3,7 +3,10 @@ import { createAccountRoleActionExecutorV1 } from '@happier-dev/protocol/prompts
 import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { readSessionRolesV1, writeSessionRoleIdV1ToMetadata, writeSessionRoleConfigurationV1ToMetadata, SessionRoleConfigurationV1Schema, snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { resolveRoleSelectionV1, readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
-import type { ActionExecutorDeps, PluginRoleContributionV1, RoleArtifactV1, RoleInstructionsOverrideV1, RolesV1, SessionRoleConfigurationV1, ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, PluginRoleContributionV1, SessionRoleConfigurationV1, ActionExecutorContext } from '@happier-dev/protocol';
+import type { AccountRoleOverridesReadV1, RoleOverrideMutationV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
@@ -24,11 +27,11 @@ export function createRoleActionExecutor(params: Readonly<{
   readSessionMetadata?: () => unknown;
   stageSessionStateMutation?: (mutation: RegisteredSessionStateFieldMutationV1) => Promise<void>;
   artifactStore?: RoleArtifactStore;
-  readSettingsOverrides?: () => Readonly<Record<string, RoleInstructionsOverrideV1>> | Promise<Readonly<Record<string, RoleInstructionsOverrideV1>>>;
+  readSettingsOverrides?: () => AccountRoleOverridesReadV1 | Promise<AccountRoleOverridesReadV1>;
   readPluginRoles?: () => readonly PluginRoleContributionV1[];
   accountId?: string;
   readRawAccountSettings?: () => Promise<Readonly<Record<string, unknown>>>;
-  mutateAccountSettings?: (mutate: (raw: Readonly<Record<string, unknown>>) => Promise<Record<string, unknown> & { rolesV1: RolesV1 }>, signal?: AbortSignal) => Promise<void>;
+  mutateAccountRoleOverrides?: (mutation: RoleOverrideMutationV1, context: ActionExecutorContext) => Promise<void>;
   readRoleSources?: RoleSourceReader;
   listReportSessions?: (leadSessionId: string, context: import('@happier-dev/protocol').ActionExecutorContext) => Promise<readonly Readonly<{ sessionId: string; ownerAccountId: string }>[]>;
   writeReportSessionRoles?: (sessionId: string, configuration: SessionRoleConfigurationV1, context: import('@happier-dev/protocol').ActionExecutorContext) => Promise<void>;
@@ -36,6 +39,15 @@ export function createRoleActionExecutor(params: Readonly<{
   prepareWorkspaceWritesPolicy?: RoleWorkspaceWritesPolicyPreparer;
 }>): NonNullable<ActionExecutorDeps['roleActionExecute']> {
   const listEntries = params.readRoleSources ?? createRoleSourceReader(params);
+  const accountScope = getActiveAccountSettingsSnapshot()?.scopeKey;
+  const readOverrides = params.readSettingsOverrides ?? (accountScope
+    ? createActionSettingsProvider({ scopeKey: accountScope }).getAccountRoleOverrides
+    : () => ({ status: 'unavailable' as const, reason: 'source-unavailable' }));
+  const readSettingsOverrides = async () => {
+    const read = await readOverrides();
+    if (read.status !== 'ready') refuse('account_role_overrides_unavailable');
+    return read.overrides;
+  };
   const accountActions = createAccountRoleActionExecutorV1({ ...params, readRoleSources: listEntries, generateId: randomUUID });
   return async ({ actionId, input, context }) => {
     context.signal?.throwIfAborted();
@@ -54,17 +66,18 @@ export function createRoleActionExecutor(params: Readonly<{
       // Validate authoritative owner data even when there is no existing role selection.
       writeSessionRoleIdV1ToMetadata(metadata as Record<string, unknown>, readSessionRolesV1(metadata)?.roleId ?? null);
       const current = readSessionRolesV1(metadata) ?? undefined;
-      const entries = await listEntries(context.signal);
-      const settingsRoles = Object.fromEntries(entries.map((entry) => [entry.roleId, entry.role]));
-      const settingsOverrides = await params.readSettingsOverrides?.();
+      const inventory = await listEntries(context.signal);
+      if (inventory.status !== 'ready') refuse('role_source_incomplete');
+      const entries = inventory.entries;
+      const settingsOverrides = await readSettingsOverrides();
       const roles = Object.fromEntries([...new Set([...entries.map((entry) => entry.roleId), ...Object.keys(current?.sessionRoles ?? {}),
         ...Object.keys(current?.overrides ?? {})])].flatMap((roleId) => {
-        const resolved = resolveRoleSelectionV1({ roleId, settingsRoles, settingsOverrides,
+        const resolved = resolveRoleSelectionV1({ roleId, roleSourceInventory: inventory, settingsOverrides,
           sessionRoles: current, pluginRoles: params.readPluginRoles?.() });
         return resolved.ok ? [[roleId, resolved.selection]] : [];
       }));
       const configuration = SessionRoleConfigurationV1Schema.parse(snapshotSessionRolesAtSpawnV1({
-        leadSessionId: request.sessionId, roles, notes: current?.notes, memoryDocRef: current?.memoryDocRef, sameAccount: true,
+        leadSessionId: request.sessionId, roles, notes: current?.notes,
       }));
       const updatedSessionIds: string[] = [];
       for (const report of await params.listReportSessions(request.sessionId, context)) {
@@ -79,14 +92,13 @@ export function createRoleActionExecutor(params: Readonly<{
       const request = RoleActionInputSchemasV1[actionId].parse(input);
       if (request.sessionId !== params.sessionId) refuse('session_target_unavailable');
       if (!params.stageSessionStateMutation || !params.readSessionMetadata) refuse('session_target_unavailable');
-      const entries = await listEntries(context.signal);
-      const settingsRoles: Record<string, RoleArtifactV1> = Object.fromEntries(entries.map((entry) => [entry.roleId, entry.role]));
+      const inventory = await listEntries(context.signal);
       const metadata = params.readSessionMetadata();
       if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) refuse('session_target_unavailable');
       writeSessionRoleIdV1ToMetadata(metadata as Record<string, unknown>, request.roleId);
       const snapshot = readSessionRolesV1(metadata) ?? undefined;
-      const settingsOverrides = await params.readSettingsOverrides?.();
-      const resolve = (roleId: string) => resolveRoleSelectionV1({ roleId, settingsRoles,
+      const settingsOverrides = await readSettingsOverrides();
+      const resolve = (roleId: string) => resolveRoleSelectionV1({ roleId, roleSourceInventory: inventory,
         settingsOverrides, sessionRoles: snapshot, pluginRoles: params.readPluginRoles?.() });
       const selection = resolve(request.roleId);
       if (!selection.ok) refuse(selection.refusal.code);
@@ -97,7 +109,7 @@ export function createRoleActionExecutor(params: Readonly<{
           && (context.workspaceWrites === 'deny' || (current?.ok && current.selection.workspaceWrites === 'deny'))) refuse('role_policy_denied');
       }
       context.signal?.throwIfAborted();
-      const previousWorkspaceWrites = readSessionWorkspaceWritesV1(metadata, { settingsRoles, settingsOverrides });
+      const previousWorkspaceWrites = readSessionWorkspaceWritesV1(metadata, { roleSourceInventory: inventory, settingsOverrides });
       // Relaxation is synchronized from accepted owner metadata, never before enqueue.
       if (selection.selection.workspaceWrites === 'deny' && previousWorkspaceWrites !== 'deny' && params.prepareWorkspaceWritesPolicy) {
         const prepared = await params.prepareWorkspaceWritesPolicy(selection.selection.workspaceWrites, context);
@@ -119,7 +131,6 @@ export function createRoleActionExecutor(params: Readonly<{
       let configuration = SessionRoleConfigurationV1Schema.parse({
         overrides: current.overrides, sessionRoles: current.sessionRoles, notes: current.notes,
         ...(current.inheritedFrom ? { inheritedFrom: current.inheritedFrom } : {}),
-        ...(current.memoryDocRef ? { memoryDocRef: current.memoryDocRef } : {}),
       });
       switch (actionId) {
         case 'session.notes.set': {
@@ -149,11 +160,10 @@ export function createRoleActionExecutor(params: Readonly<{
         }
       }
       if (context.authority !== 'present_user' && 'roleId' in request) {
-        const entries = await listEntries(context.signal);
-        const settingsRoles = Object.fromEntries(entries.map((entry) => [entry.roleId, entry.role]));
-        const settingsOverrides = await params.readSettingsOverrides?.();
-        const before = resolveRoleSelectionV1({ roleId: request.roleId, settingsRoles, settingsOverrides, sessionRoles: current });
-        const after = resolveRoleSelectionV1({ roleId: request.roleId, settingsRoles, settingsOverrides, sessionRoles: configuration });
+        const inventory = await listEntries(context.signal);
+        const settingsOverrides = await readSettingsOverrides();
+        const before = resolveRoleSelectionV1({ roleId: request.roleId, roleSourceInventory: inventory, settingsOverrides, sessionRoles: current });
+        const after = resolveRoleSelectionV1({ roleId: request.roleId, roleSourceInventory: inventory, settingsOverrides, sessionRoles: configuration });
         if (after.ok && after.selection.workspaceWrites === 'allow'
           && (context.workspaceWrites === 'deny' || (before.ok && before.selection.workspaceWrites === 'deny'))) refuse('role_policy_denied');
         if (before.ok && before.selection.workspaceWrites === 'deny' && !after.ok) refuse('role_policy_denied');
@@ -161,10 +171,10 @@ export function createRoleActionExecutor(params: Readonly<{
       configuration = SessionRoleConfigurationV1Schema.parse(configuration);
       // Reject malformed authoritative data before acknowledging a queued edit, not only at replay.
       const nextMetadata = writeSessionRoleConfigurationV1ToMetadata(metadata as Record<string, unknown>, configuration);
-      const entries = await listEntries(context.signal);
+      const inventory = await listEntries(context.signal);
       const layers = {
-        settingsRoles: Object.fromEntries(entries.map((entry) => [entry.roleId, entry.role])),
-        settingsOverrides: await params.readSettingsOverrides?.(),
+        roleSourceInventory: inventory,
+        settingsOverrides: await readSettingsOverrides(),
       };
       const workspaceWrites = readSessionWorkspaceWritesV1(nextMetadata, layers);
       const previousWorkspaceWrites = readSessionWorkspaceWritesV1(metadata, layers);

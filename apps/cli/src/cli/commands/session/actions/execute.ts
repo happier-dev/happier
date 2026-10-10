@@ -10,8 +10,8 @@ import { hasFlag, readCommandPositionals, readFlagValue, readRawFlagValue } from
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { assertSessionCommandArguments } from '@/cli/commands/session/shared/assertSessionCommandArguments';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { getActionContextualDefaults } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol';
+import { withResolvedSessionInput } from './withResolvedSessionInput';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { configuration } from '@/configuration';
 import {
@@ -23,18 +23,6 @@ import { cmd, fail } from '@happier-dev/cli-common/output';
 
 type CliActionExecutorLike = Pick<ReturnType<typeof createCliActionExecutor>, 'execute'>;
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
-
-function withResolvedSessionInput(actionId: string, input: unknown, sessionId: string): unknown {
-  if (
-    getActionContextualDefaults(actionId)?.sessionId !== 'current_session'
-    || !input
-    || typeof input !== 'object'
-    || Array.isArray(input)
-  ) {
-    return input;
-  }
-  return { ...input, sessionId };
-}
 
 function parseInputJsonOrThrow(raw: string | null): unknown {
   const trimmed = (raw ?? '').trim();

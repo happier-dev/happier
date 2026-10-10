@@ -53,7 +53,7 @@ describe('daemon browser reverse dispatch protocol boundary', () => {
       },
     }) });
     const broker = createBrowserDaemonControlBroker();
-    const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: {},
+    const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' },
       resolveRouteOwners: () => ({ browserUiAutomation: { ownsAutomationView: broker.ownsView, uiAutomation } }),
       resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {
         browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true },

@@ -12,6 +12,7 @@ import {
   listCompiledActionCliCommands,
 } from './compiledCommands';
 import { buildActionCliHelpModel } from './commandHelp';
+import { readActionCliServerId } from './actionServerTarget';
 import {
   resolveCompiledActionCliCompletionCandidates,
   resolveCompiledActionCliCompletionCandidatesWithDynamicOptions,
@@ -69,6 +70,19 @@ function compileFixture(cli: NonNullable<ActionSpec['cli']> = SEND_CLI, override
 }
 
 describe('compileActionCliCommands', () => {
+  it('projects the declared detached Machine selector through the shared help, completion and argv policy', () => {
+    const commands = listCompiledActionCliCommands();
+    const command = findCompiledActionCliCommand(['session', 'run', 'start'], commands)!;
+    expect(command.transportMachineIdFlags).toEqual(['--machine-id', '--machine']);
+    expect(buildActionCliHelpModel(command).cliOptions.some(row => /--machine(?:\s|,|$)/.test(row.label))).toBe(true);
+    expect(resolveCompiledActionCliCompletionCandidates({ commands, committed: ['session', 'run', 'start'], prefix: '--mach' }))
+      .toEqual(expect.arrayContaining(['--machine', '--machine-id']));
+    expect(() => compileFixture({ ...SEND_CLI, transportMachineIdAliases: ['--prompt'] }))
+      .toThrow(/collides/);
+    expect(() => compileFixture({ ...SEND_CLI, transportMachineIdAliases: ['--machine'] }, {
+      inputSchema: CallerSchema.extend({ machineId: z.string() }),
+    })).toThrow(/semantic machineId/);
+  });
   it('derives one descriptor per declared path with the declared positionals in argv order', () => {
     const [nested, root] = compileFixture();
     expect(nested?.path).toEqual(['session', 'send']);
@@ -299,6 +313,21 @@ describe('compileActionCliCommands', () => {
       label: '--server-id <serverId>',
       description: 'Use credentials and endpoint for an exact saved Home [required]',
     });
+  });
+});
+
+describe('Project worker exact-Home CLI projection', () => {
+  it.each([
+    ['projects.worker.preferences.get', { workspace: { serverId: 'home-b', refId: 'checkout' } }],
+    ['machines.worker.policy.get', { serverId: 'home-b', machineId: 'worker-a' }],
+  ] as const)('accepts an inactive Home selector for %s without changing the qualified Action input', (id, input) => {
+    const spec = getActionSpec(id);
+    const binding = spec.cli!.commands[0]!;
+    const [command] = compileActionCliCommands([{ spec, binding }]);
+    expect(command).toBeDefined();
+    const argv = [...binding.path, '--server-id', 'home-b', '--input-json', JSON.stringify(input)];
+    expect(parseActionCliCommandInput(command!, argv)).toMatchObject({ ok: true, canonicalBase: input });
+    expect(readActionCliServerId(argv, command!.acceptsServerId)).toBe('home-b');
   });
 });
 

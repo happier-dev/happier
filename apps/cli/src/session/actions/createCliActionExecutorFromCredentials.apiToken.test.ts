@@ -599,6 +599,29 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
   });
 
+  it('keeps explicit detached review engine discovery on its Machine despite a contextual Session', async () => {
+    const actual = await vi.importActual<typeof import('@/api/machine/resolveCurrentAccountMachineTarget')>(
+      '@/api/machine/resolveCurrentAccountMachineTarget',
+    );
+    resolveCurrentAccountMachineTarget.mockImplementation(actual.resolveCurrentAccountMachineTarget);
+    const fetch = vi.fn<FetchLike>(() => apiSuccess('review.engines.list', { sessionId: null, items: [] }));
+    installPatActionTransportMock(fetch);
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: { token: SYNTHETIC_API_TOKEN, encryption: null, credentialProvenance: 'api_token' },
+      machineId: 'machine-review',
+    });
+
+    await expect(executor.execute('review.engines.list', {
+      sessionId: null, machineId: 'machine-review', scope: 'paths',
+    }, { surface: 'cli', defaultSessionId: exactSessionId })).resolves.toEqual({
+      ok: true, result: { sessionId: null, items: [] },
+    });
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      v: 1, target: { kind: 'machine', machineId: 'machine-review' },
+      input: { sessionId: null, machineId: 'machine-review', scope: 'paths' },
+    });
+  });
+
   it('uses the sole current account machine when a PAT has no daemon-local target', async () => {
     readSettings.mockResolvedValue({});
     resolveCurrentAccountMachineTarget.mockResolvedValue({

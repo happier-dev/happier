@@ -351,7 +351,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         if (!effect || typeof effect !== 'object' || Array.isArray(effect) || !effect.command || typeof effect.command !== 'object' || Array.isArray(effect.command)
             || !Array.isArray(effect.command.args) || !effect.command.args.every(arg => typeof arg === 'string')) throw new Error('Expected reviewed native argv');
         const nativeArgs = effect.command.args;
-        const cleanupArgs = [...JSON.parse(process.env.FX16_DOCKER_ARGS ?? '[]'), ...nativeArgs.slice(0, nativeArgs.indexOf('up')), 'down'];
+        // The reviewed resolved tuple already includes the installed tool's prefix.
+        const cleanupArgs = [...nativeArgs.slice(0, nativeArgs.indexOf('up')), 'down'];
         try {
             const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
             expect(started).toMatchObject({ status: 'succeeded' });
@@ -365,10 +366,29 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             try { await handle.stop(); }
             catch (error) { throw new Error(`Native Stop failed: ${JSON.stringify(handle.snapshot())}`, { cause: error }); }
             expect(handle.snapshot()).toMatchObject({ state: 'stopped' });
+            // A fresh owner binding adopts an already-detached survivor without
+            // another starter. This is the daemon-crash recovery boundary, not
+            // graceful owner disposal (which intentionally stops owned services).
+            expect((await h.runtime.environmentIo.run({ command: process.env.FX16_DOCKER_PATH!,
+                args: nativeArgs, cwd: h.root, env: {} })).exitCode).toBe(0);
+            const recovered = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
+            expect(recovered).toMatchObject({ status: 'succeeded' });
+            const recoveredHandle = h.owner.listProjectServices()[0]!;
+            expect(recoveredHandle.snapshot()).toMatchObject({ state: 'running', mode: 'native', pid: null, baseUrl: null });
+            expect(recoveredHandle.instanceId).not.toBe(handle.instanceId);
+            expect(await recoveredHandle.stop()).toEqual({ status: 'stopped' });
         } finally {
             // The fixture's exact reviewed native project owns containers/networks.
             // Down preserves volumes and cannot address another lane's project.
-            await h.runtime.environmentIo.run({ command: process.env.FX16_DOCKER_PATH!, args: cleanupArgs, cwd: h.root, env: {} });
+            const cleanup = await h.runtime.environmentIo.run({ command: process.env.FX16_DOCKER_PATH!, args: cleanupArgs, cwd: h.root, env: {} });
+            expect(cleanup.exitCode).toBe(0);
+            const project = nativeArgs[nativeArgs.indexOf('--project-name') + 1];
+            for (const args of [['ps', '--all'], ['network', 'ls']]) {
+                const inventory = await h.runtime.environmentIo.run({ command: process.env.FX16_DOCKER_PATH!,
+                    args: [...JSON.parse(process.env.FX16_DOCKER_ARGS ?? '[]'), ...args, '--filter', `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}'], cwd: h.root, env: {} });
+                expect(inventory.exitCode).toBe(0);
+                expect(inventory.stdout.trim()).toBe('');
+            }
             await h.owner.listProjectServices()[0]?.stop();
         }
     }, 120_000);

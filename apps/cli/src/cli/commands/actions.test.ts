@@ -6,6 +6,7 @@ vi.mock('@/persistence', async (importOriginal) => ({
   readStoredCredentials: credentialBoundary.readStoredCredentials,
 }));
 import { handleActionsCommand } from './actions';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 
 afterEach(() => { vi.restoreAllMocks(); process.exitCode = undefined; });
 
@@ -61,6 +62,42 @@ function contributedActionDefinition() {
 }
 
 describe('actions root command', () => {
+  it('refuses a filesystem byte transfer without local custody before reading credentials', async () => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find(argument => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const readCredentialsFn = vi.fn(async () => credentials('stored_session'));
+    await handleActionsCommand(['invoke', 'daemon.filesystem.upload', '--machine-id', 'machine-1', '--input-json', JSON.stringify({
+      rootPath: '/repo', path: 'literal \n ', source: { sourceId: 'source-1', sizeBytes: 4 }, overwrite: false,
+    }), '--json'], { readCredentialsFn });
+    expect(JSON.parse(output)).toMatchObject({ ok: false, error: { code: 'invalid_arguments' } });
+    expect(readCredentialsFn).not.toHaveBeenCalled();
+  });
+  it('dispatches mixed-corpus memory search through the real Action executor', async () => {
+    let output = '';
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+      output += String(chunk);
+      const callback = args.find((argument) => typeof argument === 'function');
+      if (typeof callback === 'function') callback();
+      return true;
+    });
+    const result = { v: 1 as const, ok: true as const, hits: [], documents: { state: 'unavailable' as const } };
+    // The daemon RPC is the system boundary; CLI parsing and Action admission remain real.
+    const daemonMemorySearch = vi.fn(async () => result);
+    const query = { v: 1, query: 'decision', scope: { type: 'global' }, mode: 'deep', corpora: ['sessions', 'documents'] };
+    await handleActionsCommand(['invoke', 'memory.search', '--input-json', JSON.stringify({ machineId: 'machine_1', query }), '--json'], {
+      readCredentialsFn: async () => credentials('stored_session'),
+      createExecutorFn: () => createCliActionExecutorHarness({ token: 'token', sessionId: '' }, { daemonMemorySearch }).executor,
+    });
+    expect(process.exitCode).toBe(0);
+    expect(JSON.parse(output)).toMatchObject({ ok: true, data: result });
+    expect(daemonMemorySearch).toHaveBeenCalledWith({ machineId: 'machine_1', query, serverId: null });
+  });
+
   it('carries standalone Workflow project selection as target context, never Action input', async () => {
     const execute = vi.fn(async () => ({ ok: true, result: { run: { id: 'run-1' }, admission: 'created' } }));
     await handleActionsCommand([

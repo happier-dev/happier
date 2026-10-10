@@ -5,6 +5,7 @@ import { createAccountServerWorkspaceWorkerPreferenceClient } from '@/api/worksp
 import { observeProjectServicePlacementActualV1 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/accountServerMachineFinitePolicyClient';
 import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -49,6 +50,7 @@ import {
 import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganizationDisplayHost';
 import { usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveUsagePageAggregation, resolveUsagePageAccountingRequests, resolveUsageAccountingAsOfMs, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
@@ -352,6 +354,30 @@ export function createAccountServerActionDeps(input: Readonly<{
     }
     return { ok: false, errorCode: 'api_token_operation_failed', error: 'api_token_operation_failed' };
   };
+  const readPrices = async (refresh: boolean, context: ActionExecutorContext) => {
+    const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+    const mismatch = accountServerTargetMismatch(context);
+    if (mismatch) return mismatch;
+    if (context.signal?.aborted) return failure('cancelled');
+    if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
+    const actionId = refresh ? 'usage.prices.refresh' : 'usage.prices.get';
+    const path = refresh ? '/v1/account/usage/prices/refresh' : '/v1/account/usage/prices';
+    const method = refresh ? 'POST' : 'GET';
+    const body = refresh ? {} : undefined;
+    const authorization = resolveRequestHeaders({ context, effectActionId: actionId, method, path, body });
+    if (!authorization.ok) return externalAuthorizationUnavailable();
+    const sideEffectClass = getActionSpec(actionId).sideEffectClass;
+    const dispatched = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method, path, body,
+      signal: context.signal, sideEffectClass });
+    if (!dispatched.ok) return dispatched;
+    if (context.signal?.aborted) return failure(refresh ? 'outcome_unknown' : 'cancelled');
+    if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
+    if (isAuthenticationStatus(dispatched.response.status)) return externalAuthorizationUnavailable();
+    if ([404, 405, 501].includes(dispatched.response.status)) return failure('unsupported');
+    if (dispatched.response.status >= 400) return failure('usage_prices_read_failed');
+    const parsed = UsageModelPriceCatalogSchema.safeParse(dispatched.response.data);
+    return parsed.success ? parsed.data : failure(refresh ? 'outcome_unknown' : 'usage_price_catalog_invalid');
+  };
   const readQuota: NonNullable<NonNullable<ActionExecutorDeps['usageActions']>['readQuota']> = async (request, context) => {
         const mismatch = accountServerTargetMismatch(context);
         if (mismatch) return mismatch;
@@ -395,6 +421,10 @@ export function createAccountServerActionDeps(input: Readonly<{
   return {
     usageActions: {
       readQuota,
+      prices: {
+        get: context => readPrices(false, context),
+        refresh: context => readPrices(true, context),
+      },
       query: async (request, context) => {
         const mismatch = accountServerTargetMismatch(context);
         if (mismatch) return mismatch;
@@ -444,6 +474,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         let quota: Quota = { status: 'unknown' };
         let pools: UsagePoolSourceSnapshot[] | undefined;
         let preferences: ReturnType<typeof accountSettingsParse>['usageCoachPreferencesV1'] | undefined;
+        let pricingOverrides: ReturnType<typeof accountSettingsParse>['usageModelPriceOverridesV1'] | undefined;
         try {
           const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'GET', path: '/v1/account/encryption/currentness' });
           if (!authorization.ok) throw Object.assign(new Error('Action authorization unavailable'), { code: 'action_authorization_unavailable' });
@@ -455,7 +486,9 @@ export function createAccountServerActionDeps(input: Readonly<{
             fetchSettings: async () => AccountSettingsV2GetResponseSchema.parse(await read('/v2/account/settings')),
           } });
           await check();
-          preferences = accountSettingsParse(settings.raw).usageCoachPreferencesV1;
+          const parsedSettings = accountSettingsParse(settings.raw);
+          preferences = parsedSettings.usageCoachPreferencesV1;
+          pricingOverrides = parsedSettings.usageModelPriceOverridesV1;
           const profile = AccountProfileResponseSchema.parse(await read('/v1/profile'));
           pools = await Promise.all(request.queries.map(async query => ({ query,
             value: await Promise.all(profile.connectedAccountGroupsV4.map(async group => {
@@ -527,11 +560,12 @@ export function createAccountServerActionDeps(input: Readonly<{
         }
         if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
-        const result = resolveUsagePageAggregation({ queries: request.queries, quota, pools,
+        const result = resolveUsagePageAggregation({ queries: request.queries, quota, pools, pricingOverrides,
           accounting: snapshots.filter((snapshot): snapshot is UsageAccountingSourceSnapshot => !('ok' in snapshot)),
           work: request.queries.map(query => ({ query, status: 'unsupported', errorCode: 'local_detail_unavailable' })),
           howYouWork: request.queries.map(query => ({ query, detail: { status: 'unknown' } })),
-          sources: [{ source: 'coach_preferences', status: preferences ? 'available' : 'unknown' }],
+          sources: [{ source: 'coach_preferences', status: preferences ? 'available' : 'unknown' },
+            { source: 'pricing_overrides', status: pricingOverrides === undefined ? 'unknown' : 'available' }],
         });
         const nowMs = Date.now();
         return preferences ? { ...result, results: result.results.map(slice => slice.coach
@@ -588,8 +622,10 @@ export function createAccountServerActionDeps(input: Readonly<{
         try {
           if (!await isCurrent()) return { status: 'unavailable' };
           const rows = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readProjectAccountRows({ credentials, serverId, signal }));
+          const childMachines = await readWorkspaceSyncChildMachineFacts({ serverId, serverHttpBaseUrl, credentials, signal,
+            purpose: 'admitted_mapping', machineIds: rows.workspaceRefs.filter(ref => ref.serverId === serverId).map(ref => ref.machineId) });
           const actual = await observeProjectServicePlacementActualV1({ ...request,
-            workspaceRefs: rows.workspaceRefs, relationships: rows.relationships,
+            workspaceRefs: rows.workspaceRefs, relationships: rows.relationships, childMachines,
             isCurrent: async () => await isCurrent() && getActiveProjectAccountRowsSnapshot() === rows,
             readSnapshot: snapshot => callExactMachineRpc({ credentials, serverUrl: serverHttpBaseUrl,
               machineId: snapshot.machineId, method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,

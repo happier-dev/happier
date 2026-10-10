@@ -22,6 +22,12 @@ function warnIfMetadataUpgradeRequired(count: number | undefined): void {
   if (notice) console.warn(yellow(notice));
 }
 
+function warnIfBotMetadataUnavailable(count: number | undefined): void {
+  if (count !== undefined && count > 0) {
+    console.warn(yellow('Session list is incomplete: authorized metadata is unavailable for the selected Bot filter.'));
+  }
+}
+
 function isCliSessionRowModel(value: unknown): value is CliSessionRowModel {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const row = value as Partial<CliSessionRowModel>;
@@ -44,6 +50,7 @@ export const SESSION_LIST_PRESENTATION: ActionCliPresentation = {
         await printJsonEnvelope({ ok: true, kind: 'session_list', data: awareness });
       } else {
         warnIfMetadataUpgradeRequired(awareness.metadataUpgradeRequiredCount);
+        warnIfBotMetadataUnavailable(awareness.botFilterUnavailableCount);
         const plain = context.callerInput.plain === true;
         for (const session of awareness.sessions) {
           console.log(plain
@@ -73,12 +80,16 @@ export const SESSION_LIST_PRESENTATION: ActionCliPresentation = {
           ...(result.metadataUpgradeRequiredCount !== undefined
             ? { metadataUpgradeRequiredCount: result.metadataUpgradeRequiredCount }
             : {}),
+          ...(result.botFilterUnavailableCount !== undefined
+            ? { botFilterUnavailableCount: result.botFilterUnavailableCount }
+            : {}),
         },
       });
       return true;
     }
 
     warnIfMetadataUpgradeRequired(result.metadataUpgradeRequiredCount);
+    warnIfBotMetadataUnavailable(result.botFilterUnavailableCount);
     if (context.callerInput.plain === true) {
       const includeSystem = context.callerInput.includeSystem === true;
       for (const row of rows) {

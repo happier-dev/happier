@@ -4,9 +4,12 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLegacyConfiguredAcpFlavorCarrier } from '@happier-dev/protocol/backends/targets/compat/customAcp';
-import type { AccountProfile, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { AccountProfile, ActionExecutorContext, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
 import axios from 'axios';
+import { configuration } from '@/configuration';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { AgentModelsProbeObservationSchema, AgentSessionModesProbeObservationSchema,
+  AgentConfigOptionsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { connectedServiceProfileKey, legacyCustomAcpCompat } from '@happier-dev/agents';
@@ -17,15 +20,32 @@ import type { ProbedAgentModelsResult } from '@/capabilities/probes/agentModelsP
 import type { ProbedAgentModesResult } from '@/capabilities/probes/agentModesProbe';
 import type { ProbedAgentConfigOptionsResult } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { AcpCatalogUnavailableError, requireReadyAcpCatalog } from '@/agent/acp/catalog/configured/resolveBackend';
+import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { createCliBoundSessionMetadataReader } from '../resolveCliActionCallerSession';
 import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { listServerProfiles } from '@/server/serverProfiles';
 import { projectProfilesListForActions } from '@/settings/profiles/profileListProjection';
 import { readAccountLaunchProfiles, readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
-import { resolveSpawnConnectedServicesDefaults } from '@/session/services/spawnConnectedServicesDefaults';
+import { ConnectedServicesDefaultUnavailableError, resolveSpawnConnectedServicesDefaults } from '@/session/services/spawnConnectedServicesDefaults';
+import { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
+import { createCliConnectedAccountCatalogStore } from '@/settings/connectedAccounts/connectedAccountCatalogStore';
+import { createCliConnectedMetadataStore } from '@/settings/connected/connectedMetadataStore';
+import { refreshActiveConnectedMetadataCatalog } from '@/settings/connected/hydrateConnectedMetadataCatalog';
+import { connectedEntitySubjectKeyV1, projectConnectedPresentationLabelsV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { fetchAccountProfile } from '@/api/accountProfile';
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
-import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
+import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerStore';
+import { prepareActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
+  type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import type { SpawnMcpPreviewInventoryDeps } from './resolveSpawnMcpServersPreviewInventory';
 import {
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -169,74 +189,11 @@ function limitItems<T>(items: readonly T[], limit: unknown): readonly T[] {
   return bounded ? items.slice(0, bounded) : items;
 }
 
-type SpawnMcpPreviewInventoryDeps = Readonly<{
-  detectProviderMcpServers: (args: Readonly<{
-    directory: string | null;
-    providers: unknown;
-  }>) => Promise<Readonly<{
-    servers: readonly unknown[];
-    warnings: readonly unknown[];
-  }>>;
-  resolveSessionMcpPreview: (args: Readonly<{
-    settings: unknown;
-    machineId: string;
-    directory: string;
-    agentId: string;
-    selection?: unknown;
-    detectedServers: readonly unknown[];
-    detectedWarnings?: readonly unknown[];
-  }>) => any;
-}>;
-
 type AgentProbeInventoryDeps = Readonly<{
   probeAgentModelsBestEffort: (args: unknown) => Promise<unknown>;
   probeAgentModesBestEffort: (args: unknown) => Promise<unknown>;
   probeAgentConfigOptionsBestEffort: (args: unknown) => Promise<unknown>;
 }>;
-
-async function resolveSpawnMcpServersPreviewInventoryWithDeps(params: Readonly<{
-  deps: SpawnMcpPreviewInventoryDeps;
-  settings: unknown;
-  machineId: string;
-  directory: string;
-  agentId: string;
-  selection?: unknown;
-  limit?: number;
-}>): Promise<unknown> {
-  const detected = await params.deps.detectProviderMcpServers({
-    directory: params.directory,
-    providers: params.agentId ? [params.agentId] : null,
-  });
-  const preview = params.deps.resolveSessionMcpPreview({
-    settings: params.settings,
-    machineId: params.machineId,
-    directory: params.directory,
-    agentId: params.agentId,
-    ...(params.selection ? { selection: params.selection } : {}),
-    detectedServers: detected.servers,
-    detectedWarnings: detected.warnings,
-  });
-  const items = preview?.ok
-    ? [
-        ...(Array.isArray(preview.builtIn) ? preview.builtIn : []),
-        ...(Array.isArray(preview.managed) ? preview.managed : []),
-        ...(Array.isArray(preview.detected) ? preview.detected : []),
-      ].map((entry): Record<string, unknown> => ({
-        value: entry.key,
-        label: entry.title ?? entry.name ?? entry.key,
-        selected: entry.selected,
-        selectable: entry.selectable,
-        sourceKind: entry.sourceKind,
-        authMode: entry.authMode,
-        availability: entry.availability,
-      }))
-    : [];
-  return {
-    ok: preview?.ok === true,
-    items: limitItems(items, params.limit),
-    preview,
-  };
-}
 
 function readBackendTargetKey(args: Readonly<{ backendTargetKey?: unknown }>): string {
   return typeof args.backendTargetKey === 'string' ? args.backendTargetKey.trim() : '';
@@ -289,6 +246,8 @@ async function probeActionModelsBestEffort(params: Readonly<{
   }> | null;
   accountSettings: import('@happier-dev/protocol').AccountSettings | null;
   credentials: StoredCredentials | null;
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
+  savedSecretOperationContext?: SavedSecretOperationContextV1;
   probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentModelsResult | null> {
   const probeAgentId = resolveProbeAgentId({
@@ -303,7 +262,8 @@ async function probeActionModelsBestEffort(params: Readonly<{
     return null;
   }
 
-  const cwd = normalizeStringValue(params.rawSession?.path) || process.cwd();
+  const probe = params.args.probe;
+  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
   try {
     const probeAgentModelsBestEffort = params.probeDeps?.probeAgentModelsBestEffort
       ?? (await import('./resolveAgentProbeInventoryDeps')).probeAgentModelsBestEffort;
@@ -311,10 +271,16 @@ async function probeActionModelsBestEffort(params: Readonly<{
       agentId: probeAgentId,
       ...(params.backendTarget ? { backendTarget: convertBackendTargetRefV2ToV1(params.backendTarget) } : {}),
       cwd,
+      ...(probe?.timeoutMs !== undefined ? { timeoutMs: probe.timeoutMs } : {}),
+      ...(probe?.runtimeDescriptorV1 ? { runtimeDescriptorV1: probe.runtimeDescriptorV1 } : {}),
+      ...(probe?.bypassCache !== undefined ? { bypassCache: probe.bypassCache } : {}),
       accountSettings: params.accountSettings,
       credentials: params.credentials,
+      acpCatalogSnapshot: params.acpCatalogSnapshot,
+      savedSecretOperationContext: params.savedSecretOperationContext,
     }) as ProbedAgentModelsResult;
-  } catch {
+  } catch (error) {
+    if (error instanceof AcpCatalogUnavailableError) throw error;
     return null;
   }
 }
@@ -330,6 +296,8 @@ async function probeActionModesBestEffort(params: Readonly<{
   }> | null;
   accountSettings: import('@happier-dev/protocol').AccountSettings | null;
   credentials: StoredCredentials | null;
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
+  savedSecretOperationContext?: SavedSecretOperationContextV1;
   probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentModesResult | null> {
   const probeAgentId = resolveProbeAgentId({
@@ -344,7 +312,8 @@ async function probeActionModesBestEffort(params: Readonly<{
     return null;
   }
 
-  const cwd = normalizeStringValue(params.rawSession?.path) || process.cwd();
+  const probe = params.args.probe;
+  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
   try {
     const probeAgentModesBestEffort = params.probeDeps?.probeAgentModesBestEffort
       ?? (await import('./resolveAgentProbeInventoryDeps')).probeAgentModesBestEffort;
@@ -352,10 +321,15 @@ async function probeActionModesBestEffort(params: Readonly<{
       agentId: probeAgentId,
       ...(params.backendTarget ? { backendTarget: convertBackendTargetRefV2ToV1(params.backendTarget) } : {}),
       cwd,
+      ...(probe?.timeoutMs !== undefined ? { timeoutMs: probe.timeoutMs } : {}),
+      ...(probe?.runtimeDescriptorV1 ? { runtimeDescriptorV1: probe.runtimeDescriptorV1 } : {}),
       accountSettings: params.accountSettings,
       credentials: params.credentials,
+      acpCatalogSnapshot: params.acpCatalogSnapshot,
+      savedSecretOperationContext: params.savedSecretOperationContext,
     }) as ProbedAgentModesResult;
-  } catch {
+  } catch (error) {
+    if (error instanceof AcpCatalogUnavailableError) throw error;
     return null;
   }
 }
@@ -371,6 +345,8 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
   }> | null;
   accountSettings: import('@happier-dev/protocol').AccountSettings | null;
   credentials: StoredCredentials | null;
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
+  savedSecretOperationContext?: SavedSecretOperationContextV1;
   probeDeps?: AgentProbeInventoryDeps;
 }>): Promise<ProbedAgentConfigOptionsResult | null> {
   const probeAgentId = resolveProbeAgentId({
@@ -385,7 +361,8 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
     return null;
   }
 
-  const cwd = normalizeStringValue(params.rawSession?.path) || process.cwd();
+  const probe = params.args.probe;
+  const cwd = normalizeStringValue(probe?.cwd) || normalizeStringValue(params.rawSession?.path) || process.cwd();
   try {
     const probeAgentConfigOptionsBestEffort = params.probeDeps?.probeAgentConfigOptionsBestEffort
       ?? (await import('./resolveAgentProbeInventoryDeps')).probeAgentConfigOptionsBestEffort;
@@ -393,17 +370,27 @@ async function probeActionConfigOptionsBestEffort(params: Readonly<{
       agentId: probeAgentId,
       ...(params.backendTarget ? { backendTarget: convertBackendTargetRefV2ToV1(params.backendTarget) } : {}),
       cwd,
+      ...(probe?.timeoutMs !== undefined ? { timeoutMs: probe.timeoutMs } : {}),
+      ...(probe?.runtimeDescriptorV1 ? { runtimeDescriptorV1: probe.runtimeDescriptorV1 } : {}),
       accountSettings: params.accountSettings,
       credentials: params.credentials,
+      acpCatalogSnapshot: params.acpCatalogSnapshot,
+      savedSecretOperationContext: params.savedSecretOperationContext,
     }) as ProbedAgentConfigOptionsResult;
-  } catch {
+  } catch (error) {
+    if (error instanceof AcpCatalogUnavailableError) throw error;
     return null;
   }
 }
 
 export function createCliActionInventoryDeps(params: Readonly<{
   token: string;
+  serverId?: string;
+  serverHttpBaseUrl?: string;
   credentials?: StoredCredentials;
+  savedSecretOperationContext?: SavedSecretOperationContextV1;
+  authorizeConnectedAccountRequest?: (context: ActionExecutorContext | undefined,
+    request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
   sessionId: string;
   rawSession?: Readonly<{
     metadata?: unknown;
@@ -432,6 +419,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   | 'serversList'
   | 'reviewEnginesList'
   | 'agentsBackendsList'
+  | 'readAccountAcpCatalog'
   | 'agentsModelsList'
   | 'sessionModesList'
   | 'agentsConfigOptionsList'
@@ -464,9 +452,46 @@ export function createCliActionInventoryDeps(params: Readonly<{
   };
 
   const readAccountSettings = async (): Promise<import('@happier-dev/protocol').AccountSettings | null> => {
+    if (params.savedSecretOperationContext) {
+      if (!await params.savedSecretOperationContext.isCurrent()) throw new AcpCatalogUnavailableError('scope-retired');
+      const snapshot = params.savedSecretOperationContext.readSnapshot();
+      return snapshot && snapshot.source !== 'none' ? snapshot.settings : null;
+    }
     return await resolveAvailableAccountSettings({
       credentials: params.credentials ?? null,
     });
+  };
+
+  const acpServerHttpBaseUrl = params.savedSecretOperationContext?.serverHttpBaseUrl
+    ?? params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+  const readAcpCatalogSnapshot = async (signal?: AbortSignal) => runWithServerHttpBaseUrl(acpServerHttpBaseUrl, async () => {
+    const operation = params.savedSecretOperationContext;
+    const credentials = params.credentials ?? operation?.credentials;
+    if (!credentials) throw new AcpCatalogUnavailableError('not-authenticated');
+    await readAccountSettings();
+    const scopeKey = resolveAccountSettingsScopeKey(credentials);
+    const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+    const snapshot = () => operation ? operation.readSnapshot() : getActiveAccountSettingsSnapshot();
+    let observedCatalog: AcpCatalogSnapshotV1 | undefined;
+    const assertCurrent = async () => {
+      signal?.throwIfAborted();
+      if (operation && !await operation.isCurrent() || snapshot()?.scopeKey !== scopeKey
+        || !operation && getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken) {
+        throw new AcpCatalogUnavailableError('scope-retired');
+      }
+      if (observedCatalog && snapshot()?.acpCatalog !== observedCatalog) throw new AcpCatalogUnavailableError('source-stale');
+    };
+    await assertCurrent();
+    const catalog = await refreshActiveAcpCatalog({ credentials, signal, operationContext: operation });
+    observedCatalog = catalog;
+    await assertCurrent();
+    const account = snapshot();
+    if (!account || account.source === 'none') throw new AcpCatalogUnavailableError('account-settings-unavailable');
+    return { account, catalog, assertCurrent };
+  });
+  const readAcpInventorySnapshot = async (signal?: AbortSignal) => {
+    const captured = await readAcpCatalogSnapshot(signal);
+    return { ...captured, catalog: requireReadyAcpCatalog(captured.catalog) };
   };
 
   const readAccountProfile = async (): Promise<AccountProfile | null> => {
@@ -540,9 +565,11 @@ export function createCliActionInventoryDeps(params: Readonly<{
       };
     },
     machinesList: async (args) => {
+      const serverId = args.serverId ?? params.serverId ?? configuration.activeServerId;
       const items = (await listCurrentAccountMachines({ token: params.token })).map((machine) => ({
-        id: machine.id, value: machine.id, label: machine.label, machineId: machine.id,
+        serverId, id: machine.id, value: machine.id, label: machine.label, machineId: machine.id,
         active: machine.active, revokedAt: machine.revokedAt, replacedByMachineId: machine.replacedByMachineId,
+        ...(machine.access ? { access: machine.access } : {}),
       }));
       return {
         items: limitItems(items, (args as { limit?: unknown }).limit),
@@ -564,21 +591,38 @@ export function createCliActionInventoryDeps(params: Readonly<{
         items: limitItems(items, (args as { limit?: unknown }).limit),
       };
     },
-    reviewEnginesList: async ({ sessionId, includeDisabled, scope }) => ({
-      sessionId,
-      items: await (await import('./buildReviewEngineInventoryItemsLazy')).buildReviewEngineInventoryItemsLazy({
+    readAccountAcpCatalog: async ({ signal }) => {
+      try {
+        const captured = await readAcpCatalogSnapshot(signal);
+        await captured.assertCurrent();
+        return captured.catalog;
+      } catch (error) {
+        if (error instanceof AcpCatalogUnavailableError) return { status: 'unavailable', reason: error.reason };
+        throw error;
+      }
+    },
+    reviewEnginesList: async ({ sessionId, includeDisabled, scope }) => {
+      const captured = await readAcpInventorySnapshot();
+      const items = await (await import('./buildReviewEngineInventoryItemsLazy')).buildReviewEngineInventoryItemsLazy({
         includeDisabled,
         scope,
-        accountSettings: await readAccountSettings(),
-      }),
-    }),
-    agentsBackendsList: async (args) => ({
-      items: await (await import('./buildAgentBackendInventoryItemsLazy')).buildAgentBackendInventoryItemsLazy({
+        accountSettings: captured.account.settings,
+        acpCatalogSnapshot: captured.catalog,
+      });
+      await captured.assertCurrent();
+      return { sessionId, items };
+    },
+    agentsBackendsList: async (args) => {
+      const captured = await readAcpInventorySnapshot();
+      const items = await (await import('./buildAgentBackendInventoryItemsLazy')).buildAgentBackendInventoryItemsLazy({
         limit: (args as { limit?: unknown }).limit,
         includeDisabled: (args as { includeDisabled?: boolean }).includeDisabled === true,
-        accountSettings: await readAccountSettings(),
-      }),
-    }),
+        accountSettings: captured.account.settings,
+        acpCatalogSnapshot: captured.catalog,
+      });
+      await captured.assertCurrent();
+      return { items };
+    },
     agentsModelsList: async (args) => {
       const agentId = args.agentId;
       const backendTargetKey = typeof (args as { backendTargetKey?: unknown }).backendTargetKey === 'string'
@@ -596,6 +640,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
           })()
         : null;
       const usesConfiguredCompatBackend = backendTarget?.sourceKind === 'configured' || Boolean(backendTarget?.configuredBackendId);
+      const captured = usesConfiguredCompatBackend ? await readAcpInventorySnapshot(args.signal) : null;
       const modelState = readSessionModelsState(await readSessionMetadataForId(params.sessionId));
       const provider = typeof modelState?.provider === 'string' ? modelState.provider.trim() : '';
       const availableModels = Array.isArray(modelState?.availableModels) ? modelState.availableModels : [];
@@ -617,19 +662,22 @@ export function createCliActionInventoryDeps(params: Readonly<{
         agentId: normalizedAgentId,
         backendTarget,
         rawSession: await readCurrentSessionWorkspace(),
-        accountSettings: await readAccountSettings(),
-        credentials: params.credentials ?? null,
+        accountSettings: captured?.account.settings ?? await readAccountSettings(),
+        credentials: params.savedSecretOperationContext?.credentials ?? params.credentials ?? null,
+        acpCatalogSnapshot: captured?.catalog,
+        savedSecretOperationContext: params.savedSecretOperationContext,
         probeDeps: params.probeDeps,
       });
+      await captured?.assertCurrent();
       const probedItems = probeResult
         ? modelInventoryItemsFromProbeResult(probeResult)
         : null;
       const shouldUseProbeResult = Boolean(
-        probeResult && probedItems && (probeResult.source === 'dynamic' || !shouldUseSessionMetadataModels),
+        probeResult && probedItems && (usesConfiguredCompatBackend || probeResult.source === 'dynamic' || !shouldUseSessionMetadataModels),
       );
       const resolvedItems = shouldUseProbeResult && probedItems
         ? probedItems
-        : metadataItems;
+        : usesConfiguredCompatBackend ? [] : metadataItems;
       const dedupedItems = resolvedItems.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
         .filter((entry, index, all) => all.findIndex((candidate) => candidate.id === entry.id) === index);
       const bounded = normalizeLimit(limit);
@@ -649,54 +697,68 @@ export function createCliActionInventoryDeps(params: Readonly<{
           // Native choices remain usable when the exact Provider producer is unavailable.
         }
       }
+      await captured?.assertCurrent();
       return {
         ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
         items: bounded ? dedupedItems.slice(0, bounded) : dedupedItems,
         supportsFreeform: shouldUseProbeResult && probeResult ? probeResult.supportsFreeform : false,
         source: shouldUseProbeResult && probeResult
           ? probeResult.source
-          : shouldUseSessionMetadataModels ? 'session_metadata' : 'static',
+          : usesConfiguredCompatBackend ? 'unavailable' : shouldUseSessionMetadataModels ? 'session_metadata' : 'static',
         ...(args.includeProviderProjection ? { providerProjection } : {}),
+        ...(args.probe && probeResult ? { probeObservation: AgentModelsProbeObservationSchema.parse(probeResult) } : {}),
       };
     },
     agentsSessionModesList: async (args) => {
       const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);
       const backendTargetKey = readBackendTargetKey(args as { backendTargetKey?: unknown });
       const backendTarget = readBackendTargetFromKey(backendTargetKey);
+      const captured = backendTarget?.sourceKind === 'configured' || backendTarget?.configuredBackendId
+        ? await readAcpInventorySnapshot(args.signal) : null;
       const probeResult = await probeActionModesBestEffort({
         args,
         agentId: normalizedAgentId,
         backendTarget,
         rawSession: await readCurrentSessionWorkspace(),
-        accountSettings: await readAccountSettings(),
-        credentials: params.credentials ?? null,
+        accountSettings: captured?.account.settings ?? await readAccountSettings(),
+        credentials: params.savedSecretOperationContext?.credentials ?? params.credentials ?? null,
+        acpCatalogSnapshot: captured?.catalog,
+        savedSecretOperationContext: params.savedSecretOperationContext,
         probeDeps: params.probeDeps,
       });
+      await captured?.assertCurrent();
       const probedItems = probeResult ? modeInventoryItemsFromProbeResult(probeResult) : [];
       return {
         ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
         items: limitItems(dedupeById(probedItems), (args as { limit?: unknown }).limit),
         source: probeResult?.source ?? 'unavailable',
+        ...(args.probe && probeResult ? { probeObservation: AgentSessionModesProbeObservationSchema.parse(probeResult) } : {}),
       };
     },
     agentsConfigOptionsList: async (args) => {
       const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);
       const backendTargetKey = readBackendTargetKey(args as { backendTargetKey?: unknown });
       const backendTarget = readBackendTargetFromKey(backendTargetKey);
+      const captured = backendTarget?.sourceKind === 'configured' || backendTarget?.configuredBackendId
+        ? await readAcpInventorySnapshot(args.signal) : null;
       const probeResult = await probeActionConfigOptionsBestEffort({
         args,
         agentId: normalizedAgentId,
         backendTarget,
         rawSession: await readCurrentSessionWorkspace(),
-        accountSettings: await readAccountSettings(),
-        credentials: params.credentials ?? null,
+        accountSettings: captured?.account.settings ?? await readAccountSettings(),
+        credentials: params.savedSecretOperationContext?.credentials ?? params.credentials ?? null,
+        acpCatalogSnapshot: captured?.catalog,
+        savedSecretOperationContext: params.savedSecretOperationContext,
         probeDeps: params.probeDeps,
       });
+      await captured?.assertCurrent();
       const items = probeResult ? configOptionDefinitionsFromProbeResult(probeResult) : [];
       return {
         ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
         items: limitItems(dedupeById(items), (args as { limit?: unknown }).limit),
         source: probeResult?.source ?? 'unavailable',
+        ...(args.probe && probeResult ? { probeObservation: AgentConfigOptionsProbeObservationSchema.parse(probeResult) } : {}),
       };
     },
     spawnProfilesList: async (args) => {
@@ -715,18 +777,57 @@ export function createCliActionInventoryDeps(params: Readonly<{
         available: accountSettings !== null,
       });
     },
-    spawnConnectedServicesList: async (args) => {
+    spawnConnectedServicesList: async (args, context) => {
       const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);
       const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(normalizedAgentId);
       if (supportedServiceIds.length === 0) {
         return { ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}), supportedServiceIds: [], items: [] };
       }
       const agentId = normalizedAgentId;
-      const accountProfile = await readAccountProfile();
+      const operationContext = params.savedSecretOperationContext;
+      const credentials = operationContext?.credentials ?? params.credentials;
+      if (!credentials) throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+      const authorize = params.authorizeConnectedAccountRequest;
+      const authorizeRequest = authorize ? (request: Readonly<{ method: string; path: string; body?: unknown }>) =>
+        authorize(context, request) : undefined;
+      const storeInput = { credentials, operationContext, signal: context?.signal, authorizeRequest };
+      const store = await runWithServerHttpBaseUrl(acpServerHttpBaseUrl, async () => createCliConnectedAccountCatalogStore(storeInput));
+      const assertCurrent = async () => {
+        store.assertCurrent();
+        if (operationContext && !await operationContext.isCurrent()) {
+          throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+        }
+        store.assertCurrent();
+      };
+      await assertCurrent();
+      const purposeCatalog = await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => readActiveConnectedAccountCatalog({
+        ...storeInput, key: 'purposes',
+      }));
+      await assertCurrent();
+      if (purposeCatalog.status !== 'ready' || purposeCatalog.record.key !== 'purposes') {
+        throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
+      }
+      const accountProfile = params.accountProfile !== undefined ? params.accountProfile
+        : await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => fetchAccountProfile({ token: credentials.token,
+          signal: context?.signal, authorizeRequest }));
+      await assertCurrent();
       const accountSettings = await readAccountSettings();
-      const labelsByKey = accountSettings && typeof accountSettings === 'object'
-        ? ((accountSettings as any).connectedServicesProfileLabelByKey ?? {})
-        : {};
+      await assertCurrent();
+      // Labels are optional display hints. Partial catalogs retain readable
+      // neighbors; unavailable metadata must not withdraw credential inventory.
+      let labelsByKey: Readonly<Record<string, string>> = {};
+      try {
+        const metadataInput = { ...storeInput, serverHttpBaseUrl: store.serverHttpBaseUrl };
+        const metadata = operationContext
+          ? await createCliConnectedMetadataStore(metadataInput).readCatalog()
+          : await refreshActiveConnectedMetadataCatalog(metadataInput);
+        if (metadata.presentation.status === 'ready' || metadata.presentation.status === 'partial') {
+          labelsByKey = projectConnectedPresentationLabelsV1(metadata.presentation);
+        }
+      } catch {
+        // No legacy label fallback: native names remain usable without metadata.
+      }
+      await assertCurrent();
       const supported = new Set<string>(supportedServiceIds);
       const profileOptionsByServiceId = (accountProfile?.connectedAccountsV4 ?? []).reduce<
         Record<string, AccountProfile['connectedAccountsV4']>
@@ -761,7 +862,8 @@ export function createCliActionInventoryDeps(params: Readonly<{
             .filter((group) => buildQualifiedPluginContributionKey(group.ref.service) === serviceId)
             .map((group) => ({
               groupId: group.ref.groupId,
-              label: group.displayName ?? group.ref.groupId,
+              label: labelsByKey[connectedEntitySubjectKeyV1({ kind: 'group', ...group.ref })]
+                ?? group.displayName ?? group.ref.groupId,
               activeProfileId: group.activeConnectedAccountId,
               memberProfileIds: group.members
                 .filter((member) => member.enabled)
@@ -776,6 +878,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const defaultBindings = resolveSpawnConnectedServicesDefaults({
         accountSettings,
         agentId,
+        purposeCatalog,
       });
       const includeUnavailable = (args as { includeUnavailable?: unknown }).includeUnavailable === true;
       const profileItems = Object.entries(normalizedProfileOptionsByServiceId).flatMap(([serviceId, options]) => (
@@ -803,29 +906,41 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const directory = normalizeStringValue((args as { directory?: unknown }).directory)
         || await readCurrentSessionValue('path')
         || process.cwd();
-      const accountSettings = await readAccountSettings();
-      const settings = readMcpServersSettingsFromAccountSettings(accountSettings);
-      const selectionParsed = SessionMcpSelectionV1Schema.safeParse((args as { selection?: unknown }).selection);
-      if (params.mcpPreviewDeps) {
-        return await resolveSpawnMcpServersPreviewInventoryWithDeps({
-          deps: params.mcpPreviewDeps,
-          settings,
-          machineId,
-          directory,
-          agentId,
-          ...(selectionParsed.success ? { selection: selectionParsed.data } : {}),
-          limit: (args as { limit?: number }).limit,
-        });
+      const context = params.savedSecretOperationContext;
+      let snapshot: ActiveAccountSettingsSnapshot | null;
+      let isCurrent: () => Promise<boolean>;
+      if (context) {
+        isCurrent = () => context.isCurrent();
+        const catalog = await createCliMcpServerStoreForOperation({ operationContext: context }).readCatalogForOperation();
+        const captured = context.readSnapshot();
+        snapshot = captured ? { ...captured, mcpServerCatalog: catalog } : null;
+      } else {
+        await readAccountSettings();
+        if (!params.credentials) throw Object.assign(new Error('MCP Account is unavailable'), { code: 'mcp_catalog_unavailable' });
+        const scopeKey = resolveAccountSettingsScopeKey(params.credentials);
+        const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+        isCurrent = async () => getActiveAccountSettingsSnapshot()?.scopeKey === scopeKey
+          && getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken;
+        await prepareActiveMcpServerCatalog({ credentials: params.credentials, scopeKey, lifetimeToken, refresh: true });
+        snapshot = getActiveAccountSettingsSnapshot();
+        if (snapshot?.scopeKey !== scopeKey || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken) {
+          throw Object.assign(new Error('Captured MCP Account retired'), { code: 'scope-retired' });
+        }
       }
+      const settings = readMcpServersSettingsFromAccountSettings(snapshot);
+      const selectionParsed = SessionMcpSelectionV1Schema.safeParse((args as { selection?: unknown }).selection);
       const { resolveSpawnMcpServersPreviewInventory } = await import('./resolveSpawnMcpServersPreviewInventory');
-      return await resolveSpawnMcpServersPreviewInventory({
+      const preview = await resolveSpawnMcpServersPreviewInventory({
         settings,
         machineId,
         directory,
         agentId,
         ...(selectionParsed.success ? { selection: selectionParsed.data } : {}),
         limit: (args as { limit?: number }).limit,
+        ...(params.mcpPreviewDeps ? { deps: params.mcpPreviewDeps } : {}),
       });
+      if (!await isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
+      return preview;
     },
     sessionModesList: async ({ sessionId }) => {
       const sessionModes = readSessionModesState(await readSessionMetadataForId(sessionId));

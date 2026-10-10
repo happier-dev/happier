@@ -4,11 +4,12 @@ import { logger } from '@/ui/logger';
 import { StopSessionResultSchema, type StopSessionResult } from '@/daemon/sessions/stopSessionContract';
 
 import type { SessionLifecycleMachineHandlers } from './sessionLifecycleTypes';
+import { isRequesterSessionLifecycleCurrent } from './requesterSessionLifecycle';
 
 export function createMachineSessionStopLifecycleActionExecutor(params: Readonly<{
     stopSession: SessionLifecycleMachineHandlers['stopSession'];
 }>): RpcActionExecutor {
-    return createSessionLifecycleRpcActionExecutor({
+    const executor = createSessionLifecycleRpcActionExecutor({
         'session.stop': async (rawParams: unknown) => {
             const { sessionId } = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as { sessionId?: unknown };
 
@@ -26,4 +27,12 @@ export function createMachineSessionStopLifecycleActionExecutor(params: Readonly
             return result;
         },
     });
+    return { execute: async (actionId, input, context) => {
+        const sessionId = input && typeof input === 'object' ? Reflect.get(input, 'sessionId') : undefined;
+        if (typeof sessionId === 'string' && !await isRequesterSessionLifecycleCurrent(sessionId.trim(), context)) {
+            const errorCode = context?.signal?.aborted ? 'cancelled' : 'target_unavailable';
+            return { ok: false, errorCode, error: errorCode };
+        }
+        return await executor.execute(actionId, input, context);
+    } };
 }

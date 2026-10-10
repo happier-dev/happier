@@ -25,6 +25,21 @@ describe('happier session list (action executor)', () => {
     createCliActionExecutorFromCredentials.mockClear();
   });
 
+  it.each(['summary', 'awareness'] as const)('retains unavailable Bot metadata coverage in %s output', async (view) => {
+    const command = findCompiledActionCliCommand(['session', 'list']);
+    if (!command || !SESSION_LIST_PRESENTATION.presentSuccess) throw new Error('Session list presentation unavailable');
+    const payload = { ...(view === 'awareness' ? { view, projectionVersion: 1 } : {}),
+      sessions: [], nextCursor: null, hasNext: false, botFilterUnavailableCount: 1 };
+    const output = captureConsoleJsonOutput();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await SESSION_LIST_PRESENTATION.presentSuccess(payload, { command, json: true, input: { view }, callerInput: {} });
+      expect(output.json()).toMatchObject({ data: { botFilterUnavailableCount: 1 } });
+      await SESSION_LIST_PRESENTATION.presentSuccess(payload, { command, json: false, input: { view }, callerInput: {} });
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/incomplete.*metadata/i));
+    } finally { warn.mockRestore(); output.restore(); }
+  });
+
   it.each(['summary', 'awareness'] as const)('preserves metadata omissions in %s JSON and human presentation', async (view) => {
     const command = findCompiledActionCliCommand(['session', 'list']);
     if (!command || !SESSION_LIST_PRESENTATION.presentSuccess) throw new Error('Session list presentation unavailable');

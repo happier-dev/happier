@@ -147,6 +147,22 @@ describe('compiled Action commands in the one command registry', () => {
     );
   });
 
+  it('routes memory document commands through the generated Account Action leaves', async () => {
+    for (const leaf of ['remember', 'update', 'forget', 'read', 'list']) {
+      expect(await resolveAdmittedActionCliCommand(['memory', leaf])).toMatchObject({
+        actionId: `memory.${leaf}`,
+        path: ['memory', leaf],
+      });
+    }
+    expect(findCommandDispatchDescriptor('memory')).toMatchObject({
+      command: 'memory',
+      handler: expect.any(Function),
+    });
+    expect(await resolveCommandCompletionCandidates(['memory', ''])).toEqual(
+      expect.arrayContaining(['remember', 'update', 'forget', 'read', 'list']),
+    );
+  });
+
   it('completes compiled command paths, flags and enum values from the same descriptor', async () => {
     expect(await resolveCommandCompletionCandidates(['session', 'se'])).toContain('send');
     expect(await resolveCommandCompletionCandidates(['identity', ''])).toContain('github-apps');

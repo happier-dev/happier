@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RpcHandler } from '@/api/rpc/types';
@@ -12,7 +13,7 @@ function createLocalCommandDeps() {
     const handlers = new Map<string, RpcHandler>();
     registerBashHandler({ registerHandler: (method, handler) => handlers.set(method, handler) }, process.cwd());
     return createCliActionDeps({
-        token: 'unused-local-token', sessionId: 'cli-global', serverId: 'home', mode: 'plain', ctx: null,
+        token: 'unused-local-token', sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', mode: 'plain', ctx: null,
         machineActionDirectTargetTransport: {
             machineId: 'run-machine',
             invoke: async (method, request, options) => {
@@ -25,6 +26,23 @@ function createLocalCommandDeps() {
 }
 
 describe('CLI command Action host', () => {
+    it('derives Workflow suffix capture from the canonical stored-envelope ceiling and retains capture evidence', async () => {
+        const machineRpc = await import('@/session/transport/rpc/machineRpc');
+        const rpc = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ success: true, exitCode: 0,
+            stdout: 'captured tail', stderr: '', stdoutTruncated: true });
+        try {
+            const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+            const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home',
+                serverHttpBaseUrl: 'https://home.example.test', mode: 'plain', ctx: null });
+            await expect(deps.machineCommandRun!({ command: 'fixed command' }, { surface: 'cli', authority: 'account_automation', serverId: 'home',
+                actionCaller: { kind: 'workflowRun', runId: 'workflow', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
+                externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
+            })).resolves.toEqual({ exitCode: 0, stdout: 'captured tail', stderr: '', stdoutTruncated: true });
+            expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
+                outputTailMaxBytes: MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
+            }) }));
+        } finally { rpc.mockRestore(); }
+    });
     it.skipIf(process.platform === 'win32')('uses the existing local machine exec owner in the selected workspace with env-only values', async () => {
         const deps = createLocalCommandDeps();
         const directory = await realpath(tmpdir());
@@ -68,7 +86,7 @@ describe('CLI command Action host', () => {
         const rpc = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ success: true, exitCode: 0, stdout: 'finished', stderr: '' });
         try {
             const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
-            const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', mode: 'plain', ctx: null });
+            const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', mode: 'plain', ctx: null });
             const signal = new AbortController().signal;
             await expect(deps.machineCommandRun!({ command: 'fixed command', env: { VALUE: 'data' } }, { surface: 'cli', authority: 'present_user', serverId: 'home', signal,
                 externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
@@ -95,7 +113,7 @@ describe('CLI command Action host', () => {
             const rpc = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue(response);
             try {
                 const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
-                const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', mode: 'plain', ctx: null });
+                const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', mode: 'plain', ctx: null });
                 await expect(deps.machineCommandRun!({ command: 'already executed' }, { surface: 'cli', authority: 'present_user', serverId: 'home',
                     externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
                 })).resolves.toMatchObject({ ok: false, errorCode: 'action_failed' });

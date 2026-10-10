@@ -4,13 +4,15 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
+import type { ResolvedLocalServiceActionTarget } from './executor';
 
-type ActionTarget = Readonly<{ kind: 'inventory_entry'; entry: NormalizedLocalServiceInventoryEntry }>;
+type ActionTarget = ResolvedLocalServiceActionTarget;
 
 export type ResolveLocalServiceActionEligibilityInput = Readonly<{
     action: LocalServiceActionKindV1;
     target: ActionTarget;
     terminateEnabled: boolean;
+    restartAdmitted?: boolean;
 }>;
 
 function enabledDecision(kind: LocalServiceActionKindV1, input?: Readonly<{
@@ -85,18 +87,27 @@ function resolveTerminateDetectedDecision(
 export function resolveLocalServiceActionEligibility(
     input: ResolveLocalServiceActionEligibilityInput,
 ): LocalServiceActionDecisionV1 {
+    if (input.target.kind === 'managed_service') {
+        const snapshot = input.target.handle.snapshot();
+        if (input.action === 'stop_managed') return snapshot.state === 'stopped'
+            ? deniedDecision(input.action, 'managed_service_stopped')
+            : enabledDecision(input.action, { requiresConfirmation: true, auditRequired: true });
+        // Exact retained resource cleanup is independent of serving/new-effect authority.
+        if (!input.target.handle.isCurrent()) return deniedDecision(input.action, 'managed_service_not_current');
+        if (input.action === 'forget') return enabledDecision(input.action, { auditRequired: true });
+        if (input.action === 'restart_managed') return input.restartAdmitted
+            ? enabledDecision(input.action, { requiresConfirmation: true, auditRequired: true })
+            : deniedDecision(input.action, 'managed_service_restart_admission_required');
+        if (input.action === 'copy_url' || input.action === 'open_preview') return snapshot.baseUrl
+            ? enabledDecision(input.action) : deniedDecision(input.action, 'managed_service_no_endpoint');
+        return deniedDecision(input.action, 'wrong_target_kind');
+    }
     switch (input.action) {
         case 'copy_url':
         case 'open_preview':
             return enabledDecision(input.action);
         case 'forget':
             return enabledDecision('forget', { auditRequired: true });
-        // `stop_managed` / `restart_managed` survive in the published action catalog
-        // (`packages/protocol/src/actions/specs/localServices.ts`, projected into the plugin
-        // SDK) but the managed local-service runtime they addressed was removed with its
-        // producerless registry (RU2 surfaces finalization, DEC-6). There is no managed target
-        // kind to resolve, so the only honest answer is a denial. Removal condition: delete
-        // both kinds — and this arm — in the next plugin-SDK contraction window.
         case 'stop_managed':
         case 'restart_managed':
             return deniedDecision(input.action, 'wrong_target_kind', {

@@ -7,7 +7,6 @@ import {
 import {
   ACTION_CLI_HELP_FLAGS,
   ACTION_CLI_JSON_OUTPUT_FLAG,
-  ACTION_CLI_MACHINE_ID_FLAG,
   ACTION_CLI_SERVER_ID_FLAG,
   ACTION_CLI_WHOLE_INPUT_FLAG,
   parseActionCliInput,
@@ -289,8 +288,8 @@ export function resolveCompiledActionCliCompletionCandidates(
     // the value of an Action field just as the shared input helper suppresses
     // every ordinary flag in that position.
     if (!inputWords.includes('--') && !fieldForValuePosition(exact, inputWords)) {
-      if (exact.routesByTransportMachineId && ACTION_CLI_MACHINE_ID_FLAG.startsWith(context.prefix)) {
-        candidates.add(ACTION_CLI_MACHINE_ID_FLAG);
+      for (const flag of exact.transportMachineIdFlags) {
+        if (flag.startsWith(context.prefix)) candidates.add(flag);
       }
       if (exact.acceptsServerId && ACTION_CLI_SERVER_ID_FLAG.startsWith(context.prefix)) {
         candidates.add(ACTION_CLI_SERVER_ID_FLAG);
@@ -327,7 +326,7 @@ export async function resolveCompiledActionCliCompletionCandidatesWithDynamicOpt
     resolveDynamicOptions: context.resolveDynamicOptions,
     cliOwnedFlags: {
       valueFlags: [
-        ...(command.routesByTransportMachineId ? [ACTION_CLI_MACHINE_ID_FLAG] : []),
+        ...command.transportMachineIdFlags,
         ...(command.acceptsServerId ? [ACTION_CLI_SERVER_ID_FLAG] : []),
       ],
     },

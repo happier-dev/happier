@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 
 import fastify from 'fastify';
+import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
 import { API_TOKEN_FULL_GRANT_V1, ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1 } from '@happier-dev/protocol';
 
@@ -22,7 +23,11 @@ import {
   EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   measureExternalActionResponseEnvelopeUtf8BytesV1,
   type ActionExecuteResult,
+  createActionExecutor,
 } from '@happier-dev/protocol/actions';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 
 import { handleActionsCommand } from '@/cli/commands/actions';
 import {
@@ -124,6 +129,40 @@ async function createApp(overrides: Partial<Parameters<typeof registerDaemonExte
 }
 
 describe('registerDaemonExternalActionRoute', () => {
+  it('rechecks minted installation authority before a daemon-hosted Action reaches launch', async () => {
+    const target = { kind: 'machine' as const, machineId: 'machine-local' };
+    const envelope = { v: 1 as const, requestId: 'http-installation-current', target,
+      input: { creationKey: 'own-start', agentTarget: { kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, directory: { kind: 'managed' as const } } };
+    const authorization = { v: 1 as const, token: 'minted-home-authority', binding: {
+      serverIdentityId: 'home', accountId: 'account-1', custodianAccountId: 'account-1',
+      principalId: 'principal-1', credentialId: 'credential-1', grant: API_TOKEN_FULL_GRANT_V1,
+      machineId: target.machineId, installationId: 'installation-1', actionId: 'session.spawn_new',
+      requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } };
+    const sessionSpawnNew = vi.fn(async () => SESSION_SPAWN_PENDING_RESULT);
+    let current = false;
+    const app = await createApp({
+      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'daemon-token' } }),
+      mintExecutionAuthorization: async () => ({ ok: true, authorization }),
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair().secretKey,
+      resolveInstallationId: () => 'installation-1',
+      verifyExecutionAuthorization: async () => current,
+    });
+    try {
+      const dispatch = () => app.inject({ method: 'POST', url: '/v1/actions/session.spawn_new',
+        headers: { authorization: `Bearer ${PAT}` }, payload: envelope });
+      expect((await dispatch()).json()).toMatchObject({ execution: { ok: false, errorCode: 'not_authenticated' } });
+      expect(sessionSpawnNew).not.toHaveBeenCalled();
+      current = true;
+      expect((await dispatch()).json()).toMatchObject({ execution: { ok: true, result: SESSION_SPAWN_PENDING_RESULT } });
+      expect(sessionSpawnNew).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('returns a strict correlated outer failure for protected placement before opening', async () => {
     const app = await createApp();
     try {

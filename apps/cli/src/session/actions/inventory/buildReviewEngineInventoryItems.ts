@@ -1,5 +1,6 @@
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { AccountSettings, ReviewEngineCapabilities } from '@happier-dev/protocol';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
@@ -103,6 +104,7 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
   limit?: unknown;
   includeDisabled?: boolean;
   accountSettings?: AccountSettings | null;
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   scope?: ReviewEngineScope;
 }>): Promise<readonly ActionReviewEngineInventoryItem[]> {
   const accountSettings = params.accountSettings ?? null;
@@ -126,7 +128,7 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
         capabilities: { structuredNarration: readAgentStructuredOutputCapabilities(agent.richDefinition?.definition)?.formats.includes('json') === true },
       }];
     });
-  const configuredItems = (await buildConfiguredAcpBackendInventoryItems(accountSettings))
+  const configuredItems = (await buildConfiguredAcpBackendInventoryItems(accountSettings, params.acpCatalogSnapshot))
     .filter((item): item is typeof item & { backendId: string } => typeof item.backendId === 'string')
     .map((item): ActionReviewEngineInventoryItem => ({
       engineId: item.targetKey,

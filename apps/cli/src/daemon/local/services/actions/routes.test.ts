@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 
 import { createLocalServiceActionRoutes } from './routes';
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventorySnapshot } from '../inventory/scanner';
+import { createManagedServicesOwner, type ProjectManagedServiceSupervisionInput } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
 
 const inventorySnapshot: NormalizedLocalServiceInventorySnapshot = {
     v: 1,
@@ -36,6 +40,132 @@ const inventorySnapshot: NormalizedLocalServiceInventorySnapshot = {
 };
 
 describe('createLocalServiceActionRoutes', () => {
+    it.each(['unsupported', 'accepted', 'termination_incomplete'] as const)(
+        'preserves the canonical %s native Stop outcome through real service controls',
+        async stopOutcome => {
+            const owner = createManagedServicesOwner({
+                processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+                // This Project-only owner admits no Plugin scope/dependency request.
+                dependencies() { throw new Error('Project service control does not use Plugin dependencies'); },
+                resolveScope() { return null; },
+            });
+            const workspace = {
+                id: 'workspace-one', serverId: 'server-one', machineId: 'machine-one',
+                rootPath: process.cwd(), createdAtMs: 1,
+            };
+            const declaration = {
+                workspaceRefId: workspace.id,
+                selection: { kind: 'manifest' as const, name: 'worker' },
+            };
+            const reviewedEffectDigest = 'reviewed-worker-effect';
+            const instance = {
+                adapter: { pluginId: 'acme.native', localId: 'compose' },
+                nativeResourceId: 'retained-control-resource',
+            };
+            let stoppable = false;
+            let nativeStopped = false;
+            const supervision: ProjectManagedServiceSupervisionInput = {
+                workspace, declaration, cwd: workspace.rootPath,
+                requester: {
+                    serverId: workspace.serverId, accountId: 'requester-one',
+                    machineId: workspace.machineId, installationId: 'installation-one',
+                },
+                serviceId: 'project:workspace-one:manifest:worker',
+                specIdentity: reviewedEffectDigest,
+                isCurrent: () => true,
+                authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({
+                    signal, assertCurrent() {},
+                    projectLaunch: {
+                        status: 'ready', reviewedEffectDigest,
+                        environment: {
+                            selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
+                            io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+                        },
+                    },
+                    launch: {
+                        command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'],
+                        cwd: workspace.rootPath, env: {},
+                    },
+                }),
+                processSpec: {
+                    startupTimeoutMs: 1_000,
+                    mode: {
+                        kind: 'native',
+                        instance,
+                        // Native resource inspection and Stop are external OS/tool IO.
+                        lifecycle: {
+                            inspect: async observed => {
+                                expect(observed).toEqual(instance);
+                                return {
+                                    phase: nativeStopped ? 'stopped' : 'running',
+                                    readiness: 'not_reported',
+                                    endpoint: null,
+                                };
+                            },
+                            stop: async observed => {
+                                expect(observed).toEqual(instance);
+                                if (stoppable) {
+                                    nativeStopped = true;
+                                    return { status: 'stopped' };
+                                }
+                                return { status: stopOutcome };
+                            },
+                        },
+                    },
+                },
+            };
+            try {
+                const handle = await owner.superviseProject(supervision);
+                const routes = createLocalServiceActionRoutes({
+                    machineId: workspace.machineId,
+                    inventoryRegistry: createLocalServiceInventoryRegistry(),
+                    projectManagedServices: owner,
+                    verifyConfirmationNonce: request => request.confirmationNonce === createLocalServiceActionConfirmationNonceV1(request),
+                });
+                const target = {
+                    kind: 'managed_service' as const,
+                    managedServiceId: handle.instanceId,
+                    machineId: workspace.machineId,
+                    workspaceId: workspace.id,
+                    cwd: workspace.rootPath,
+                    declaration,
+                };
+                const request = {
+                    requestId: 'retained-native-control',
+                    target,
+                    action: 'stop_managed' as const,
+                    force: false,
+                };
+                const confirmed = {
+                    ...request,
+                    confirmationNonce: createLocalServiceActionConfirmationNonceV1(request),
+                };
+                // The SDK wrapper preserves the supervisor's unsupported vs
+                // unconfirmed distinction through its canonical typed errors.
+                const reasonCode = stopOutcome === 'unsupported'
+                    ? 'plugin_managed_service_unavailable'
+                    : 'plugin_managed_server_termination_incomplete';
+                const result = await routes.execute(confirmed);
+                expect(result).toMatchObject({ status: 'failed', reasonCode });
+                expect(result.auditEvents.at(-1)).toMatchObject({ result: 'failed', reasonCode });
+                expect(nativeStopped).toBe(false);
+                expect(handle.snapshot()).toMatchObject({ mode: 'native', state: 'running', nativePhase: 'running' });
+                expect(owner.resolveProjectService(target)).toMatchObject({ status: 'found', handle });
+                expect(await owner.superviseProject(supervision)).toBe(handle);
+                expect(owner.readRetainedSemanticCustodyCount()).toBe(1);
+
+                stoppable = true;
+                expect(await routes.execute(confirmed)).toMatchObject({ status: 'succeeded' });
+                expect(nativeStopped).toBe(true);
+                expect(handle.snapshot().state).toBe('stopped');
+                expect(owner.resolveProjectService(target)).toEqual({ status: 'unknown' });
+                expect(owner.readRetainedSemanticCustodyCount()).toBe(0);
+            } finally {
+                stoppable = true;
+                await owner.dispose();
+            }
+        },
+    );
     it('undoes Forget through the same action after rescanning and restarting the inventory owner', async () => {
         let annotations: import('../inventory/registry').LocalServiceInventoryAnnotationsV1 | null = null;
         const store = { read: () => annotations, write: (next: NonNullable<typeof annotations>) => { annotations = next; } };
@@ -72,9 +202,15 @@ describe('createLocalServiceActionRoutes', () => {
     it('executes forget by hiding the canonical inventory target and future matching snapshots', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
         inventoryRegistry.replaceSnapshot(inventorySnapshot);
+        // Termination is the OS/process boundary. Forget must only change projection even
+        // when the exact detected process is eligible for the distinct terminate action.
+        const terminateDetectedService = vi.fn(async () => ({ status: 'succeeded' as const }));
         const routes = createLocalServiceActionRoutes({
             machineId: 'machine-a',
             inventoryRegistry,
+            terminateEnabled: () => true,
+            verifyConfirmationNonce: () => true,
+            terminateDetectedService,
             now: () => 2_000,
         });
 
@@ -103,6 +239,7 @@ describe('createLocalServiceActionRoutes', () => {
             entries: [{ ...inventorySnapshot.entries[0], id: 'entry-b' }],
         });
         expect(inventoryRegistry.getSnapshot().entries).toEqual([]);
+        expect(terminateDetectedService).not.toHaveBeenCalled();
     });
 
 

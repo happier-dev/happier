@@ -191,6 +191,14 @@ Before starting a run, inspect its current action spec, then resolve selectable 
 
 Waiting is only observation. If a bounded wait times out, the run may still be active; the timeout does not stop it or turn it into a failed run. Retry only when the returned provider evidence classifies the failure as retryable, such as a typed transient rate limit. Do not treat every backend failure as transient or silently switch to another backend.
 
+## Recovering a native session goal
+
+In development source, a session agent can inspect, update, and clear its native goal through Happier tools. Omit `sessionId` to target the invoking session; external callers without a bound session must supply it. The installed action spec remains the source of truth for the accepted fields and current availability.
+
+To replace a blocked goal, read it, clear it, confirm that the goal snapshot is empty, then set the replacement objective. These controls use the existing native goal path and require an Agent runtime that supports goal controls.
+
+Goal recovery is autonomous by default. You can require approval for clearing through the existing action approval settings. When required, the clear tool waits for approval and returns the execution result; rejection leaves the goal intact. Disabled actions and discoverable-only preferences still apply.
+
 ## Hot-path actions
 
 Happier still keeps a small dynamic hot path for common actions.

@@ -9,6 +9,12 @@ import { encodeBase64 } from '@/api/encryption';
 import { encryptStoredSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { createCliActionDeps } from './createCliActionDeps';
+import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
+import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { updateSettings } from '@/persistence';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -18,6 +24,45 @@ describe('Session-backed SCM owner workspace', () => {
   const encryptedCredentials = { token: 'scm-owner-token', encryption: {
     type: 'dataKey', publicKey: nacl.box.keyPair.fromSecretKey(machineKey).publicKey, machineKey,
   } } satisfies StoredCredentials;
+
+  it.each(['differentId', 'differentUrl', 'unboundUrl', 'contextId', 'currentUrl', 'currentApi'] as const)('binds this producer retained result to the exact selected Home (%s)', async scenario => {
+    await withTempDir('scm-owner-home-admission-', async workspace => {
+      const saved = await scmDiffSummaryResultStore.create({ cwd: workspace, sessionId,
+        output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
+          metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison' },
+          comparison: { id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: workspace },
+            endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+          requestedOutputs: ['summary'], outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Private Home A result' } } },
+          analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+        }) });
+      vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
+        data: String(url).endsWith('/v1/account/encryption/currentness')
+          ? { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
+          : { session: createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: workspace }), share: null }) },
+      }));
+      const token = 'authenticated-other-home';
+      const boundaryParams = { token, credentials: { token, encryption: null },
+        sessionId, mode: 'plain' as const, ctx: null,
+        ...(['unboundUrl', 'contextId', 'currentUrl', 'currentApi'].includes(scenario) ? {} : { serverId: scenario === 'differentId'
+          ? `${configuration.activeServerId}-other` : configuration.activeServerId }),
+        serverHttpBaseUrl: scenario === 'currentUrl' || scenario === 'contextId' ? `${configuration.serverUrl}/`
+          : scenario === 'currentApi' ? `${configuration.apiServerUrl}/` : 'https://other-home.test',
+        scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [workspace] },
+        resolveServerFeaturesSnapshot: () => ({ status: 'unsupported' as const, reason: 'endpoint_missing' as const }),
+      };
+      // URL-only cases model runtime configuration below the exact-Home typed host boundary.
+      const executor = createActionExecutor(createCliActionDeps(boundaryParams as unknown as Parameters<typeof createCliActionDeps>[0]));
+      const result = await executor.execute('scm.diffSummary.result.read', { cwd: workspace, resultId: saved.resultId },
+        { surface: 'cli', defaultSessionId: sessionId,
+          ...(scenario === 'contextId' ? { serverId: `${configuration.activeServerId}-other` } : {}) });
+      const currentHome = scenario === 'currentUrl' || scenario === 'currentApi';
+      expect(result).toMatchObject(currentHome ? { ok: true, result: { success: true,
+        result: { output: { outputs: { summary: { value: { summaryMarkdown: 'Private Home A result' } } } } } } }
+        : { ok: false, errorCode: 'server_scope_mismatch' });
+      if (!currentHome) expect(JSON.stringify(result)).not.toContain('Private Home A result');
+    });
+  });
 
   const cases = ['plain', 'e2ee', 'e2eeSession', 'layout0', 'absent', 'modeMismatch', 'wrongKey'] as const;
   it.each(cases)('reads the authenticated owner workspace (%s) before real SCM dispatch', async (scenario) => {
@@ -71,6 +116,53 @@ describe('Session-backed SCM owner workspace', () => {
 });
 
 describe('exact-machine SCM Action targeting', () => {
+  it('admits a portable Home for real local saved-review list and read while refusing lost or ambiguous bindings', async () => {
+    await withTempDir('scm-portable-home-', async home => {
+      const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+      const profileId = 'local-machine-profile';
+      const serverId = 'srv_portable_review_home';
+      try {
+        scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: profileId });
+        reloadConfiguration();
+        const serverUrl = configuration.serverUrl;
+        const profile = { id: profileId, name: 'Review Home', serverUrl, webappUrl: serverUrl,
+          createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
+          homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: serverId, canonicalServerUrl: serverUrl,
+            revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }) };
+        await updateSettings(settings => ({ ...settings, machineIdByServerId: { [profileId]: 'machine' }, activeServerId: profileId,
+          servers: { [profileId]: profile } }));
+        const saved = await scmDiffSummaryResultStore.create({ cwd: home,
+          output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'portable-comparison',
+            metadata: { source: { kind: 'workingTree' }, sourceKey: 'portable-comparison' },
+            comparison: { id: 'portable-comparison', source: { kind: 'workingTree' }, repository: { rootPath: home },
+              endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+            requestedOutputs: ['summary'], outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Portable Home review' } } },
+            analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+          }) });
+        const token = 'admitted-review-requester';
+        const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
+          serverId: profileId, serverHttpBaseUrl: serverUrl, sessionId: '', mode: 'plain', ctx: null,
+          scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [home] } }));
+        const context = { surface: 'rpc' as const, authority: 'account_automation' as const, serverId,
+          externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } };
+        expect(await executor.execute('scm.diffSummary.result.list', {}, context)).toMatchObject({ ok: true,
+          result: { success: true, results: [expect.objectContaining({ resultId: saved.resultId })] } });
+        expect(await executor.execute('scm.diffSummary.result.read', { cwd: home, resultId: saved.resultId }, context))
+          .toMatchObject({ ok: true, result: { success: true, result: { resultId: saved.resultId } } });
+        expect(await executor.execute('scm.diffSummary.result.read', { cwd: home, resultId: saved.resultId },
+          { ...context, serverId: 'srv_wrong_home' })).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+        for (const scenario of ['ambiguous', 'retired'] as const) {
+          await updateSettings(settings => ({ ...settings, servers: scenario === 'retired' ? {}
+            : { [profileId]: profile, duplicate: { ...profile, id: 'duplicate' } } }));
+          expect(await executor.execute('scm.diffSummary.result.list', {}, context))
+            .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+          expect(await executor.execute('scm.diffSummary.result.read', { cwd: home, resultId: saved.resultId }, context))
+            .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+        }
+      } finally { scope.restore(); reloadConfiguration(); }
+    });
+  });
+
   it('admits machine saved inventory without a fabricated directory and refuses a Session-wide inventory', async () => {
     const calls: unknown[] = [];
     const inventory = { success: true, results: [], count: 0, bytes: 0,

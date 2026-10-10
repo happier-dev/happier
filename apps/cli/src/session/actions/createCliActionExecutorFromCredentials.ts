@@ -46,7 +46,7 @@ import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { getActionSpec, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
-import { isSettingsDeclarationActionIdV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { isSettingsDeclarationActionIdV1, SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { resolveActionSessionListAccessFailure } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 import { SessionListResultSchema } from '@happier-dev/protocol/sessions/control/listResult';
@@ -396,15 +396,22 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     }
   }
   const inputSessionId = readNonEmptyString(readRecord(params.input)?.sessionId);
-  const executionPlacement = resolveActionExecutionPlacementForInput(spec, params.input);
+  let placementInput = params.input;
+  if (spec.executionPlacementForInput) {
+    const admittedInput = spec.inputSchema.safeParse(params.input);
+    if (!admittedInput.success) return { kind: 'settled', result: actionFailure('invalid_parameters') };
+    placementInput = admittedInput.data;
+  }
+  const executionPlacement = resolveActionExecutionPlacementForInput(spec, placementInput);
   // The generic Session command resolves its positional selector before
   // invoking this adapter; first-class CLI and MCP Actions carry `sessionId`.
   // In each case the selector remains this adapter's only Session-target input
   // and is resolved to the immutable Session id before crossing the API seam.
-  const requestedSessionId = (spec.contextualDefaults?.sessionId === 'current_session'
-    ? readNonEmptyString(params.context?.defaultSessionId)
-    : null)
-    ?? (executionPlacement === 'session' ? inputSessionId : null);
+  const requestedSessionId = executionPlacement === 'session'
+    ? (spec.contextualDefaults?.sessionId === 'current_session'
+      ? readNonEmptyString(params.context?.defaultSessionId)
+      : null) ?? inputSessionId
+    : null;
   if (requestedSessionId) {
     const resolved = await resolvePatSessionTarget({
       credentials: params.credentials,
@@ -571,6 +578,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   credentials: StoredCredentials;
   requesterSessionBootstrap?: Parameters<typeof createCliActionDeps>[0]['requesterSessionBootstrap'];
   savedSecretOperationContext?: Parameters<typeof createCliActionDeps>[0]['savedSecretOperationContext'];
+  providerPreparedSavedSecret?: Parameters<typeof createCliActionDeps>[0]['providerPreparedSavedSecret'];
   onRequesterSessionCredentialDisclosure?: Parameters<typeof dispatchRequesterSessionSpawnNewRpc>[0]['onRequesterSessionCredentialDisclosure'];
   scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   /** Receives the exact dispatch boundary for Home-owned HTTP Actions. */
@@ -885,6 +893,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
       ...(params.requesterSessionBootstrap ? { requesterSessionBootstrap: params.requesterSessionBootstrap } : {}),
       ...(params.savedSecretOperationContext ? { savedSecretOperationContext: params.savedSecretOperationContext } : {}),
+      ...(params.providerPreparedSavedSecret ? { providerPreparedSavedSecret: params.providerPreparedSavedSecret } : {}),
       resolveServerFeaturesSnapshot,
       ...(params.resolvePluginNotifications ? { resolvePluginNotifications: params.resolvePluginNotifications } : {}),
       ...(params.readPluginVoiceProviders ? { readPluginVoiceProviders: params.readPluginVoiceProviders } : {}),
@@ -1006,6 +1015,131 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         managedMachineCreationEnabled: provider.getAccountSettings?.()?.managedMachineCreationEnabled,
       });
     };
+    const prepareOriginalCliActionInvocation = async (actionId: string, input: unknown,
+      context: ActionExecutorContext, credentials: StoredCredentials) => {
+      const mountedFilesystemCopy = params.filesystemActionExecute && actionId === 'daemon.filesystem.copy'
+        && (FilesystemPreparedCopyInputSchema.safeParse(input).success || FilesystemTargetCopyInputSchema.safeParse(input).success);
+      // Finite original CLI work is admitted at Home before the selected
+      // retained guest is online. Keep policy/approval in the shared executor;
+      // admitted Session/Run origins retain their existing credentialed owner.
+      const originalCliCaller = (context.surface === undefined || context.surface === 'cli')
+        && (!context.actionCaller || context.actionCaller.kind === 'host')
+        && !context.externalActionCredential && !context.externalActionExecutionAuthorization
+        && !context.rpcSessionAuthorization && !context.causalPermissionAuthority;
+      const provenance = readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: true });
+      const ordinary = provenance?.provenance.kind === 'account' && provenance.provenance.authority === 'present_user'
+        && context.authority !== 'account_automation';
+      // A paired terminal uses its own daemon ingress when locally placed;
+      // another selected Machine uses Home's named Session-start admission.
+      // Both retain terminal policy and exact Machine admission.
+      const pairedSessionCreation = actionId === 'session.spawn_new' && provenance?.provenance.kind === 'terminal'
+        ? SessionSpawnNewInputV2Schema.safeParse(input) : null;
+      // A standalone CLI has no UI reverse-dispatch connection. The own daemon
+      // already owns client placement, Account binding and terminal policy.
+      const settingsAction = isSettingsDeclarationActionIdV1(actionId);
+      const settingsInput = settingsAction ? SettingsDeclarationActionInputSchemasV1[actionId].safeParse(input) : null;
+      const admittedInput = settingsInput?.success ? settingsInput.data : input;
+      const settingsClientAction = settingsAction && settingsInput?.success
+        && resolveActionExecutionPlacementForInput(getActionSpec(actionId), admittedInput) === 'client';
+      const pairedSettingsAction = originalCliCaller && provenance?.provenance.kind === 'terminal'
+        && settingsClientAction;
+      const settingsDaemonTarget = params.externalActionClient && originalCliCaller && settingsClientAction
+        ? await resolveLiveDaemonControlTargetForServer(fixedServerId ?? approvalServerId).catch(() => null)
+        : undefined;
+      const settingsOwnDaemon = settingsClientAction && settingsDaemonTarget?.accountId
+        && settingsDaemonTarget.accountId === readAccountIdFromToken(credentials.token);
+      const originalContext = params.externalActionClient && originalCliCaller && provenance?.provenance.kind === 'terminal'
+        ? { ...context, authority: 'account_automation' as const } : context;
+      const originalMachineEnvironment = actionId === 'machines.environment.apply' && originalCliCaller
+        ? MachineEnvironmentApplyInputV1Schema.safeParse(input) : null;
+      if (originalMachineEnvironment && (!originalMachineEnvironment.success
+        || originalMachineEnvironment.data.homeId !== context.serverIdentityId)) return { context: originalContext,
+          invocation: createOneShotPatInvocation(async () => actionFailure('target_unavailable')) };
+      const originalMachineTarget = context.externalActionTarget
+        ? context.externalActionTarget.kind === 'machine' : Boolean(params.machineId);
+      const originalFiniteProjectAction = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) && originalCliCaller;
+      if (params.externalActionClient && hasStoredSessionCredentialProvenance(credentials)
+        && originalCliCaller && (!settingsAction || settingsClientAction && (settingsOwnDaemon || originalMachineTarget))
+        && (ordinary || pairedSessionCreation?.success || settingsOwnDaemon || originalMachineTarget || actionId === 'projects.service.relocate')
+        && !mountedFilesystemCopy && !originalFiniteProjectAction) {
+        const parsedActionId = SignedRootActionIdSchema.safeParse(actionId);
+        if (!parsedActionId.success) return { context: originalContext,
+          invocation: createOneShotPatInvocation(async () => actionFailure('unsupported')) };
+        const signal = combineInvocationSignals(invocationSignal, context?.signal);
+        let target = context?.externalActionTarget
+          ?? (params.machineId ? { kind: 'machine' as const, machineId: params.machineId } : undefined);
+        if (originalMachineEnvironment?.success) {
+          if (target && (target.kind !== 'machine' || target.machineId !== originalMachineEnvironment.data.machineId)) return { context: originalContext,
+            invocation: createOneShotPatInvocation(async () => actionFailure('target_unavailable')) };
+          target ??= { kind: 'machine', machineId: originalMachineEnvironment.data.machineId };
+        }
+        // Public V2 already names the Machine. Keep the same exact Account /
+        // publication check when the caller omits the optional outer flag.
+        if (!target && pairedSessionCreation?.success) {
+          target = { kind: 'machine', machineId: pairedSessionCreation.data.executionTarget.machineId };
+        }
+        if (parsedActionId.data === 'projects.service.relocate') {
+          const source = await resolveServiceRelocationSource({ credentials, input, serverId: approvalServerId,
+            serverApiUrl: resolveActionServerApiUrl(), ...(signal ? { signal } : {}) });
+          if (!source.ok) return { context: originalContext, invocation: createOneShotPatInvocation(async () => actionResolutionFailure(source)) };
+          if (target && (target.kind !== 'machine' || target.machineId !== source.machineId)) {
+            return { context: originalContext,
+              invocation: createOneShotPatInvocation(async () => actionFailure('target_unavailable')) };
+          }
+          target ??= { kind: 'machine', machineId: source.machineId };
+        }
+        const daemonControlTarget = settingsClientAction ? settingsDaemonTarget : fixedServerId
+          ? await resolveLiveDaemonControlTargetForServer(fixedServerId).catch(() => null) : undefined;
+        return { context: originalContext, invocation: createOneShotPatInvocation(async () => {
+          // A prepared invocation must not borrow a later credential scope.
+          if (signal?.aborted) return actionFailure('cancelled');
+          const credentialsCurrent = sameStoredCredentials(credentials, await readCurrentCredentials());
+          if (signal?.aborted) return actionFailure('cancelled');
+          if (!credentialsCurrent) return actionFailure('credential_scope_retired');
+          if (target?.kind === 'machine') {
+            // Home's API URL need not be the daemon's control URL. Preserve
+            // the fixed-Home publication's own Account/Machine offline dispatcher.
+            const localEndpoint = await resolveLiveDaemonExternalActionEndpoint(resolveActionServerApiUrl()).catch(() => null);
+            const accountId = readAccountIdFromToken(credentials.token);
+            const localPublication = daemonControlTarget ?? localEndpoint;
+            const ownLocal = (ordinary || pairedSessionCreation?.success || pairedSettingsAction) && accountId && localPublication?.machineId === target.machineId
+              && localPublication.accountId === accountId;
+            if (!ownLocal || requiresOriginalAccountMachineActionProof(parsedActionId.data)) {
+              try {
+                const requester = await dispatchOriginalAccountAction({ actionId: parsedActionId.data, input: admittedInput,
+                  requestId: context.actionRequestId ?? randomUUID(), target, credentials,
+                  serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId,
+                  // Accepted legacy publications omit Account identity. Keep their
+                  // incumbent own-target bridge while Home still admits foreign work.
+                  ...(ordinary && localPublication && !localPublication.accountId ? { foreignTargetOnly: true as const } : {}),
+                  ...(originalContext.authority ? { authority: originalContext.authority } : {}),
+                  ...(params.onRequesterSessionCredentialDisclosure
+                    ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
+                  isCurrent: async () => sameStoredCredentials(credentials, await readCurrentCredentials()),
+                  ...(signal ? { signal } : {}) });
+                if (requester) return requester;
+              } catch { return actionFailure(signal?.aborted ? 'cancelled' : 'target_unavailable'); }
+            }
+          }
+          if (fixedServerId && !daemonControlTarget) return actionFailure('daemon_unavailable');
+          return await requestDaemonSignedRootActionExecution({
+            actionId: parsedActionId.data,
+            input: admittedInput,
+            ...(target ? { target } : {}),
+            ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
+          }, {
+            ...(signal ? { signal } : {}),
+            ...(daemonControlTarget ? { target: daemonControlTarget } : {}),
+            ...(pairedSessionCreation?.success || pairedSettingsAction
+              ? context.authority === 'account_automation'
+                ? { authorityCeiling: 'account_automation' as const }
+                : buildTerminalAuthorityCeiling({ token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl() })
+              : {}),
+          });
+        }) };
+      }
+      return { context: originalContext, invocation: null };
+    };
     return bindExecutorToActionServer({
       observeRecordedApprovalExecution: async args => {
         const credentials = await readCurrentCredentials();
@@ -1054,7 +1188,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             })),
           };
         }
-        const context = await enrichApprovalRoutingContext(rawContext, credentials);
+        let context = await enrichApprovalRoutingContext(rawContext, credentials);
+        if (isSettingsDeclarationActionIdV1(actionId)) {
+          const prepared = await prepareOriginalCliActionInvocation(actionId, input, context, credentials);
+          if (prepared.invocation) return { kind: 'ready' as const, invocation: prepared.invocation };
+          context = prepared.context;
+        }
         const executor = fixedExecutor ?? createExecutor(credentials, transcriptFollowLeaseRegistry);
         // An explicitly supplied policy provider is already the admitted
         // principal's policy authority. Do not widen it by bootstrapping
@@ -1092,110 +1231,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           });
         }
         const context = await enrichApprovalRoutingContext(rawContext, credentials);
-        const mountedFilesystemCopy = params.filesystemActionExecute && actionId === 'daemon.filesystem.copy'
-          && (FilesystemPreparedCopyInputSchema.safeParse(input).success || FilesystemTargetCopyInputSchema.safeParse(input).success);
-        // Finite original CLI work is admitted at Home before the selected
-        // retained guest is online. Keep policy/approval in the shared executor;
-        // admitted Session/Run origins retain their existing credentialed owner.
-        const originalCliCaller = (context.surface === undefined || context.surface === 'cli')
-          && (!context.actionCaller || context.actionCaller.kind === 'host')
-          && !context.externalActionCredential && !context.externalActionExecutionAuthorization
-          && !context.rpcSessionAuthorization && !context.causalPermissionAuthority;
-        const provenance = readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: true });
-        const ordinary = provenance?.provenance.kind === 'account' && provenance.provenance.authority === 'present_user'
-          && context.authority !== 'account_automation';
-        // A paired terminal uses its own daemon ingress when locally placed;
-        // another selected Machine uses Home's named Session-start admission.
-        // Both retain terminal policy and exact Machine admission.
-        const pairedSessionCreation = actionId === 'session.spawn_new' && provenance?.provenance.kind === 'terminal'
-          ? SessionSpawnNewInputV2Schema.safeParse(input) : null;
-        // A standalone CLI has no UI reverse-dispatch connection. The own daemon
-        // already owns client placement, Account binding and terminal policy.
-        const pairedSettingsAction = originalCliCaller && provenance?.provenance.kind === 'terminal'
-          && isSettingsDeclarationActionIdV1(actionId);
-        const pairedSettingsDaemonTarget = params.externalActionClient && pairedSettingsAction
-          ? await resolveLiveDaemonControlTargetForServer(fixedServerId ?? approvalServerId).catch(() => null)
-          : undefined;
-        const pairedSettingsOwnDaemon = pairedSettingsAction && pairedSettingsDaemonTarget?.accountId
-          && pairedSettingsDaemonTarget.accountId === readAccountIdFromToken(credentials.token);
-        const originalContext = params.externalActionClient && originalCliCaller && provenance?.provenance.kind === 'terminal'
-          ? { ...context, authority: 'account_automation' as const } : context;
-        const originalMachineEnvironment = actionId === 'machines.environment.apply' && originalCliCaller
-          ? MachineEnvironmentApplyInputV1Schema.safeParse(input) : null;
-        if (originalMachineEnvironment && (!originalMachineEnvironment.success
-          || originalMachineEnvironment.data.homeId !== context.serverIdentityId)) return actionFailure('target_unavailable');
-        const originalMachineTarget = context.externalActionTarget
-          ? context.externalActionTarget.kind === 'machine' : Boolean(params.machineId);
-        const originalFiniteProjectAction = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) && originalCliCaller;
-        if (params.externalActionClient && hasStoredSessionCredentialProvenance(credentials)
-          && originalCliCaller && (ordinary || pairedSessionCreation?.success || pairedSettingsOwnDaemon || originalMachineTarget || actionId === 'projects.service.relocate')
-          && !mountedFilesystemCopy && !originalFiniteProjectAction) {
-          const parsedActionId = SignedRootActionIdSchema.safeParse(actionId);
-          if (!parsedActionId.success) return actionFailure('unsupported');
-          const signal = combineInvocationSignals(invocationSignal, context?.signal);
-          let target = context?.externalActionTarget
-            ?? (params.machineId ? { kind: 'machine' as const, machineId: params.machineId } : undefined);
-          if (originalMachineEnvironment?.success) {
-            if (target && (target.kind !== 'machine' || target.machineId !== originalMachineEnvironment.data.machineId)) return actionFailure('target_unavailable');
-            target ??= { kind: 'machine', machineId: originalMachineEnvironment.data.machineId };
-          }
-          // Public V2 already names the Machine. Keep the same exact Account /
-          // publication check when the caller omits the optional outer flag.
-          if (!target && pairedSessionCreation?.success) {
-            target = { kind: 'machine', machineId: pairedSessionCreation.data.executionTarget.machineId };
-          }
-          if (parsedActionId.data === 'projects.service.relocate') {
-            const source = await resolveServiceRelocationSource({ credentials, input, serverId: approvalServerId,
-              serverApiUrl: resolveActionServerApiUrl(), ...(signal ? { signal } : {}) });
-            if (!source.ok) return actionResolutionFailure(source);
-            if (target && (target.kind !== 'machine' || target.machineId !== source.machineId)) {
-              return actionFailure('target_unavailable');
-            }
-            target ??= { kind: 'machine', machineId: source.machineId };
-          }
-          const daemonControlTarget = pairedSettingsAction ? pairedSettingsDaemonTarget : fixedServerId
-            ? await resolveLiveDaemonControlTargetForServer(fixedServerId).catch(() => null) : undefined;
-          if (target?.kind === 'machine') {
-            // Home's API URL need not be the daemon's control URL. Preserve
-            // the fixed-Home publication's own Account/Machine offline dispatcher.
-            const localEndpoint = await resolveLiveDaemonExternalActionEndpoint(resolveActionServerApiUrl()).catch(() => null);
-            const accountId = readAccountIdFromToken(credentials.token);
-            const localPublication = daemonControlTarget ?? localEndpoint;
-            const ownLocal = (ordinary || pairedSessionCreation?.success || pairedSettingsAction) && accountId && localPublication?.machineId === target.machineId
-              && localPublication.accountId === accountId;
-            if (!ownLocal || requiresOriginalAccountMachineActionProof(parsedActionId.data)) {
-              try {
-                const requester = await dispatchOriginalAccountAction({ actionId: parsedActionId.data, input,
-                  requestId: context.actionRequestId ?? randomUUID(), target, credentials,
-                  serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId,
-                  // Accepted legacy publications omit Account identity. Keep their
-                  // incumbent own-target bridge while Home still admits foreign work.
-                  ...(ordinary && localPublication && !localPublication.accountId ? { foreignTargetOnly: true as const } : {}),
-                  ...(originalContext.authority ? { authority: originalContext.authority } : {}),
-                  ...(params.onRequesterSessionCredentialDisclosure
-                    ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
-                  isCurrent: async () => sameStoredCredentials(credentials, await readCurrentCredentials()),
-                  ...(signal ? { signal } : {}) });
-                if (requester) return requester;
-              } catch { return actionFailure(signal?.aborted ? 'cancelled' : 'target_unavailable'); }
-            }
-          }
-          if (fixedServerId && !daemonControlTarget) return actionFailure('daemon_unavailable');
-          return await requestDaemonSignedRootActionExecution({
-            actionId: parsedActionId.data,
-            input,
-            ...(target ? { target } : {}),
-            ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
-          }, {
-            ...(signal ? { signal } : {}),
-            ...(daemonControlTarget ? { target: daemonControlTarget } : {}),
-            ...(pairedSessionCreation?.success || pairedSettingsAction
-              ? context.authority === 'account_automation'
-                ? { authorityCeiling: 'account_automation' as const }
-                : buildTerminalAuthorityCeiling({ token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl() })
-              : {}),
-          });
-        }
+        const { context: originalContext, invocation } = await prepareOriginalCliActionInvocation(actionId, input, context, credentials);
+        if (invocation) return await invocation.run();
         const signal = combineInvocationSignals(invocationSignal, context?.signal);
         let sessionMemoryEnabled: boolean | undefined;
         const catalogSessionId = readNonEmptyString(context?.defaultSessionId);

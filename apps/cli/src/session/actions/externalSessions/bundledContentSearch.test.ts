@@ -11,6 +11,7 @@ import { resolveExternalSessionSourceFromAgentProjection } from '@/plugins/proje
 // and Account HTTP are replaced; ingestion, admission and codecs stay real.
 vi.mock('@/persistence', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/persistence')>(),
+    readSettings: async () => ({ memory: { v: 1, enabledAtMs: 1 } }),
     readStoredCredentials: async () => ({ token: 'fixture-token', encryption: null }),
 }));
 vi.mock('@/api/client/connectedServiceCredentialApi', async (importOriginal) => ({

@@ -71,7 +71,6 @@ import {
   resolveExternalSessionSourceKeyOwner,
 } from '@/session/external/resolveExternalSessionSourceKeyOwner';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { createExternalSessionSourceKeyOwnerFromAgentProjection } from '@/plugins/projection/registry/externalSessionSources';
 
 export {
   assertExternalSessionPersistedTakeoverSourceContinuity,
@@ -1226,17 +1225,11 @@ async function loadCurrentExternalSessionTakeoverTarget(
         const target = lease.registry.currentGlobalExternalSessionsTarget;
         await target?.activateConfiguredSources(input.agentId);
         const service = target?.resolveCurrent();
-        const sourceKeyOwner = createExternalSessionSourceKeyOwnerFromAgentProjection(
-          lease.registry.contributes,
-          input.agentId,
-          input.source,
-        );
-        const sourceId = sourceKeyOwner?.resolveSourceKey(input.source) ?? null;
-        return service && sourceId
-          ? service.admitPersistedTakeoverSource({
+        return service
+          ? await service.admitPersistedTakeoverSource({
               agentId: input.agentId,
               machineId: input.machineId,
-              sourceId,
+              remoteSessionId: input.remoteSessionId,
               source: input.source,
             })
           : null;

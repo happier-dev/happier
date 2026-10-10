@@ -3,8 +3,10 @@ import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
-import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
-import { canonicalizeSpawnBackendTargetFromTransportInput } from '@/rpc/handlers/spawnSessionOptionsContract';
+import {
+    pickDefinedSpawnSessionOptions,
+    SpawnDaemonSessionRequestSchema,
+} from '@/rpc/handlers/spawnSessionOptionsContract';
 import {
     createRandomSpawnNonce,
     createStableSpawnNonce,
@@ -13,17 +15,16 @@ import {
 import { logger } from '@/ui/logger';
 import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionCreationCorrespondenceV1Schema, sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
 import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
 import type { SpawnConfigOptionValue } from '@happier-dev/protocol';
+import { canUseCustodianAccountForMachineRequest, RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { isAdmittedRequesterSessionBootstrapCurrent } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 
 import type {
     SessionLifecycleActionHandler,
@@ -32,6 +33,7 @@ import type {
 
 export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
     spawnSession: SessionLifecycleMachineHandlers['spawnSession'];
+    serverId?: string;
 }>): SessionLifecycleActionHandler {
     return async (rawParams: unknown, context) => {
         const cancelled = () => ({
@@ -40,6 +42,24 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             errorMessage: 'cancelled',
         });
         if (context?.signal?.aborted) return cancelled();
+        if (rawParams && typeof rawParams === 'object'
+            && (Object.hasOwn(rawParams, 'requesterWorkAttributionV1')
+                || Object.hasOwn(rawParams, 'verifyRequesterMachineAdmissionCurrent')
+                || Object.hasOwn(rawParams, 'beforeSessionRunnerLaunch')
+                || Object.hasOwn(rawParams, 'requesterSessionCredentialFile')
+                || Object.hasOwn(rawParams, 'requesterSessionRuntimeContext')
+                || Object.hasOwn(rawParams, 'requesterSessionBootstrap'))) {
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Requester launch context cannot be authored in spawn input' };
+        }
+        const requesterAdmission = context?.machineAdmission;
+        const requesterBootstrap = context?.requesterSessionBootstrap;
+        if ((requesterAdmission || requesterBootstrap) && !params.serverId) {
+            // A Machine use grant is not a requester Account credential. No unsigned
+            // shared launch may borrow the custodian's settings or subscriptions.
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Session credential unavailable' };
+        }
         const {
             directory,
             spawnNonce,
@@ -49,8 +69,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             initialAccess,
             primaryTeamId,
             teamCredentialBindings,
-            backendTarget,
-            agent,
             environmentVariables,
             profileId,
             secretReferenceOverlay,
@@ -64,9 +82,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             permissionModeUpdatedAt,
             agentModeId,
             agentModeUpdatedAt,
-            modelId,
-            modelUpdatedAt,
-            modelSelection,
             accountSettingsVersionHint,
             initialTranscriptAfterSeq,
             executionAuthorization,
@@ -75,12 +90,13 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             windowsRemoteSessionLaunchMode,
             windowsRemoteSessionConsole,
             windowsTerminalWindowName,
-            runtimeDescriptorV1,
             mcpSelection,
             agentSessionStartupInstructionsV1,
             sessionCreationTag,
             sessionCreationCorrespondence,
             initialTitle,
+            identity,
+            memoryEnabled,
         } = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>;
 
         const parsedAgentSessionStartupInstructionsV1 =
@@ -195,6 +211,23 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             };
         }
         const normalizedSecretReferenceOverlay = parsedSecretReferenceOverlay.data;
+        const parsedIdentity = SessionSpawnNewInputV2Schema.shape.identity.safeParse(identity);
+        const parsedMemoryEnabled = SessionSpawnNewInputV2Schema.shape.memoryEnabled.safeParse(memoryEnabled);
+        if (!parsedIdentity.success || !parsedMemoryEnabled.success) {
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Invalid initial Session identity or memory choice' };
+        }
+        if (normalizedSessionCreationCorrespondence && !sessionCreationCorrespondenceMatchesV1(
+            normalizedSessionCreationCorrespondence,
+            { ...normalizedSessionCreationCorrespondence, recipe: {
+                ...normalizedSessionCreationCorrespondence.recipe,
+                ...(parsedIdentity.data !== undefined ? { identity: parsedIdentity.data } : {}),
+                ...(parsedMemoryEnabled.data !== undefined ? { memoryEnabled: parsedMemoryEnabled.data } : {}),
+            } },
+        )) {
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Initial Session facts conflict with Session creation correspondence' };
+        }
         if (
             normalizedSessionCreationCorrespondence
             && normalizedProfileId !== undefined
@@ -242,7 +275,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
                 errorMessage: 'Invalid initial Session title',
             };
         }
-        const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId.trim() : undefined;
         const normalizedPermissionMode =
             typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
         const normalizedPermissionModeUpdatedAt =
@@ -302,56 +334,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             || attachMetadataIdentityPolicy === 'replace_with_runtime_identity'
                 ? attachMetadataIdentityPolicy
                 : undefined;
-        const normalizedBackendTargetResolution = canonicalizeSpawnBackendTargetFromTransportInput({
-            backendTarget,
-            legacyAgent: agent,
-        });
-        if (normalizedBackendTargetResolution.errorMessage) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-                errorMessage: normalizedBackendTargetResolution.errorMessage,
-            };
-        }
-        const normalizedBackendTarget = normalizedBackendTargetResolution.backendTarget;
-        const parsedModelSelection = modelSelection === undefined
-            ? null
-            : SessionModelSelectionV1Schema.safeParse(modelSelection);
-        if (parsedModelSelection && !parsedModelSelection.success) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-                errorMessage: 'Invalid model selection',
-            };
-        }
-        const modelTargetKey = normalizedBackendTarget ? buildBackendTargetKeyV2(normalizedBackendTarget) : null;
-        if ((parsedModelSelection?.success || normalizedModelId) && !modelTargetKey) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-                errorMessage: 'backendTarget is required for model selection',
-            };
-        }
-        if (parsedModelSelection?.success && parsedModelSelection.data.ref.agentTargetKey !== modelTargetKey) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-                errorMessage: 'Model selection agent target must match backendTarget',
-            };
-        }
-        const normalizedModelSelection = parsedModelSelection?.success
-            ? parsedModelSelection.data
-            : normalizedModelId && modelTargetKey
-                ? SessionModelSelectionV1Schema.parse({
-                    v: 1,
-                    updatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : Date.now(),
-                    ref: {
-                        agentTargetKey: modelTargetKey,
-                        providerConnectionId: null,
-                        modelId: normalizedModelId,
-                    },
-                })
-                : undefined;
         const normalizedMcpSelection = (() => {
             if (mcpSelection === undefined) return undefined;
             const parsed = SessionMcpSelectionV1Schema.safeParse(mcpSelection);
@@ -378,31 +360,58 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             sessionConfigOptionOverrides: canonicalSessionConfigOptionOverrides,
             configOptions: normalizedConfigOptions,
         });
-        let normalizedRuntimeDescriptorV1;
+        // The private transport must retain every admitted daemon option, not
+        // recreate a narrower request that loses managed placement or first input.
+        const { configOptions: _configOptionsAlias, ...transportRequest } =
+            (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>;
+        let parsedTransportRequest: ReturnType<typeof SpawnDaemonSessionRequestSchema.safeParse>;
         try {
-            const parsedRuntimeDescriptorV1 = runtimeDescriptorV1 === undefined
-                ? undefined
-                : RuntimeDescriptorV1Schema.parse(runtimeDescriptorV1);
-            normalizedRuntimeDescriptorV1 = readCanonicalSpawnRuntimeSelection({
-                agentId: normalizedBackendTarget?.sourceKind === 'built_in'
-                    ? normalizedBackendTarget.backendId
-                    : undefined,
-                runtimeDescriptorV1: parsedRuntimeDescriptorV1,
-            }).runtimeDescriptorV1;
+            parsedTransportRequest = SpawnDaemonSessionRequestSchema.safeParse({
+                ...transportRequest,
+                sessionConfigOptionOverrides: normalizedSessionConfigOptionOverrides,
+            });
         } catch (error) {
+            // Runtime selection transforms may reject an incompatible descriptor.
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: error instanceof Error ? error.message : 'Invalid daemon spawn request' };
+        }
+        if (!parsedTransportRequest.success) {
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-                errorMessage: error instanceof Error
-                    ? error.message
-                    : 'Invalid runtime descriptor identity',
+                errorMessage: 'Invalid daemon spawn request',
             };
         }
+        const admittedSpawnOptions = pickDefinedSpawnSessionOptions(parsedTransportRequest.data);
+        const requesterMachineId = requesterBootstrap?.attribution.machineId ?? requesterAdmission?.machineId;
+        if (requesterMachineId && typeof machineId === 'string' && machineId !== requesterMachineId) {
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Requester Machine target mismatch' };
+        }
+        if (requesterAdmission || requesterBootstrap) {
+            const current = requesterBootstrap
+                ? requesterBootstrap.attribution.serverId === params.serverId
+                    && await isAdmittedRequesterSessionBootstrapCurrent(context)
+                : await canUseCustodianAccountForMachineRequest(context);
+            if (context?.signal?.aborted) return cancelled();
+            if (!current) return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                errorMessage: 'Requester Machine admission unavailable' };
+        }
         const buildBaseSpawnOptions = (resolvedDirectory: string): SpawnSessionOptions => ({
+            ...admittedSpawnOptions,
+            ...(context?.requesterSessionBootstrap ? { requesterSessionBootstrap: context.requesterSessionBootstrap } : {}),
+            ...(context?.beforeSessionRunnerLaunch ? { beforeSessionRunnerLaunch: context.beforeSessionRunnerLaunch } : {}),
+            ...(requesterBootstrap || requesterAdmission ? {
+                requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.parse(requesterBootstrap?.attribution ?? {
+                    serverId: params.serverId, accountId: requesterAdmission.actorAccountId,
+                    machineId: requesterAdmission.machineId, installationId: requesterAdmission.installationId,
+                }),
+                verifyRequesterMachineAdmissionCurrent: requesterBootstrap
+                    ? () => requesterBootstrap.isCurrent() : context!.verifyMachineAdmissionCurrent,
+            } : {}),
             directory: resolvedDirectory,
             spawnNonce: normalizedSpawnNonce,
             machineId: typeof machineId === 'string' ? machineId : undefined,
-            backendTarget: normalizedBackendTarget,
             environmentVariables: normalizedEnvironmentVariables,
             profileId: effectiveProfileId,
             secretReferenceOverlay: effectiveSecretReferenceOverlay,
@@ -424,7 +433,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
                 : {}),
             agentModeId: normalizedAgentModeId,
             agentModeUpdatedAt: normalizedAgentModeUpdatedAt,
-            modelSelection: normalizedModelSelection,
             sessionConfigOptionOverrides: normalizedSessionConfigOptionOverrides,
             windowsRemoteSessionLaunchMode: windowsRemoteSessionLaunchMode as SpawnSessionOptions['windowsRemoteSessionLaunchMode'],
             windowsRemoteSessionConsole: windowsRemoteSessionConsole as SpawnSessionOptions['windowsRemoteSessionConsole'],
@@ -437,13 +445,20 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
                 ? { sessionCreationCorrespondence: normalizedSessionCreationCorrespondence }
                 : {}),
             ...(normalizedInitialTitle ? { initialTitle: normalizedInitialTitle } : {}),
+            ...(!isResumeSessionRequest && !parsedTransportRequest.data.existingSessionId ? {
+                ...(normalizedSessionCreationCorrespondence?.recipe.identity !== undefined
+                    ? { identity: normalizedSessionCreationCorrespondence.recipe.identity }
+                    : parsedIdentity.data !== undefined ? { identity: parsedIdentity.data } : {}),
+                ...(normalizedSessionCreationCorrespondence?.recipe.memoryEnabled !== undefined
+                    ? { memoryEnabled: normalizedSessionCreationCorrespondence.recipe.memoryEnabled }
+                    : parsedMemoryEnabled.data !== undefined ? { memoryEnabled: parsedMemoryEnabled.data } : {}),
+            } : {}),
             ...(normalizedAgentSessionStartupInstructionsV1
                 ? {
                     agentSessionStartupInstructionsV1:
                         normalizedAgentSessionStartupInstructionsV1,
                 }
                 : {}),
-            ...(normalizedRuntimeDescriptorV1 ? { runtimeDescriptorV1: normalizedRuntimeDescriptorV1 } : {}),
         });
 
         if (isResumeSessionRequest) {
@@ -487,11 +502,11 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
         if (typeof directory !== 'string' || directory.length === 0) {
             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: 'Directory is required' };
         }
-        if (!normalizedBackendTarget) {
+        if (!parsedTransportRequest.data.agentTarget && !parsedTransportRequest.data.backendTarget) {
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-                errorMessage: 'Backend target is required for fresh session spawn.',
+                errorMessage: 'Agent target is required for fresh session spawn.',
             };
         }
         const baseSpawnOptions = buildBaseSpawnOptions(directory);

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import tweetnacl from 'tweetnacl';
 
 const { mockAxiosGet, mockAxiosPost } = vi.hoisted(() => ({
   mockAxiosGet: vi.fn(),
@@ -36,7 +37,6 @@ const {
   updateSessionMetadataWithRetry,
   sendSessionMessage,
   requestSessionStop,
-  setSessionTitle,
   setSessionMode,
   getExecutionRun,
   listExecutionRuns,
@@ -52,7 +52,6 @@ const {
   updateSessionMetadataWithRetry: vi.fn(),
   sendSessionMessage: vi.fn(),
   requestSessionStop: vi.fn(),
-  setSessionTitle: vi.fn(),
   setSessionMode: vi.fn(),
   getExecutionRun: vi.fn(),
   listExecutionRuns: vi.fn(),
@@ -87,9 +86,13 @@ const {
   readMachineOperationProtocolCapabilitiesV1: vi.fn(),
 }));
 
-vi.mock('@/daemon/controlClient', () => ({ requestDaemonPluginActionExecution }));
+vi.mock('@/daemon/controlClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/controlClient')>(),
+  requestDaemonPluginActionExecution,
+}));
 
-vi.mock('@/session/transport/http/sessionsHttp', () => ({
+vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>(),
   fetchSessionById,
   fetchSessionsPage,
   lookupSessionsByTags,
@@ -105,10 +108,6 @@ vi.mock('@/session/services/sendSessionMessage', () => ({
 
 vi.mock('@/session/services/requestSessionStop', () => ({
   requestSessionStop,
-}));
-
-vi.mock('@/session/services/setSessionTitle', () => ({
-  setSessionTitle,
 }));
 
 vi.mock('@/session/services/setSessionMode', () => ({
@@ -179,10 +178,15 @@ import {
   type SessionSpawnNewInputV2,
   createActionExecutor,
   type ActionExecutorDeps,
+  type ExecutionRunGetResponse,
+  API_TOKEN_FULL_GRANT_V1,
+  computeExternalActionRequestEnvelopeDigestV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createPluginStateStore } from '@/plugins/store/state.testkit';
+import { createPluginStateStore, writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { configuration } from '@/configuration';
 import type { ComposerAttachmentRuntime, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
@@ -212,6 +216,7 @@ async function writePluginBackendFixture(rootDir: string): Promise<void> {
         entrypoints: {
           daemon: './daemon.mjs',
         },
+        activation: { events: [{ kind: 'startup' }] },
         hostAccess: {
           required: [],
           optional: [],
@@ -248,9 +253,7 @@ async function writePluginBackendFixture(rootDir: string): Promise<void> {
     'utf8',
   );
 
-  // The manifest references a daemon entrypoint; keep the fixture structurally valid so plugin
-  // contribution discovery doesn't fail closed on missing files.
-  await writeFile(join(rootDir, 'daemon.mjs'), 'export {};\n', 'utf8');
+  await writeFile(join(rootDir, 'daemon.mjs'), 'export async function activate() {}\n', 'utf8');
 }
 
 async function writePluginActionFixture(rootDir: string): Promise<void> {
@@ -415,6 +418,33 @@ function createDataKeyExecutor(extra: CliActionExecutorTestOverrides = {}) {
   });
 }
 
+function publishActionsSettings(actionsSettingsV1: unknown, settingsVersion = 1): void {
+  setActiveAccountSettingsSnapshot({
+    source: 'network',
+    settings: accountSettingsParse({ actionsSettingsV1 }),
+    settingsVersion,
+    loadedAtMs: settingsVersion,
+    settingsSecretsReadKeys: [],
+    scopeKey: resolveAccountSettingsScopeKeyForToken('token'),
+  });
+}
+
+const executionRunGetResponse = {
+  run: {
+    runId: 'run-1',
+    callId: 'call-1',
+    sidechainId: 'sidechain-1',
+    intent: 'review',
+    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    permissionMode: 'read_only',
+    retentionPolicy: 'ephemeral',
+    runClass: 'bounded',
+    ioMode: 'request_response',
+    status: 'running',
+    startedAtMs: 1,
+  },
+} satisfies ExecutionRunGetResponse;
+
 const SESSION_SPAWN_AGENT_TARGETS = {
   claude: {
     kind: 'agent',
@@ -522,7 +552,6 @@ describe('createCliActionExecutor', () => {
     updateSessionMetadataWithRetry.mockReset();
     sendSessionMessage.mockReset();
     requestSessionStop.mockReset();
-    setSessionTitle.mockReset();
     setSessionMode.mockReset();
     getExecutionRun.mockReset();
     listExecutionRuns.mockReset();
@@ -590,10 +619,14 @@ describe('createCliActionExecutor', () => {
     resolveMachineSpawnSessionByNonce.mockResolvedValue({ status: 'unsupported' });
     callMachineRpc.mockImplementation(async (call: MachineRpcCall) => {
       if (call.method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE) {
+        const directory = call.request.directory;
         return {
           ok: true,
-          directory: typeof call.request.directory === 'string'
-            ? call.request.directory
+          directory: typeof directory === 'string'
+            ? directory
+            : directory && typeof directory === 'object' && 'kind' in directory
+              && directory.kind === 'path' && 'path' in directory && typeof directory.path === 'string'
+              ? directory.path
             : '/repo/current',
           directoryKind: 'path' as const, directoryCreationRequired: false,
           checkout: null,
@@ -815,34 +848,32 @@ describe('createCliActionExecutor', () => {
   it('includes plugin-contributed ACP backends in execution backend options', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-action-plugin-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-cli-action-plugin-root-'));
-    const store = createPluginStateStore({ happyHomeDir });
 
     await writePluginBackendFixture(pluginRoot);
-    await store.write({
-      t: 'happier_plugin_state_v1',
-      schemaVersion: 1,
-      plugins: {
-        'acme.cli-action.plugin': {
-          source: {
-            kind: 'path',
-            locator: pluginRoot,
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-            resolvedPath: pluginRoot,
-            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
-          },
-          compatibility: {
-            status: 'unknown',
-            diagnostics: [],
-          },
-          install: {
-            mode: 'link',
-            manifestVersion: '1.0.0',
-            installedPath: null,
-          },
-          state: {
-            enabled: true,
-          },
+    await writeCommittedLocalPathPluginFixture({
+      happyHomeDir,
+      pluginId: 'acme.cli-action.plugin',
+      sourceRootPath: pluginRoot,
+      plugin: {
+        source: {
+          kind: 'path',
+          locator: pluginRoot,
+          trustPolicy: 'local_trusted',
+          installPolicy: 'link',
+          resolvedPath: pluginRoot,
+          manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+        },
+        compatibility: {
+          status: 'unknown',
+          diagnostics: [],
+        },
+        install: {
+          mode: 'link',
+          manifestVersion: '1.0.0',
+          installedPath: null,
+        },
+        state: {
+          enabled: true,
         },
       },
     });
@@ -860,26 +891,59 @@ describe('createCliActionExecutor', () => {
         },
       },
     });
-    const executor = createPlainExecutor({ happyHomeDir });
+    // Installation alone does not publish an Agent into the serving catalog.
+    // Exercise the real daemon registry publication, not a caller-local catalog.
+    const registry = await resolveExecutablePluginRuntimeRegistry({
+      happyHomeDir,
+      pluginIds: ['acme.cli-action.plugin'],
+    });
+    try {
+      const publication = await pluginReloadController.adoptPreparedRuntimeRegistry({
+        registry,
+        changedPluginIds: ['acme.cli-action.plugin'],
+        runningSessionDisposition: 'retainRunningSessions',
+      });
+      expect(publication.ok).toBe(true);
+      const executor = createPlainExecutor({ happyHomeDir, pluginActionExecutionOwner: 'current_process' });
+      const result = await executor.execute(
+        'action.options.resolve',
+        {
+          actionId: 'subagents.plan.start',
+          fieldPath: 'backendTargetKeys',
+          sessionId: 'sess-1',
+        },
+        { surface: 'mcp', defaultSessionId: 'sess-1' },
+      );
 
-    const result = await executor.execute(
-      'action.options.resolve',
-      {
-        actionId: 'subagents.plan.start',
-        fieldPath: 'backendTargetKeys',
-        sessionId: 'sess-1',
-      },
-      { surface: 'mcp', defaultSessionId: 'sess-1' },
-    );
-
-    expect((result as any).result.options).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          value: 'backend:acme-cli-action-backend:configured:acme-cli-action-backend',
-          label: 'Plugin Review Bot',
-        }),
-      ]),
-    );
+      expect(result).toMatchObject({
+        ok: true,
+        result: {
+          options: expect.arrayContaining([
+            expect.objectContaining({
+              value: 'agent:acme.cli-action.plugin/acme-cli-action-backend',
+              label: 'Plugin Review Bot',
+            }),
+          ]),
+        },
+      });
+      const spawnOptions = await executor.execute('action.options.resolve', {
+        actionId: 'session.spawn_new', fieldPath: 'agentTarget',
+      }, { surface: 'mcp', defaultSessionId: 'sess-1' });
+      expect(spawnOptions).toMatchObject({ ok: true, result: { options: expect.arrayContaining([
+        expect.objectContaining({ value: 'agent:acme.cli-action.plugin/acme-cli-action-backend' }),
+      ]) } });
+    } finally {
+      const restoredRegistry = await resolveExecutablePluginRuntimeRegistry({
+        happyHomeDir: configuration.happyHomeDir,
+        pluginIds: [],
+      });
+      const restoration = await pluginReloadController.adoptPreparedRuntimeRegistry({
+        registry: restoredRegistry,
+        changedPluginIds: ['acme.cli-action.plugin'],
+        runningSessionDisposition: 'retainRunningSessions',
+      });
+      expect(restoration.ok).toBe(true);
+    }
   });
 
   it('executes plugin-contributed actions through the daemon action handler', async () => {
@@ -1105,7 +1169,6 @@ describe('createCliActionExecutor', () => {
       'agents.backends.list',
       {
         includeDisabled: true,
-        limit: 20,
       },
       { surface: 'mcp', defaultSessionId: 'sess-1' },
     );
@@ -1265,7 +1328,7 @@ describe('createCliActionExecutor', () => {
   it('resolves session mode options from fetched session metadata when targeting a different session id', async () => {
     const executor = createPlainExecutor();
     fetchSessionById.mockResolvedValue({
-      id: 'sess-2',
+      id: 'sess-2-aaaaaaaaaaaa',
       createdAt: 1,
       updatedAt: 2,
       active: true,
@@ -1273,21 +1336,21 @@ describe('createCliActionExecutor', () => {
       pendingCount: 0,
       metadataVersion: 1,
       encryptionMode: 'plain',
-      metadata: {
+      metadata: JSON.stringify({
         sessionModesV1: {
           availableModes: [
             { id: 'build', name: 'Build' },
             { id: 'plan', name: 'Plan' },
           ],
         },
-      },
+      }),
     });
 
     const result = await executor.execute(
       'action.options.resolve',
       {
         optionsSourceId: 'session.modes.available',
-        sessionId: 'sess-2',
+        sessionId: 'sess-2-aaaaaaaaaaaa',
       },
       { surface: 'mcp', defaultSessionId: 'sess-1' },
     );
@@ -1304,11 +1367,11 @@ describe('createCliActionExecutor', () => {
         ],
       },
     });
-    expect(fetchSessionById).toHaveBeenCalledWith({ token: 'token', sessionId: 'sess-2' });
+    expect(fetchSessionById).toHaveBeenCalledWith({ token: 'token', sessionId: 'sess-2-aaaaaaaaaaaa' });
   });
 
   it('rejects actions disabled on the CLI surface by action settings', async () => {
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+    publishActionsSettings({
       v: 1,
       actions: {
         'review.start': { enabled: true, disabledSurfaces: ['cli'], disabledPlacements: [] },
@@ -1344,31 +1407,29 @@ describe('createCliActionExecutor', () => {
   });
 
   it('enforces persisted API action policy through external Action admission', async () => {
-    const publishActionsSettings = (actionsSettingsV1: unknown, settingsVersion: number): void => {
-      setActiveAccountSettingsSnapshot({
-        source: 'network',
-        settings: accountSettingsParse({ actionsSettingsV1 }),
-        settingsVersion,
-        loadedAtMs: settingsVersion,
-        settingsSecretsReadKeys: [],
-        scopeKey: 'account:external-action-policy',
-      });
-    };
     const executor = createDataKeyExecutor();
+    const target = { kind: 'machine', machineId: 'machine-1' } as const;
+    const envelope = { v: 1, requestId: 'request-api-policy', target, input: { query: 'session' } } as const;
+    const principal = {
+      accountId: 'account-1', principalId: 'principal-1', credentialId: 'credential-1',
+      grant: API_TOKEN_FULL_GRANT_V1, authority: 'account_automation',
+    } as const;
+    // The authenticated Home ingress is the boundary; digest/signing and
+    // external admission beneath its verified stamp remain real.
+    const executionAuthorization = { v: 1, token: 'test-home-proof', binding: {
+      serverIdentityId: 'home-identity', accountId: principal.accountId, principalId: principal.principalId,
+      credentialId: principal.credentialId, machineId: target.machineId, actionId: 'action.spec.search',
+      requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      target, grant: principal.grant,
+    } } as const;
     const execute = async () => await executeExternalAction({
       actionId: 'action.spec.search',
-      envelope: {
-        v: 1,
-        target: { kind: 'machine', machineId: 'machine-1' },
-        input: { query: 'session' },
-      },
-      principal: {
-        accountId: 'account-1',
-        principalId: 'principal-1',
-        credentialId: 'credential-1',
-        authority: 'account_automation',
-      },
+      envelope,
+      principal,
+      executionAuthorization,
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey,
       currentMachineId: 'machine-1',
+      currentServerId: 'server-a',
       resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-1' }),
       executor,
     });
@@ -1399,7 +1460,9 @@ describe('createCliActionExecutor', () => {
         'action.spec.search': { approvalRequiredSurfaces: ['api'] },
       },
     }, 2);
-    mockAxiosPost.mockResolvedValueOnce({ status: 200, data: { id: 'approval-api-1' } });
+    mockAxiosPost.mockImplementationOnce(async (_url: string, body: { id: string }) => ({
+      status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 },
+    }));
     mockAxiosGet.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
     await expect(execute()).resolves.toMatchObject({
       kind: 'response',
@@ -1409,7 +1472,7 @@ describe('createCliActionExecutor', () => {
           ok: true,
           result: {
             kind: 'approval_request_created',
-            artifactId: 'approval-api-1',
+            artifactId: expect.any(String),
             actionId: 'action.spec.search',
           },
         },
@@ -1426,7 +1489,7 @@ describe('createCliActionExecutor', () => {
     });
   });
 
-  it('does not permit MCP to respond to permission requests', async () => {
+  it('fails closed for an unstamped MCP permission decision without approval origin', async () => {
     const executor = createPlainExecutor();
     fetchSessionsPage.mockResolvedValue({
       sessions: [{ id: 'sess-1', metadata: {} }],
@@ -1454,13 +1517,8 @@ describe('createCliActionExecutor', () => {
 
     expect(result).toEqual({
       ok: false,
-      errorCode: 'action_disabled',
-      error: 'action_disabled',
-      details: expect.objectContaining({
-        actionId: 'session.permission.respond',
-        surface: 'mcp',
-        reason: 'unsupported_surface',
-      }),
+      errorCode: 'approval_origin_unavailable',
+      error: 'approval_origin_unavailable',
     });
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
@@ -1481,7 +1539,7 @@ describe('createCliActionExecutor', () => {
       pendingCount: 0,
       metadataVersion: 1,
       encryptionMode: 'plain',
-      metadata: {},
+      metadata: '{}',
     });
     callSessionRpc.mockResolvedValue({ ok: true });
 
@@ -1495,7 +1553,7 @@ describe('createCliActionExecutor', () => {
         updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls:*' }] }],
         execPolicyAmendment: { command: ['ls'] },
       },
-      { surface: 'rpc', defaultSessionId: 'sess-1' },
+      { surface: 'rpc', authority: 'present_user', defaultSessionId: 'sess-1' },
     );
 
     expect(result).toEqual({ ok: true, result: { ok: true } });
@@ -1528,7 +1586,7 @@ describe('createCliActionExecutor', () => {
       pendingCount: 0,
       metadataVersion: 1,
       encryptionMode: 'plain',
-      metadata: {},
+      metadata: '{}',
     });
     callSessionRpc.mockResolvedValue({ ok: true });
 
@@ -1544,7 +1602,7 @@ describe('createCliActionExecutor', () => {
           values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'],
         }],
       },
-      { surface: 'mcp', defaultSessionId: 'sess-1' },
+      { surface: 'rpc', authority: 'present_user', defaultSessionId: 'sess-1' },
     );
 
     expect(result).toEqual({ ok: true, result: { ok: true } });
@@ -1580,7 +1638,7 @@ describe('createCliActionExecutor', () => {
       pendingCount: 0,
       metadataVersion: 1,
       encryptionMode: 'plain',
-      metadata: {},
+      metadata: '{}',
     });
     callSessionRpc.mockResolvedValue({ ok: true });
 
@@ -1592,7 +1650,7 @@ describe('createCliActionExecutor', () => {
         decision: 'reject',
         reason: 'not acceptable',
       },
-      { surface: 'rpc', defaultSessionId: 'sess-1' },
+      { surface: 'rpc', authority: 'present_user', defaultSessionId: 'sess-1' },
     );
     await executor.execute(
       'session.user_action.answer',
@@ -1602,7 +1660,7 @@ describe('createCliActionExecutor', () => {
         decision: 'request_changes',
         reason: 'revise first',
       },
-      { surface: 'rpc', defaultSessionId: 'sess-1' },
+      { surface: 'rpc', authority: 'present_user', defaultSessionId: 'sess-1' },
     );
 
     expect(callSessionRpc).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -1640,7 +1698,7 @@ describe('createCliActionExecutor', () => {
       encryptionMode: 'plain',
       metadata: {},
     });
-    getExecutionRun.mockResolvedValue({ ok: true, runId: 'run-1' });
+    getExecutionRun.mockResolvedValue(executionRunGetResponse);
 
     const result = await executor.execute(
       'execution.run.get',
@@ -1648,11 +1706,7 @@ describe('createCliActionExecutor', () => {
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
-    expect(result).toMatchObject({
-      ok: true,
-      result: { type: 'success', sessionId: 'sess-team-default' },
-    });
-    expect(result).toEqual({ ok: true, result: { ok: true, runId: 'run-1' } });
+    expect(result).toEqual({ ok: true, result: executionRunGetResponse });
     expect(getExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess-2-aaaaaaaaaaaa',
     }));
@@ -1671,7 +1725,7 @@ describe('createCliActionExecutor', () => {
       encryptionMode: 'e2ee',
       metadata: {},
     });
-    getExecutionRun.mockResolvedValue({ ok: true, runId: 'run-1' });
+    getExecutionRun.mockResolvedValue(executionRunGetResponse);
 
     const result = await executor.execute(
       'execution.run.get',
@@ -1679,7 +1733,7 @@ describe('createCliActionExecutor', () => {
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
-    expect(result).toEqual({ ok: true, result: { ok: true, runId: 'run-1' } });
+    expect(result).toEqual({ ok: true, result: executionRunGetResponse });
     expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
       sessionId: 'sess-2-aaaaaaaaaaaa',
@@ -1766,7 +1820,7 @@ describe('createCliActionExecutor', () => {
     { created: true, abort: false },
     { created: true, abort: true },
     { created: false, abort: false },
-  ])('compensates only a created checkout after a known initial-trigger birth refusal ($created, aborted=$abort)', async ({ created, abort }) => {
+  ])('retains the checkout after an initial-trigger birth refusal without current exclusive ownership proof ($created, aborted=$abort)', async ({ created, abort }) => {
     const controller = new AbortController();
     const machineRpc = callMachineRpc.getMockImplementation();
     if (!machineRpc) throw new Error('Expected the Machine transport boundary fixture');
@@ -1804,18 +1858,7 @@ describe('createCliActionExecutor', () => {
 
     expect(result).toEqual({ ok: true, result: { type: 'error', code: 'target_unavailable', retryable: false } });
     const compensations = callMachineRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.SCM_WORKTREE_REMOVE);
-    if (created) {
-      expect(compensations).toEqual([[expect.objectContaining({
-        machineId: 'machine-1',
-        request: expect.objectContaining({
-          cwd: '/repo/.dev/worktree/initial-trigger',
-          worktreePath: '/repo/.dev/worktree/initial-trigger',
-          confirmed: true,
-        }),
-      })]]);
-    } else {
-      expect(compensations).toEqual([]);
-    }
+    expect(compensations).toEqual([]);
     expect(fetchSessionById).not.toHaveBeenCalled();
     expect(resolveMachineSpawnSessionByNonce).not.toHaveBeenCalled();
   });
@@ -1985,7 +2028,7 @@ describe('createCliActionExecutor', () => {
       createSessionSpawnInput({
         creationKey: SessionCreationKeyV1Schema.parse('public-rpc-no-action-request-id'),
       }),
-      { signal: controller.signal },
+      { signal: controller.signal, callerAuthority: 'present_user' },
     );
     await vi.waitFor(() => expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledTimes(1));
     controller.abort(new Error('public caller retired after accepted submission'));
@@ -2645,7 +2688,7 @@ describe('createCliActionExecutor', () => {
     const result = await executor.execute(
       'session.spawn_new',
       createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex }),
-      { surface: 'mcp', defaultSessionId: 'sess-1' },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
     expect(result).toMatchObject({
@@ -3046,15 +3089,17 @@ describe('createCliActionExecutor', () => {
   });
 
   it('routes approval-required actions through approvalsCreate when configured for the CLI surface', async () => {
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+    publishActionsSettings({
       v: 1,
       actions: {
         'session.message.send': { enabled: true, disabledSurfaces: [], disabledPlacements: [], approvalRequiredSurfaces: ['cli'] },
       },
     });
 
-    mockAxiosPost.mockResolvedValueOnce({ status: 200, data: { id: 'artifact-1' } });
-    mockAxiosGet.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee' } });
+    mockAxiosPost.mockImplementationOnce(async (_url: string, body: { id: string }) => ({
+      status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 },
+    }));
+    mockAxiosGet.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
 
     const executor = createDataKeyExecutor();
     sendSessionMessage.mockResolvedValueOnce({ ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false });
@@ -3062,27 +3107,29 @@ describe('createCliActionExecutor', () => {
     const result = await executor.execute(
       'session.message.send',
       { sessionId: 'sess-1', message: 'hello' },
-      { surface: 'cli', defaultSessionId: 'sess-1' },
+      { surface: 'cli', serverId: 'server-a', actionRequestId: 'request-cli-approval', defaultSessionId: 'sess-1' },
     );
 
-    expect((result as any).result).toEqual(expect.objectContaining({
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
       kind: 'approval_request_created',
-      artifactId: 'artifact-1',
+      artifactId: expect.any(String),
       actionId: 'session.message.send',
-    }));
+    } });
     expect(sendSessionMessage).not.toHaveBeenCalled();
   });
 
   it('routes approval-required actions through approvalsCreate when CLI surface is implicit', async () => {
-    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+    publishActionsSettings({
       v: 1,
       actions: {
         'session.message.send': { enabled: true, disabledSurfaces: [], disabledPlacements: [], approvalRequiredSurfaces: ['cli'] },
       },
     });
 
-    mockAxiosPost.mockResolvedValueOnce({ status: 200, data: { id: 'artifact-1' } });
-    mockAxiosGet.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee' } });
+    mockAxiosPost.mockImplementationOnce(async (_url: string, body: { id: string }) => ({
+      status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 },
+    }));
+    mockAxiosGet.mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
 
     const executor = createDataKeyExecutor();
     sendSessionMessage.mockResolvedValueOnce({ ok: true, sessionId: 'sess-1', localId: 'local-1', waited: false });
@@ -3090,14 +3137,14 @@ describe('createCliActionExecutor', () => {
     const result = await executor.execute(
       'session.message.send',
       { sessionId: 'sess-1', message: 'hello' },
-      { defaultSessionId: 'sess-1' },
+      { serverId: 'server-a', actionRequestId: 'request-cli-approval', defaultSessionId: 'sess-1' },
     );
 
-    expect((result as any).result).toEqual(expect.objectContaining({
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
       kind: 'approval_request_created',
-      artifactId: 'artifact-1',
+      artifactId: expect.any(String),
       actionId: 'session.message.send',
-    }));
+    } });
     expect(sendSessionMessage).not.toHaveBeenCalled();
   });
 

@@ -53,7 +53,7 @@ describe('browser daemon control routes', () => {
     const broker = createBrowserDaemonControlBroker();
     broker.registerAdapter(adapter);
     const routes = createBrowserDaemonControlRoutes({ broker, automation: () => automation });
-    const gate = createBrowserDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
+    const gate = createBrowserDaemonFeatureGate({ env: { NODE_ENV: 'test' }, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
       features: FeaturesResponseSchema.parse({ features: { browser: { enabled: true,
         viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } } } }),
     }) });

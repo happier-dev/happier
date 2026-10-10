@@ -12,7 +12,8 @@ export function parseActionOperationProgressUpdate(
       : null
     : update.phase !== undefined
       ? update.label !== undefined
-        ? { kind: 'phase' as const, phase: update.phase, label: update.label }
+        ? { kind: 'phase' as const, phase: update.phase, label: update.label,
+          ...(update.queueAhead === undefined ? {} : { queueAhead: update.queueAhead }) }
         : null
       : update.label !== undefined
         ? { kind: 'indeterminate' as const, label: update.label }

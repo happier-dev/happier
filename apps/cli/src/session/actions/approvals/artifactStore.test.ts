@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
 import { z } from 'zod';
+import tweetnacl from 'tweetnacl';
 
 import type { Credentials, StoredCredentials } from '@/persistence';
 import { decodeBase64, decryptWithDataKey, encryptWithDataKey, encodeBase64, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
@@ -21,6 +22,16 @@ import {
 } from '@happier-dev/protocol';
 
 import { createCliApprovalsArtifactStore } from './artifactStore';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { executeArtifactFolderActionV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
+import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowMutationV1Schema, openPromptLibraryContentV1, sealPromptLibraryContentV1, type PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 const { mockGet, mockPost } = vi.hoisted(() => ({
   mockGet: vi.fn(),
@@ -56,10 +67,74 @@ vi.mock('axios', () => ({
 vi.mock('@/configuration', () => ({
   configuration: {
     apiServerUrl: 'http://127.0.0.1:24599',
+    activeServerId: 'home',
+    activeServerDir: '/tmp/happier-cli-artifact-store-test',
   },
 }));
 
 describe('createCliApprovalsArtifactStore', () => {
+  it('places a received Artifact through the real private row transport and refuses stale, cancelled and retired-Home writes', async () => {
+    const credentials: StoredCredentials = { token: 'folder-account-token', encryption: null };
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+    const store = createCliApprovalsArtifactStore({ credentials, serverId: 'home', getAccountEncryptionMode: async () => 'plain' });
+    const port = store.promptLibraryStore.organization!;
+    let revision = 1;
+    let value: Extract<PromptLibraryRecordV1, { key: 'folders' }> = { key: 'folders', value: { v: 1, folders: [{ id: 'personal', name: 'Personal' }] } };
+    let retireOnHeaderRead = false;
+    let writes = 0;
+    const shared = { id: 'received', ownerAccountId: 'other-account', access: 'view', encryptionMode: 'plain',
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      header: encodePlainArtifactStoredContent({ v: 1, kind: 'memory_doc.v1', title: 'Shared memory', folderId: 'owner-private', tags: ['Private tag'] }) };
+    mockGet.mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      if (parsed.pathname === '/v1/account/entity-rows/prompt-library') return { status: 200, data: { status: 'listed',
+        rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: key === 'folders' ? revision : 0,
+          content: key === 'folders' ? { t: 'plain', v: value } : null })) } };
+      if (parsed.pathname === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (parsed.pathname === '/v1/artifacts') {
+        expect(parsed.searchParams.get('includeBody')).toBeNull();
+        if (retireOnHeaderRead) setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+          loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'replacement-home' });
+        return { status: 200, data: [shared] };
+      }
+      // History is outside this organization contract; the real importer retains cleanup pending.
+      return { status: 503, data: {} };
+    });
+    mockPost.mockImplementation(async (url: string, input: unknown) => {
+      expect(new URL(url).pathname).toBe('/v1/account/entity-rows/prompt-library/folders');
+      const mutation = PromptLibraryRowMutationV1Schema.parse(input);
+      if (mutation.expectedRevision !== revision) return { status: 409, data: { status: 'conflict', revision } };
+      if (mutation.content?.t !== 'plain' || mutation.content.v.key !== 'folders') throw new Error('Wrong private row');
+      value = mutation.content.v; revision++; writes++;
+      return { status: 200, data: { status: 'updated', revision, cursor: revision } };
+    });
+    try {
+      expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folders.list', input: {} }))
+        .toEqual({ status: 'ready', items: [{ id: 'personal', name: 'Personal', parentId: null }], revision: 1,
+          coverage: 'complete', nextCursor: null });
+      expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folders.read', input: { folderId: 'personal' } }))
+        .toEqual({ status: 'ready', item: { id: 'personal', name: 'Personal', parentId: null }, revision: 1, coverage: 'complete' });
+      expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folder.set',
+        input: { artifactId: shared.id, folderId: 'personal', expectedRevision: 1 } }))
+        .toEqual({ status: 'updated', revision: 2 });
+      expect(value).toMatchObject({ value: { artifactHeadersById: { received: { folderId: 'personal' } } } });
+      expect(JSON.stringify(value)).not.toContain('Private tag');
+      expect(await executeArtifactFolderActionV1({ port, actionId: 'artifact.folder.set',
+        input: { artifactId: shared.id, folderId: null, expectedRevision: 1 } })).toEqual({ status: 'conflict', revision: 2 });
+      const controller = new AbortController(); controller.abort();
+      await expect(executeArtifactFolderActionV1({ port, actionId: 'artifact.folder.set',
+        input: { artifactId: shared.id, folderId: null, expectedRevision: 2 }, signal: controller.signal })).rejects.toThrow();
+      retireOnHeaderRead = true;
+      await expect(executeArtifactFolderActionV1({ port, actionId: 'artifact.folder.set',
+        input: { artifactId: shared.id, folderId: null, expectedRevision: 2 } })).rejects.toMatchObject({ code: 'scope-retired' });
+      expect(writes).toBe(1);
+      expect(decodePlainArtifactStoredContent(shared.header)).toMatchObject({ folderId: 'owner-private', tags: ['Private tag'] });
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
   it('refuses a prompt update based on an earlier read instead of overwriting a concurrent writer', async () => {
     const store = createStore({ token: 'token-only', encryption: null }, 'plain');
     let record = {
@@ -126,6 +201,45 @@ describe('createCliApprovalsArtifactStore', () => {
       getAccountEncryptionMode: async () => accountMode,
     });
   }
+
+  it('requires qualified native review before publishing a declared service Auto approval Artifact', async () => {
+    const store = createStore({ token: 'captured-personal-account-token', encryption: null }, 'plain');
+    const executor = createActionExecutor(store);
+    const source = { id: '00000000-0000-4000-8000-000000000031', serverId: 'service-home',
+      machineId: 'source-machine' };
+    const selection = { kind: 'manifest', name: 'web' } as const;
+    const input = DaemonLocalServiceLauncherStartRequestV1Schema.parse({
+      machineId: source.machineId,
+      targetId: createProjectServiceDeclarationTargetIdV1(source, selection),
+      workspace: { serverId: source.serverId, machineId: source.machineId,
+        workspaceId: source.id, rootPath: '/projects/source' },
+      declaration: { workspaceRefId: source.id, selection },
+      choice: { kind: 'workers', destination: {
+        kind: 'pool', poolId: '00000000-0000-4000-8000-000000000032', selection: 'automatic',
+      } },
+    });
+    const published: unknown[] = [];
+    // Only Account HTTP is replaced. The executor, approval policy, origin,
+    // Artifact codec and durable creation all remain their canonical owners.
+    mockPost.mockImplementation(async (_url: string, payload: Record<string, unknown>) => {
+      const envelope = decodePlainArtifactStoredContent(String(payload.body));
+      published.push(envelope);
+      return { status: 200, data: { id: payload.id, headerVersion: 1, bodyVersion: 1 } };
+    });
+
+    const prepared = await executor.prepare('localServices.launcher.start', input, {
+      surface: 'cli', authority: 'account_automation', serverId: source.serverId,
+      serverIdentityId: 'service-home-identity', runtimeAccountId: 'personal-account',
+      actionRequestId: 'declared-service-auto-review',
+    });
+
+    // A SOURCE generic approval is not consent for the still-unselected worker,
+    // current copy/setup or native Start effect. Missing compound review must
+    // refuse before durable approval custody, without changing caller authority.
+    expect(published).toEqual([]);
+    expect(prepared).toMatchObject({ kind: 'settled', result: { ok: false,
+      errorCode: 'approval_context_unavailable' } });
+  });
 
   it('creates approval requests as encrypted artifacts with an inbox-compatible header', async () => {
     const credentials = createCredentials();
@@ -523,51 +637,75 @@ describe('createCliApprovalsArtifactStore', () => {
   });
 
   it.each(['plain', 'e2ee'] as const)('creates and favourites prompts through the real %s Artifact adapter', async (mode) => {
-    const store = createStore(mode === 'plain' ? { token: 'token-only', encryption: null } : createCredentials(), mode);
-    const signal = new AbortController().signal;
-    let createdPayload: any = null;
-    mockPost.mockImplementationOnce(async (_url: string, body: any, config: any) => {
-      expect(config.signal).toBe(signal);
-      createdPayload = body;
-      return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
-    });
-
-    const { artifactId } = await createPromptDocInLibrary({ store: store.promptLibraryStore,
-      request: { title: 'Prompt', markdown: '# Prompt', folderId: 'folder', tags: ['topic'] },
-      signal, nowMs: () => 1,
-    });
-    const record = {
-      id: artifactId,
-      header: createdPayload.header,
-      headerVersion: 1,
-      body: createdPayload.body,
-      bodyVersion: 1,
-      ownerAccountId: 'account-1', access: 'owner', encryptionMode: mode,
-      dataEncryptionKey: createdPayload.dataEncryptionKey,
-      seq: 1,
-      createdAt: 1,
-      updatedAt: 1,
+    const currentAccountKeyPair = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+    const credentials = mode === 'plain' ? { token: 'token-only', encryption: null } : {
+      token: 'token-current-e2ee', encryption: { type: 'dataKey' as const,
+        publicKey: currentAccountKeyPair.publicKey, machineKey: currentAccountKeyPair.secretKey },
     };
-    mockGet.mockResolvedValueOnce({ status: 200, data: record });
-    await expect(store.promptLibraryStore.read(artifactId, { signal })).resolves.toMatchObject({
-      id: artifactId,
-      revision: { headerVersion: 1, bodyVersion: 1 },
-      header: { v: 1, kind: 'prompt_doc.v2', title: 'Prompt' },
-      body: JSON.stringify({ v: 1, markdown: '# Prompt', createdAtMs: 1, updatedAtMs: 1 }),
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+    const store = createStore(credentials, mode);
+    const signal = new AbortController().signal;
+    const encryption = credentials.encryption;
+    const material = encryption ? { type: 'dataKey' as const, machineKey: encryption.machineKey } : null;
+    const contentKeyFingerprint = encryption ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+      createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'dataKey', machineKey: encryption.machineKey },
+        dataKeyPublicKey: encryption.publicKey }).contentPublicKeyFingerprint) : null;
+    const settingsContent = material ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material,
+      payload: {}, randomBytes: length => new Uint8Array(length).fill(5) }) } : { t: 'plain', v: {} };
+    let folderRevision = 1;
+    let folders: PromptLibraryRecordV1 = { key: 'folders', value: { v: 1, folders: [{ id: 'folder', name: 'Folder' }] } };
+    let record: Record<string, unknown> | null = null;
+    mockGet.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode, version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint, updatedAt: 1 } };
+      if (path === '/v1/account/entity-rows/prompt-library') return { status: 200, data: { status: 'listed',
+        rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: key === 'folders' ? folderRevision : 0,
+          content: key === 'folders' ? sealPromptLibraryContentV1({ mode, material, record: folders }) : null })) } };
+      if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: settingsContent } };
+      if (path === '/v1/artifacts') return { status: 200, data: record ? [record] : [] };
+      if (path.startsWith('/v1/artifacts/')) return { status: 200, data: record };
+      return { status: 503, data: {} };
     });
-
-    mockGet
-      .mockResolvedValueOnce({ status: 200, data: record })
-      .mockResolvedValueOnce({ status: 200, data: record });
-    mockPost.mockResolvedValueOnce({ status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } });
-    await expect(setPromptDocFavorite({ store: store.promptLibraryStore,
-      request: { artifactId, favorite: true }, signal })).resolves.toEqual({ ok: true, artifactId });
-    expect(mockGet.mock.calls.at(-1)?.[1]?.signal).toBe(signal);
-    expect(mockPost.mock.calls.at(-1)?.[2]?.signal).toBe(signal);
-    mockGet.mockResolvedValueOnce({ status: 200, data: [record] });
-    await expect(listPromptLibrary({ store: store.promptLibraryStore, request: {} })).resolves.toMatchObject({
-      coverage: 'complete', items: [{ artifactId, folderId: 'folder', tags: ['topic'] }],
+    mockPost.mockImplementation(async (url: string, body: unknown, config: { signal?: AbortSignal }) => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/account/entity-rows/prompt-library/folders') {
+        const mutation = PromptLibraryRowMutationV1Schema.parse(body);
+        expect(mutation.expectedRevision).toBe(folderRevision);
+        const opened = openPromptLibraryContentV1({ key: 'folders', mode, material, content: mutation.content });
+        if (opened.status !== 'opened') throw new Error(opened.reason);
+        folders = opened.record; folderRevision++;
+        return { status: 200, data: { status: 'updated', revision: folderRevision, cursor: folderRevision } };
+      }
+      if (!body || typeof body !== 'object') throw new Error('Invalid Artifact write');
+      expect(config.signal).toBe(signal);
+      if (path === '/v1/artifacts') {
+        record = { ...body, headerVersion: 1, bodyVersion: 1, ownerAccountId: 'account-1', access: 'owner', encryptionMode: mode,
+          seq: 1, createdAt: 1, updatedAt: 1 };
+        return { status: 200, data: { id: Reflect.get(body, 'id'), headerVersion: 1, bodyVersion: 1 } };
+      }
+      if (path.startsWith('/v1/artifacts/') && record) {
+        record = { ...record, ...body, headerVersion: 2, bodyVersion: 2 };
+        return { status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } };
+      }
+      throw new Error('Unexpected HTTP mutation');
     });
+    try {
+      const { artifactId } = await createPromptDocInLibrary({ store: store.promptLibraryStore,
+        request: { title: 'Prompt', markdown: '# Prompt', folderId: 'folder', tags: ['topic'] }, signal, nowMs: () => 1 });
+      const stored = await store.promptLibraryStore.read(artifactId, { signal });
+      expect(stored).toMatchObject({ id: artifactId, revision: { headerVersion: 1, bodyVersion: 1 },
+        header: { v: 1, kind: 'prompt_doc.v2', title: 'Prompt' },
+        body: JSON.stringify({ v: 1, markdown: '# Prompt', createdAtMs: 1, updatedAtMs: 1 }) });
+      expect(stored?.header).not.toHaveProperty('folderId');
+      expect(stored?.header).not.toHaveProperty('tags');
+      expect(folders).toMatchObject({ value: { artifactHeadersById: { [artifactId]: { folderId: 'folder', tags: ['topic'] } } } });
+      await expect(setPromptDocFavorite({ store: store.promptLibraryStore,
+        request: { artifactId, favorite: true }, signal })).resolves.toEqual({ ok: true, artifactId });
+      await expect(listPromptLibrary({ store: store.promptLibraryStore, request: {} })).resolves.toMatchObject({
+        coverage: 'complete', items: [{ artifactId, folderId: 'folder', tags: ['topic'] }] });
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
   });
 
 

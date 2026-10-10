@@ -1,7 +1,23 @@
 import path from 'node:path';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { StoredCredentials } from '@/persistence';
 
 import type { LocalServiceWorkspaceFact } from './provenance';
+
+export type LocalServiceAcceptedWorkspaceReadDiagnostic = Readonly<{
+    code: 'local_services_accepted_workspaces_unavailable';
+    severity: 'warning';
+    message: string;
+}>;
+
+export type LocalServiceWorkspaceFactsSnapshot = Readonly<{
+    facts: readonly LocalServiceWorkspaceFact[];
+    acceptedWorkspaceRefs: readonly WorkspaceRefV1[];
+    diagnostics: readonly LocalServiceAcceptedWorkspaceReadDiagnostic[];
+}>;
 
 export type LocalServiceWorkspaceSessionMarker = Readonly<{
     happySessionId?: string;
@@ -81,6 +97,47 @@ export function resolveLocalServiceWorkspaceFactsFromSessionMarkers(
         }
     }
     return mergeLocalServiceWorkspaceFacts(facts);
+}
+
+/** One fresh Account-row read supplies both scan roots and declaration provenance. */
+export async function readLocalServiceWorkspaceFacts(input: Readonly<{
+    credentials: StoredCredentials;
+    serverId: string;
+    serverBaseUrl: string;
+    machineId: string;
+    markers: readonly LocalServiceWorkspaceSessionMarker[];
+    signal?: AbortSignal;
+}>): Promise<LocalServiceWorkspaceFactsSnapshot> {
+    input.signal?.throwIfAborted();
+    let acceptedWorkspaceRefs: readonly WorkspaceRefV1[] = [];
+    const diagnostics: LocalServiceAcceptedWorkspaceReadDiagnostic[] = [];
+    try {
+        const { readProjectAccountRows } = await import('@/workspaces/projectAccountRows');
+        const snapshot = await runWithServerHttpBaseUrl(input.serverBaseUrl, () => readProjectAccountRows({
+            credentials: input.credentials,
+            serverId: input.serverId,
+            ...(input.signal ? { signal: input.signal } : {}),
+        }));
+        input.signal?.throwIfAborted();
+        acceptedWorkspaceRefs = snapshot.workspaceRefs.filter(ref => (
+            ref.serverId === input.serverId && ref.machineId === input.machineId
+        ));
+    } catch (error) {
+        input.signal?.throwIfAborted();
+        diagnostics.push({
+            code: 'local_services_accepted_workspaces_unavailable',
+            severity: 'warning',
+            message: readTrimmedString(readRecord(error)?.code) || 'project_account_rows_unavailable',
+        });
+    }
+    return {
+        facts: mergeLocalServiceWorkspaceFacts(
+            acceptedWorkspaceRefs.map(ref => ({ id: ref.id, path: ref.rootPath })),
+            resolveLocalServiceWorkspaceFactsFromSessionMarkers(input.markers, input.machineId),
+        ),
+        acceptedWorkspaceRefs,
+        diagnostics,
+    };
 }
 
 /**

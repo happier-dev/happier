@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { Readable } from 'node:stream';
+import { isDeepStrictEqual } from 'node:util';
 import { LocalServicePreviewNativeRegistrationAdmittedV1Schema, LocalServicePreviewNativeRegistrationRequestV1Schema } from '@happier-dev/protocol/local/services/preview/nativeDirect';
 import type { LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
-import { LocalServicePreviewSnapshotRowV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { LocalServicePreviewSnapshotRowV1Schema, localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import type { LocalServicePreviewResourceV1, LocalServicePreviewSnapshotRowV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -73,8 +74,7 @@ export function createLocalServicePreviewServerRoutes(input: LocalServicePreview
             const payload: unknown = response.data;
             if (typeof payload !== 'object' || payload === null) throw new Error('invalid_preview_registration');
             const row = LocalServicePreviewSnapshotRowV1Schema.parse({ ...payload, previewId: resource.previewId, diagnostics: [] });
-            if (row.resource.previewId !== resource.previewId || row.resource.machineId !== resource.machineId
-                || row.resource.sessionId !== resource.sessionId || JSON.stringify(row.resource.target) !== JSON.stringify(resource.target)
+            if (!isDeepStrictEqual(localServicePreviewDirectBindingV1(row.resource), localServicePreviewDirectBindingV1(resource))
                 || (!row.accessUrl || row.expiresAt === null) && row.accessUnavailableReasonCode !== 'preview_private_route_unavailable'
                 || row.accessUnavailableReasonCode && (row.accessUrl !== null || row.expiresAt !== null)) throw new Error('preview_registration_binding_mismatch');
             return row;

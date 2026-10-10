@@ -12,6 +12,7 @@ import { readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { logger } from '@/utils/logger';
 import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
+import { readMemorySettingsFromDisk } from '@/settings/memorySettings';
 
 import { annotateExternalSessionCandidates } from './candidateAnnotations';
 import {
@@ -32,6 +33,14 @@ export async function executeExternalSessionCandidatesListAction(
     const parsed = ExternalSessionsCandidatesListRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionsCandidatesListResponse;
     try {
+        options.signal?.throwIfAborted();
+        if (parsed.data.searchTarget === 'content'
+            && !(await readMemorySettingsFromDisk()).conversationSearch.standardSearch.enabled) {
+            return {
+                ok: true, candidates: [], nextCursor: null, contentCoverage: 'unsupported',
+                contentCoverageReason: 'standard_search_disabled',
+            };
+        }
         const validatedSource = await validateExternalMachineSource({
             agentId: parsed.data.agentId,
             source: parsed.data.source,

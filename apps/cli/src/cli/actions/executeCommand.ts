@@ -23,6 +23,9 @@ import {
   type ServerFeaturesSnapshotStore,
 } from '@/features/serverFeaturesSnapshotStore';
 import type { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
+import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 
 import type { CompiledActionCliCommand } from './compiledCommands';
 import { renderActionCliCommandHelp } from './commandHelp';
@@ -75,11 +78,25 @@ const DEFAULT_DEPS: ActionCliExecutionDeps = {
   ).createCliActionExecutorFromCredentials(params),
 };
 
+/** CLI confidentiality consent precedes private custody; target Action approval remains separate. */
+export async function confirmCliRequesterCredentialDisclosure(
+  disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>,
+  options: Readonly<{ json?: boolean; signal?: AbortSignal }> = {},
+): Promise<boolean> {
+  if (options.json || options.signal?.aborted || !isInteractiveTerminal()) return false;
+  const custodian = disclosure.custodian?.displayName?.trim() || disclosure.custodian?.accountId;
+  return await promptConfirmYesNo(
+    `Machine ${disclosure.machineId}${custodian ? ` (owned by ${custodian})` : ''} will receive your full Happier sign-in and can use it to access your Account. `
+    + 'Its owner and anyone with terminal or agent access can read local files, output and sign-ins used by work there. '
+    + 'Allow this sign-in to be shared for this action?',
+    { default: 'no', ...(options.signal ? { signal: options.signal } : {}) },
+  );
+}
+
 /**
  * CLI-owned transport flags. They route the invocation and never become Action
  * input, so they are removed before the Action parser sees a single token.
  */
-const TRANSPORT_VALUE_FLAGS = [ACTION_CLI_MACHINE_ID_FLAG] as const;
 const SERVER_TRANSPORT_VALUE_FLAG = ACTION_CLI_SERVER_ID_FLAG;
 
 function isHelpRequest(argv: readonly string[]): boolean {
@@ -95,7 +112,7 @@ function hasFlagBeforeTerminator(argv: readonly string[], flags: ReadonlySet<str
   return false;
 }
 
-/** The exact `--machine-id` value, read without disturbing Action input. */
+/** The exact Machine transport value, read without disturbing Action input. */
 function readTransportMachineId(command: CompiledActionCliCommand, argv: readonly string[]): string | null {
   if (!command.routesByTransportMachineId) return null;
   let selected: string | null = null;
@@ -103,17 +120,19 @@ function readTransportMachineId(command: CompiledActionCliCommand, argv: readonl
     const token = argv[index] ?? '';
     if (token === '--') break;
     let value: string | null = null;
-    if (token === ACTION_CLI_MACHINE_ID_FLAG) {
+    const name = token.includes('=') ? token.slice(0, token.indexOf('=')) : token;
+    if (!command.transportMachineIdFlags.includes(name)) continue;
+    if (token === name) {
       const next = argv[index + 1];
       if (typeof next !== 'string' || next.startsWith('--')) {
-        throw Object.assign(new Error(`Option ${ACTION_CLI_MACHINE_ID_FLAG} requires a value.`), { code: 'invalid_arguments' });
+        throw Object.assign(new Error(`Option ${name} requires a value.`), { code: 'invalid_arguments' });
       }
       value = next;
       index += 1;
-    } else if (token.startsWith(`${ACTION_CLI_MACHINE_ID_FLAG}=`)) {
-      value = token.slice(ACTION_CLI_MACHINE_ID_FLAG.length + 1);
+    } else {
+      value = token.slice(name.length + 1);
       if (!value) {
-        throw Object.assign(new Error(`Option ${ACTION_CLI_MACHINE_ID_FLAG} requires a value.`), { code: 'invalid_arguments' });
+        throw Object.assign(new Error(`Option ${name} requires a value.`), { code: 'invalid_arguments' });
       }
     }
     if (value === null) continue;
@@ -144,7 +163,7 @@ function stripTransportTokens(
   tokens: readonly string[],
 ): readonly string[] {
   const transportValueFlags: readonly string[] = command.routesByTransportMachineId
-    ? [...TRANSPORT_VALUE_FLAGS, ...(command.acceptsServerId ? [SERVER_TRANSPORT_VALUE_FLAG] : [])]
+    ? [...command.transportMachineIdFlags, ...(command.acceptsServerId ? [SERVER_TRANSPORT_VALUE_FLAG] : [])]
     : command.acceptsServerId ? [SERVER_TRANSPORT_VALUE_FLAG] : [];
   const kept: string[] = [];
   let positionalOnly = false;
@@ -282,6 +301,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
   const deps: ActionCliExecutionDeps = { ...DEFAULT_DEPS, ...params.deps };
   let credentials: StoredCredentials | null;
   let fixedServer: ActionCliFixedServerTarget | null = null;
+  let serverIdentityId: string | undefined;
   let machineId: string | null;
   try {
     machineId = readTransportMachineId(command, params.argv);
@@ -292,7 +312,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
         { code: 'invalid_arguments' },
       );
     }
-    ({ credentials, fixedServer } = await resolveActionCliCredentialTarget({
+    ({ credentials, fixedServer, serverIdentityId } = await resolveActionCliCredentialTarget({
       requestedServerId,
       requireServerIdentityId: command.requiresServerId,
       deps,
@@ -346,6 +366,9 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     };
     const executorOptions = {
       credentials,
+      ...(serverIdentityId ? { serverIdentityId } : {}),
+      onRequesterSessionCredentialDisclosure: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) =>
+        confirmCliRequesterCredentialDisclosure(disclosure, { json, ...(requestSignal ? { signal: requestSignal } : {}) }),
       readCredentials: fixedServer
         ? () => deps.readCredentialsForServerIdFn(fixedServer.serverId)
         : deps.readCredentialsFn,
@@ -392,6 +415,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       defaultSessionId: typeof input.sessionId === 'string' ? input.sessionId : null,
       ...(requestSignal ? { signal: requestSignal } : {}),
       ...(fixedServer ? { serverId: fixedServer.serverId } : {}),
+      ...(serverIdentityId ? { serverIdentityId } : {}),
       ...(command.binding.observation === 'changes' ? {
         onWaitSnapshot: async (snapshot: unknown) => writeJsonStdout({
           kind, target: input.target, condition: input.condition, snapshot,
@@ -497,7 +521,7 @@ export function describeCompiledActionCliCommandArgvPolicy(command: CompiledActi
   return Object.freeze({
     booleanFlags: Object.freeze([ACTION_CLI_JSON_OUTPUT_FLAG, ...ACTION_CLI_HELP_FLAGS, ...flags.booleanFlags]),
     valueFlags: Object.freeze([
-      ...(command.routesByTransportMachineId ? TRANSPORT_VALUE_FLAGS : []),
+      ...command.transportMachineIdFlags,
       ...(command.acceptsServerId ? [SERVER_TRANSPORT_VALUE_FLAG] : []),
       ACTION_CLI_WHOLE_INPUT_FLAG,
       ...flags.valueFlags,

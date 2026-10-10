@@ -17,8 +17,10 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
         const credentials = { token, encryption: mode === 'plain' ? null
             : { type: 'dataKey' as const, machineKey: secret, publicKey: x25519.getPublicKey(secret) } };
-        const createSchema = z.object({ id: z.string(), header: z.string(), body: z.string(), dataEncryptionKey: z.string() });
-        const updateSchema = z.object({ header: z.string(), body: z.string(), expectedHeaderVersion: z.number(), expectedBodyVersion: z.number() });
+        const createSchema = z.object({ id: z.string(), header: z.string(), body: z.string(), dataEncryptionKey: z.string(),
+            provenance: z.string().optional(), provenanceDataEncryptionKey: z.string().optional() });
+        const updateSchema = z.object({ header: z.string(), body: z.string(), expectedHeaderVersion: z.number(), expectedBodyVersion: z.number(),
+            provenance: z.string().optional(), provenanceDataEncryptionKey: z.string().optional() });
         const rows = new Map<string, z.infer<typeof createSchema> & { headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number;
             ownerAccountId: string; access: 'owner'; encryptionMode: 'plain' | 'e2ee' }>();
         const homeArtifactId = buildHomeHubArtifactIdV1('owner');
@@ -47,8 +49,12 @@ describe('CLI Board Actions through the Artifact owner', () => {
             if (path.endsWith('/access/recipients') && row) return { status: 200, data: {
                 artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, encryptionMode: mode,
                 dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey, recipients: [],
+                provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, callerProvenanceDataEncryptionKey: row.provenanceDataEncryptionKey,
             } };
-            return row ? { status: 200, data: row } : { status: 404 };
+            if (path.endsWith('/access/grants') && row) return { status: 200, data: {
+                artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, grants: [],
+            } };
+            return row ? { status: 200, data: { ...row, publicAudience: 'none' } } : { status: 404 };
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
             if (new URL(url).pathname === '/v1/artifacts') {
@@ -65,7 +71,7 @@ describe('CLI Board Actions through the Artifact owner', () => {
             const row = rows.get(artifactId)!;
             const next = updateSchema.parse(input);
             expect(next.expectedHeaderVersion).toBe(row.headerVersion); expect(next.expectedBodyVersion).toBe(row.bodyVersion);
-            const updated = { ...row, header: next.header, body: next.body, headerVersion: row.headerVersion + 1, bodyVersion: row.bodyVersion + 1 };
+            const updated = { ...row, ...next, headerVersion: row.headerVersion + 1, bodyVersion: row.bodyVersion + 1 };
             rows.set(row.id, updated);
             return { status: 200, data: { success: true, headerVersion: updated.headerVersion, bodyVersion: updated.bodyVersion } };
         });
@@ -78,7 +84,8 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
             serverId: 'board-home', serverHttpBaseUrl: 'https://board-home.test' }));
         const context = { surface: 'cli', bypassApprovals: true } as const;
-        expect(await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: 'new-board', name: 'Board title' } } }, context))
+        const created = await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: 'new-board', name: 'Board title' } } }, context);
+        expect(created, JSON.stringify(created))
             .toMatchObject({ ok: true, result: { board: { id: 'new-board', name: 'Board title' } } });
         expect(rows.get('new-board')?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
         const updated = await executor.execute('boards.apply', { intent: { kind: 'update', boardId: 'new-board', patch: { pinnedInSessions: true, mode: 'by_status' } } }, context);
@@ -108,36 +115,36 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const ref = { surface, instanceId: instance.id };
         expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'new-board', ref, instance } }, context))
             .toMatchObject({ ok: true, result: { board: { mode: 'by_status', widgets: [{ instance, size: 'medium' }] } } });
-        expect(await executor.execute('widgets.instance.list', { surface }, context))
+        expect(await executor.execute('widgets.item.list', { surface }, context))
             .toMatchObject({ ok: true, result: { instances: [{ instance, size: 'medium' }] } });
-        expect(await executor.execute('widgets.instance.size.set', { ref, size: 'full' }, context)).toMatchObject({ ok: true });
-        expect(await executor.execute('widgets.instance.list', { surface }, context))
+        expect(await executor.execute('widgets.item.size.set', { ref, size: 'full' }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.item.list', { surface }, context))
             .toMatchObject({ ok: true, result: { instances: [{ instance, size: 'full' }] } });
         const home = { ...surface, owner: { kind: 'home' } } as const;
         const homeInstance = { v: 1, id: 'home-copy', displayName: 'Named Home copy',
             definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: { repo: { kind: 'value', value: 'my/repo' } } } as const;
         const homeRef = { surface: home, instanceId: homeInstance.id };
         if (initiallyUnavailable) {
-            const unreadableHome = await executor.execute('widgets.instance.add', { surface: home, instance: homeInstance }, context);
+            const unreadableHome = await executor.execute('widgets.item.add', { surface: home, instance: homeInstance }, context);
             expect(unreadableHome, JSON.stringify(unreadableHome)).toMatchObject({ ok: false, errorCode: 'widget_add_unknown',
                 details: { reasonCode: 'widget_write_ack_unknown' } });
             expect(rows.has(homeArtifactId)).toBe(true);
             // Recovery reads the same already-written singleton instead of inventing acknowledged content.
             withholdCreatedHome = false;
         }
-        const addedHome = await executor.execute('widgets.instance.add', { surface: home, instance: homeInstance }, context);
+        const addedHome = await executor.execute('widgets.item.add', { surface: home, instance: homeInstance }, context);
         expect(addedHome, JSON.stringify(addedHome)).toMatchObject(initiallyUnavailable
             ? { ok: false, errorCode: 'widget_instance_already_exists' } : { ok: true });
-        expect(await executor.execute('widgets.instance.list', { surface: home }, context)).toMatchObject({ ok: true, result: {
+        expect(await executor.execute('widgets.item.list', { surface: home }, context)).toMatchObject({ ok: true, result: {
             instances: expect.arrayContaining([expect.objectContaining({ instance: homeInstance })]),
         } });
         expect(homeCreates).toBe(1);
-        expect(await executor.execute('widgets.instance.size.set', { ref: homeRef, size: 'full' }, context)).toMatchObject({ ok: true });
-        expect(await executor.execute('widgets.instance.frame.set', { ref: homeRef, frameStyle: 'plain' }, context)).toMatchObject({ ok: true });
-        const movedHome = await executor.execute('widgets.instance.move', { ref: homeRef, to: { surface, index: 0 } }, context);
+        expect(await executor.execute('widgets.item.size.set', { ref: homeRef, size: 'full' }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.item.frame.set', { ref: homeRef, frameStyle: 'plain' }, context)).toMatchObject({ ok: true });
+        const movedHome = await executor.execute('widgets.item.move', { ref: homeRef, to: { surface, index: 0 } }, context);
         expect(movedHome, JSON.stringify(movedHome))
             .toMatchObject({ ok: true, result: { status: 'moved' } });
-        expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [
+        expect(await executor.execute('widgets.item.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [
             { instance: homeInstance, size: 'full', frameStyle: 'plain' }, { instance, size: 'full' },
         ] } });
         expect(await executor.execute('widgets.catalog.list', { surface }, context)).toMatchObject({ ok: true, result: { entries: expect.arrayContaining([
@@ -146,22 +153,22 @@ describe('CLI Board Actions through the Artifact owner', () => {
         ]) } });
         const areaInstance = { ...homeInstance, id: 'area-copy' };
         if (initiallyUnavailable) {
-            const unreadableArea = await executor.execute('widgets.instance.add', { surface: area, instance: areaInstance }, context);
+            const unreadableArea = await executor.execute('widgets.item.add', { surface: area, instance: areaInstance }, context);
             expect(unreadableArea, JSON.stringify(unreadableArea)).toMatchObject({ ok: false, errorCode: 'widget_add_unknown',
-                details: { reasonCode: 'widget_write_ack_unknown' } });
+                details: { reasonCode: 'artifact_content_unavailable' } });
             expect(rows.has(areaArtifactId)).toBe(true);
         }
-        const addedArea = await executor.execute('widgets.instance.add', { surface: area, instance: areaInstance }, context);
+        const addedArea = await executor.execute('widgets.item.add', { surface: area, instance: areaInstance }, context);
         expect(addedArea, JSON.stringify(addedArea)).toMatchObject({ ok: true });
         expect(areaCreates).toBe(1);
-        expect(await executor.execute('widgets.instance.list', { surface: area }, context)).toMatchObject({ ok: true, result: {
+        expect(await executor.execute('widgets.item.list', { surface: area }, context)).toMatchObject({ ok: true, result: {
             instances: [{ instance: areaInstance, size: 'medium' }],
         } });
-        const homeState = await executor.execute('widgets.instance.list', { surface: home }, context);
+        const homeState = await executor.execute('widgets.item.list', { surface: home }, context);
         expect(homeState).toMatchObject({ ok: true, result: { instances: expect.not.arrayContaining([expect.objectContaining({ instance: homeInstance })]) } });
-        expect(await executor.execute('widgets.instance.remove', { ref: { surface, instanceId: homeInstance.id } }, context)).toMatchObject({ ok: true });
-        expect(await executor.execute('widgets.instance.remove', { ref }, context)).toMatchObject({ ok: true });
-        expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [] } });
+        expect(await executor.execute('widgets.item.remove', { ref: { surface, instanceId: homeInstance.id } }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.item.remove', { ref }, context)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.item.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [] } });
         expect(await executor.execute('boards.apply', { intent: { kind: 'delete', boardId: 'new-board' } }, context)).toMatchObject({ ok: true, result: { board: null } });
         expect(rows.has('new-board')).toBe(false);
     });
@@ -175,10 +182,13 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const row = (id: string) => ({ id, header: encodePlainArtifactStoredContent({ kind: 'work-board.v1', v: 1, title: id === 'b1' ? board.name : other.name, pinnedInSessions: false, readsNeedsYou: false }),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(id === 'b1' ? board : other) }), headerVersion: version, bodyVersion: version,
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, seq: version, createdAt: 1, updatedAt: version,
-            ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain' });
+            ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none' });
         const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: { unrelated: 'x'.repeat(600_000) } }, version: 1 } };
+            if (url.endsWith('/access/grants')) return { status: 200, data: {
+                artifactId: new URL(url).pathname.split('/')[3], ownerAccountId: 'owner', access: 'owner', grants: [],
+            } };
             if (url.includes('/v1/artifacts?')) return { status: 200, data: [row('b1'), row('other')] };
             if (url.endsWith('/v1/artifacts/b1')) return { status: 200, data: row('b1') };
             if (url.endsWith('/v1/artifacts/other')) return { status: 200, data: row('other') };
@@ -205,7 +215,8 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const executor = createActionExecutor(createCliActionDeps({ token: 'board-token', credentials: { token: 'board-token', encryption: null }, sessionId: 'cli-global', mode: 'plain', ctx: null,
             serverId: 'board-home', serverHttpBaseUrl: 'https://board-home.test' }));
         const context = { surface: 'cli', bypassApprovals: true } as const;
-        await executor.execute('boards.apply', { intent: { kind: 'set_positions', boardId: 'b1', positionsByItemRef: { [key]: { x: 48, y: 96 } } } }, context);
+        const positioned = await executor.execute('boards.apply', { intent: { kind: 'set_positions', boardId: 'b1', positionsByItemRef: { [key]: { x: 48, y: 96 } } } }, context);
+        expect(positioned, JSON.stringify(positioned)).toMatchObject({ ok: true });
         expect(board.positionsByItemRef).toEqual({ [key]: { x: 48, y: 96 }, [otherKey]: { x: 3, y: 4 } });
         expect(await executor.execute('boards.list', {}, context)).toMatchObject({ ok: true, result: { boards: [{ id: 'b1' }, { id: 'other' }] } });
         expect(post.mock.calls.every(call => call[0] === 'https://board-home.test/v1/artifacts/b1')).toBe(true);

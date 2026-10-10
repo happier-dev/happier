@@ -61,6 +61,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
         sourceMachineId: 'source-machine',
         sessionStorageMode: 'persisted' as const,
       })),
+      checkExistingTarget: vi.fn(async () => ({ ok: true })),
       prepareTarget: vi.fn(async () => {
         calls.push('prepare');
         return prepared;
@@ -97,6 +98,125 @@ function createDeps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('tracked session handoff coordinator', () => {
+  it('leaves the source untouched when the target cannot resolve existing native state', async () => {
+    const { deps } = createDeps({
+      checkExistingTarget: vi.fn(async () => ({ ok: false, errorCode: 'existing_session_state_unavailable', error: 'Turn session data transfer on.' })),
+    });
+    const result = await coordinateTrackedSessionHandoff({
+      input: { sessionId: 'session-1', targetMachineId: 'target-machine', targetPath: '/repo', stateTransfer: 'existing', workspaceAction: { kind: 'none' } },
+      signal: new AbortController().signal, ...deps,
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'existing_session_state_unavailable' });
+    expect(deps.start).not.toHaveBeenCalled();
+    expect(deps.prepareTarget).not.toHaveBeenCalled();
+    expect(deps.abort).not.toHaveBeenCalled();
+  });
+
+  it.each(['source-machine', 'target-machine'])('uses existing state through the ordinary handoff lifecycle to %s', async targetMachineId => {
+    const order: string[] = [];
+    const checkExistingTarget = vi.fn(async () => { order.push('check'); return { ok: true }; });
+    const { deps, calls } = createDeps({
+      checkExistingTarget,
+      start: vi.fn(async () => { order.push('stop'); return { ok: true as const, result: started }; }),
+    });
+    const result = await coordinateTrackedSessionHandoff({
+      input: { sessionId: 'session-1', targetMachineId, targetPath: '/repo', stateTransfer: 'existing', workspaceAction: { kind: 'none' } },
+      signal: new AbortController().signal, ...deps,
+    });
+    expect(result).toMatchObject({ ok: true, result: { status: { status: 'completed' } } });
+    expect(order).toEqual(['check', 'stop']);
+    expect(checkExistingTarget).toHaveBeenCalledWith({ sessionId: 'session-1', sourceMachineId: 'source-machine', targetMachineId,
+      targetPath: '/repo', sourceSessionStorageMode: 'persisted' }, expect.any(AbortSignal));
+    expect(deps.prepareTarget).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-1', stateTransfer: 'existing' }), expect.any(AbortSignal));
+    expect(calls).toEqual(['prepare', 'resume', 'confirm', 'commit-target', 'cleanup-source']);
+  });
+
+  it('does not stop the source after cancellation of the read-only target check', async () => {
+    const controller = new AbortController();
+    const { deps } = createDeps({
+      checkExistingTarget: vi.fn(async () => { controller.abort(); return { ok: true }; }),
+    });
+    const result = await coordinateTrackedSessionHandoff({
+      input: { sessionId: 'session-1', targetMachineId: 'target-machine', targetPath: '/repo', stateTransfer: 'existing', workspaceAction: { kind: 'none' } },
+      signal: controller.signal, ...deps,
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(deps.start).not.toHaveBeenCalled();
+    expect(deps.abort).not.toHaveBeenCalled();
+  });
+
+  it('uses ordinary abort recovery if existing native state disappears after preflight', async () => {
+    const { deps } = createDeps({
+      checkExistingTarget: vi.fn(async () => ({ ok: true })),
+      prepareTarget: vi.fn(async () => ({ ok: false, errorCode: 'existing_session_state_unavailable' })),
+      abort: vi.fn(async () => ({ handoffId: 'handoff-1', status: { ...status('staging_target'), status: 'aborted' } })),
+    });
+    const result = await coordinateTrackedSessionHandoff({
+      input: { sessionId: 'session-1', targetMachineId: 'target-machine', targetPath: '/repo', stateTransfer: 'existing' },
+      signal: new AbortController().signal, ...deps,
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'existing_session_state_unavailable' });
+    expect(deps.abort).toHaveBeenNthCalledWith(1, { machineId: 'target-machine', handoffId: 'handoff-1', reason: 'existing_session_state_unavailable' });
+    expect(deps.abort).toHaveBeenNthCalledWith(2, { machineId: 'source-machine', handoffId: 'handoff-1', reason: 'existing_session_state_unavailable' });
+    expect(deps.resumeTarget).not.toHaveBeenCalled();
+  });
+
+  it('checks the canonical source-path fallback but never guesses a managed target directory', async () => {
+    const { deps } = createDeps({ resolveSource: vi.fn(async () => ({
+      ok: true, sourceMachineId: 'source-machine', sourceRootPath: '/repo', sessionStorageMode: 'persisted',
+    })) });
+    const existingInput = { sessionId: 'session-1', targetMachineId: 'target-machine', stateTransfer: 'existing' as const };
+    expect(await coordinateTrackedSessionHandoff({ input: existingInput, signal: new AbortController().signal, ...deps })).toMatchObject({ ok: true });
+    expect(deps.checkExistingTarget).toHaveBeenCalledWith(expect.objectContaining({ targetPath: '/repo' }), expect.any(AbortSignal));
+    deps.start.mockClear();
+    deps.checkExistingTarget.mockClear();
+    expect(await coordinateTrackedSessionHandoff({ input: { ...existingInput, targetDirectory: { kind: 'managed' } },
+      signal: new AbortController().signal, ...deps })).toMatchObject({ ok: false, errorCode: 'existing_session_state_unavailable' });
+    expect(deps.start).not.toHaveBeenCalled();
+    expect(deps.checkExistingTarget).not.toHaveBeenCalled();
+  });
+
+  it('finishes local launch and commit when cancellation arrives after binding begins', async () => {
+    const controller = new AbortController();
+    const { deps } = createDeps({
+      workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({
+        sync: {} as never,
+        // Session-only handoff has no target workspace bootstrap transport.
+        bootstrap: async () => { throw new Error('Unexpected target workspace bootstrap'); },
+      }),
+      resumeTarget: async (_request: unknown, signal: AbortSignal) => {
+        controller.abort();
+        signal.throwIfAborted();
+        return { ok: true };
+      },
+      confirmTarget: async (_request: unknown, signal: AbortSignal) => {
+        signal.throwIfAborted();
+        return { ok: true };
+      },
+    });
+    const result = await coordinateTrackedSessionHandoff({ input: { sessionId: 'session-1', targetMachineId: 'source-machine', targetPath: '/repo/my-app', workspaceAction: { kind: 'none' } }, signal: controller.signal, ...deps });
+    expect(result).toMatchObject({ ok: true, result: { status: { status: 'completed' } } });
+    expect(deps.abort).not.toHaveBeenCalled();
+    expect(deps.cleanupSource).toHaveBeenCalledOnce();
+  });
+
+  it('cancels pending local preparation with one abort of the shared daemon job', async () => {
+    const controller = new AbortController();
+    const { deps } = createDeps({
+      workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({
+        sync: {} as never,
+        // Session-only handoff has no target workspace bootstrap transport.
+        bootstrap: async () => { throw new Error('Unexpected target workspace bootstrap'); },
+      }),
+      prepareTarget: async () => { controller.abort(); controller.signal.throwIfAborted(); },
+      abort: vi.fn(async () => ({ handoffId: 'handoff-1', status: { ...status('staging_target'), status: 'aborted' } })),
+    });
+    const result = await coordinateTrackedSessionHandoff({ input: { sessionId: 'session-1', targetMachineId: 'source-machine', targetPath: '/repo/my-app', workspaceAction: { kind: 'none' } }, signal: controller.signal, ...deps });
+    expect(result).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(deps.abort).toHaveBeenCalledOnce();
+    expect(deps.resumeTarget).not.toHaveBeenCalled();
+  });
+
   it('stops before target preparation when the final linked route blocks after source quiescence', async () => {
     const linkStatus = {
       relationshipId: 'source-hub', controllerMachineId: 'hub-machine', state: 'watching' as const,
@@ -225,6 +345,7 @@ describe('tracked session handoff coordinator', () => {
       result: { handoffId: 'handoff-1', workspace: { kind: 'none' } },
     });
     expect(calls).toEqual(['prepare', 'resume', 'confirm', 'commit-target', 'cleanup-source']);
+    expect(deps.checkExistingTarget).not.toHaveBeenCalled();
     expect(deps.publishOwnerUpdate).toHaveBeenCalledWith(expect.objectContaining({
       domainRef: { kind: 'handoff', id: 'handoff-1', targetMachineId: 'target-machine' },
     }));

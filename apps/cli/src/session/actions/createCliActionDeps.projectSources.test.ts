@@ -15,6 +15,12 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { reloadConfiguration } from '@/configuration';
+import { updateSettings } from '@/persistence';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -29,6 +35,96 @@ function deps() {
 }
 
 describe('Source Actions through the CLI Account front door', () => {
+  it('admits portable Home private Artifact attachment through real requester custody without borrowing the owner', async () => {
+    await withTempDir('source-portable-home-', async home => {
+      const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+      const profileId = 'source-local-profile';
+      const homeId = 'srv_portableSource';
+      const serverUrl = 'https://source-home.test';
+      let admitted: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+      try {
+        scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: profileId });
+        reloadConfiguration();
+        const profile = { id: profileId, name: 'Source Home', serverUrl, webappUrl: serverUrl,
+          createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
+          homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: homeId,
+            canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }) };
+        await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: profile } }));
+        const bobToken = `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
+        const artifactId = '11111111-1111-4111-8111-111111111111';
+        let current = true;
+        const artifactRequests: string[] = [];
+        // HTTP is the boundary; private Account admission, projection, Artifact decoding and Source admission stay real.
+        vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+          expect(config?.headers).toMatchObject({ Authorization: `Bearer ${bobToken}` });
+          const href = String(url);
+          if (href.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+          if (href.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+          if (href.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+          if (href.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+          expect(href).toBe(`${serverUrl}/v1/artifacts/${artifactId}`);
+          artifactRequests.push(href);
+          return { status: 200, data: { id: artifactId, ownerAccountId: 'bob', access: 'owner', encryptionMode: 'plain',
+            header: encodePlainArtifactStoredContent({ kind: 'widget-area-layout.v1' }),
+            body: encodePlainArtifactStoredContent({ body: '{}' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+          expect(String(url)).toMatch(/\/verify$/);
+          return { status: 200, data: { ok: true } };
+        });
+        const write = vi.spyOn(axios, 'request').mockImplementation(async request => {
+          expect(request.headers).not.toHaveProperty('Authorization');
+          expect(request.headers).toHaveProperty(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER);
+          return { status: 200, data: { ok: true, source, canManage: true } };
+        });
+        const target = { kind: 'machine' as const, machineId: 'source-machine' };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'portable-proof', binding: {
+          accountId: 'bob', principalId: 'bob', credentialId: 'pat', custodianAccountId: 'source-account', accountEncryptionMode: 'plain',
+          serverIdentityId: homeId, machineId: target.machineId, installationId: 'source-installation',
+          actionId: 'projects.sources.update', requestId: 'request', requestEnvelopeDigest: 'A'.repeat(43), target,
+          grant: API_TOKEN_FULL_GRANT_V1,
+        } });
+        admitted = await admitRequesterAccountActionContext({ authorization, credentials: { token: bobToken, encryption: null },
+          serverId: profileId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, isCurrent: async () => current });
+        if (!admitted) throw new Error('Requester Account custody unavailable');
+        const keys = tweetnacl.sign.keyPair();
+        const carrier = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
+          serverId: profileId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, target,
+          installationId: 'source-installation', privateKey: keys.secretKey, isCurrent: admitted.isCurrent });
+        if (!carrier) throw new Error('Requester HTTP custody unavailable');
+        expect(carrier.requesterAccountProjection?.serverId).toBe(profileId);
+        expect(carrier.requesterHttpProjection?.serverId).toBe(profileId);
+        expect.soft(await carrier.requesterAccountProjection!.readArtifact({ kind: 'doc', serverId: homeId, artifactId }))
+          .toMatchObject({ artifactId });
+        artifactRequests.length = 0;
+        const actions = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: 'source-session',
+          serverId: profileId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, mode: 'plain', ctx: null });
+        const input = { serverId: homeId, sourceId: source.id, expectedRevision: 2,
+          patch: { attachment: { kind: 'attach' as const, attachment: { purpose: 'dashboard' as const,
+            ref: { kind: 'doc' as const, artifactId, serverId: homeId } } } } };
+        const context = { serverId: homeId, externalActionExecutionAuthorization: carrier };
+        expect(await actions.projectSourcesUpdate!(input, context)).toMatchObject({ ok: true, canManage: true });
+        expect(artifactRequests).toEqual([`${serverUrl}/v1/artifacts/${artifactId}`]);
+        write.mockClear(); artifactRequests.length = 0;
+        expect(await actions.projectSourcesUpdate!({ ...input, patch: { attachment: { ...input.patch.attachment,
+          attachment: { ...input.patch.attachment.attachment, ref: { ...input.patch.attachment.attachment.ref, serverId: 'srv_wrongSource' } } } } }, context))
+          .toEqual({ ok: false, error: 'artifact_unavailable' });
+        for (const scenario of ['ambiguous', 'retired'] as const) {
+          await updateSettings(settings => ({ ...settings, servers: scenario === 'retired' ? {}
+            : { [profileId]: profile, duplicate: { ...profile, id: 'duplicate' } } }));
+          expect(await actions.projectSourcesUpdate!(input, context)).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
+        }
+        await updateSettings(settings => ({ ...settings, servers: { [profileId]: profile } }));
+        current = false;
+        expect(await actions.projectSourcesUpdate!(input, context)).toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable' });
+        expect(artifactRequests).toEqual([]);
+        expect(write).not.toHaveBeenCalled();
+      } finally { await admitted?.dispose(); scope.restore(); reloadConfiguration(); }
+    });
+  });
+
   it('accepts only a current qualified requester Artifact through the same admitted carrier', async () => {
     const bobToken = `header.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
     const artifacts = createCredentialedAccountArtifactStore({ token: bobToken, encryption: null });

@@ -67,6 +67,7 @@ export type CompiledActionCliCommand = Readonly<{
    * Action's input", so the declaration decides, not a runtime precedence rule.
    */
   routesByTransportMachineId: boolean;
+  transportMachineIdFlags: readonly string[];
   /** This command preserves the established command-local exact-Home selector. */
   acceptsServerId: boolean;
   /** This command may not borrow the device's ambient active Home. */
@@ -340,7 +341,10 @@ function compileDeclaredActionCliCommand(
   { spec, binding }: ReturnType<typeof listActionCliCommandDeclarations>[number],
 ): CompiledActionCliCommand {
   const { fields, callerSchema } = compileActionCliFields(spec, {
-    reservedFlags: spec.cli?.acceptsServerId === true ? [ACTION_CLI_SERVER_ID_FLAG] : [],
+    reservedFlags: [
+      ...(spec.cli?.acceptsServerId === true ? [ACTION_CLI_SERVER_ID_FLAG] : []),
+      ...(spec.cli?.transportMachineIdAliases ?? []),
+    ],
   });
   const fieldsByPath = new Map(fields.map((field) => [field.path, field]));
   const positionals = (binding.positionals ?? [])
@@ -360,10 +364,16 @@ function compileDeclaredActionCliCommand(
     );
   }
   const routesByTransportMachineId = !fieldsByPath.has(TRANSPORT_MACHINE_ID_FIELD);
+  if (!routesByTransportMachineId && spec.cli?.transportMachineIdAliases?.length) {
+    throw new Error(`Action ${spec.id} has semantic machineId input and cannot declare Machine transport aliases.`);
+  }
+  const transportMachineIdFlags = Object.freeze(routesByTransportMachineId
+    ? [ACTION_CLI_MACHINE_ID_FLAG, ...(spec.cli?.transportMachineIdAliases ?? [])]
+    : []);
   const collision = validateActionCliFlagCollisions(
     { fields, positionals },
     { reservedFlags: [
-      ...(routesByTransportMachineId ? [ACTION_CLI_MACHINE_ID_FLAG] : []),
+      ...transportMachineIdFlags,
       ...(spec.cli?.acceptsServerId === true ? [ACTION_CLI_SERVER_ID_FLAG] : []),
     ] },
   );
@@ -386,6 +396,7 @@ function compileDeclaredActionCliCommand(
     wholeInputSchema: spec.cli?.wholeInputSchema ?? spec.inputSchema,
     binding,
     routesByTransportMachineId,
+    transportMachineIdFlags,
     acceptsServerId: spec.cli?.acceptsServerId === true,
     requiresServerId: spec.cli?.requiresServerId === true,
     requestTimeout: spec.cli?.requestTimeout,

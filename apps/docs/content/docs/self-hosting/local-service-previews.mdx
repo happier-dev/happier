@@ -10,7 +10,7 @@ being exposed to anything else.
 
 This page is about turning that on for a self-hosted relay. It also covers **public
 exposure** — the shareable-link feature that puts one of those services on the open
-internet — which is off by default and, as of this release, should stay off.
+internet — which is disabled by default and remains a development feature.
 
 ## Availability
 
@@ -18,15 +18,15 @@ internet — which is off by default and, as of this release, should stay off.
 | --- | --- | --- |
 | Detecting local services and listing them in the launchpad | Shipped | On |
 | Opening a private preview from the app | Shipped, but needs signing keys and a relay port allowlist | Feature on, transport unconfigured |
-| Public exposure through a shareable secret link | **Development only — do not enable** | Off |
+| Public exposure through a shareable secret link | Development only | Off |
 
 Private previews are the normal path and the rest of this page is mostly about them.
 
 <Callout type="warn">
-  **Public exposure is not ready to run.** It is not switched on, and it should not be
-  switched on until its independent security review has completed. Leave
-  `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` unset. Everything below about it
-  is here so you can recognise it, not so you can turn it on.
+  **Public exposure is not a released availability claim.** Leave
+  `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` unset for the default private-only
+  deployment. Development builds use the actual server policy and the prerequisites below;
+  there is no separate “until review” activation switch.
 </Callout>
 
 ## What you need first
@@ -54,6 +54,37 @@ Worth thirty seconds, because every failure below is one of these three steps re
 The daemon verifies every grant against the relay's public key, which it learns from the
 relay's own capability payload. That is why there is nothing to configure on the machine —
 and why a signing key you rotate takes effect as soon as machines refresh.
+
+### Project Service previews in 0.3 development
+
+Current development source also registers an owned Project Service without creating an
+Agent Session. A Machine, workspace and declaration identify the requested service; they
+do not grant access. The relay checks the exact running managed occurrence and its actual
+starter against current Machine access. A URL-less service can be Running without having
+an HTTP endpoint to preview.
+
+Hiding a service or clearing its launch history does not stop it or revoke its preview.
+Workspace-scoped history clearing preserves history from other workspaces on the same
+Machine; use Stop to end the owned service lifetime.
+
+Development tools can read a Project Service's public exposure status against the
+exact managed occurrence, without borrowing an Agent Session.
+
+Opening an already registered preview requests a fresh URL using the viewer's Account and
+Home, including when the Browser target has no local preview snapshot. Web and server
+fallback use this admission rather than another person's cached URL. Native direct access
+still needs the actual registered native descriptor and its signed grant; a Browser target
+alone cannot create that capability.
+
+Final effective access loss closes the affected viewer's streams. Losing the starter's
+serving admission retires the service's exposures immediately, even if native Stop is
+unsupported or its outcome is still uncertain. Another valid overlapping grant preserves
+access. A shared actor without a genuine requester credential channel gets
+`requester_credentials_unavailable`; the daemon cannot borrow its custodian's credential.
+
+These are development-source contracts, not certification of a loaded Project journey,
+native-device support or released availability. The private relay configuration below
+continues to apply.
 
 ## Turn on private previews
 
@@ -166,8 +197,10 @@ Two more that look alike and are not:
 
 <Callout type="info">
   `HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED` sounds like it would help here and
-  does not. Local service previews always travel through the relay; that variable governs a
-  different route used by other features. Turning it on changes nothing about previews.
+  does not enable the server-relayed preview path. That path needs the server-routed gate
+  and port allowlist above. In 0.3 development, native direct preview admission additionally
+  uses the direct-peer policy and an actually available Machine native transport; turning
+  on that gate alone does not supply the transport.
 </Callout>
 
 ## Public exposure, and why it is off
@@ -176,12 +209,12 @@ Public exposure takes a private preview and gives it a URL anyone on the interne
 with no sign-in, for a limited time. It is gated behind
 `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED`, which defaults to off.
 
-**Leave it off.** It has not completed the independent security review that this kind of
-surface requires, and a relay that enables it is exposing a port on someone's laptop to the
-open internet on the strength of code that has not been signed off for that job. This is not
-a limitation of your deployment; it is the current state of the feature.
+The default private-only deployment leaves it off. Enabling public exposure makes a port on
+someone's Machine reachable without sign-in; only use a development deployment whose
+operator intends that exposure. Current development admission is controlled by the real
+server policy, not a separate review-completion condition.
 
-If you enable it anyway, the relay still refuses to mint links until six further prerequisites
+If you enable it, the relay still refuses to mint links until six further prerequisites
 are all satisfied, and the app names whichever ones are missing on the service row:
 
 - an allowed exposure mode,
@@ -196,8 +229,36 @@ The last one used to be advisory and is now required, because abuse control on a
 unauthenticated public URL is not an optional extra. There is no switch to turn the audit
 requirement off.
 
-That list is a completeness check, not a security review. Satisfying all six does not make the
-feature ready, and the default stays off regardless.
+Satisfying those prerequisites allows the configured development admission; it is not a
+release certification. The default stays off regardless.
+
+## Stored-content public links in 0.3 development
+
+Public links for Sessions and documents publish stored content rather than a
+port on a Machine. They share the isolated-host and rate-limiter configuration
+above, but have their own public-sharing feature decision. They do not require
+enabling public local-service exposure or configuring its lifetime and audit
+policy.
+
+Before creating these links, the Home operator must provide:
+
+- An HTTPS `HAPPIER_PUBLIC_SERVER_URL`.
+- `HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN`, a domain whose
+  wildcard DNS and TLS certificate route each resource's HTTPS hostname to this
+  Home. These origins must differ from the API origin.
+- `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_CHECKER=fixed_window`,
+  with positive `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_MAX_REQUESTS`
+  and `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_WINDOW_MS` values
+  chosen for the deployment's traffic policy.
+
+Restart the server after configuring these prerequisites. Without a usable
+isolated origin or limiter, creation returns HTTP 503
+`public_share_isolation_unavailable`. No link is created; the app keeps it Off.
+An HTTP-only local deployment cannot provide these public links by enabling
+the sharing feature alone.
+
+See [Session sharing](/accounts/session-sharing#public-links) for creating and
+managing a link once the Home is ready.
 
 ## Related
 

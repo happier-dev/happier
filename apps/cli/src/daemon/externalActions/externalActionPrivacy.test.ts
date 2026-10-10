@@ -57,6 +57,8 @@ function executionAuthorization(actionId: string, envelope: Parameters<typeof co
       credentialId,
       grant: principal.grant,
       machineId: target.machineId,
+      custodianAccountId: principal.accountId,
+      installationId: 'machine-installation-1',
       actionId,
       requestId: envelope.requestId ?? `generated-${actionId}`,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
@@ -68,6 +70,8 @@ function executionAuthorization(actionId: string, envelope: Parameters<typeof co
 function owner() {
   return {
     currentServerId: binding.serverIdentityId,
+    resolveInstallationId: () => 'machine-installation-1',
+    verifyExecutionAuthorization: async () => true,
     externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
     resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
     // The OS/Machine correspondence is a boundary; all Action logic stays real.
@@ -173,6 +177,7 @@ describe('private external Action origins with the real CLI executor', () => {
       viewerRole: 'owner',
       capabilities: NO_TEAM_CAPABILITIES_V1,
       admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+      counts: null,
     } as const;
 
     // Home HTTP is the only mocked process boundary. It intentionally does not

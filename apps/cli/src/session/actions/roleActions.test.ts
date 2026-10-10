@@ -1,12 +1,72 @@
-import { describe, expect, it } from 'vitest';
-import { BUILT_IN_ROLES_V1, readSessionRoleIdV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { accountSettingsParse, BUILT_IN_ROLES_V1, readSessionRoleIdV1 } from '@happier-dev/protocol';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createRoleActionExecutor } from './roleActions';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import type { RoleOverrideMutationV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 
 describe('role Action effects', () => {
+  beforeEach(() => {
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({ scopeKey: 'roles-test', source: 'network', settingsVersion: 1, settings: accountSettingsParse({}),
+      rawSettings: {}, settingsSecretsReadKeys: [], loadedAtMs: 1,
+      promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+  });
+  afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+  it('serves a known complete Role but refuses unknown origin when legacy storage is unavailable', async () => {
+    const queued: RegisteredSessionStateFieldMutationV1[] = [];
+    const execute = createRoleActionExecutor({ sessionId: 'session-1', accountId: 'account-1',
+      readRawAccountSettings: async () => { throw new Error('Settings storage unavailable'); },
+      readSessionMetadata: () => createTestMetadata(),
+      stageSessionStateMutation: async (mutation) => { queued.push(mutation); },
+    });
+    const context = { authority: 'present_user' as const, surface: 'ui' as const };
+    await expect(execute({ actionId: 'session.role.set', input: { sessionId: 'session-1', roleId: 'builder' }, context }))
+      .resolves.toEqual({ updated: true });
+    await expect(execute({ actionId: 'session.role.set', input: { sessionId: 'session-1', roleId: 'unknown-origin' }, context }))
+      .rejects.toMatchObject({ code: 'role_source_incomplete' });
+    expect(queued.map(mutation => mutation.fieldId)).toEqual(['intent.role']);
+  });
+
+  it('refuses report copies before writing a partial fresh Role inventory', async () => {
+    const writes: string[] = [];
+    const execute = createRoleActionExecutor({ sessionId: 'lead', accountId: 'account-1',
+      readRawAccountSettings: async () => { throw new Error('Settings storage unavailable'); },
+      readSessionMetadata: () => ({ work: { sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: '' } } }),
+      listReportSessions: async () => [{ sessionId: 'child', ownerAccountId: 'account-1' }],
+      writeReportSessionRoles: async (sessionId) => { writes.push(sessionId); },
+    });
+    await expect(execute({ actionId: 'session.roles.apply_to_reports', input: { sessionId: 'lead' },
+      context: { authority: 'present_user', surface: 'ui' } })).rejects.toMatchObject({ code: 'role_source_incomplete' });
+    expect(writes).toEqual([]);
+  });
+
+  it.each([
+    { memoryDocRef: { kind: 'doc', artifactId: 'private-memory' } },
+    { retainedSessionContextEntry: { id: 'session.legacy-role-memory', ref: { kind: 'doc', artifactId: 'private-memory' },
+      enabled: true, placement: 'system_append' } },
+  ])('refuses new Role Actions that attempt to carry retained-only context authority (%j)', async (carrier) => {
+    const queued: RegisteredSessionStateFieldMutationV1[] = [];
+    const execute = createRoleActionExecutor({ sessionId: 'session-1', readSessionMetadata: () => createTestMetadata(),
+      stageSessionStateMutation: async (mutation) => { queued.push(mutation); },
+    });
+    await expect(execute({ actionId: 'session.notes.set', input: { sessionId: 'session-1', notes: 'Keep notes', ...carrier },
+      context: { authority: 'present_user', surface: 'ui' } })).rejects.toThrow();
+    expect(queued).toEqual([]);
+  });
+  it('refuses Session writes when Account override authority is unavailable', async () => {
+    const queued: RegisteredSessionStateFieldMutationV1[] = [];
+    const execute = createRoleActionExecutor({ sessionId: 'session-1', readSessionMetadata: () => createTestMetadata(),
+      readSettingsOverrides: () => ({ status: 'unavailable', reason: 'catalog-loading' }),
+      stageSessionStateMutation: async (mutation) => { queued.push(mutation); },
+    });
+    await expect(execute({ actionId: 'session.role.set', input: { sessionId: 'session-1', roleId: 'builder' },
+      context: { authority: 'present_user', surface: 'ui' } })).rejects.toMatchObject({ code: 'account_role_overrides_unavailable' });
+    expect(queued).toEqual([]);
+  });
   it('does not relax native policy before a user relaxation is durably accepted', async () => {
     let nativePolicy: 'allow' | 'deny' = 'deny';
     const metadata: Metadata = { ...createTestMetadata(), work: { sessionRolesV1: { roleId: 'builder',
@@ -67,7 +127,6 @@ describe('role Action effects', () => {
   it('deletes user roles through Artifact revision CAS, with approval and source protection', async () => {
     const deleted: string[] = [];
     const execute = createRoleActionExecutor({ sessionId: '', accountId: 'account-1',
-      mutateAccountSettings: async (mutate) => { await mutate({ rolesV1: { overrides: {} } }); },
       artifactStore: { list: async () => ({ items: [], coverage: 'complete' }),
         accessGrants: {
           list: async () => { throw new Error('Unexpected access grant list'); },
@@ -99,7 +158,7 @@ describe('role Action effects', () => {
     const writes: string[] = [];
     const execute = createRoleActionExecutor({ sessionId: 'lead', accountId: 'account-1',
       readSessionMetadata: () => ({ work: { sessionRolesV1: { overrides: { builder: { roleId: 'builder', instructionsOverride: 'Lead instruction' } },
-        sessionRoles: {}, notes: 'Lead notes', memoryDocRef: { kind: 'doc', artifactId: 'memory' } } } }),
+        sessionRoles: {}, notes: 'Lead notes' }, promptStack: [{ id: 'lead-context', ref: { kind: 'doc', artifactId: 'memory' }, enabled: true, placement: 'system_append' }] } }),
       listReportSessions: async () => [{ sessionId: 'child', ownerAccountId: 'account-1' }, { sessionId: 'foreign', ownerAccountId: 'account-2' }],
       writeReportSessionRoles: async (sessionId, configuration) => {
         writes.push(sessionId);
@@ -111,7 +170,8 @@ describe('role Action effects', () => {
       .toEqual({ updatedSessionIds: ['child'] });
     expect(writes).toEqual(['child']);
     expect(child.work).toMatchObject({ sessionRolesV1: { roleId: 'builder', inheritedFrom: 'lead', notes: 'Lead notes',
-      memoryDocRef: { kind: 'doc', artifactId: 'memory' }, sessionRoles: { builder: { name: 'Builder', instructions: 'Lead instruction' } } } });
+      sessionRoles: { builder: { name: 'Builder', instructions: 'Lead instruction' } } } });
+    expect(child.work).not.toHaveProperty('promptStack');
   });
   it('persists current-role changes through the outbox and preserves unrelated session data at replay', async () => {
     const queued: RegisteredSessionStateFieldMutationV1[] = [];
@@ -178,32 +238,21 @@ describe('role Action effects', () => {
     expect(queued).toEqual([]);
   });
 
-  it('retains legacy Artifacts before the first Account override save and rejoins a retry', async () => {
-    const artifacts = new Map<string, { header: Readonly<Record<string, unknown>>; body: string }>();
-    let raw: Readonly<Record<string, unknown>> = { executionRunsGuidanceEntries: [{ id: 'legacy-1', description: 'Review carefully' }] };
-    let failSettings = true;
-    const execute = createRoleActionExecutor({ sessionId: '', accountId: 'account-1', readRawAccountSettings: async () => raw,
-      mutateAccountSettings: async (mutate) => { const next = await mutate(raw); if (failSettings) throw new Error('Settings transport failed'); raw = next; },
-      artifactStore: {
-        accessGrants: {
-          list: async () => { throw new Error('Unexpected access grant list'); },
-          set: async () => { throw new Error('Unexpected access grant set'); },
-          remove: async () => { throw new Error('Unexpected access grant remove'); },
-        },
-        list: async () => ({ items: [], coverage: 'complete' }),
-        read: async (artifactId) => { const artifact = artifacts.get(artifactId); return artifact ? { artifactId, ...artifact, ownerAccountId: 'account-1', access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 }, seq: 1, createdAt: 1, updatedAt: 1 } : null; },
-        create: async ({ artifactId, header, body }) => { if (!artifactId) throw new Error('Missing id'); if (typeof body !== 'string') throw new Error('Expected role text'); artifacts.set(artifactId, { header, body }); return { artifactId, revision: { headerVersion: 1, bodyVersion: 1 } }; },
-        update: async () => { throw new Error('Unexpected update'); }, delete: async () => { throw new Error('Unexpected delete'); },
+  it('saves Account overrides only through the row writer and exposes a rejected transport effect', async () => {
+    const mutations: RoleOverrideMutationV1[] = [];
+    let failTransport = true;
+    const execute = createRoleActionExecutor({ sessionId: '', accountId: 'account-1',
+      readRawAccountSettings: async () => { throw new Error('Unexpected Settings read'); },
+      mutateAccountRoleOverrides: async (mutation) => {
+        if (failTransport) throw new Error('Role row transport failed');
+        mutations.push(mutation);
       },
     });
     const request = { actionId: 'roles.override.set' as const, input: { roleId: 'builder', instructionsOverride: 'Build carefully' }, context: { surface: 'ui' as const, authority: 'present_user' as const } };
-    await expect(execute(request)).rejects.toThrow('Settings transport failed');
-    expect(artifacts.size).toBe(1);
-    expect(raw).not.toHaveProperty('rolesV1');
-    expect([...artifacts.values()][0].header).toMatchObject({ kind: 'role.v1', migratedFromV0_2: true });
-    failSettings = false;
+    await expect(execute(request)).rejects.toThrow('Role row transport failed');
+    expect(mutations).toEqual([]);
+    failTransport = false;
     expect(await execute(request)).toEqual({ updated: true });
-    expect(artifacts.size).toBe(1);
-    expect(raw).toHaveProperty('rolesV1', { overrides: { builder: { roleId: 'builder', instructionsOverride: 'Build carefully' } } });
+    expect(mutations).toEqual([{ kind: 'set', override: request.input }]);
   });
 });

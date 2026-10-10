@@ -20,6 +20,7 @@ import { BrowserSidecarCdpTransportError, createBrowserSidecarCdpTransport } fro
 import type { LoopbackWebSocketJsonClientV1 } from '@/plugins/runtime/exec/privateContract';
 import { createBrowserContextRoutes } from '../../context/routes';
 import { createCdpBrowserContextSource } from '../../context/cdp/source';
+import { SNAPSHOT_MAX_INTERACTIVE_ELEMENTS, SNAPSHOT_MAX_NAME_CHARS } from '../../context/cdp/snapshotEvaluators';
 
 function controlAdapter(overrides: Partial<BrowserDaemonControlAdapter> = {}): BrowserDaemonControlAdapter {
   return {
@@ -42,7 +43,7 @@ const HANDLE: BrowserSidecarCdpPageHandle = { targetId: 'target_1', sessionId: '
 
 // Only the websocket/CDP peer is substituted. Controller, page binding, input adapter and
 // settlement remain the production path, including known pre-send boundary failures.
-async function inputSettlementBoundary() {
+async function inputSettlementBoundary(evaluatePage?: (expression: string) => unknown) {
   const listeners = new Set<(message: unknown) => void | Promise<void>>();
   let closePeer: () => void = () => undefined;
   const state = { loseAck: false, disposedBeforeInput: false, failedRead: false, dialogOnRead: false, dialogRaised: false };
@@ -60,7 +61,7 @@ async function inputSettlementBoundary() {
       }
       const result = command.method === 'Target.createTarget' ? { targetId: HANDLE.targetId }
         : command.method === 'Target.attachToTarget' ? { sessionId: HANDLE.sessionId }
-        : command.method === 'Runtime.evaluate' ? cdpEvaluateValue('safe page') : {};
+        : command.method === 'Runtime.evaluate' ? cdpEvaluateValue(evaluatePage ? evaluatePage(String(command.params?.expression)) : 'safe page') : {};
       if (command.method === 'Runtime.evaluate' && state.failedRead) throw new Error('read unavailable');
       if (command.method === 'Runtime.evaluate' && state.dialogOnRead && !state.dialogRaised) {
         state.dialogRaised = true;
@@ -321,6 +322,36 @@ function createAggregateTextDocument(): Readonly<{
 }
 
 describe('control adapter automation transport bridge', () => {
+  it('returns complete daemon query Action results while context snapshots and timelines stay bounded', async () => {
+    const name = 'Accessible label '.repeat(30).trim();
+    const nodes = Array.from({ length: SNAPSHOT_MAX_INTERACTIVE_ELEMENTS + 1 }, (_, index) => ({
+      ...bridgeElement({ tagName: 'button', textContent: name, attributes: { 'aria-label': name },
+        rect: { left: 0, top: 0, width: 40, height: 20 } }),
+      id: `button-${index}`, nodeType: 1, parentElement: null,
+    }));
+    const documentValue = { querySelectorAll: (selector: string) => selector.startsWith('#')
+      ? nodes.filter(node => `#${node.id}` === selector) : nodes };
+    const boundary = await inputSettlementBoundary(expression => Function('document', 'window', 'CSS',
+      `return ${expression};`)(documentValue, { CSS: true }, { escape: String }));
+    const routes = createBrowserAutomationRoutes({ service: boundary.service });
+    const query = (selector: string, automationRequestId: string) => routes.dispatch('browser.automation.queryElements', {
+      v: 1, ...view, automationRequestId, requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'agent' }, navigationGeneration: 0,
+      actionKind: 'queryElements', payload: { selector }, timeoutMs: 10_000,
+    }, { authority: 'account_automation' });
+    try {
+      const full = await query('button', 'full-query');
+      expect(full).toMatchObject({ status: 'succeeded', resultSummary: { count: nodes.length, truncated: false } });
+      expect('resultSummary' in full && full.resultSummary?.elements).toHaveLength(nodes.length);
+      expect('resultSummary' in full && full.resultSummary?.elements).toEqual(nodes.map(() => ({ tag: 'button', name })));
+      const semantic = await query(`role=button[name="${name}"]`, 'semantic-query');
+      expect(semantic).toMatchObject({ status: 'succeeded', resultSummary: { count: 1, elements: [{ tag: 'button', name }], truncated: false } });
+      const snapshot = await boundary.execute('semanticSnapshot');
+      expect(snapshot).toMatchObject({ status: 'succeeded', resultSummary: { truncated: true } });
+      expect(snapshot.resultSummary?.elements).toHaveLength(SNAPSHOT_MAX_INTERACTIVE_ELEMENTS);
+      expect(snapshot.resultSummary?.elements).toEqual(expect.arrayContaining([expect.objectContaining({ name: name.slice(0, SNAPSHOT_MAX_NAME_CHARS) })]));
+      expect(boundary.service.getTimeline(view).entries[0]?.resultSummary?.elements).not.toHaveLength(nodes.length);
+    } finally { boundary.dispose(); }
+  });
   it.each([
     ['type', { text: 'ordinary text' }, 'Input.insertText'],
     ['scroll', { deltaY: 120 }, 'Input.dispatchMouseEvent'],

@@ -6,7 +6,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { FeaturesResponseSchema, AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, AUTHORITY_CEILING_HEADER_V1, supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
@@ -190,6 +190,8 @@ describe('managed catalog original Account transport', () => {
             payload: { v: 1, machineId: controller.machineId, envelope, executionAuthorization: minted.authorization } });
           const capabilityRow = await db.machine.findUnique({ where: { id: controller.machineId },
             select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true } });
+          expect(supportsMachineOperationProtocolCapabilityV1(capabilityRow?.operationProtocolCapabilities,
+            'externalActionExecutionAuthorization'), JSON.stringify(capabilityRow)).toBe(true);
           expect(response.statusCode, JSON.stringify({ response: response.json(), capabilityRow })).toBe(200);
           const execution = openExternalActionResponseV2({ envelope: response.json(), binding, material, request: envelope });
           return execution?.ok ? { kind: 'succeeded', value: execution.result } : { kind: 'failed', execution };

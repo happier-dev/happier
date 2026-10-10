@@ -35,6 +35,38 @@ const origin: ApprovalExecutionOriginV1 = {
 };
 
 describe('daemon approval execution-origin currentness', () => {
+  it('rechecks signed ordinary Account approval without requiring descriptive PAT fields', async () => {
+    const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
+    const target = { kind: 'machine' as const, machineId: 'machine-1' };
+    const actionArgs = { homeId: 'home-1', managedId: 'managed', expectedIntentRevision: 0 };
+    const authorization = { v: 1 as const, token: 'ordinary-home-proof', binding: {
+      accountId: 'account-1', authentication: { kind: 'account' as const, tokenEpoch: 7 },
+      serverIdentityId: 'home-1', machineId: 'machine-1', custodianAccountId: 'account-1', installationId: 'installation-1',
+      actionId: 'machines.managed.bootstrap.retry', requestId: 'retry', requestEnvelopeDigest: 'a'.repeat(43), target,
+    } };
+    const accountOrigin: ApprovalExecutionOriginV1 = { v: 1, authority: 'present_user', surface: 'ui',
+      caller: { kind: 'host' }, serverId: 'profile', serverIdentityId: 'home-1', accountId: 'account-1', machineId: 'machine-1',
+      actionId: 'machines.managed.bootstrap.retry', requestId: 'retry', target,
+      externalActionExecutionAuthorization: authorization,
+      externalActionInputSignature: signExternalActionApprovalInputV1({ authorizationToken: authorization.token,
+        actionId: 'machines.managed.bootstrap.retry', input: actionArgs, target, privateKey: keys.secretKey }),
+    };
+    const request: ApprovalRequestV2 = { v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'system' }, actionId: accountOrigin.actionId, actionArgs, summary: 'approval',
+      decision: { kind: 'approve', decidedAtMs: 2 }, executionOriginV1: accountOrigin };
+    let current = true;
+    // Home verification is the external currentness boundary. The signed
+    // input and replay origin owner are exercised directly, without a PAT.
+    const check = createDaemonApprovalExecutionOriginCurrentness({ accountId: 'account-1', machineId: 'machine-1', serverId: 'profile',
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'home-1', machineId: 'machine-1' }),
+      resolveTarget: async () => target, listAccountApiTokens: async () => { throw new Error('Unexpected PAT lookup'); },
+      externalActionMachinePublicKey: keys.publicKey, verifyExternalExecutionAuthorization: async () => current,
+    });
+    expect(await check({ origin: accountOrigin, request })).toBe(true);
+    expect(await check({ origin: accountOrigin, request: { ...request, actionArgs: { ...actionArgs, expectedIntentRevision: 1 } } })).toBe(false);
+    current = false;
+    expect(await check({ origin: accountOrigin, request })).toBe(false);
+  });
   it('rechecks layout-1 private permission and locality using Account mode, independently of Session mode', async () => {
     const sessionId = 'c111111111111111111111111';
     const secret = new Uint8Array(32).fill(7);

@@ -2,6 +2,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { UiActionDispatchRequestV1Schema, clientActionUnavailable, parseClientActionDispatchResult } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { projectApprovalExecutionOriginCaller } from '@happier-dev/protocol/actions/actionExecutor';
 
 export type ClientActionMachineRpc = Readonly<{
   hasConnectedClientRpcHandler(method: string): boolean;
@@ -19,11 +20,17 @@ export function createClientActionReverseDispatcher(
     const client = getMachineClient();
     if (!client?.hasConnectedClientRpcHandler(RPC_METHODS.UI_ACTION_EXECUTE)) return unavailable();
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    const actionCaller = context.actionCaller ? projectApprovalExecutionOriginCaller(context.actionCaller) : undefined;
+    if (context.actionCaller && !actionCaller) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const request = UiActionDispatchRequestV1Schema.safeParse({ v: 1, actionId, input, context: {
       surface: context.surface ?? 'agent', authority: context.authority ?? 'account_automation',
       ...(context.defaultSessionId ? { defaultSessionId: context.defaultSessionId } : {}),
       ...(context.defaultSessionMachineId ? { defaultSessionMachineId: context.defaultSessionMachineId } : {}),
       ...(context.agentStartWorkspaceWrites ? { agentStartWorkspaceWrites: context.agentStartWorkspaceWrites } : {}),
+      ...(actionCaller ? { actionCaller } : {}),
+      ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
+      ...(context.externalActionCredential ? { externalActionCredential: context.externalActionCredential } : {}),
+      ...(context.externalActionTarget ? { externalActionTarget: context.externalActionTarget } : {}),
     } });
     if (!request.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     let issued = false;

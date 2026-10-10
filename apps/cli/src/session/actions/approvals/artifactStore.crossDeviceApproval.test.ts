@@ -170,10 +170,10 @@ describe('approval Artifact cross-device decision', () => {
         return { dispose: disposeObservation };
       },
     });
-    const sessionTitleSet = vi.fn(async () => ({ updated: true }));
+    const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
     const executor = createActionExecutor({
       ...store,
-      sessionTitleSet,
+      sessionStateFieldSet,
       isApprovalExecutionOriginCurrent: async ({ origin }: Readonly<{ origin: ApprovalExecutionOriginV1 }>) => (
         origin.serverIdentityId === stableHomeId
         && origin.accountId === 'account-1'
@@ -216,7 +216,7 @@ describe('approval Artifact cross-device decision', () => {
       ok: true,
       result: { status: 'executed', execution: { ok: true } },
     });
-    expect(sessionTitleSet).toHaveBeenCalledOnce();
+    expect(sessionStateFieldSet).toHaveBeenCalledOnce();
 
     const persisted = await store.approvalsGet({
       artifactId: created.artifactId,
@@ -249,7 +249,7 @@ describe('approval Artifact cross-device decision', () => {
       },
     });
     expect(mockPost).toHaveBeenCalledTimes(writesBeforeStaleDecision + 2);
-    expect(sessionTitleSet).toHaveBeenCalledOnce();
+    expect(sessionStateFieldSet).toHaveBeenCalledOnce();
 
     // A second decider observes the same terminal artifact; it cannot execute
     // the Action or reopen the approval even with the now-correct target.
@@ -261,7 +261,7 @@ describe('approval Artifact cross-device decision', () => {
       },
     });
     expect(mockPost).toHaveBeenCalledTimes(writesBeforeStaleDecision + 2);
-    expect(sessionTitleSet).toHaveBeenCalledOnce();
+    expect(sessionStateFieldSet).toHaveBeenCalledOnce();
 
     const persistedStale = await store.approvalsGet({
       artifactId: staleCreated.artifactId,
@@ -298,8 +298,8 @@ describe('approval Artifact cross-device decision', () => {
       serverId: 'profile-creator-a',
     });
     const created = await store.approvalsCreate({ request, serverId: 'profile-creator-a' });
-    const sessionTitleSet = vi.fn(async () => ({ updated: true }));
-    const executor = createActionExecutor({ ...store, sessionTitleSet } as unknown as ActionExecutorDeps);
+    const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
+    const executor = createActionExecutor({ ...store, sessionStateFieldSet } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute(
       'approval.request.decide',
@@ -312,7 +312,7 @@ describe('approval Artifact cross-device decision', () => {
         execution: { ok: false, errorCode: 'approval_stale' },
       },
     });
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
     await expect(store.approvalsGet({
       artifactId: created.artifactId,
       serverId: 'profile-creator-a',

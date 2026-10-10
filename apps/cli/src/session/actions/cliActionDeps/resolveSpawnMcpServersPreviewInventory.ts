@@ -1,5 +1,9 @@
 import type { McpServersSettingsV1, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 
+export type SpawnMcpPreviewInventoryDeps = Readonly<{
+  detectProviderMcpServers: typeof import('@/mcp/providerDetection/detectProviderMcpServers')['detectProviderMcpServers'];
+}>;
+
 type McpPreviewOptionItem = Readonly<{
   value: string;
   label: string;
@@ -28,12 +32,14 @@ export async function resolveSpawnMcpServersPreviewInventory(params: Readonly<{
   agentId: string;
   selection?: SessionMcpSelectionV1;
   limit?: number;
+  deps?: SpawnMcpPreviewInventoryDeps;
 }>): Promise<Readonly<{
   ok: boolean;
   items: readonly McpPreviewOptionItem[];
   preview: unknown;
 }>> {
-  const { detectProviderMcpServers } = await import('@/mcp/providerDetection/detectProviderMcpServers');
+  const detectProviderMcpServers = params.deps?.detectProviderMcpServers
+    ?? (await import('@/mcp/providerDetection/detectProviderMcpServers')).detectProviderMcpServers;
   const { resolveSessionMcpPreview } = await import('@/mcp/preview/resolveSessionMcpPreview');
   const detected = await detectProviderMcpServers({
     directory: params.directory,

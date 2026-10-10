@@ -157,6 +157,7 @@ export async function attemptProviderNativeFork(params: Readonly<{
                     ...params.forkBackendResolution.metadataOverlay,
                     ...launchMetadata,
                     forkV1: {
+                        ...(metadata.forkV1?.parentSessionId === params.parentSessionId ? metadata.forkV1 : {}),
                         v: 1,
                         parentSessionId: params.parentSessionId,
                         parentCutoffSeqInclusive: resolveEstablishedForkLineageCutoff({

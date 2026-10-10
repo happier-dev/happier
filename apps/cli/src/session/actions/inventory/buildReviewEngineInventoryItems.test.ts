@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, buildBackendTargetKeyV2, PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
 
@@ -20,7 +21,11 @@ vi.mock('@/plugins/runtime/reload/singleton', () => ({
   },
 }));
 
-import { buildReviewEngineInventoryItems } from './buildReviewEngineInventoryItems';
+import { buildReviewEngineInventoryItems as buildReviewInventory } from './buildReviewEngineInventoryItems';
+const emptyCatalog = { status: 'ready', revision: 1, record: { v: 1, definitions: [] } } satisfies AcpCatalogSnapshotV1;
+const buildReviewEngineInventoryItems = (params: Parameters<typeof buildReviewInventory>[0]) => buildReviewInventory({
+  acpCatalogSnapshot: emptyCatalog, ...params,
+});
 
 function runCapableDefinition(definition: Record<string, unknown>) {
   return {
@@ -149,21 +154,24 @@ describe('buildReviewEngineInventoryItems', () => {
       catalogEntriesById: {},
       executionRunProfiles: [],
     });
-    const accountSettings = AccountSettingsSchema.parse({
-      acpCatalogSettingsV1: { v: 2, backends: [{
+    const accountSettings = AccountSettingsSchema.parse({});
+    const acpCatalogSnapshot = { status: 'ready', revision: 3, record: AcpCatalogRecordV1Schema.parse({
+      v: 1, definitions: [{
         id: 'review-bot', name: 'review-bot', title: 'Review Bot', command: 'review-bot',
-        createdAt: 1, updatedAt: 1,
-      }] },
-    });
+        args: [], env: {}, capabilities: { supportsLoadSession: false, supportsModes: 'unknown', supportsModels: 'unknown',
+          supportsConfigOptions: 'unknown', promptImageSupport: 'unknown' }, createdAt: 1, updatedAt: 1,
+      }],
+    }) } satisfies AcpCatalogSnapshotV1;
     const targetKey = buildBackendTargetKeyV2({
       kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured',
     });
 
-    expect(await buildReviewEngineInventoryItems({ accountSettings })).toContainEqual(
+    expect(await buildReviewEngineInventoryItems({ accountSettings, acpCatalogSnapshot })).toContainEqual(
       expect.objectContaining({ engineId: targetKey, value: targetKey, label: 'Review Bot',
         capabilities: { structuredNarration: false } }),
     );
     expect(await buildReviewEngineInventoryItems({
+      acpCatalogSnapshot,
       accountSettings: AccountSettingsSchema.parse({
         ...accountSettings,
         backendEnabledByTargetKey: { [targetKey]: false },

@@ -32,8 +32,67 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
 }));
 
 import { createCliActionDeps } from './createCliActionDeps';
+import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { MemorySettingsV1Schema } from '@happier-dev/protocol/memory/memorySettings';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 describe('createCliActionDeps memory bindings', () => {
+  it('preserves admitted native search hits while rechecking only Happier Session ranges', async () => {
+    const nativeHit = { type: 'external_transcript' as const,
+      source: { type: 'external_transcript' as const, agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' },
+      sourceItemId: 'native-item', createdAtFromMs: 1, createdAtToMs: 2, summary: 'native quartz', score: 0.8 };
+    const sessionHit = { sessionId: 'revoked', seqFrom: 1, seqTo: 2,
+      createdAtFromMs: 1, createdAtToMs: 2, summary: 'retained quartz', score: 0.8 };
+    callMachineRpc.mockResolvedValue({ v: 1, ok: true, hits: [nativeHit, sessionHit] });
+    fetchSessionById.mockResolvedValue(null);
+    const deps = createCliActionDeps({ token: 't', credentials: { token: 't', encryption: null }, sessionId: 'unused',
+      serverId: 'home', serverHttpBaseUrl: 'https://home.test', mode: 'plain', ctx: null });
+    expect(await deps.daemonMemorySearch({ machineId: 'machine', serverId: 'home',
+      query: { v: 1, query: 'quartz', scope: { type: 'global' }, mode: 'auto', corpora: ['sessions', 'external_transcripts'] },
+    })).toEqual({ v: 1, ok: true, hits: [nativeHit] });
+    expect(fetchSessionById.mock.calls.map(([request]) => request.sessionId)).toEqual(['revoked']);
+  });
+
+  it('reads a native memory window on its exact Machine and Home without a Session read', async () => {
+    const source = { type: 'external_transcript' as const, agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' };
+    const window = { v: 1, snippets: [], citations: [], externalSnippets: [{ source, sourceItemId: 'item', createdAtMs: 1, text: 'quartz' }] };
+    callExactMachineRpc.mockResolvedValue(window);
+    const deps = createCliActionDeps({ token: 't', credentials: { token: 't', encryption: null }, sessionId: 'unused',
+      serverId: 'home', serverHttpBaseUrl: 'https://home.test', mode: 'plain', ctx: null });
+    expect(await createActionExecutor(deps).execute('memory.get_window', { machineId: 'machine', source, sourceItemId: 'item', cursor: 'page' },
+      { surface: 'cli', serverId: 'home' })).toEqual({ ok: true, result: window });
+    expect(callExactMachineRpc).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine', serverUrl: 'https://home.test',
+      method: RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, request: { v: 1, source, sourceItemId: 'item', cursor: 'page' } }));
+    expect(fetchSessionById).not.toHaveBeenCalled();
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+  it('persists Search settings and clears only the exact requested Machine through the Action owner', async () => {
+    const credentials = { token: 'search-token', encryption: null };
+    let persisted = MemorySettingsV1Schema.parse({ v: 1 });
+    let cleared = false;
+    callExactMachineRpc.mockImplementation(async ({ machineId, method, request }) => {
+      expect(machineId).toBe('search-machine');
+      if (method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) return persisted;
+      if (method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_SET) { persisted = MemorySettingsV1Schema.parse(request); return persisted; }
+      if (method === RPC_METHODS.DAEMON_MEMORY_CLEAR_INDEX) { expect(request).toEqual({}); cleared = true; return { ok: true }; }
+      throw new Error('unexpected_method');
+    });
+    const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials,
+      sessionId: 'cli-global', serverId: 'search-home', serverHttpBaseUrl: 'https://search-home.test', mode: 'plain', ctx: null });
+    const context = { surface: 'cli', authority: 'present_user', serverId: 'search-home',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'memory.clear_index': ['cli'] } }),
+    } as const;
+    expect(await executor.execute('search.settings.get', { machineId: 'search-machine' }, context)).toMatchObject({
+      ok: true, result: { conversationSearch: { standardSearch: { enabled: true } } },
+    });
+    const settings = MemorySettingsV1Schema.parse({ v: 1, conversationSearch: { standardSearch: { enabled: false } } });
+    expect(await executor.execute('search.settings.set', { machineId: 'search-machine', settings }, context)).toEqual({ ok: true, result: settings });
+    expect(await executor.execute('search.settings.get', { machineId: 'search-machine' }, context)).toEqual({ ok: true, result: settings });
+    expect(await executor.execute('memory.clear_index', { machineId: 'search-machine' }, context)).toEqual({ ok: true, result: { ok: true } });
+    expect(cleared).toBe(true);
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
   afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); withdrawActiveProjectAccountRowsSnapshot(); });
   beforeEach(() => {
     callMachineRpc.mockReset();

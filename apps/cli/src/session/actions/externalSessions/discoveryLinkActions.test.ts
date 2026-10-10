@@ -58,6 +58,7 @@ vi.mock('@/api/client/connectedServiceCredentialApi', async (importOriginal) => 
 });
 
 vi.mock('@/persistence', () => ({
+    readSettings: async () => ({ memory: { v: 1, enabledAtMs: 1 } }),
     readCredentials: (...args: unknown[]) => readCredentialsMock(...args),
     readStoredCredentials: (...args: unknown[]) => readStoredCredentialsMock(...args),
 }));
