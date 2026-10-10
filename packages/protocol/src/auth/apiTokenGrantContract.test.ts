@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AccountApiTokensCreateActionInputV1Schema } from './accountApiTokens.js';
 import { API_TOKEN_SOCKET_EVENT_ACTIONS, resolveSocketRpcSessionAuthorization, SESSION_RPC_METHODS } from '../rpc/index.js';
+import { API_TOKEN_FULL_GRANT_V1, evaluateApiTokenGrantV1, resolveApiTokenSessionCapabilityCeilingV1 } from './apiTokenGrant.js';
 
 describe('scoped credential public ingress', () => {
   it('accepts a strict creation grant while refusing unknown grant authority', () => {
@@ -11,8 +12,15 @@ describe('scoped credential public ingress', () => {
     expect(AccountApiTokensCreateActionInputV1Schema.safeParse(input).success).toBe(true);
     expect(AccountApiTokensCreateActionInputV1Schema.safeParse({ ...input, grant: { ...input.grant, presentUser: true } }).success).toBe(false);
   });
-  it('requires submitAgentInput and the declared message Action for abort', () => {
-    expect(resolveSocketRpcSessionAuthorization('s1:abort')).toMatchObject({ authority: 'submitAgentInput', actionId: 'session.message.send' });
+  it('requires submitAgentInput and the declared current-turn Action for abort', () => {
+    expect(resolveSocketRpcSessionAuthorization('s1:abort')).toMatchObject({ authority: 'submitAgentInput', actionId: 'session.turn.cancel' });
+  });
+  it('projects the abort-only capability without granting Send or stopping the process', () => {
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['session.turn.cancel'] } };
+    expect(resolveApiTokenSessionCapabilityCeilingV1(grant).has('submitAgentInput')).toBe(true);
+    expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.turn.cancel' }).ok).toBe(true);
+    expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.message.send' }).ok).toBe(false);
+    expect(evaluateApiTokenGrantV1({ grant, actionId: 'session.stop' }).ok).toBe(false);
   });
   it('declares token Actions on the same closed RPC and event authorization owners', () => {
     const rows = [

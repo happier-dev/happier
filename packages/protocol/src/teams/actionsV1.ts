@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { TEAM_DIRECTORY_ACTION_IDS_V1 } from './directory/actionIds.js';
 import { TEAM_IDENTITY_ACTION_IDS_V1 } from './identity/actionIds.js';
 import { TEAM_EXTERNAL_GROUP_BINDING_ACTION_IDS_V1 } from './externalGroupBindings/actionIds.js';
-import { TEAM_CREDENTIAL_ACTION_IDS_V1 } from './credentials/actionsV1.js';
+import { TEAM_CREDENTIAL_ACTION_IDS_V1 } from './credentials/actionIdsV1.js';
 
 export {
   TEAM_DIRECTORY_ACTION_IDS_V1,
@@ -45,6 +46,7 @@ export const TEAM_ACTION_IDS_V1 = [
   'teams.members.suspend',
   'teams.members.reactivate',
   'teams.members.remove',
+  'teams.members.leave',
   'teams.members.management.set',
   'teams.members.groups.list',
   'teams.groups.list',
@@ -71,4 +73,4 @@ export const TEAM_ACTION_IDS_V1 = [
 
 export type TeamActionIdV1 = typeof TEAM_ACTION_IDS_V1[number];
 
-export const TeamActionIdV1Schema = z.enum(TEAM_ACTION_IDS_V1);
+export const TeamActionIdV1Schema = lazyZodSchema(() => z.enum(TEAM_ACTION_IDS_V1));

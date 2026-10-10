@@ -1,4 +1,7 @@
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { TEAM_CREDENTIAL_ACTION_IDS_V1, type TeamCredentialActionIdV1 } from './actionIdsV1.js';
+export { TEAM_CREDENTIAL_ACTION_IDS_V1, type TeamCredentialActionIdV1 } from './actionIdsV1.js';
 
 import {
   TeamCredentialResourceAudienceInputV1Schema,
@@ -46,48 +49,20 @@ import {
 } from './sourceCandidatesV1.js';
 import { TeamCredentialResourceReadinessV1Schema } from './readinessV1.js';
 
-export const TeamCredentialTestActionInputV1Schema = z.object({
+export const TeamCredentialTestActionInputV1Schema = lazyZodSchema(() => z.object({
   teamId: z.string().min(1).max(256),
   resourceId: z.string().min(1).max(256),
-}).strict();
+}).strict());
 export type TeamCredentialTestActionInputV1 = z.infer<typeof TeamCredentialTestActionInputV1Schema>;
 
-export const TeamCredentialTestActionOutputV1Schema = z.object({
+export const TeamCredentialTestActionOutputV1Schema = lazyZodSchema(() => z.object({
   result: z.enum(['available', 'needs_attention', 'partially_available']),
   readiness: TeamCredentialResourceReadinessV1Schema,
   recovery: z.string().trim().min(1).max(240).optional(),
-}).strict();
+}).strict());
 export type TeamCredentialTestActionOutputV1 = z.infer<typeof TeamCredentialTestActionOutputV1Schema>;
 
-/** Reachable Team credential-resource intents. Additional plan vocabulary is
- * intentionally not registered until its domain producer and result contract
- * exist. */
-export const TEAM_CREDENTIAL_ACTION_IDS_V1 = [
-  'teams.credentials.list',
-  'teams.credentials.sources.list',
-  'teams.credentials.requestPolicySupport.get',
-  'teams.credentials.sourceResources.list',
-  'teams.credentials.get',
-  'teams.credentials.entitled.list',
-  'teams.credentials.create',
-  'teams.credentials.update',
-  'teams.credentials.audience.set',
-  'teams.credentials.delete',
-  'teams.credentials.test',
-  'teams.credentials.activity.list',
-  'teams.credentials.limits.list',
-  'teams.credentials.limits.upsert',
-  'teams.credentials.limits.delete',
-  'teams.credentials.usage.query',
-  'teams.credentials.externalKeys.create',
-  'teams.credentials.externalKeys.authorize',
-  'teams.credentials.externalKeys.list',
-  'teams.credentials.externalKeys.revoke',
-  'teams.credentials.externalKeys.revokeAll',
-] as const;
-
-export type TeamCredentialActionIdV1 = typeof TEAM_CREDENTIAL_ACTION_IDS_V1[number];
-export const TeamCredentialActionIdV1Schema = z.enum(TEAM_CREDENTIAL_ACTION_IDS_V1);
+export const TeamCredentialActionIdV1Schema = lazyZodSchema(() => z.enum(TEAM_CREDENTIAL_ACTION_IDS_V1));
 export const TEAM_CREDENTIAL_HOME_ACTION_IDS_V1 = TEAM_CREDENTIAL_ACTION_IDS_V1;
 export type TeamCredentialHomeActionIdV1 = typeof TEAM_CREDENTIAL_HOME_ACTION_IDS_V1[number];
 
@@ -115,7 +90,7 @@ export const TEAM_CREDENTIAL_ACTION_PATHS_V1: Readonly<Record<TeamCredentialHome
   'teams.credentials.externalKeys.revokeAll': '/v1/teams/credential-resources/external-keys/revoke-all',
 };
 
-export const TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1 = {
+export const TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1 = lazyDefinition(() => ({
   'teams.credentials.list': TeamCredentialResourceListInputV1Schema,
   'teams.credentials.sources.list': TeamCredentialSourceCandidateListInputV1Schema,
   'teams.credentials.requestPolicySupport.get': TeamCredentialRequestPolicySupportInputV1Schema,
@@ -137,9 +112,9 @@ export const TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1 = {
   'teams.credentials.externalKeys.list': TeamCredentialExternalApiKeyListInputV1Schema,
   'teams.credentials.externalKeys.revoke': TeamCredentialExternalApiKeyRevokeInputV1Schema,
   'teams.credentials.externalKeys.revokeAll': TeamCredentialExternalApiKeyRevokeAllInputV1Schema,
-} as const satisfies Readonly<Record<TeamCredentialActionIdV1, z.ZodTypeAny>>;
+} as const satisfies Readonly<Record<TeamCredentialActionIdV1, z.ZodTypeAny>>));
 
-export const TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1 = {
+export const TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1 = lazyDefinition(() => ({
   'teams.credentials.list': TeamCredentialResourcePageV1Schema,
   'teams.credentials.sources.list': TeamCredentialSourceCandidateListOutputV1Schema,
   'teams.credentials.requestPolicySupport.get': TeamCredentialRequestPolicySupportOutputV1Schema,
@@ -161,7 +136,7 @@ export const TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1 = {
   'teams.credentials.externalKeys.list': TeamCredentialExternalApiKeyListOutputV1Schema,
   'teams.credentials.externalKeys.revoke': TeamCredentialExternalApiKeyRevokeOutputV1Schema,
   'teams.credentials.externalKeys.revokeAll': TeamCredentialExternalApiKeyRevokeAllOutputV1Schema,
-} as const satisfies Readonly<Record<TeamCredentialActionIdV1, z.ZodTypeAny>>;
+} as const satisfies Readonly<Record<TeamCredentialActionIdV1, z.ZodTypeAny>>));
 
 export const TEAM_CREDENTIAL_ACTION_METHODS_V1: Readonly<Record<TeamCredentialHomeActionIdV1, 'POST'>> = {
   'teams.credentials.list': 'POST',

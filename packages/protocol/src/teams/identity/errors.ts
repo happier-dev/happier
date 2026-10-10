@@ -1,6 +1,8 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const TeamIdentityErrorCodeV1Schema = z.enum([
+export const TeamIdentityErrorCodeV1Schema = lazyZodSchema(() => z.enum([
+  'home_forbidden',
   'team_not_found',
   'team_forbidden',
   'team_authentication_required',
@@ -17,10 +19,10 @@ export const TeamIdentityErrorCodeV1Schema = z.enum([
   'workos_platform_unavailable',
   'workos_organization_mismatch',
   'workos_connection_mismatch',
-]);
+]));
 export type TeamIdentityErrorCodeV1 = z.infer<typeof TeamIdentityErrorCodeV1Schema>;
 
-export const TeamIdentityErrorV1Schema = z.object({ error: TeamIdentityErrorCodeV1Schema }).strict();
+export const TeamIdentityErrorV1Schema = lazyZodSchema(() => z.object({ error: TeamIdentityErrorCodeV1Schema }).strict());
 
 export function teamIdentityErrorHttpStatusV1(
   error: TeamIdentityErrorCodeV1,
@@ -29,6 +31,7 @@ export function teamIdentityErrorHttpStatusV1(
     case 'identity_connection_invalid':
       return 400;
     case 'team_forbidden':
+    case 'home_forbidden':
     case 'team_authentication_required':
     case 'team_identity_not_allowed':
       return 403;

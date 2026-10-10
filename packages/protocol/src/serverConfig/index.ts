@@ -43,3 +43,7 @@ export type {
     HomeSettingsWriteValidation,
 } from './homeSettingsWrite.js';
 export { SERVER_CONFIG, SERVER_CONFIG_REGISTRY_BASE } from './registry.js';
+export {
+    HOME_AUTH_METHOD_ENABLE_KEYS, HOME_ANONYMOUS_SIGNUP_KEY, HOME_STORAGE_POLICY_KEY,
+    HOME_KEYLESS_ACCOUNTS_KEY, isHomeGovernanceSettingKey, isHomeSignInPlatformSetting,
+} from './homeSettingsOwnership.js';

@@ -78,6 +78,29 @@ it('retains genuine signed Account approval origins without replacing Session au
 });
 
 describe('ApprovalRequestV1Schema', () => {
+  it('retains the bounded Account Settings validator reason without persisting opaque details', () => {
+    const actionId = 'settings.set';
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system' }, requestedSurface: 'cli', actionId,
+      actionArgs: { anchor: 'delegation.workDepthLimit', value: 4 }, summary: 'Change depth',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home-1', accountId: 'account-1', machineId: 'machine-1', actionId, requestId: 'request-1' } });
+    const details = { status: 'invalid', reason: 'invalidValue' };
+    const failure = { ok: false as const, errorCode: 'account_settings_invalid', error: 'account_settings_invalid', details };
+    const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+    expect(execution).toMatchObject({ details });
+    const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+    expect(readApprovalExecutionFailure(stored)).toMatchObject({ details });
+    for (const unsafe of [{ ...details, token: 'must-not-persist' }, { ...details, reason: 'opaque' }]) {
+      expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: unsafe }, executedAtMs: 3 }))
+        .not.toHaveProperty('details');
+    }
+    expect(readApprovalExecutionFailure(StoredApprovalRequestSchema.parse({ ...stored,
+      execution: { ...execution, details: { ...details, token: 'must-not-persist' } } }))).toMatchObject({ details });
+    expect(projectApprovalExecutionFailureV2({ request: { ...request, actionArgs: {} }, failure, executedAtMs: 3 }))
+      .not.toHaveProperty('details');
+  });
   it.each(['projects.script.run', 'projects.compute.exec'] as const)(
     'retains only request-bound worker refusal facts for approved %s', actionId => {
       const workspace = { serverId: 'home-1', machineId: 'source', workspaceId: 'source-ref', rootPath: '/source' };

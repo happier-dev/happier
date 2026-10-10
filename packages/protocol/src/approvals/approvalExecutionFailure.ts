@@ -11,6 +11,9 @@ import {
 import { HomeAccountDeleteInputV1Schema } from '../home/governance/accounts.js';
 import { HomeGovernanceErrorV1Schema } from '../home/governance/errors.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { AccountSettingsMutationInvalidResultSchema } from '../account/settings/accountSettingMutationV1.js';
+import { SettingsDeclarationActionInputSchemasV1 } from '../actions/settingsDeclarationActionFamily.js';
+import { readAccountSettingDeclarationV1 } from '../actions/accountSettingDeclarations.js';
 import {
   parseSessionBoardActionPortResultV1,
   parseStoredSessionBoardActionFailureV1,
@@ -26,6 +29,15 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  if (input.request.actionId === 'settings.set') {
+    if (input.failure.errorCode !== 'account_settings_invalid') return null;
+    const schema = SettingsDeclarationActionInputSchemasV1['settings.set'];
+    const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+    if (!args.success || args.data.target || !readAccountSettingDeclarationV1(args.data.anchor)) return null;
+    const details = (storedRead ? createStoredReadSchema(AccountSettingsMutationInvalidResultSchema)
+      : AccountSettingsMutationInvalidResultSchema).safeParse(input.failure.details);
+    return details.success ? { ...input.failure, details: details.data } : null;
+  }
   const projectActionId = input.request.actionId;
   if (projectActionId === 'projects.script.run' || projectActionId === 'projects.compute.exec') {
     const inputSchema = PROJECT_ACTION_INPUT_SCHEMAS_V1[projectActionId];

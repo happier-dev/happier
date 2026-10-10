@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 /**
@@ -11,12 +12,17 @@ import { z } from 'zod';
  * imply. Like the Home projection this is for rendering and precheck only and
  * never substitutes for the transactional authorization the mutation performs.
  *
+ * `viewRoster` is whether the Team's roster and Groups are readable: a current
+ * membership, or a Home administrator recovering an ownerless Team. `viewTeam`
+ * alone (which Home administration also confers) does not admit those reads.
+ *
  * `manageSettings` covers Team metadata and branding through one decision.
  * `manageAuthentication` is projected for the Lane 03 Authentication
  * destination; this child does not yet admit its mutation (see `team.ts`).
  */
-export const TeamCapabilitiesV1Schema = z.object({
+export const TeamCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   viewTeam: z.boolean(),
+  viewRoster: z.boolean(),
   manageSettings: z.boolean(),
   managePolicy: z.boolean(),
   manageMembers: z.boolean(),
@@ -26,7 +32,9 @@ export const TeamCapabilitiesV1Schema = z.object({
   manageAuthentication: z.boolean(),
   archiveTeam: z.boolean(),
   restoreTeam: z.boolean(),
-}).strict();
+  /** Self-removal is separate from Team administration, including suspended membership. */
+  leave: z.boolean().default(false),
+}).strict());
 
 export type TeamCapabilitiesV1 = z.infer<typeof TeamCapabilitiesV1Schema>;
 
@@ -37,6 +45,7 @@ export type TeamCapabilitiesV1 = z.infer<typeof TeamCapabilitiesV1Schema>;
  */
 export const NO_TEAM_CAPABILITIES_V1: TeamCapabilitiesV1 = Object.freeze({
   viewTeam: false,
+  viewRoster: false,
   manageSettings: false,
   managePolicy: false,
   manageMembers: false,
@@ -46,4 +55,5 @@ export const NO_TEAM_CAPABILITIES_V1: TeamCapabilitiesV1 = Object.freeze({
   manageAuthentication: false,
   archiveTeam: false,
   restoreTeam: false,
+  leave: false,
 });

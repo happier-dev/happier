@@ -158,6 +158,15 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         readOnlyReason: 'before_database',
         reason: SET_BY_RUNTIME,
     },
+    HAPPIER_STACK_SHARED_DB_SOURCE_STACK: {
+        type: 'string',
+        sensitivity: 'plain',
+        apply: 'restart',
+        editable: 'internal',
+        section: 'server',
+        group: 'process',
+        description: 'Source stack of a shared QA database; set by Stack for schema mismatch diagnostics.',
+    },
     HAPPIER_PERSONAL_HOME_RELOCATION_OPERATION_ID: {
         type: 'string',
         sensitivity: 'plain',

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ImageRefSchema } from '../common/imageRef.js';
@@ -17,15 +18,15 @@ import { isTeamPrincipalRoleV1, TeamPolicyV1Schema, TeamRoleV1Schema } from './t
  * projects this so invitation and direct-add screens share one rule and one
  * wording rather than each inferring the guest exception.
  */
-const TeamHistoryChoiceAvailabilityV1Schema = z.enum(['choice', 'hidden']);
+const TeamHistoryChoiceAvailabilityV1Schema = lazyZodSchema(() => z.enum(['choice', 'hidden']));
 
-export const TeamAdmissionProjectionV1Schema = z.object({
+export const TeamAdmissionProjectionV1Schema = lazyZodSchema(() => z.object({
   historyChoice: z.object({
     admin: TeamHistoryChoiceAvailabilityV1Schema,
     member: TeamHistoryChoiceAvailabilityV1Schema,
     guest: TeamHistoryChoiceAvailabilityV1Schema,
   }).strict(),
-}).strict();
+}).strict());
 export type TeamAdmissionProjectionV1 = z.infer<typeof TeamAdmissionProjectionV1Schema>;
 
 /**
@@ -54,14 +55,35 @@ export function resolveTeamAdmissionProjectionV1(): TeamAdmissionProjectionV1 {
  *
  * It carries no `serverId` or `homeId`: one server database is one Home, so the
  * API is already Home-bound and only the multi-Home client qualifies the ID.
- * It also carries no decorative counts — a count is added only when a real UI
- * surface consumes it and its query is bounded.
+ * It carries only the counts a real UI surface consumes (`counts`, the Team
+ * Overview summaries), each answered by one grouped query per page rather than
+ * a count per row.
  *
  * `logo` uses the released shared `ImageRef` output shape. That schema is
  * deliberately not tightened globally here; the Team-logo *mutation input* has
  * its own Team-owned strict schema at the media boundary.
  */
-export const TeamSummaryV1Schema = z.object({
+/**
+ * The Team Overview summary counts, qualified by the viewer's projected
+ * capabilities: the whole object is `null` unless the viewer may read the Team
+ * (`viewTeam`), and `waitingInvitations` is `null` unless the viewer may read
+ * the invitation list (`manageInvitations`). A count is never disclosed to a
+ * viewer the corresponding list would refuse.
+ *
+ * - `members`: every membership (active and suspended), the roster's `all` set.
+ * - `suspendedMembers`: memberships currently suspended.
+ * - `groups`: Groups that are not archived.
+ * - `waitingInvitations`: invitations that are neither accepted, revoked nor expired.
+ */
+export const TeamSummaryCountsV1Schema = lazyZodSchema(() => z.object({
+  members: z.number().int().min(0),
+  suspendedMembers: z.number().int().min(0),
+  groups: z.number().int().min(0),
+  waitingInvitations: z.number().int().min(0).nullable(),
+}).strict());
+export type TeamSummaryCountsV1 = z.infer<typeof TeamSummaryCountsV1Schema>;
+
+export const TeamSummaryV1Schema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
   name: z.string(),
   description: z.string().nullable(),
@@ -75,7 +97,8 @@ export const TeamSummaryV1Schema = z.object({
   viewerRole: TeamRoleV1Schema.nullable(),
   capabilities: TeamCapabilitiesV1Schema,
   admission: TeamAdmissionProjectionV1Schema,
-}).strict();
+  counts: TeamSummaryCountsV1Schema.nullable(),
+}).strict());
 export type TeamSummaryV1 = z.infer<typeof TeamSummaryV1Schema>;
 
 /**
@@ -93,20 +116,20 @@ export type TeamSummaryV1 = z.infer<typeof TeamSummaryV1Schema>;
 export const TEAM_DIRECTORY_PAGE_LIMIT_MAX_V1 = 100;
 export const TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1 = 50;
 
-export const TeamsListInputV1Schema = z.object({
+export const TeamsListInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   scope: z.enum(['member', 'administered']),
   archived: z.enum(['active', 'archived']),
   limit: z.number().int().min(1).max(TEAM_DIRECTORY_PAGE_LIMIT_MAX_V1).optional(),
   cursor: z.string().min(1).nullable().optional(),
-}).strict();
+}).strict());
 export type TeamsListInputV1 = z.infer<typeof TeamsListInputV1Schema>;
 
 /** The repository's public page convention; no generic pagination framework. */
-export const TeamsPageV1Schema = z.object({
+export const TeamsPageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamSummaryV1Schema),
   nextCursor: z.string().nullable(),
-}).strict();
+}).strict());
 export type TeamsPageV1 = z.infer<typeof TeamsPageV1Schema>;
 
 /**

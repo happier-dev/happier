@@ -10,6 +10,7 @@ import { TeamInvitationPostAuthContinuationV1Schema, TeamInvitationPreviewV1Sche
 import { TeamIdentityProviderKindV1Schema } from '../teams/identity/connection.js';
 import { AuthEntryMethodIdV1Schema } from './methodId.js';
 import { NativeAuthOneTimeBearerV1Schema } from './nativeAuthOneTimeOperation.js';
+import { normalizeVerifiedEmail } from './verifiedEmail.js';
 
 export * from './teamAuthenticationPolicy.js';
 export { AuthEntryMethodIdV1Schema } from './methodId.js';
@@ -53,6 +54,8 @@ export const AuthEntryRequestV1Schema = z.union([
     v: z.literal(1),
     scope: HomeAuthEntryScopeV1Schema,
     purpose: z.enum(['home', 'account_service']).optional(),
+    /** Syntax-only company routing hint; never Account identity or admission evidence. */
+    email: z.string().refine((value) => normalizeVerifiedEmail(value) !== null).optional(),
   }).strict(),
   z.object({
     v: z.literal(1),

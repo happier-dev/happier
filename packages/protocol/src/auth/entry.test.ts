@@ -84,6 +84,18 @@ describe('auth entry protocol v1', () => {
     }).success).toBe(false);
   });
 
+  it('accepts a syntax-normalized email routing hint only for Home entry', () => {
+    expect(AuthEntryRequestV1Schema.safeParse({
+      v: 1, scope: { kind: 'home' }, email: 'Person@Acme.Example',
+    }).success).toBe(true);
+    expect(AuthEntryRequestV1Schema.safeParse({
+      v: 1, scope: { kind: 'home' }, email: 'not-a-mailbox',
+    }).success).toBe(false);
+    expect(AuthEntryRequestV1Schema.safeParse({
+      v: 1, scope: { kind: 'team', teamId: 'team_1' }, email: 'person@acme.example',
+    }).success).toBe(false);
+  });
+
   it('accepts a strict immutable-Team request and keeps unavailable targets non-enumerating', () => {
     expect(AuthEntryRequestV1Schema.parse({
       v: 1,

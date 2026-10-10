@@ -197,11 +197,25 @@ describe('Team summary projection', () => {
     viewerRole: 'owner' as const,
     capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true },
     admission: { historyChoice: { admin: 'choice' as const, member: 'choice' as const, guest: 'hidden' as const } },
+    counts: { members: 3, suspendedMembers: 1, groups: 2, waitingInvitations: null },
   };
 
   it('round-trips and rejects undeclared fields', () => {
     expect(TeamSummaryV1Schema.parse(summary)).toEqual(summary);
     expect(TeamSummaryV1Schema.safeParse({ ...summary, memberCount: 12 }).success).toBe(false);
+  });
+
+  it('carries viewer-qualified Overview counts as a closed object', () => {
+    expect(TeamSummaryV1Schema.parse({ ...summary, counts: null }).counts).toBeNull();
+    expect(TeamSummaryV1Schema.safeParse({ ...summary, counts: undefined }).success).toBe(false);
+    expect(TeamSummaryV1Schema.safeParse({
+      ...summary,
+      counts: { ...summary.counts, sessions: 4 },
+    }).success).toBe(false);
+    expect(TeamSummaryV1Schema.safeParse({
+      ...summary,
+      counts: { ...summary.counts, members: -1 },
+    }).success).toBe(false);
   });
 
   it('carries no Home or server identity, which the client qualifies separately', () => {

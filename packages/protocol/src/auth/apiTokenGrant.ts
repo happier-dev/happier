@@ -220,7 +220,7 @@ export function isOriginAllowedByApiTokenGrantV1(grant: ApiTokenGrantV1, origin:
 }
 export function resolveApiTokenSessionCapabilityCeilingV1(grant: ApiTokenGrantV1): ReadonlySet<SocketRpcSessionWriteAuthorityV1> {
   const capabilities = new Set<SocketRpcSessionWriteAuthorityV1>(['readTranscript']);
-  if (actionGranted(grant, 'session.message.send')) capabilities.add('submitAgentInput');
+  if (actionGranted(grant, 'session.message.send') || actionGranted(grant, 'session.turn.cancel')) capabilities.add('submitAgentInput');
   if (actionGranted(grant, 'session.stop')) capabilities.add('stopSession');
   if (actionGranted(grant, 'session.archive')) capabilities.add('archiveSession');
   if (grant.approve) capabilities.add('approveRuntimePermissions');
