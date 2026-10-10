@@ -5,8 +5,10 @@ import { afterTx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import type { Tx } from "@/storage/inTx";
 import type { MachineReplacementSource } from "./validateMachineReplacement";
-import { readMachineAccessKeySessionIdsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
+import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { catchUpAutomationRunLifecycleSourcesForRestoredMachineTx } from "@/app/automations/automationRunLifecycleAdmission";
+import { readMachineDevcontainerChildInTx } from './managed/managedRows';
+import { resolveMachineAccessInTx } from './machineAccess';
 
 export type ApplyMachineReplacementParams = Readonly<{
     tx: Tx;
@@ -30,7 +32,7 @@ export class MachineReplacementWriteConflictError extends Error {
 
 export async function applyMachineReplacement(params: ApplyMachineReplacementParams): Promise<void> {
     const replacedAt = params.replacedAt ?? new Date();
-    const invalidatedSessionIds = await readMachineAccessKeySessionIdsInTx(params.tx, {
+    const invalidatedSessionBindings = await readMachineAccessKeySessionBindingsInTx(params.tx, {
         accountId: params.accountId,
         machineId: params.oldMachineId,
     });
@@ -89,7 +91,7 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
         eventRouter.disconnectMachineAndSessionSockets({
             accountId: params.accountId,
             machineId: params.oldMachineId,
-            sessionIds: invalidatedSessionIds,
+            sessionBindings: invalidatedSessionBindings,
         });
         eventRouter.emitUpdate({
             userId: params.accountId,
@@ -101,6 +103,7 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
                 undefined,
                 {
                     active: false,
+                    devcontainerChild: null,
                     replacedByMachineId: params.replacementMachineId,
                     replacedAt: replacedAt.getTime(),
                     replacementReason: params.reason,
@@ -130,6 +133,9 @@ export async function clearMachineReplacement(params: Readonly<{
     });
 
     await catchUpAutomationRunLifecycleSourcesForRestoredMachineTx(params.tx, params.accountId, params.oldMachineId);
+    const child = await readMachineDevcontainerChildInTx(params.tx, params.oldMachineId);
+    const access = await resolveMachineAccessInTx(params.tx, { actorAccountId: params.accountId, machineId: params.oldMachineId });
+    const devcontainerChild = access?.accessState === 'ready' ? child : null;
 
     const cursor = await markAccountChanged(params.tx, {
         accountId: params.accountId,
@@ -149,6 +155,7 @@ export async function clearMachineReplacement(params: Readonly<{
                 undefined,
                 {
                     replacedByMachineId: null,
+                    devcontainerChild,
                     replacedAt: null,
                     replacementReason: null,
                     replacementSource: null,

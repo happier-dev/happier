@@ -29,6 +29,11 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { registerSavedSecretResourceRoutes } from "./registerSavedSecretResourceRoutes";
+import { registerAccountEncryptionRoutes } from "./registerAccountEncryptionRoutes";
+import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
+import { registerAccountSettingsHistoryRoutes } from "./registerAccountSettingsHistoryRoutes";
+import { registerConnectedAccountConfigurationRowsRoutes } from "@/app/account/connectedAccounts/registerConfigurationRowsRoutes";
+import { readProfileReferenceGuardInTx } from '@/app/account/profiles/profileRows';
 import type { FastifyRequest } from "fastify";
 
 async function importCliTestModule<T>(specifier: string): Promise<T> {
@@ -437,6 +442,10 @@ describe("Saved Secret material route (SQLite integration)", () => {
             request.headers["x-test-user-id"] = owner.id;
         });
         registerSavedSecretResourceRoutes(app);
+        registerAccountEncryptionRoutes(app);
+        registerAccountSettingsRoutes(app);
+        registerAccountSettingsHistoryRoutes(app);
+        registerConnectedAccountConfigurationRowsRoutes(app);
         await app.listen({ host: "127.0.0.1", port: 0 });
 
         const activeSnapshot = await importCliTestModule<{
@@ -462,6 +471,12 @@ describe("Saved Secret material route (SQLite integration)", () => {
                     serverFeatures: FeaturesResponse | null;
                 }>): Promise<void>;
             }>("../../../../../../cli/src/settings/secrets/hydrateSavedSecretCatalog");
+            const { refreshActiveConnectedAccountCatalog } = await importCliTestModule<{
+                refreshActiveConnectedAccountCatalog(input: Readonly<{
+                    credentials: Readonly<{ token: string; encryption: null }>;
+                    key: "purposes";
+                }>): Promise<unknown>;
+            }>("../../../../../../cli/src/settings/connectedAccounts/hydrateConnectedAccountCatalog");
 
             activeSnapshot.setActiveAccountSettingsSnapshot({
                 source: "network",
@@ -472,6 +487,17 @@ describe("Saved Secret material route (SQLite integration)", () => {
                 settings: promotedSettings,
             });
             await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, async () => {
+                // Voice source selection needs the opened purpose authority, not
+                // an assumed empty facet. The canonical owner admits absence
+                // from Home settings, creates the row, and re-reads it over HTTP.
+                await expect(refreshActiveConnectedAccountCatalog({
+                    credentials: { token, encryption: null },
+                    key: "purposes",
+                })).resolves.toMatchObject({
+                    status: "ready",
+                    record: { key: "purposes" },
+                    revision: expect.any(Number),
+                });
                 await hydrateSavedSecretCatalog({
                     token,
                     // The catalog is Teams-gated at its own owner; the harness runs
@@ -713,11 +739,17 @@ describe("Saved Secret material route (SQLite integration)", () => {
 
             // The same request without that evidence still fails closed and
             // writes nothing.
+            const currentAccount = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { settingsVersion: true } });
+            const currentGuard = await inTx(tx => readProfileReferenceGuardInTx(tx, { accountId: owner.id }));
+            if (currentGuard.status !== 'ready') throw new Error('Expected a current reference census');
+            const unqualifiedBody = body("resource_promote_unqualified");
             const unqualified = await app.inject({
                 method: "POST",
                 url,
                 headers: { "x-test-user-id": owner.id },
-                payload: { ...body("resource_promote_unqualified"), expectedSettingsVersion: 2 },
+                payload: { ...unqualifiedBody, expectedSettingsVersion: currentAccount.settingsVersion,
+                    referenceCensus: { ...unqualifiedBody.referenceCensus,
+                        profiles: { ...unqualifiedBody.referenceCensus.profiles, referenceGuardRevision: currentGuard.revision } } },
             });
             expect({ status: unqualified.statusCode, body: unqualified.json() }).toEqual({
                 status: 403,

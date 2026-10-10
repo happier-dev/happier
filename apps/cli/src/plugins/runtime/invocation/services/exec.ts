@@ -1,4 +1,6 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { realpath } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, ProtocolClientsService } from '@happier-dev/plugin-sdk/exec/protocol-clients';
@@ -34,6 +36,32 @@ import {
 } from './filesystem';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
+import type { ProjectNativeEnvironmentInput, ProjectNativeEnvironmentIo, ProjectNativePluginAdapterInput } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import type { ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
+
+/** Prepared by the host Project owner, never accepted from an SDK Exec request. */
+export type HostProjectNativeLaunchAdmission =
+    | Readonly<{
+        status: 'ready';
+        reviewedEffectDigest: string;
+        environment: Omit<ProjectNativeEnvironmentInput, 'cwd' | 'env' | 'signal' | 'pluginAdapter'>;
+        nativeAdapter?: Omit<ProjectNativePluginAdapterInput, 'launch'>;
+        secretReferences?: ProjectSecretReferenceEnvironmentInput;
+    }>
+    | Readonly<{
+        status: 'refused';
+        kind: 'unavailable' | 'unsupported' | 'binding_unavailable' | 'approval_pending'
+            | 'effect_changed' | 'native_failed' | 'cancelled' | 'child_required';
+        code: string;
+        operationId?: string;
+    }>;
+
+export type HostPluginExecLaunchOptions = Readonly<{
+    signal?: AbortSignal;
+    projectLaunch?: HostProjectNativeLaunchAdmission;
+    /** The selected native adapter's invocation, not the original Agent's. */
+    nativeExecutableOwner?: ExecService;
+}>;
 
 export type ResolvedPluginExecutable = Readonly<{
     command: string;
@@ -49,21 +77,37 @@ const INTERNAL_PREAUTHORIZED_SPAWNS = new WeakMap<
 >();
 
 /**
- * Host-internal native-custody installs, keyed by the exact spawn request.
- * When present for a request, `launchProcess` starts the custody helper as the
- * command and passes the authorized target launch through it, so the helper
+ * Host-internal custody installs, keyed by the exact spawn request. A shared
+ * daemon's lifetime transfers before resolution; ordinary invocation ownership
+ * remains unchanged. When native custody is present, `launchProcess` starts
+ * its helper as the command and passes the authorized target launch through it, so the helper
  * establishes the job containment before the target's first instruction while
  * command/args/cwd/env and stdio stay exactly the authorized ones.
  */
+type ManagedPluginExecLifetimeForHost = Readonly<{
+    signal: AbortSignal;
+    isOccurrenceCurrent(): boolean;
+    resolveManagedExecutable?(
+        executable: ManagedExecutableRef,
+        isOccurrenceCurrent: () => boolean,
+    ): Promise<ResolvedPluginExecutable>;
+}>;
+
+type ManagedPluginExecCustodyForHost = Readonly<{
+    processCustody: ProcessCustodySpawnSpec | null;
+    lifetime?: ManagedPluginExecLifetimeForHost;
+}>;
+
 const INTERNAL_MANAGED_PROCESS_CUSTODY = new WeakMap<
     object,
-    WeakMap<object, ProcessCustodySpawnSpec>
+    WeakMap<object, ManagedPluginExecCustodyForHost>
 >();
 
 export function installManagedProcessCustodyForHost(
     service: Pick<ExecService, 'spawn' | 'run'>,
     request: Parameters<ExecService['spawn']>[0],
-    custody: ProcessCustodySpawnSpec,
+    processCustody: ProcessCustodySpawnSpec | null,
+    lifetime?: ManagedPluginExecLifetimeForHost,
 ): Readonly<{ dispose(): void }> {
     let authorizations = INTERNAL_MANAGED_PROCESS_CUSTODY.get(service);
     if (!authorizations) {
@@ -76,6 +120,10 @@ export function installManagedProcessCustodyForHost(
             'Process custody is already installed for this exact spawn request',
         );
     }
+    const custody: ManagedPluginExecCustodyForHost = Object.freeze({
+        processCustody,
+        ...(lifetime ? { lifetime } : {}),
+    });
     authorizations.set(request, custody);
     return Object.freeze({
         dispose() {
@@ -89,7 +137,7 @@ export function installManagedProcessCustodyForHost(
 function readInstalledManagedProcessCustody(
     service: ExecService,
     request: Parameters<ExecService['spawn']>[0],
-): ProcessCustodySpawnSpec | null {
+): ManagedPluginExecCustodyForHost | null {
     const custody = INTERNAL_MANAGED_PROCESS_CUSTODY.get(service)?.get(request) ?? null;
     if (custody) {
         // Custody installs are single-use: they govern exactly one spawn.
@@ -144,13 +192,61 @@ export type HostAuthorizedPluginExecLaunch = Readonly<{
     maxStdoutBytes?: number;
     maxStderrBytes?: number;
     windowsVerbatimArguments?: boolean;
-    release(): void;
+    release(): void | Promise<void>;
 }>;
+
+/** Dispatches the final authorized tuple through the incumbent OS/process owner. */
+export function spawnAuthorizedHostExecLaunchForHost(
+    launch: HostAuthorizedPluginExecLaunch,
+    options: Readonly<{
+        signal?: AbortSignal;
+        processCustody?: ProcessCustodySpawnSpec;
+        recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
+        /** Transfer the final capture to the existing service's physical-settlement cleanup. */
+        retainLaunch?: (release: HostAuthorizedPluginExecLaunch['release']) => void;
+    }> = {},
+): SupervisedPluginProcess {
+    const custody = options.processCustody;
+    let supervised: SupervisedPluginProcess;
+    // The service cleanup must retain even a no-launch capture: native
+    // preparation may already own resources when the final spawn fails.
+    options.retainLaunch?.(launch.release);
+    try {
+        supervised = spawnSupervisedPluginProcess({
+            command: custody ? custody.executablePath : launch.command,
+            args: custody ? [
+                'run', `--job=${custody.jobName}`, `--handshake=${custody.handshakePath}`,
+                ...(launch.windowsVerbatimArguments ? ['--target-windows-verbatim'] : []),
+                '--', launch.command, ...launch.args,
+            ] : launch.args,
+            ...(launch.cwd ? { cwd: launch.cwd } : {}),
+            env: launch.env,
+            ...(launch.stdin ? { stdin: launch.stdin } : {}),
+            ...(launch.timeoutMs === undefined ? {} : { timeoutMs: launch.timeoutMs }),
+            ...(launch.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: launch.maxStdoutBytes }),
+            ...(launch.maxStderrBytes === undefined ? {} : { maxStderrBytes: launch.maxStderrBytes }),
+            signals: options.signal ? [options.signal] : [],
+            ...(custody ? { processCustody: custody } : {}),
+            spawnOptions: {
+                detached: process.platform !== 'win32',
+                ...(custody ? {} : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
+            },
+            ...(options.recordRuntimeLimitMeasurement
+                ? { recordRuntimeLimitMeasurement: options.recordRuntimeLimitMeasurement }
+                : {}),
+        });
+    } catch (error) {
+        if (!options.retainLaunch) void launch.release();
+        return fail('plugin_exec_spawn_failed', 'Process could not be started', error);
+    }
+    if (!options.retainLaunch) void supervised.waitForSettlement().then(() => launch.release());
+    return supervised;
+}
 
 export type PluginExecDisclosureMismatch =
     | Readonly<{ capability: 'process'; executable: ManagedExecutableRef }>
     | Readonly<{ capability: 'environment'; keys: readonly string[] }>
-    | Readonly<{ capability: 'filesystem'; path: PluginPath; access: 'read' }>;
+    | Readonly<{ capability: 'filesystem'; path: PluginPath | string; access: 'read' }>;
 
 const INTERNAL_LAUNCH_AUTHORIZERS = new WeakMap<
     ExecService,
@@ -158,14 +254,32 @@ const INTERNAL_LAUNCH_AUTHORIZERS = new WeakMap<
         request: Parameters<ExecService['spawn']>[0]
             & Readonly<{ timeoutMs?: number }>,
         options?: Readonly<{ signal?: AbortSignal }>,
+        projectLaunch?: HostProjectNativeLaunchAdmission,
+        nativeExecutableOwner?: ExecService,
     ) => Promise<HostAuthorizedPluginExecLaunch>
 >();
+
+export type PluginExecProcessCustodyForHost = Readonly<{
+    requestStop(): Promise<void>;
+    waitForSettlement(): Promise<void>;
+    onOutcomeUncertain(listener: (error: unknown) => void): () => void;
+    hasUnsettledProcesses(): boolean;
+}>;
+
+// Host-only lookup for the resources already owned by this exact Exec service.
+const INTERNAL_PROCESS_CUSTODY = new WeakMap<ExecService, PluginExecProcessCustodyForHost>();
+
+export function readPluginExecProcessCustodyForHost(service: ExecService): PluginExecProcessCustodyForHost {
+    const custody = INTERNAL_PROCESS_CUSTODY.get(service);
+    if (!custody) return fail('plugin_exec_process_custody_unavailable', 'Native process custody is unavailable in this invocation host');
+    return custody;
+}
 
 export async function authorizePluginExecLaunchForHost(
     service: ExecService,
     request: Parameters<ExecService['spawn']>[0]
         & Readonly<{ timeoutMs?: number }>,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: HostPluginExecLaunchOptions,
 ): Promise<HostAuthorizedPluginExecLaunch> {
     const authorize = INTERNAL_LAUNCH_AUTHORIZERS.get(service);
     if (!authorize) {
@@ -174,7 +288,9 @@ export async function authorizePluginExecLaunchForHost(
             'Exact process launch authorization is unavailable in this invocation host',
         );
     }
-    return await authorize(request, options);
+    // Only this host entry point supplies the third argument. Extra properties
+    // on public run/spawn options cannot opt a plugin into Project effects.
+    return await authorize(request, options, options?.projectLaunch, options?.nativeExecutableOwner);
 }
 
 export function createStableRunnerPluginExecService(
@@ -328,6 +444,315 @@ export function resolveStablePluginExecInvocation(input: Readonly<{
     return resolveWindowsCommandInvocation(input);
 }
 
+type ResolvedHostExecLaunch = Omit<HostAuthorizedPluginExecLaunch, 'windowsVerbatimArguments' | 'release'>
+    & Readonly<{ release?: () => void }>;
+
+function validateExecLaunchInput(input: Readonly<{
+    maxStdoutBytes?: number; maxStderrBytes?: number; timeoutMs?: number; stdin?: Uint8Array; cwd?: unknown;
+}>): void {
+    if (typeof input.cwd === 'string' && (!isAbsolute(input.cwd) || input.cwd.includes('\u0000'))) {
+        fail('plugin_exec_invalid_cwd', 'Process working directory must be an absolute path without NUL');
+    }
+    for (const [field, value] of [
+        ['maxStdoutBytes', input.maxStdoutBytes],
+        ['maxStderrBytes', input.maxStderrBytes],
+        ['timeoutMs', input.timeoutMs],
+    ] as const) {
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+            fail('plugin_exec_invalid_limit', `${field} must be a non-negative safe integer`);
+        }
+    }
+    if (input.stdin !== undefined && !(input.stdin instanceof Uint8Array)) {
+        fail('plugin_exec_invalid_input', 'Process stdin must be binary data');
+    }
+}
+
+function assertAllowedExecArguments(resolved: ResolvedPluginExecutable, args: readonly string[]): void {
+    const allowedArguments = resolved.allowedArguments;
+    if (allowedArguments !== undefined && args.some(argument => !allowedArguments.includes(argument))) {
+        fail('plugin_exec_argument_denied', 'Process argument is not authorized for this system tool');
+    }
+}
+
+async function resolveNativeExecutableForHost(
+    service: ExecService,
+    executable: ManagedExecutableRef,
+    signal: AbortSignal,
+): Promise<ResolvedPluginExecutable> {
+    const resolveExecutable = INTERNAL_EXECUTABLE_RESOLVERS.get(service);
+    if (!resolveExecutable) fail('native_adapter_invocation_unavailable', 'Native wrapper executable resolution is unavailable');
+    return await resolveExecutable(executable, { signal });
+}
+
+type HostProjectEnvironmentInput = Readonly<{
+    cwd: string;
+    env: Readonly<Record<string, string>>;
+    projectLaunch: HostProjectNativeLaunchAdmission;
+    signal: AbortSignal;
+    assertCurrent(): void;
+}>;
+
+async function produceHostProjectEnvironment(input: HostProjectEnvironmentInput,
+    launch?: Readonly<{ command: string; args: readonly string[] }>) {
+    const assertCurrent = () => {
+        if (input.signal.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+        input.assertCurrent();
+        if (input.projectLaunch.status === 'ready' && input.projectLaunch.nativeAdapter
+            && !input.projectLaunch.nativeAdapter.lease.isCurrent()) {
+            fail('native_adapter_retired', 'Project native adapter was retired');
+        }
+    };
+    assertCurrent();
+    const admitted = input.projectLaunch;
+    if (admitted.status === 'refused') fail(admitted.code, 'Project launch preparation was not admitted');
+    if (!input.cwd || !admitted.reviewedEffectDigest) {
+        fail('project_launch_preparation_unavailable', 'Project launch requires its admitted root and reviewed effect');
+    }
+    const { produceProjectNativeEnvironment } = await import('@/workspaces/environment/produceProjectNativeEnvironment');
+    const native = await produceProjectNativeEnvironment({
+        ...admitted.environment, cwd: input.cwd, env: input.env, signal: input.signal,
+        ...(admitted.nativeAdapter ? { pluginAdapter: { ...admitted.nativeAdapter,
+            ...(launch ? { launch } : {}),
+        } } : {}),
+    });
+    assertCurrent();
+    if (native.status === 'refused') fail(native.code, 'Project native environment production was refused');
+    // Complete replacement preserves native removals. Only exact bindings may
+    // overlay it; no consumer can accidentally merge inherited values back.
+    let environment = native.env;
+    if (admitted.secretReferences) {
+        const { resolveProjectSecretReferenceEnvironment } = await import('@/settings/secrets/secretReferenceOverlay');
+        environment = { ...environment, ...resolveProjectSecretReferenceEnvironment(admitted.secretReferences) };
+    }
+    assertCurrent();
+    return { ...native, env: Object.freeze({ ...environment }) };
+}
+
+/** Environment-only preparation uses the same owner without a dummy process. */
+export async function produceProjectLaunchEnvironmentForHost(input: HostProjectEnvironmentInput): Promise<Readonly<Record<string, string>>> {
+    const native = await produceHostProjectEnvironment(input);
+    if (native.nativeLaunch) fail('native_environment_launch_required', 'This native adapter requires an admitted command');
+    return native.env;
+}
+
+/** The one final tuple producer, after the caller's executable/effect admission. */
+async function finalizeHostExecLaunch(input: Readonly<{
+    launch: ResolvedHostExecLaunch;
+    projectLaunch?: HostProjectNativeLaunchAdmission;
+    resolveNativeExecutable?: (executable: ManagedExecutableRef, signal: AbortSignal) => Promise<ResolvedPluginExecutable>;
+    signal: AbortSignal;
+    assertCurrent(): void;
+}>): Promise<HostAuthorizedPluginExecLaunch> {
+    let released = false;
+    let nativeExecutable: ResolvedPluginExecutable | undefined;
+    const release = () => {
+        if (released) return;
+        released = true;
+        try { nativeExecutable?.release?.(); }
+        finally { input.launch.release?.(); }
+    };
+    const assertCurrent = () => {
+        input.assertCurrent();
+        if (input.projectLaunch?.status === 'ready' && input.projectLaunch.nativeAdapter
+            && !input.projectLaunch.nativeAdapter.lease.isCurrent()) {
+            fail('native_adapter_retired', 'Project native adapter was retired');
+        }
+    };
+    try {
+        assertCurrent();
+        if (input.projectLaunch?.status === 'refused') {
+            fail(input.projectLaunch.code, 'Project launch preparation was not admitted');
+        }
+        validateExecLaunchInput(input.launch);
+        let environment = input.launch.env;
+        let command = input.launch.command;
+        let args = input.launch.args;
+        let cwd = input.launch.cwd;
+        if (input.projectLaunch?.status === 'ready') {
+            const native = await produceHostProjectEnvironment({
+                cwd: cwd ?? '', env: environment, projectLaunch: input.projectLaunch,
+                signal: input.signal, assertCurrent,
+            }, { command, args });
+            assertCurrent();
+            environment = native.env;
+            if (native.nativeLaunch) {
+                if (!input.resolveNativeExecutable) fail('native_adapter_invocation_unavailable', 'Native wrapper executable resolution is unavailable');
+                nativeExecutable = await input.resolveNativeExecutable(native.nativeLaunch.executable, input.signal);
+                assertCurrent();
+                assertAllowedExecArguments(nativeExecutable, native.nativeLaunch.args);
+                command = nativeExecutable.command;
+                args = [...(nativeExecutable.args ?? []), ...native.nativeLaunch.args];
+                cwd = native.nativeLaunch.cwd;
+                // The adapter's complete environment is authoritative; a
+                // resolver overlay must not revive values it removed.
+            }
+            assertCurrent();
+        }
+        const invocation = resolveStablePluginExecInvocation({
+            command, args, env: environment,
+        });
+        return Object.freeze({
+            ...input.launch,
+            command: invocation.command,
+            args: Object.freeze([...invocation.args]),
+            env: Object.freeze({ ...environment }),
+            ...(cwd === undefined ? {} : { cwd }),
+            ...(input.launch.stdin ? { stdin: new Uint8Array(input.launch.stdin) } : {}),
+            ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+            release,
+        });
+    } catch (error) {
+        release();
+        throw error;
+    }
+}
+
+/** Host-only entry for B1/B9's resolved built-in/literal Project commands.
+ * SDK requests still resolve their declared executable through ExecService. */
+export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<{
+    launch: ResolvedHostExecLaunch;
+    projectLaunch: HostProjectNativeLaunchAdmission;
+    nativeExecutableOwner?: ExecService;
+    signal: AbortSignal;
+    assertCurrent(): void;
+}>): Promise<HostAuthorizedPluginExecLaunch> {
+    const nativeExecutableOwner = input.nativeExecutableOwner;
+    return await finalizeHostExecLaunch({
+        ...input,
+        ...(nativeExecutableOwner ? {
+            resolveNativeExecutable: (executable: ManagedExecutableRef, signal: AbortSignal) =>
+                resolveNativeExecutableForHost(nativeExecutableOwner, executable, signal),
+        } : {}),
+        assertCurrent() {
+            if (input.signal.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+            input.assertCurrent();
+        },
+    });
+}
+
+/** Native-effect IO over the incumbent supervisor and process-tree owner.
+ * Tool resolution stays with the admitted managed/system-tool invocation. */
+export type ProjectNativeEffectCaptureForHost = Readonly<{
+    requestStop(): Promise<void>;
+    waitForSettlement(): Promise<void>;
+    onOutcomeUncertain(listener: (error: unknown) => void): () => void;
+    release(): Promise<void>;
+}>;
+
+export type ProjectNativeEnvironmentIoForHost = ProjectNativeEnvironmentIo & Readonly<{
+    createInvocation(input: Readonly<{
+        signal: AbortSignal;
+        retainCapture(capture: ProjectNativeEffectCaptureForHost): void;
+    }>): ProjectNativeEnvironmentIo;
+}>;
+
+/** One invocation's physical resources, shared by SDK Exec and built-in effects. */
+function createNativeProcessCustodyForHost() {
+    const resources = new Set<SupervisedPluginProcess>();
+    const observers = new Set<(error: unknown) => void>();
+    let uncertain: unknown;
+    let stopRequested = false;
+    const custody: PluginExecProcessCustodyForHost = Object.freeze({
+        async requestStop() {
+            stopRequested = true;
+            await Promise.all([...resources].map(resource => resource.dispose('caller')));
+        },
+        async waitForSettlement() { await Promise.all([...resources].map(resource => resource.waitForSettlement())); },
+        hasUnsettledProcesses: () => resources.size > 0,
+        onOutcomeUncertain(listener) {
+            observers.add(listener);
+            if (uncertain !== undefined) {
+                try { listener(uncertain); } catch { /* Observers do not own process custody. */ }
+            }
+            return () => { observers.delete(listener); };
+        },
+    });
+    return {
+        custody,
+        assertOpen() { if (stopRequested) fail('plugin_exec_aborted', 'Process operation was aborted'); },
+        retain(supervised: SupervisedPluginProcess) {
+            resources.add(supervised);
+            const unsubscribe = supervised.onOutcomeUncertain(error => {
+                uncertain = error;
+                for (const listener of [...observers]) {
+                    try { listener(error); } catch { /* Observers do not own process custody. */ }
+                }
+            });
+            void supervised.waitForSettlement().then(() => {
+                resources.delete(supervised);
+                unsubscribe();
+                if (resources.size === 0) uncertain = undefined;
+            });
+        },
+    };
+}
+
+export function createProjectNativeEnvironmentIoForHost(input: Readonly<{
+    resolveTool(tool: string, signal: AbortSignal | undefined, scopedIo: ProjectNativeEnvironmentIo): ReturnType<ProjectNativeEnvironmentIo['resolveTool']>;
+}>): ProjectNativeEnvironmentIoForHost {
+    const create = (invocation?: Parameters<ProjectNativeEnvironmentIoForHost['createInvocation']>[0]): ProjectNativeEnvironmentIoForHost => {
+        const { custody, retain, assertOpen } = createNativeProcessCustodyForHost();
+        const capture: ProjectNativeEffectCaptureForHost = Object.freeze({
+            requestStop: custody.requestStop,
+            waitForSettlement: custody.waitForSettlement,
+            onOutcomeUncertain: custody.onOutcomeUncertain,
+            async release() {
+                await custody.requestStop();
+                await custody.waitForSettlement();
+            },
+        });
+        invocation?.retainCapture(capture);
+        const io: ProjectNativeEnvironmentIoForHost = Object.freeze({
+            resolveTool: (tool, signal) => input.resolveTool(tool, signal, io),
+            createInvocation: create,
+            async run(request: Parameters<ProjectNativeEnvironmentIo['run']>[0]) {
+                const signal = invocation ? request.signal ? AbortSignal.any([invocation.signal, request.signal]) : invocation.signal : request.signal;
+                assertOpen();
+                if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+                const supervised = spawnSupervisedPluginProcess({
+                    ...request,
+                    signals: signal ? [signal] : [],
+                    // The incumbent supervisor can prove this owned containment
+                    // even after the launcher exits and reparents native children.
+                    // Escaped-descendant cancellation remains covered separately.
+                    spawnOptions: { detached: process.platform !== 'win32' },
+                });
+                retain(supervised);
+                const settle = async () => {
+                    try { await supervised.dispose(); }
+                    catch (error) {
+                        if (!invocation || !isPluginError(error) || error.code !== 'plugin_exec_termination_incomplete') throw error;
+                        await supervised.waitForSettlement();
+                    }
+                };
+                try {
+                    const result = await supervised.handle.wait();
+                    // Root exit alone is not completed requested tree cleanup.
+                    await settle();
+                    if (signal?.aborted || result.termination.requestedBy.kind === 'abort') {
+                        fail('plugin_exec_aborted', 'Process operation was aborted');
+                    }
+                    if (result.termination.observed.kind === 'failed') {
+                        fail('project_native_environment_process_failed', 'Native environment process failed');
+                    }
+                    if (result.stdoutTruncated) {
+                        fail('project_native_environment_output_incomplete', 'Native environment output was incomplete');
+                    }
+                    return Object.freeze({
+                        exitCode: result.termination.observed.kind === 'exit' ? result.termination.observed.exitCode : 1,
+                        stdout: Buffer.from(result.stdout).toString('utf8'),
+                        stderr: Buffer.from(result.stderr).toString('utf8'),
+                    });
+                } finally {
+                    await settle();
+                }
+            },
+        });
+        return io;
+    };
+    return create();
+}
+
 function executableKey(executable: ManagedExecutableRef): string {
     if (executable.kind === 'packaged-runtime-binary') {
         return `${executable.kind}:${JSON.stringify(executable.directorySegments)}:${JSON.stringify(executable.executableBaseName)}`;
@@ -384,6 +809,13 @@ export function createStablePluginExecService(params: Readonly<{
     signal: AbortSignal;
     isOccurrenceCurrent(): boolean;
     resolveExecutable(executable: ManagedExecutableRef): Promise<ResolvedPluginExecutable>;
+    /** Host-only physical owner admission, independent of one consumer invocation. */
+    resolveManagedExecutable?(
+        executable: ManagedExecutableRef,
+        isOccurrenceCurrent: () => boolean,
+    ): Promise<ResolvedPluginExecutable>;
+    observeProcessOutput?: (output: import('@happier-dev/plugin-sdk/exec').PluginProcessOutput) => void;
+    invocationTimeoutMs?: number | null;
     resolvePath(path: PluginPath): Promise<string>;
     agentCli?: PluginAgentCliReadinessService;
     systemTools?: ExecSystemToolServiceV1;
@@ -398,6 +830,7 @@ export function createStablePluginExecService(params: Readonly<{
     recordDisclosureMismatch?(mismatch: PluginExecDisclosureMismatch): void;
     recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
 }>): ExecService {
+    const { custody, retain, assertOpen } = createNativeProcessCustodyForHost();
     const allowedExecutables = new Set(params.allowedExecutables.map(executableKey));
     const preResolvedSystemTools = new WeakMap<object, Readonly<{
         launch: ResolvedPluginExecutable;
@@ -410,11 +843,12 @@ export function createStablePluginExecService(params: Readonly<{
         Object.entries(params.environment ?? {}).filter(([key]) => allowedEnvKeys.has(key)),
     ));
 
-    function guard(signal?: AbortSignal): void {
-        if (!params.isOccurrenceCurrent()) {
+    function guard(signal?: AbortSignal, lifetime?: ManagedPluginExecLifetimeForHost): void {
+        if (!(lifetime ? lifetime.isOccurrenceCurrent() : params.isOccurrenceCurrent())) {
             fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
         }
-        if (params.signal.aborted || signal?.aborted) {
+        if (!lifetime) assertOpen();
+        if ((lifetime?.signal ?? params.signal).aborted || signal?.aborted) {
             fail('plugin_exec_aborted', 'Process operation was aborted');
         }
     }
@@ -501,36 +935,33 @@ export function createStablePluginExecService(params: Readonly<{
         },
     });
 
-    function validateOptionalByteLimit(value: number | undefined, field: string): void {
-        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
-            fail('plugin_exec_invalid_limit', `${field} must be a non-negative safe integer`);
-        }
-    }
-
-    function validateSpawnRequest(request: Parameters<ExecService['spawn']>[0] & { timeoutMs?: number }): void {
-        validateOptionalByteLimit(request.maxStdoutBytes, 'maxStdoutBytes');
-        validateOptionalByteLimit(request.maxStderrBytes, 'maxStderrBytes');
-        if (request.timeoutMs !== undefined && (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 0)) {
-            fail('plugin_exec_invalid_limit', 'timeoutMs must be a non-negative safe integer');
-        }
-        if (request.stdin !== undefined && !(request.stdin instanceof Uint8Array)) {
-            fail('plugin_exec_invalid_input', 'Process stdin must be binary data');
-        }
-    }
-
     async function authorizeLaunch(
         request: Parameters<ExecService['spawn']>[0] & Readonly<{ timeoutMs?: number }>,
         options?: { signal?: AbortSignal },
+        projectLaunch?: HostProjectNativeLaunchAdmission,
+        nativeExecutableOwner?: ExecService,
+        lifetime?: ManagedPluginExecLifetimeForHost,
     ): Promise<HostAuthorizedPluginExecLaunch> {
-        guard(options?.signal);
-        validateSpawnRequest(request);
+        const assertCurrent = () => guard(options?.signal, lifetime);
+        const resolveManagedExecutable = lifetime?.resolveManagedExecutable ?? params.resolveManagedExecutable;
+        assertCurrent();
+        if (lifetime && (!resolveManagedExecutable || params.authorizeLaunch)) {
+            return fail('plugin_exec_managed_launch_authorization_unavailable', 'Physical process launch authorization is unavailable');
+        }
+        validateExecLaunchInput(request);
+        if (projectLaunch?.status === 'refused') {
+            return fail(projectLaunch.code, 'Project launch preparation was not admitted');
+        }
         if (params.authorizeLaunch) {
+            if (projectLaunch) {
+                return fail('plugin_project_launch_admission_unavailable', 'Project effects must be produced by the target host');
+            }
             const launch = await params.authorizeLaunch(
                 request,
                 options,
             );
             try {
-                guard(options?.signal);
+                assertCurrent();
                 return launch;
             } catch (error) {
                 launch.release();
@@ -544,7 +975,14 @@ export function createStablePluginExecService(params: Readonly<{
         diagnoseDeclarationMismatches(request);
         let resolved: ResolvedPluginExecutable;
         const preauthorized = preauthorizedSpawns.get(request);
-        if (preauthorized) {
+        if (lifetime) {
+            try {
+                resolved = await resolveManagedExecutable!(request.executable, lifetime.isOccurrenceCurrent);
+            } catch (error) {
+                if (isPluginError(error)) throw error;
+                return fail('plugin_exec_resolve_failed', 'Executable could not be resolved', error);
+            }
+        } else if (preauthorized) {
             preauthorizedSpawns.delete(request);
             resolved = preauthorized;
         } else {
@@ -570,26 +1008,22 @@ export function createStablePluginExecService(params: Readonly<{
             released = true;
             resolved.release?.();
         };
-        const allowedArguments = resolved.allowedArguments;
-        if (
-            allowedArguments !== undefined
-            && (request.args ?? []).some((argument) => !allowedArguments.includes(argument))
-        ) {
+        try {
+            assertAllowedExecArguments(resolved, request.args ?? []);
+        } catch (error) {
             releaseExecutable();
-            return fail(
-                'plugin_exec_argument_denied',
-                'Process argument is not authorized for this system tool',
-            );
+            throw error;
         }
         try {
-            guard(options?.signal);
+            assertCurrent();
         } catch (error) {
             releaseExecutable();
             throw error;
         }
         let cwd: string | undefined;
         try {
-            cwd = request.cwd ? await params.resolvePath(request.cwd) : undefined;
+            cwd = typeof request.cwd === 'string' ? await realpath(request.cwd)
+                : request.cwd ? await params.resolvePath(request.cwd) : undefined;
         } catch (error) {
             releaseExecutable();
             if (isPluginError(error)) throw error;
@@ -597,7 +1031,8 @@ export function createStablePluginExecService(params: Readonly<{
         }
         if (
             request.cwd
-            && !isPluginPathCoveredByDisclosure(request.cwd, params.allowedCwdScopes ?? [], 'read')
+            && (typeof request.cwd === 'string'
+                || !isPluginPathCoveredByDisclosure(request.cwd, params.allowedCwdScopes ?? [], 'read'))
         ) {
             recordDisclosureMismatch({
                 capability: 'filesystem',
@@ -606,127 +1041,77 @@ export function createStablePluginExecService(params: Readonly<{
             });
         }
         try {
-            guard(options?.signal);
+            assertCurrent();
         } catch (error) {
             releaseExecutable();
             throw error;
         }
-        const environment = {
+        const environment: Readonly<Record<string, string>> = {
             ...admittedEnvironment,
             ...(resolved.env ?? {}),
             ...(request.env ?? {}),
         };
-        const invocation = resolveStablePluginExecInvocation({
-            command: resolved.command,
-            args: [
-                ...(resolved.args ?? []),
-                ...(request.args ?? []),
-            ],
-            env: environment,
-        });
-        return Object.freeze({
-            command: invocation.command,
-            args: Object.freeze([...invocation.args]),
-            env: Object.freeze({ ...environment }),
-            ...(cwd ? { cwd } : {}),
-            ...(request.stdin
-                ? { stdin: new Uint8Array(request.stdin) }
-                : {}),
-            ...(request.timeoutMs === undefined
-                ? {}
-                : { timeoutMs: request.timeoutMs }),
-            ...(request.maxStdoutBytes === undefined
-                ? {}
-                : {
-                    maxStdoutBytes:
-                        request.maxStdoutBytes,
-                }),
-            ...(request.maxStderrBytes === undefined
-                ? {}
-                : {
-                    maxStderrBytes:
-                        request.maxStderrBytes,
-                }),
-            ...(invocation.windowsVerbatimArguments
-                ? { windowsVerbatimArguments: true }
-                : {}),
-            release: releaseExecutable,
+        return await finalizeHostExecLaunch({
+            signal: options?.signal ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal]) : lifetime?.signal ?? params.signal,
+            assertCurrent,
+            projectLaunch,
+            ...(nativeExecutableOwner ? { resolveNativeExecutable: (executable: ManagedExecutableRef, signal: AbortSignal) =>
+                resolveNativeExecutableForHost(nativeExecutableOwner, executable, signal) } : {}),
+            launch: {
+                command: resolved.command,
+                args: [...(resolved.args ?? []), ...(request.args ?? [])],
+                env: environment,
+                ...(cwd ? { cwd } : {}),
+                ...(request.stdin ? { stdin: new Uint8Array(request.stdin) } : {}),
+                ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+                ...(request.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: request.maxStdoutBytes }),
+                ...(request.maxStderrBytes === undefined ? {} : { maxStderrBytes: request.maxStderrBytes }),
+                release: releaseExecutable,
+            },
         });
     }
 
     async function launchProcess(
         request: Parameters<ExecService['spawn']>[0] & Readonly<{ timeoutMs?: number }>,
-        options?: { signal?: AbortSignal },
+        options?: Parameters<ExecService['run']>[1],
         transformProtocolClientEnvironment = false,
     ): Promise<SupervisedPluginProcess> {
-        const launch = await authorizeLaunch(request, options);
+        // Only the supervisor installs this exact host-owned request; public
+        // Exec options cannot transfer invocation authority or process custody.
         const managedCustody = readInstalledManagedProcessCustody(service, request);
-        let supervised: ReturnType<typeof spawnSupervisedPluginProcess>;
+        const lifetime = managedCustody?.lifetime;
+        const launch = await authorizeLaunch(request, options, undefined, undefined, lifetime);
+        try { guard(options?.signal, lifetime); }
+        catch (error) { await launch.release(); throw error; }
+        let environment: Readonly<Record<string, string>>;
         try {
-            const environment = transformProtocolClientEnvironment
+            environment = transformProtocolClientEnvironment
                 && params.transformAgentChildLaunchEnvironment
-                ? params.transformAgentChildLaunchEnvironment(
-                    launch.env,
-                )
+                ? params.transformAgentChildLaunchEnvironment(launch.env)
                 : launch.env;
-            supervised = spawnSupervisedPluginProcess({
-                command: managedCustody
-                    ? managedCustody.executablePath
-                    : launch.command,
-                args: managedCustody
-                    ? Object.freeze([
-                        'run',
-                        `--job=${managedCustody.jobName}`,
-                        `--handshake=${managedCustody.handshakePath}`,
-                        ...(launch.windowsVerbatimArguments
-                            ? ['--target-windows-verbatim']
-                            : []),
-                        '--',
-                        launch.command,
-                        ...launch.args,
-                    ])
-                    : launch.args,
-                ...(launch.cwd ? { cwd: launch.cwd } : {}),
-                env: environment,
-                ...(launch.stdin ? { stdin: launch.stdin } : {}),
-                ...(launch.timeoutMs === undefined ? {} : { timeoutMs: launch.timeoutMs }),
-                ...(launch.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: launch.maxStdoutBytes }),
-                ...(launch.maxStderrBytes === undefined ? {} : { maxStderrBytes: launch.maxStderrBytes }),
-                signals: options?.signal ? [options.signal] : [],
-                ...(managedCustody ? { processCustody: managedCustody } : {}),
-                spawnOptions: {
-                    // A dedicated POSIX process group lets the canonical supervisor
-                    // terminate the owned process group immediately without first
-                    // enumerating every process on the host. Windows remains attached
-                    // and terminates through the named job containment. The group is
-                    // also the managed-executable containment contract: an owned
-                    // child that moves a descendant into a new session (`setsid`)
-                    // leaves SVC09's enforceable containment, and cleanup proves
-                    // group absence — never unbounded-tree absence.
-                    detached: process.platform !== 'win32',
-                    // Under custody the helper's own argv is built here and must
-                    // use the standard quoting contract so the helper can decode
-                    // and re-render the target command line losslessly.
-                    ...(managedCustody
-                        ? {}
-                        : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
-                },
-                ...(params.recordRuntimeLimitMeasurement
-                    ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
-                    : {}),
-            });
         } catch (error) {
-            launch.release();
+            await launch.release();
             return fail('plugin_exec_spawn_failed', 'Process could not be started', error);
         }
+        const supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch, env: environment }, {
+            ...(lifetime ? { signal: lifetime.signal } : options?.signal ? { signal: options.signal } : {}),
+            ...(managedCustody?.processCustody ? { processCustody: managedCustody.processCustody } : {}),
+            ...(params.recordRuntimeLimitMeasurement
+                ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
+                : {}),
+        });
+        if (!lifetime) retain(supervised);
+        const outputSubscription = !lifetime && options?.outputDelivery === 'invocation' && params.observeProcessOutput
+            ? supervised.handle.onOutput(params.observeProcessOutput)
+            : null;
         const retire = () => {
-            void supervised.dispose('generationRetired');
+            void supervised.dispose('generationRetired').catch(() => undefined);
         };
 
-        params.signal.addEventListener('abort', retire, { once: true });
-        void supervised.handle.wait().finally(() => {
-            params.signal.removeEventListener('abort', retire);
-            launch.release();
+        if (!lifetime) params.signal.addEventListener('abort', retire, { once: true });
+        void supervised.waitForSettlement().then(() => {
+            outputSubscription?.dispose();
+            if (!lifetime) params.signal.removeEventListener('abort', retire);
         });
         return supervised;
     }
@@ -1052,10 +1437,13 @@ export function createStablePluginExecService(params: Readonly<{
             request: Parameters<ExecService['run']>[0],
             options?: Parameters<ExecService['run']>[1],
         ) {
+            const selectedRequest = options?.outputDelivery === 'invocation' && params.invocationTimeoutMs !== undefined
+                ? { ...request, timeoutMs: params.invocationTimeoutMs ?? undefined }
+                : request;
             const handle = (await launchProcess(
-                request.stdin === undefined
-                    ? { ...request, stdin: new Uint8Array() }
-                    : request,
+                selectedRequest.stdin === undefined
+                    ? { ...selectedRequest, stdin: new Uint8Array() }
+                    : selectedRequest,
                 options,
             )).handle;
             try {
@@ -1069,6 +1457,7 @@ export function createStablePluginExecService(params: Readonly<{
     });
     INTERNAL_PREAUTHORIZED_SPAWNS.set(service, preauthorizedSpawns);
     INTERNAL_LAUNCH_AUTHORIZERS.set(service, authorizeLaunch);
+    INTERNAL_PROCESS_CUSTODY.set(service, custody);
     INTERNAL_EXECUTABLE_RESOLVERS.set(service, async (executable, options) => {
         guard(options?.signal);
         diagnoseDeclarationMismatches({ executable });

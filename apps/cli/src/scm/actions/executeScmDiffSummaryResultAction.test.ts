@@ -1,9 +1,26 @@
-import { describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, ScmDiffSummaryGenerateOutputSchema, ExecutionRunGetResponseSchema, ProviderBoundModelRefSchema, ReviewCommentsV1Schema, type ActionExecutorDeps, type ScmActionExecute } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios, { AxiosHeaders } from 'axios';
+import { createActionExecutor, ScmDiffSummaryGenerateOutputSchema, ExecutionRunGetResponseSchema, ProviderBoundModelRefSchema, ReviewCommentsV1Schema, type ActionExecutorContext, type ActionExecutorDeps, type ScmActionExecute } from '@happier-dev/protocol';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
-import { executeScmActionOperation } from './executeScmActionOperation';
+import { executeScmActionOperation as executeScmOperation } from './executeScmActionOperation';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { configuration } from '@/configuration';
 
 const cwd = '/saved/repository';
+beforeEach(() => {
+  vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, statusText: 'OK', headers: {},
+    config: { headers: new AxiosHeaders() }, data: { session: createSessionRecordFixture({
+      id: decodeURIComponent(String(url).split('/').at(-1)!.split('?')[0]), encryptionMode: 'plain',
+      metadata: JSON.stringify({ path: cwd }), share: null,
+    }) },
+  }));
+});
+afterEach(() => vi.restoreAllMocks());
+const executeScmActionOperation = (params: Parameters<typeof executeScmOperation>[0]) => executeScmOperation({ ...params,
+  // The authenticated Home network is replaced; the Session parser and admission are real.
+  authorizeSession: async sessionId => Boolean(await fetchSessionById({ token: 'authorized-account', sessionId })),
+});
 const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
   metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison' },
   comparison: { id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: cwd }, endpoints: {},
@@ -21,12 +38,74 @@ const run = {
   interaction: { kind: 'retained_agent_session.v1', capabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } },
 } as const;
 
-function createScmResultActionExecutor(scmActionExecute: NonNullable<ActionExecutorDeps['scmActionExecute']>) {
+function createScmResultActionExecutor(scmActionExecute: NonNullable<ActionExecutorDeps['scmActionExecute']>,
+  transports: Partial<Pick<ActionExecutorDeps, 'executionRunGet' | 'sessionSendMessage'>> = {}) {
   // This machine-transport fixture supplies the real SCM route; unrelated transport boundaries are not exercised.
-  return createActionExecutor({ scmActionExecute } as unknown as ActionExecutorDeps);
+  return createActionExecutor({ scmActionExecute, ...transports } as unknown as ActionExecutorDeps);
 }
 
 describe('saved SCM result Action boundary', () => {
+  it('admits an RPC parent’s canonical child with its requester and approval context while refusing direct closed RPC', async () => {
+    const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'session', output });
+    const context: ActionExecutorContext = {
+      surface: 'rpc', authority: 'account_automation', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'requester-account', serverId: configuration.activeServerId, actionRequestId: 'requester-attempt',
+      bypassApprovals: true, callerPermissionMode: 'read-only',
+      externalActionTarget: { kind: 'machine', machineId: 'machine' },
+      rpcSessionAuthorization: { kind: 'session.write', sessionId: 'session' },
+    };
+    const accepted: string[] = [];
+    const executor = createScmResultActionExecutor(({ actionId, input, context, executeCanonicalAction }) =>
+      executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
+        workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] } }), {
+      executionRunGet: async () => ({ run }),
+      sessionSendMessage: async request => {
+        expect(request.context).toMatchObject(context);
+        expect(request.actionCaller).toEqual(context.actionCaller);
+        accepted.push(request.sessionId);
+        return { status: 'accepted', localId: request.localId };
+      },
+    });
+    expect(await executor.execute('session.message.send', { sessionId: 'session', message: 'Direct RPC' }, context))
+      .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(accepted).toEqual([]);
+    const discussed = await executor.execute('scm.diffSummary.discuss', {
+      cwd, resultId: saved.resultId, expectedRevision: 0, message: 'Explain the saved review',
+    }, context);
+    expect(discussed, JSON.stringify(discussed)).toMatchObject({ ok: true, result: {
+      success: true, runId: run.runId, inputId: expect.any(String),
+    } });
+    expect(accepted).toEqual(['session']);
+  });
+  it('preserves separately admitted Session continuation behind a Machine saved-result host', async () => {
+    const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'session', output });
+    const seen: string[] = [];
+    const executor = createScmResultActionExecutor(({ actionId, input, context, executeCanonicalAction }) =>
+      executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
+        workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] } }), {
+      // These two leaves are the external Run and Session-input transports.
+      // The actual Action executor, admission, persisted result and revision owner stay real.
+      executionRunGet: async (sessionId, _request, options) => {
+        expect(sessionId).toBe('session');
+        expect(options?.targetMachineId).toBeUndefined();
+        seen.push('session-run');
+        return { run };
+      },
+      sessionSendMessage: async request => {
+        expect(request.sessionId).toBe('session');
+        seen.push('session-input');
+        return { status: 'accepted', localId: request.localId };
+      },
+    });
+    const discussed = await executor.execute('scm.diffSummary.discuss', { cwd, resultId: saved.resultId,
+      expectedRevision: 0, message: 'Explain the admitted private result' }, {
+      surface: 'rpc', authority: 'account_automation',
+      externalActionTarget: { kind: 'machine', machineId: 'machine' },
+      rpcSessionAuthorization: { kind: 'session.write', sessionId: 'session' },
+    });
+    expect(discussed, JSON.stringify(discussed)).toMatchObject({ ok: true, result: { success: true, runId: run.runId, inputId: expect.any(String) } });
+    expect(seen).toEqual(['session-run', 'session-input']);
+  });
   it('lists only permitted machine results and clears exactly confirmed revisions without erasing a newer edit', async () => {
     const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'saved-session', output });
     const excluded = await scmDiffSummaryResultStore.create({ cwd: '/private', output });
@@ -146,18 +225,20 @@ describe('saved SCM result Action boundary', () => {
     const modelSelection = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:codex', providerConnectionId: 'chosen-provider', modelId: 'chosen-model' });
     const generator = { backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const }, modelId: 'chosen-model', modelSelection };
     const created = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'session', output, generator });
-    const starts: unknown[] = [];
+    const starts: Array<{ localInputId?: string } & Record<string, unknown>> = [];
     const response = await executeScmActionOperation({ actionId: 'scm.diffSummary.discuss',
       input: { cwd, resultId: created.resultId, expectedRevision: 0, message: 'Why this change?', startNew: true }, workingDirectory: cwd,
       executeCanonicalAction: async (id, input) => {
         if (id === 'execution.run.get') return originalAvailable ? { ok: true, result: { run } } : { ok: false, errorCode: 'execution_run_not_found', error: 'Gone' };
         if (id !== 'execution.run.start') throw new Error('Fallback must admit one canonical generator');
-        starts.push(input);
+        starts.push(input as { localInputId?: string } & Record<string, unknown>);
         await scmDiffSummaryResultStore.bindRun({ cwd, resultId: created.resultId, expectedRevision: 0, runId: 'replacement', seededFromRunId: 'saved-generator' });
         return { ok: true, result: { runId: 'replacement', callId: 'call', sidechainId: 'sidechain' } };
       },
     });
-    expect(response).toMatchObject({ success: true, runId: 'replacement', seededFromRunId: 'saved-generator', result: { revision: 1 } });
+    expect(response).toMatchObject({ success: true, runId: 'replacement', inputId: expect.any(String),
+      seededFromRunId: 'saved-generator', result: { revision: 1 } });
+    expect(starts[0]?.localInputId).toBe((response as { inputId: string }).inputId);
     expect(starts).toEqual([expect.objectContaining({ kind: 'scm_diff_summary.v1', backendTarget: generator.backendTarget, modelId: 'chosen-model', modelSelection,
       intentInput: expect.objectContaining({ resultId: created.resultId, comparisonId: 'comparison', expectedRevision: 0 }) })]);
   });

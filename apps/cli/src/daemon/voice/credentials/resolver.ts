@@ -1,5 +1,11 @@
 import type { VoiceCredentialBindingIdentityV1, VoiceCredentialSourceSelection } from '@happier-dev/protocol';
-import { resolveAccountSettingsVoiceCredentialSource } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { resolveSavedSecretCatalogVoiceCredentialSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
+import { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 
 import {
   getActiveAccountSettingsSnapshot,
@@ -33,6 +39,8 @@ type VoiceCredentialReferenceInspection =
   | Readonly<{ status: Exclude<VoiceCredentialMaterialStatus, 'ready'> }>;
 
 export type VoiceCredentialResolver = Readonly<{
+  prepareForOperation(signal?: AbortSignal): Promise<void>;
+  resolveSelectedAuthority(identity: VoiceCredentialBindingIdentityV1, snapshot?: ActiveAccountSettingsSnapshot): ReturnType<typeof resolveSavedSecretCatalogVoiceCredentialSourceV1> | null;
   /** Current Account-settings source selection before any secret materialization. */
   resolveSelectedSource(identity: VoiceCredentialBindingIdentityV1): VoiceCredentialSourceSelection | null;
   status(identity: VoiceCredentialBindingIdentityV1): Readonly<{
@@ -62,7 +70,8 @@ function unavailable(materialStatus: Exclude<VoiceCredentialMaterialStatus, 'rea
 /**
  * Resolve the SavedSecret this Voice target may use right now.
  *
- * The selected credential source is owned by Account Settings: a target whose
+ * Voice preferences select the source kind; the opened purpose catalog owns
+ * Connected Account targets. A target whose
  * source is `none` or `connectedAccount` deliberately keeps its dormant
  * SavedSecret bindings, so only the canonical resolution may decide that the
  * saved-secret arm is the effective one. Any invalid or ambiguous stored shape
@@ -75,9 +84,11 @@ function inspectReference(params: Readonly<{
   recipientContractDigest?: string;
 }>): VoiceCredentialReferenceInspection {
   if (!params.snapshot) return { status: 'missing' };
-  let resolved: ReturnType<typeof resolveAccountSettingsVoiceCredentialSource>;
+  const purposes = params.snapshot.connectedPurposeCatalog;
+  if (purposes?.status !== 'ready' || purposes.record.key !== 'purposes') return { status: 'missing' };
+  let resolved: ReturnType<typeof resolveSavedSecretCatalogVoiceCredentialSourceV1>;
   try {
-    resolved = resolveAccountSettingsVoiceCredentialSource(
+    resolved = resolveSavedSecretCatalogVoiceCredentialSourceV1(
       params.snapshot.settings as unknown as Readonly<Record<string, unknown>>,
       {
         contribution: params.identity.contribution,
@@ -85,6 +96,7 @@ function inspectReference(params: Readonly<{
         purpose: params.identity.purpose,
         machineId: params.machineId,
       },
+      { connectedPurposes: purposes.record.value },
     );
   } catch {
     return { status: 'missing' };
@@ -136,10 +148,12 @@ function readSelectedSource(params: Readonly<{
   snapshot: ActiveAccountSettingsSnapshot | null;
   machineId: string | null;
   identity: VoiceCredentialBindingIdentityV1;
-}>): VoiceCredentialSourceSelection | null {
+}>): ReturnType<typeof resolveSavedSecretCatalogVoiceCredentialSourceV1> | null {
   if (!params.snapshot) return null;
+  const purposes = params.snapshot.connectedPurposeCatalog;
+  if (purposes?.status !== 'ready' || purposes.record.key !== 'purposes') return null;
   try {
-    return resolveAccountSettingsVoiceCredentialSource(
+    return resolveSavedSecretCatalogVoiceCredentialSourceV1(
       params.snapshot.settings as unknown as Readonly<Record<string, unknown>>,
       {
         contribution: params.identity.contribution,
@@ -147,7 +161,8 @@ function readSelectedSource(params: Readonly<{
         purpose: params.identity.purpose,
         machineId: params.machineId,
       },
-    ).selection;
+      { connectedPurposes: purposes.record.value },
+    );
   } catch {
     return null;
   }
@@ -167,10 +182,48 @@ export function createVoiceCredentialResolver(params: Readonly<{
   getLifetimeToken?: () => number;
   /** The canonical operation-admission refresh; injectable for tests only. */
   refreshForOperation?: typeof refreshSavedSecretCatalogForOperation;
+  credentials?: StoredCredentials;
+  readCredentials?: () => Promise<StoredCredentials | null>;
+  operationContext?: SavedSecretOperationContextV1;
+  ensureSnapshot?: () => Promise<void>;
 }>): VoiceCredentialResolver {
   const getSnapshot = params.getSnapshot ?? getActiveAccountSettingsSnapshot;
   const getLifetimeToken = params.getLifetimeToken ?? getActiveAccountSettingsSnapshotLifetimeToken;
   const refreshForOperation = params.refreshForOperation ?? refreshSavedSecretCatalogForOperation;
+
+  async function prepareForOperation(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    const before = getSnapshot();
+    if (before?.connectedPurposeCatalog?.status === 'ready') return;
+    // Private invocation snapshots publish only through their captured owner.
+    if (params.getSnapshot && !params.operationContext && before !== getActiveAccountSettingsSnapshot()) throw unavailable();
+    const home = params.operationContext?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+    const lifetime = getLifetimeToken();
+    const assertCurrent = () => {
+      signal?.throwIfAborted();
+      const current = getSnapshot();
+      if (!params.operationContext && resolveServerHttpBaseUrl() !== home
+        || before && (getLifetimeToken() !== lifetime || current?.scopeKey !== before.scopeKey)) {
+        throw unavailable('repair_required');
+      }
+    };
+    const credentials = params.credentials ?? await (params.readCredentials ?? readStoredCredentials)();
+    assertCurrent();
+    if (!credentials || before?.scopeKey !== undefined && resolveAccountSettingsScopeKey(credentials) !== before.scopeKey) {
+      throw unavailable();
+    }
+    await runWithServerHttpBaseUrl(home, async () => {
+      if (!getSnapshot()) {
+        if (params.ensureSnapshot) await params.ensureSnapshot();
+        else await warmActiveAccountSettingsSnapshotBestEffort({ credentials });
+        assertCurrent();
+      }
+      const catalog = await readActiveConnectedAccountCatalog({ credentials, key: 'purposes', signal,
+        ...(params.operationContext ? { operationContext: params.operationContext } : {}) });
+      assertCurrent();
+      if (catalog.status !== 'ready' || getSnapshot()?.connectedPurposeCatalog?.status !== 'ready') throw unavailable();
+    });
+  }
 
   /**
    * Admit this Voice operation against Home-current shared material.
@@ -203,13 +256,17 @@ export function createVoiceCredentialResolver(params: Readonly<{
   }
 
   return Object.freeze({
+    prepareForOperation,
+    resolveSelectedAuthority(identity, snapshot) {
+      return identity ? readSelectedSource({ snapshot: snapshot ?? getSnapshot(), machineId: params.machineId, identity }) : null;
+    },
     resolveSelectedSource(identity) {
       return identity
         ? readSelectedSource({
             snapshot: getSnapshot(),
             machineId: params.machineId,
             identity,
-          })
+          })?.selection ?? null
         : null;
     },
     status(identity) {

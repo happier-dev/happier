@@ -3,6 +3,7 @@ import { AxiosError, AxiosHeaders } from 'axios';
 
 import { createLocalServicePreviewRoutes as createRoutes } from './routes';
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { createLocalServicePreviewRegistry } from './registry';
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
@@ -14,6 +15,8 @@ import { createLocalServiceEndpointEnricher } from '../inventory/endpoint';
 import { registerDaemonLocalServicePreviewSnapshotHandler } from '@/rpc/handlers/daemonLocalServicePreviewSnapshot';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 
 const MACHINE_ID = 'machine-a';
 
@@ -84,6 +87,94 @@ function inventoryRegistryWith(entries: readonly NormalizedLocalServiceInventory
 }
 
 describe('createLocalServicePreviewRoutes lifecycle', () => {
+    it('registers an observed Project endpoint through the existing preview owner and refuses retired exact custody', async () => {
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            // Project literal launch cannot reach plugin dependency installation.
+            dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
+        });
+        const workspace = { id: 'checkout', serverId: 'home', machineId: MACHINE_ID, rootPath: process.cwd(), createdAtMs: 1 };
+        const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'web' } };
+        let stopped = false;
+        const handle = await owner.superviseProject({ workspace, declaration, cwd: workspace.rootPath,
+            serviceId: 'web', specIdentity: 'web', isCurrent: () => true,
+            requester: { serverId: 'home', accountId: 'account-1', machineId: MACHINE_ID, installationId: 'installation' },
+            processSpec: { mode: { kind: 'native',
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'web' }, nativeResourceId: 'exact-web' },
+                lifecycle: { inspect: async () => ({ phase: stopped ? 'stopped' : 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:4312' }),
+                    stop: async () => { stopped = true; return { status: 'stopped' }; } } } },
+            authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], env: {}, release: async () => undefined }),
+        });
+        const serviceTarget = { kind: 'managed_service' as const, machineId: MACHINE_ID, managedServiceId: handle.instanceId,
+            workspaceId: workspace.id, declaration, cwd: workspace.rootPath };
+        try {
+            const registry = createLocalServicePreviewRegistry();
+            const routes = createLocalServicePreviewRoutes({ machineId: MACHINE_ID, registry, projectManagedServices: owner });
+            expect(await routes.openOrCreate({ machineId: MACHINE_ID, serviceTarget: { ...serviceTarget, cwd: `${workspace.rootPath}/other` } }))
+                .toEqual({ ok: false, reasonCode: 'preview_target_unresolved' });
+            const result = await routes.openOrCreate({ machineId: MACHINE_ID, serviceTarget });
+            expect(result).toMatchObject({ ok: true, response: { status: 'created', preview: { resource: {
+                serviceTarget, owner: { kind: 'user', id: 'account-1' }, target: { scheme: 'http', host: '127.0.0.1', port: 4312 },
+            }, accessUrl: expect.stringContaining('previewToken=admission-') } } });
+            expect((await routes.getSnapshot()).resources).toHaveLength(1);
+            await handle.stop();
+            expect(await routes.openOrCreate({ machineId: MACHINE_ID, serviceTarget }))
+                .toEqual({ ok: false, reasonCode: 'preview_target_unresolved' });
+        } finally { await handle.stop(); await owner.dispose(); }
+    });
+
+    it('refuses foreign Machine actors before exposing or using the custodian HTTP credential', async () => {
+        const registry = createLocalServicePreviewRegistry();
+        registry.previewsById.set('private-preview', { previewId: 'private-preview', diagnostics: [],
+            resource: { previewId: 'private-preview', machineId: MACHINE_ID, owner: { kind: 'user', id: 'account-1' },
+                target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
+                display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host' },
+            accessUrl: 'https://private.example.test/?previewToken=custodian', expiresAt: 61_000 });
+        let httpReached = false;
+        const routes = createRoutes({ machineId: MACHINE_ID, accountId: 'account-1', registry, server: {
+            token: 'custodian-token', http: { async post() { httpReached = true; throw new Error('unexpected credential use'); },
+                async delete() { httpReached = true; return { data: { ok: true } }; } },
+        } });
+        const context: RpcHandlerContext = { signal: new AbortController().signal, machineAdmission: {
+            actorAccountId: 'foreign-viewer', custodianAccountId: 'account-1', machineId: MACHINE_ID,
+            installationId: 'installation-1', role: 'use', encryptionMode: 'plain' } };
+        await expect(routes.getSnapshot(context)).rejects.toThrow('requester_credentials_unavailable');
+        expect(await routes.openOrCreate({ machineId: MACHINE_ID, managedServiceId: 'private-preview' }, undefined, context))
+            .toEqual({ ok: false, reasonCode: 'requester_credentials_unavailable' });
+        expect(await routes.revoke({ machineId: MACHINE_ID, previewId: 'private-preview' }, context))
+            .toEqual({ ok: false, reasonCode: 'requester_credentials_unavailable' });
+        expect(httpReached).toBe(false);
+        expect(registry.previewsById.has('private-preview')).toBe(true);
+        const ownContext: RpcHandlerContext = { ...context,
+            machineAdmission: { ...context.machineAdmission!, actorAccountId: 'account-1' },
+            verifyMachineAdmissionCurrent: async () => true };
+        expect((await routes.getSnapshot(ownContext)).previews[0]?.accessUrl).toContain('previewToken=custodian');
+        await expect(routes.getSnapshot({ ...ownContext, verifyMachineAdmissionCurrent: async () => false }))
+            .rejects.toThrow('requester_credentials_unavailable');
+    });
+    it.each(['owner', 'policy'] as const)('refuses server admission that changes the preview %s binding', async (changed) => {
+        const routes = createRoutes({
+            machineId: MACHINE_ID, accountId: 'account-1', registry: createLocalServicePreviewRegistry(),
+            inventoryRegistry: inventoryRegistryWith([inventoryEntry()]),
+            server: { token: 'daemon-token', http: {
+                async post(_url, body) {
+                    const resource = LocalServicePreviewResourceV1Schema.parse(body);
+                    return { data: {
+                        resource: { ...resource, ...(changed === 'owner'
+                            ? { owner: { kind: 'user', id: 'other-account' } }
+                            : { policy: { allowedMethods: ['POST'], cookiePolicy: 'drop', compressionPolicy: 'identity',
+                                redirectPolicy: 'preserve_host_origin', maxRequestBodyBytes: 1024, maxResponseBodyBytes: 1024 } }) },
+                        accessUrl: 'https://other.preview.example.test/?previewToken=wrong-binding', expiresAt: 61_000,
+                    } };
+                },
+                async delete() { return { data: { ok: true } }; },
+            } },
+        });
+        expect(await routes.openOrCreate({ machineId: MACHINE_ID, inventoryEntryId: 'entry-vite' }))
+            .toEqual({ ok: false, reasonCode: 'preview_registration_failed' });
+        expect((await routes.getSnapshot()).previews?.[0]).toMatchObject({ accessUrl: null, expiresAt: null });
+    });
+
     it('resolves a slow loopback endpoint after an inconclusive inventory observation before registering Open', async () => {
         let delayResponse = true;
         const target = createServer((_request, response) => {

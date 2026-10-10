@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
 import { resolveLightSqliteBusyTimeoutMsFromEnv } from "@/flavors/light/sqliteConnectionConfig";
 import { log, warn } from "@/utils/logging/log";
+import { AsyncLock } from "@/utils/runtime/lock";
 import { isPrismaErrorCode, readSharedQaSchemaMismatchDiagnostic } from './prismaErrors';
 export { isPrismaErrorCode } from './prismaErrors';
 export type TransactionClient = PrismaNamespace.TransactionClient;
@@ -44,14 +45,22 @@ function loadDefaultPrismaClientModule(): typeof import("@prisma/client") {
 }
 
 /**
- * Canonical runtime Prisma namespace.
+ * Canonical provider-matched runtime Prisma namespace.
  *
  * Runtime callers must use this sidecar-aware CommonJS loader instead of a
  * named ESM import from `@prisma/client`; packaged server builds externalize
  * Prisma and cannot rely on named-import interop from its generated module.
+ * SQL objects must come from the active client's runtime: query extensions clone
+ * their arguments using that runtime's Sql class and otherwise lose SQL getters.
+ * Construct fragments after database initialization; cache their text, not Sql objects.
  */
-export const prismaRuntime: typeof import("@prisma/client").Prisma = loadDefaultPrismaClientModule().Prisma;
+const defaultPrismaRuntime = loadDefaultPrismaClientModule().Prisma;
 let activePrismaRuntime: typeof import("@prisma/client").Prisma | null = null;
+export const prismaRuntime: typeof import("@prisma/client").Prisma = new Proxy(defaultPrismaRuntime, {
+    get(_target, property) {
+        return Reflect.get(activePrismaRuntime ?? defaultPrismaRuntime, property);
+    },
+});
 
 /** Provider-matched Prisma namespace for sentinels such as `DbNull`. */
 export function getActivePrismaRuntime(): typeof import("@prisma/client").Prisma {
@@ -160,6 +169,12 @@ let _pgliteServer: PGLiteSocketServer | null = null;
 let _provider: DbProvider | null = null;
 let _releasePgliteDirLock: (() => Promise<void>) | null = null;
 let _initDbPgliteInFlight: Promise<void> | null = null;
+let sqliteReadSnapshot: {
+    databaseUrl: string;
+    env: NodeJS.ProcessEnv;
+    lock: AsyncLock;
+    client: ReturnType<typeof withSharedQaSchemaDiagnostics> | null;
+} | null = null;
 
 export const db: PrismaClientType = new Proxy({} as PrismaClientType, {
     get(_target, prop) {
@@ -194,7 +209,7 @@ export function initDbPostgres(): void {
         process.env.DATABASE_URL = applyConfiguredDatabaseConnectionLimit(process.env.DATABASE_URL, process.env);
     }
     _db = withSharedQaSchemaDiagnostics(createDefaultPrismaClient());
-    activePrismaRuntime = prismaRuntime;
+    activePrismaRuntime = defaultPrismaRuntime;
 }
 
 async function importGeneratedClient(provider: "mysql" | "sqlite"): Promise<any> {
@@ -300,6 +315,13 @@ export async function initDbSqlite(): Promise<void> {
         throw new Error("Database client is not initialized after initDbFromGeneratedClient(sqlite).");
     }
     await applySqliteRuntimePragmas(_db, process.env);
+    if (!process.env.DATABASE_URL) throw new Error("SQLite DATABASE_URL is unavailable.");
+    sqliteReadSnapshot = {
+        databaseUrl: withConnectionLimit(process.env.DATABASE_URL, 1),
+        env: { ...process.env },
+        lock: new AsyncLock(),
+        client: null,
+    };
     const diagnostics = resolveSqliteStartupDiagnosticsFromEnv(process.env);
     log(
         { module: "storage", event: "sqlite-startup-diagnostics", sqlite: diagnostics },
@@ -316,6 +338,50 @@ export async function initDbSqlite(): Promise<void> {
             "SQLite ignores unsupported database URL query parameters; pool acquisition remains unbounded",
         );
     }
+}
+
+/**
+ * Prisma's SQLite interactive transactions begin IMMEDIATE, even for reads.
+ * Keep snapshot reads off the write pool with one storage-owned connection.
+ * The existing lock serializes BEGIN/read/ROLLBACK on that single connection;
+ * query_only prevents a read callback from accidentally becoming a writer.
+ */
+export async function withSqliteReadSnapshot<T>(
+    read: (reader: TransactionClient) => Promise<T>,
+    options: Readonly<{ deadlineAtMs?: number }> = {},
+): Promise<T> {
+    const state = sqliteReadSnapshot;
+    if (!state) throw new Error("SQLite database client is not initialized.");
+    return await state.lock.inLock(async () => {
+        if (sqliteReadSnapshot !== state) throw new Error("SQLite database client is shutting down.");
+        if (!state.client) {
+            const { client } = await createGeneratedPrismaClient("sqlite", state.databaseUrl);
+            try {
+                const pragmas = resolveSqliteRuntimePragmasFromEnv(state.env);
+                await client.$queryRawUnsafe(`PRAGMA busy_timeout=${pragmas.busyTimeoutMs};`);
+                await client.$queryRawUnsafe("PRAGMA query_only=ON;");
+                state.client = withSharedQaSchemaDiagnostics(client);
+            } catch (error) {
+                await client.$disconnect();
+                throw error;
+            }
+        }
+        const client = state.client;
+        await client.$executeRawUnsafe("BEGIN DEFERRED;");
+        try {
+            return await read(client);
+        } finally {
+            try {
+                // No writes are permitted, so rollback also ends successful reads.
+                await client.$executeRawUnsafe("ROLLBACK;");
+            } catch (error) {
+                // Never reuse a connection whose transaction state is unknown.
+                state.client = null;
+                await client.$disconnect();
+                throw error;
+            }
+        }
+    }, options);
 }
 
 function resolveLightPgliteDirFromEnv(env: NodeJS.ProcessEnv): string {
@@ -381,7 +447,7 @@ export async function initDbPglite(): Promise<void> {
             _pgliteServer = server;
             _provider = "pglite";
             _db = withSharedQaSchemaDiagnostics(prismaClient);
-            activePrismaRuntime = prismaRuntime;
+            activePrismaRuntime = defaultPrismaRuntime;
             _releasePgliteDirLock = releaseLock;
         } catch (e) {
             if (server) {
@@ -580,6 +646,11 @@ export async function applySqliteRuntimePragmas(client: Pick<PrismaClientType, "
 export async function shutdownDbClient(): Promise<void> {
     if (_pglite || _pgliteServer || _provider === "pglite") {
         throw new Error("shutdownDbClient() cannot shut down PGlite; call shutdownDbPglite() instead");
+    }
+    const reader = sqliteReadSnapshot;
+    sqliteReadSnapshot = null;
+    if (reader) {
+        await reader.lock.inLock(async () => { await reader.client?.$disconnect(); });
     }
     const client = _db;
     _db = null;

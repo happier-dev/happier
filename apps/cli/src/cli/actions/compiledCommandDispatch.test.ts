@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { getActionSpec } from '@happier-dev/protocol';
+import { encodeTerminalStreamBytes, TerminalStreamReadOkResponseSchema } from '@happier-dev/protocol/terminal/stream';
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 
 import { compileActionCliCommands, findCompiledActionCliCommand, listCompiledActionCliCommands } from './compiledCommands';
@@ -520,6 +521,62 @@ describe('compiled Action CLI command dispatch', () => {
     }]);
   });
 
+  it('starts and observes detached runs on the explicit Machine without resolving a Session', async () => {
+    for (const operation of ['start', 'get', 'wait', 'stop'] as const) {
+      const { executions, deps } = harness();
+      const resolveSessionTarget = vi.fn(async (sessionId: string) => ({ ok: true as const, sessionId }));
+      const createExecutor = deps.createExecutorFn;
+      const execute = vi.fn(async (actionId: string, input: unknown, _context: unknown) => createExecutor().execute(actionId, input));
+      const createExecutorFn = vi.fn(() => ({ ...createExecutor(), execute, resolveSessionTarget }));
+      const path = ['session', 'run', operation];
+      await runCompiledActionCliCommand({
+        command: commandFor(path),
+        argv: [...path, '--machine', 'machine_7', ...(operation === 'start'
+          ? ['--cwd', '/repo', '--intent', 'scm_commit_message', '--agent', 'codex']
+          : ['--run-id', 'run_1']), '--json'],
+        deps: { ...deps, createExecutorFn } as never,
+      });
+      expect(createExecutorFn).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine_7' }));
+      expect(resolveSessionTarget).not.toHaveBeenCalled();
+      expect(executions).toHaveLength(1);
+      expect(executions[0]!.actionId).toBe(`execution.run.${operation}`);
+      expect(execute).toHaveBeenCalledWith(`execution.run.${operation}`, expect.anything(), expect.objectContaining({ defaultSessionId: null }));
+      expect(executions[0]!.input).not.toHaveProperty('machineId');
+      if (operation === 'start') expect(executions[0]!.input).toMatchObject({ sessionId: null, cwd: '/repo', intent: 'scm_commit_message' });
+      expect(renderActionCliCommandHelp(commandFor(path))).toContain('--machine');
+    }
+  });
+
+  it('preserves explicit null Session in canonical Run input even with an explicit Machine', async () => {
+    const executions = await run(['session', 'run', 'get'], [
+      '--input-json', '{"sessionId":null,"runId":"run_1"}', '--machine-id', 'machine_7', '--json',
+    ]);
+    expect(executions).toEqual([{ actionId: 'execution.run.get', input: { sessionId: null, runId: 'run_1' } }]);
+  });
+
+  it('keeps an explicitly authored canonical Session when cwd is supplied as a friendly overlay', async () => {
+    const canonicalInput = {
+      sessionId: 'session_1', intent: 'delegate',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      permissionMode: 'workspace_write', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+    };
+    const executions = await run(['session', 'run', 'start'], [
+      '--input-json', JSON.stringify(canonicalInput),
+      '--cwd', '/repo', '--machine', 'machine_7', '--json',
+    ]);
+    expect(executions).toEqual([{ actionId: 'execution.run.start', input: { ...canonicalInput, cwd: '/repo' } }]);
+  });
+
+  it('rejects conflicting Machine spellings before authenticating or dispatching', async () => {
+    const { executions, deps } = harness();
+    await runCompiledActionCliCommand({ command: commandFor(['session', 'run', 'get']),
+      argv: ['session', 'run', 'get', '--machine', 'machine_7', '--machine-id', 'machine_8', '--run-id', 'run_1'],
+      deps: deps as never });
+    expect(executions).toEqual([]);
+    expect(deps.readCredentialsFn).not.toHaveBeenCalled();
+    process.exitCode = 0;
+  });
+
   it('routes every execution-run leaf through the one compiled Action dispatcher', async () => {
     const cases = [
       [['session', 'run', 'list'], ['session_1'], 'execution.run.list'],
@@ -671,5 +728,99 @@ describe('compiled Action CLI command dispatch', () => {
     expect(findCompiledActionCliCommand(['session', 'run', 'send', 'a', 'b', 'c'], commands)?.path.join(' '))
       .toBe('session run send');
     expect(findCompiledActionCliCommand(['session', 'history', 'a'], commands)).toBeNull();
+  });
+
+  describe('Project execution output presentation', () => {
+    const input = {
+      serverId: 'home_1', machineId: 'machine_1', operationId: 'operation_1',
+      byteOffset: 0, controlCursor: 2, ackedByteOffset: 0, creditBytes: 64, maxBytes: 64,
+    };
+
+    function retainedOutput() {
+      // Includes invalid UTF-8, NUL, terminal controls and a character split
+      // across frames: a text round-trip would corrupt the permitted bytes.
+      const bytes = Buffer.from([0x00, 0xff, 0xc3, 0xa9, 0x1b, 0x5b, 0x33, 0x31, 0x6d, 0x0d, 0x0a]);
+      const output = TerminalStreamReadOkResponseSchema.parse({
+        ok: true, terminalId: 'terminal_1',
+        frames: [
+          { t: 'gap', terminalId: 'terminal_1', droppedBeforeByteOffset: 7,
+            nextAvailableByteOffset: 7, reason: 'ring_overflow' },
+          ...[bytes.subarray(0, 3), bytes.subarray(3)].map((chunk, index) => ({
+            t: 'bytes', terminalId: 'terminal_1', seq: index,
+            byteOffset: index === 0 ? 7 : 10, byteLength: chunk.length,
+            encoding: 'base64', data: encodeTerminalStreamBytes(chunk),
+          })),
+          { t: 'exit', terminalId: 'terminal_1', byteOffset: 18, exitCode: 1, signal: null },
+        ],
+        nextByteOffset: 18, availableByteOffset: 18, droppedBeforeByteOffset: 7,
+        nextControlCursor: 4, done: true,
+      });
+      return { bytes, output };
+    }
+
+    it.each(['read', 'copy'] as const)('prints exact binary Project output for human %s and reports gaps on stderr', async (operation) => {
+      const { bytes, output } = retainedOutput();
+      const path = ['projects', 'execution', 'output', operation];
+      const { deps } = harness();
+      const execute = vi.fn(async () => ({ ok: true as const,
+        result: operation === 'read' ? output : { kind: 'bytes' as const, output } }));
+      const chunks: Buffer[] = [];
+      // Vitest virtualizes console.error before it reaches stderr.write.
+      const diagnostics = captureConsoleText();
+      // The shared text capture intentionally decodes UTF-8. Capture this OS
+      // stream boundary as bytes to prove binary output survives unchanged.
+      const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        encoding?: BufferEncoding | ((error?: Error | null) => void),
+        callback?: (error?: Error | null) => void,
+      ) => {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk));
+        if (typeof encoding === 'function') encoding(null);
+        else callback?.(null);
+        return true;
+      }) as typeof process.stdout.write);
+      try {
+        await runCompiledActionCliCommand({
+          command: commandFor(path), argv: [...path, '--input-json', JSON.stringify(input)],
+          deps: { ...deps, createExecutorFn: () => ({ resolveSessionTarget: vi.fn(), execute }) },
+        });
+
+        expect(Buffer.concat(chunks)).toEqual(bytes);
+        expect(diagnostics.text()).toContain('ring_overflow');
+        expect(diagnostics.text()).toContain('7');
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(execute).toHaveBeenCalledWith(`projects.execution.output.${operation}`, input, expect.anything());
+      } finally {
+        stdout.mockRestore();
+        diagnostics.restore();
+        process.exitCode = undefined;
+      }
+    });
+
+    it.each(['read', 'copy'] as const)('preserves canonical Project output frames, cursors and envelope for JSON %s', async (operation) => {
+      const { output } = retainedOutput();
+      const path = ['projects', 'execution', 'output', operation];
+      const { deps } = harness();
+      const result = operation === 'read' ? output : { kind: 'bytes' as const, output };
+      const execute = vi.fn(async () => ({ ok: true as const, result }));
+      const diagnostics = captureConsoleText();
+      const stdout = captureConsoleJsonOutput();
+      try {
+        await runCompiledActionCliCommand({
+          command: commandFor(path), argv: [...path, '--input-json', JSON.stringify(input), '--json'],
+          deps: { ...deps, createExecutorFn: () => ({ resolveSessionTarget: vi.fn(), execute }) },
+        });
+
+        const { ok: _ok, ...readPayload } = output;
+        expect(stdout.json()).toEqual({ v: 1, ok: true, kind: `projects_execution_output_${operation}`,
+          data: operation === 'read' ? readPayload : result });
+        expect(diagnostics.text()).toBe('');
+        expect(execute).toHaveBeenCalledWith(`projects.execution.output.${operation}`, input, expect.anything());
+      } finally {
+        stdout.restore();
+        diagnostics.restore();
+        process.exitCode = undefined;
+      }
+    });
   });
 });

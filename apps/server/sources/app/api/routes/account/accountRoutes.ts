@@ -11,11 +11,24 @@ import { registerAccountActivityBadgeSnapshotRoute } from "./registerAccountActi
 import { registerPluginAccountSettingsRoutes } from "./registerPluginAccountSettingsRoutes";
 import { registerPluginAccountStorageRoutes } from "./registerPluginAccountStorageRoutes";
 import { registerAuthoringMemoryRoutes } from "./registerAuthoringMemoryRoutes";
+import { registerProjectAccountRowRoutes } from '../projects/registerProjectAccountRowRoutes';
+import { registerWorkspaceExecutionConfigRoutes } from '@/app/projects/execution/registerWorkspaceExecutionConfigRoutes';
+import { registerProjectTrustRoutes } from '@/app/projects/trust/registerProjectTrustRoutes';
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { registerAccountPetLibraryRoutes } from "@/app/pets/accountPetLibraryRoutes";
 import { registerSessionDraftRoutes } from "@/app/account/sessionDrafts/registerSessionDraftRoutes";
 import { registerAccountDirectoryLinkRoutes, registerAccountDirectoryRoutes } from "@/app/accountDirectory/accountDirectoryRoutes";
 import { registerSavedSecretResourceRoutes } from "./registerSavedSecretResourceRoutes";
+import { registerProfileRowsRoutes } from './registerProfileRowsRoutes';
+import { registerProfileTransferRoutes } from './registerProfileTransferRoutes';
+import { registerPromptLibraryRoutes } from '@/app/account/prompts/registerPromptLibraryRoutes';
+import { registerConfiguredAgentRowsRoutes } from '@/app/account/agents/registerConfiguredAgentRowsRoutes';
+import { registerMcpServerCatalogRoutes } from '@/app/account/mcp/registerMcpServerCatalogRoutes';
+import { registerProviderConnectionsRoutes } from '@/app/account/providers/registerProviderConnectionsRoutes';
+import { registerConnectedAccountConfigurationRowsRoutes } from '@/app/account/connectedAccounts/registerConfigurationRowsRoutes';
+import { registerRemoteHostCatalogRoutes } from '@/app/account/remoteHosts/registerRemoteHostCatalogRoutes';
+import { registerNotificationChannelRoutes } from '@/app/account/notifications/registerNotificationChannelRoutes';
+import { registerConnectedMetadataRoutes } from '@/app/account/connectedAccounts/registerConnectedMetadataRoutes';
 
 export function accountRoutes(app: Fastify): void {
     registerAccountProfileRoute(app);
@@ -23,6 +36,16 @@ export function accountRoutes(app: Fastify): void {
     registerAccountUsernameRoute(app);
     registerAccountSettingsRoutes(app);
     registerSavedSecretResourceRoutes(app);
+    registerProfileRowsRoutes(app);
+    registerProfileTransferRoutes(app);
+    registerPromptLibraryRoutes(app);
+    registerConfiguredAgentRowsRoutes(app);
+    registerMcpServerCatalogRoutes(app);
+    registerProviderConnectionsRoutes(app);
+    registerConnectedAccountConfigurationRowsRoutes(app);
+    registerRemoteHostCatalogRoutes(app);
+    registerNotificationChannelRoutes(app);
+    registerConnectedMetadataRoutes(app);
     registerAccountSettingsHistoryRoutes(app);
     registerAccountEncryptionRoutes(app);
     registerAccountEncryptionMigrateRoutes(app);
@@ -31,6 +54,9 @@ export function accountRoutes(app: Fastify): void {
     registerPluginAccountSettingsRoutes(app);
     registerPluginAccountStorageRoutes(app);
     registerAuthoringMemoryRoutes(app);
+    registerProjectAccountRowRoutes(app);
+    registerWorkspaceExecutionConfigRoutes(app);
+    registerProjectTrustRoutes(app);
     registerAccountDirectoryRoutes(app);
     registerAccountDirectoryLinkRoutes(app);
     registerAccountPetLibraryRoutes(createServerFeatureGatedRouteApp(app, "pets.sync"));

@@ -4,11 +4,15 @@ import { HandoffTargetReplacementApprovalV1Schema } from '@happier-dev/protocol/
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
-import type { ActionExecuteResult, SessionHandoffPrepareTargetResponse, SessionHandoffStorageMode, WorkspaceRefV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
+import { resolveWorkspaceSyncEndpoint } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import type { ActionExecuteResult, SessionHandoffPrepareTargetResponse, SessionHandoffStorageMode } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
-import type { StoredCredentials } from '@/persistence';
+import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { prepareExternalActionHandoffContinuationAuthorization, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import type { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
 import { resolveSessionHandoffSourceAuthority } from '@/session/handoff/resolveSessionHandoffSourceAuthority';
 import { awaitSpawnedSessionId } from '@/session/services/awaitSpawnedSessionId';
 import { buildMachineResumeRequest } from '@/session/services/requestInactiveSessionResume';
@@ -16,7 +20,11 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { readProjectAccountRows, type ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { resolveWorkspaceTransferRootWithScmWorkspace } from '@/scm/workspace';
 import { getPathRemainderWithinBase, resolveSessionHandoffWorkspaceSessionPath } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 
@@ -24,7 +32,8 @@ import type { ActionOperationOwnerUpdate } from './actionOperationTypes';
 import { coordinateTrackedSessionHandoff } from './sessionHandoffCoordinator';
 import { resolveSessionHandoffWorkspaceContext } from './sessionHandoffWorkspaceContext';
 import { buildTrackedSessionHandoffMachineCall } from './trackedSessionHandoffMachineCall';
-import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import { admitSessionHandoffExistingState, createSessionHandoffPreflightMachineRpc } from '@/session/handoff/sessionHandoffPreflightMachineRpc';
+import type { WorkspaceSyncHandoffAdapter, PrepareWorkspaceSyncHandoffInput } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 
 type SourceContext =
   | Readonly<{
@@ -36,18 +45,13 @@ type SourceContext =
     }>
   | Readonly<{ ok: false; errorCode: string; error: string }>;
 
-type MachineCall = (input: Readonly<{
-  credentials: StoredCredentials;
-  machineId: string;
-  method: string;
-  request: unknown;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}>) => Promise<unknown>;
+type MachineCall = typeof callMachineRpc;
 
 type CoordinatorDeps = Readonly<{
-  /** Daemon-host Account Home scope; caller payload may only prove it matches this owner. */
+  /** Local profile scope for requester credentials and daemon lifetime. */
   expectedAccountServerId: string;
+  /** Workspace semantic Home; materialization requires a fresh witness, membership can use the captured Home. */
+  resolveWorkspaceAccountServerId?: (signal?: AbortSignal, options?: Readonly<{ requireFreshHome: boolean }>) => Promise<string | null>;
   readCredentials: () => Promise<StoredCredentials | null>;
   resolveSource?: (
     credentials: StoredCredentials,
@@ -55,6 +59,12 @@ type CoordinatorDeps = Readonly<{
     signal: AbortSignal,
   ) => Promise<SourceContext>;
   callMachine?: MachineCall;
+  handoffAuthorization?: Readonly<{
+    sourceExportStore: ReturnType<typeof createSessionHandoffSourceExportStore>;
+    serverHttpBaseUrl: string;
+    readSourceInstallation(): Readonly<{ machineId: string; installationId: string;
+      privateKey: ExternalActionMachineRequestSigningKey }> | null;
+  }>;
   awaitTargetCustody?: (input: Readonly<{
     credentials: StoredCredentials;
     machineId: string;
@@ -65,16 +75,15 @@ type CoordinatorDeps = Readonly<{
   }>) => Promise<Readonly<{ type: 'success'; sessionId: string } | { type: 'error'; errorCode: string; errorMessage: string }>>;
   wait?: (signal: AbortSignal) => Promise<void>;
   workspaceSyncAdapter: WorkspaceSyncHandoffAdapter;
+  /** Actual installed Machine socket; context stays host-private and is never an Action field. */
+  callWorkspaceSourcePhase?: (input: Parameters<NonNullable<PrepareWorkspaceSyncHandoffInput['callWorkspaceSourcePhase']>>[0],
+    context: RpcActionExecutorContext) => Promise<unknown>;
   resolveWorkspaceTransferRoot?: typeof resolveWorkspaceTransferRootWithScmWorkspace;
-  refreshWorkspaceSettings?: (input: Readonly<{
+  refreshProjectSnapshot?: (input: Readonly<{
     credentials: StoredCredentials;
-  }>) => Promise<Readonly<{
-    settingsVersion: number;
-    settings: Readonly<{
-      workspaceRefsV1: readonly WorkspaceRefV1[];
-      workspaceSyncRelationshipsV1: readonly WorkspaceSyncRelationshipV1[];
-    }>;
-  }>>;
+    serverId: string;
+    signal?: AbortSignal;
+  }>) => Promise<ActiveProjectAccountRowsSnapshot>;
 }>;
 
 type HostCoordinatorInput = Readonly<{
@@ -83,6 +92,8 @@ type HostCoordinatorInput = Readonly<{
   start: (privateActionInput: unknown) => Promise<ActionExecuteResult>;
   signal: AbortSignal;
   publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
+  /** Preserved by the accepted Action owner, never read from author input. */
+  context?: RpcActionExecutorContext;
 }>;
 
 type PreparedHandoffTarget = SessionHandoffPrepareTargetResponse & Readonly<{
@@ -137,14 +148,18 @@ async function waitForTargetCustody(input: Readonly<{
   return await awaitSpawnedSessionId({
     result: input.spawnResult,
     spawnNonce: input.spawnNonce,
-    resolveSpawnSessionByNonce: async (spawnNonce, timeoutMs) => normalizeSpawnSessionNonceResolution(
+    resolveSpawnSessionByNonce: async (spawnNonce, timeoutMs, observation) => normalizeSpawnSessionNonceResolution(
       await input.callMachine({
         credentials: input.credentials,
         machineId: input.machineId,
         method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE,
         request: { spawnNonce, ...(timeoutMs !== undefined ? { timeoutMs } : {}) },
-        ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
-        signal: input.signal,
+        timeoutMs: null,
+        reattachOnReconnect: {
+          readRequest: () => ({ spawnNonce,
+            timeoutMs: observation?.readRemainingTimeoutMs() ?? timeoutMs }),
+        },
+        signal: observation?.signal ?? input.signal,
       }),
     ),
     signal: input.signal,
@@ -154,6 +169,7 @@ async function waitForTargetCustody(input: Readonly<{
 export function buildTrackedSessionHandoffSpawnOptions(params: Readonly<{
   targetMachineId: string;
   prepared: PreparedHandoffTarget;
+  stateTransfer?: 'transfer' | 'existing';
 }>): SpawnSessionOptions {
   const prepared = params.prepared;
   const runtimeDescriptorV1 = readRuntimeDescriptorV1(prepared.runtimeDescriptorV1) ?? undefined;
@@ -169,6 +185,7 @@ export function buildTrackedSessionHandoffSpawnOptions(params: Readonly<{
     resume: prepared.resume.resume,
     attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
     transcriptStorage: prepared.resume.transcriptStorage,
+    ...(params.stateTransfer === 'existing' ? { handoffStateTransfer: 'existing' as const } : {}),
     executionAuthorization: SpawnSessionExecutionAuthorizationSchema.parse({
       provenance: 'user_request',
       requestId: prepared.handoffId,
@@ -183,23 +200,13 @@ export function buildTrackedSessionHandoffSpawnOptions(params: Readonly<{
 export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
   const resolveSource = deps.resolveSource ?? resolveSourceContext;
   const callMachine: MachineCall = deps.callMachine ?? (async (input) => await callMachineRpc(input));
-  const awaitTargetCustody = deps.awaitTargetCustody ?? (async (input) => await waitForTargetCustody({
-    ...input,
-    callMachine,
-  }));
-  const refreshWorkspaceSettings = deps.refreshWorkspaceSettings ?? (async (input) => {
-    const context = await refreshAccountSettingsForMinimumVersion(input);
-    return {
-      settingsVersion: context.settingsVersion,
-      settings: {
-        workspaceRefsV1: context.settings.workspaceRefsV1,
-        workspaceSyncRelationshipsV1: context.settings.workspaceSyncRelationshipsV1,
-      },
-    };
-  });
+  const preflightMachineRpc = createSessionHandoffPreflightMachineRpc({ callMachine, authorization: deps.handoffAuthorization });
+  const refreshProjectSnapshot = deps.refreshProjectSnapshot ?? readProjectAccountRows;
   const resolveWorkspaceTransferRoot = deps.resolveWorkspaceTransferRoot ?? resolveWorkspaceTransferRootWithScmWorkspace;
 
   return async (hostInput: HostCoordinatorInput): Promise<ActionExecuteResult> => {
+    const requester = hostInput.context?.requesterSessionBootstrap;
+    const coordinate = async (): Promise<ActionExecuteResult> => {
     const rawInput = hostInput.actionInput && typeof hostInput.actionInput === 'object'
       && !Array.isArray(hostInput.actionInput)
       ? hostInput.actionInput as Readonly<Record<string, unknown>>
@@ -211,12 +218,28 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
     if (!operationId || !sessionId || !targetMachineId) {
       return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
     }
-    const credentials = await deps.readCredentials();
+    if (rawInput.stateTransfer !== undefined && rawInput.stateTransfer !== 'transfer' && rawInput.stateTransfer !== 'existing') {
+      return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
+    }
+    const stateTransfer = rawInput.stateTransfer;
+    const admission = hostInput.context?.machineAdmission;
+    if (requester && (requester.getBoundSessionId() !== sessionId
+      || requester.attribution.serverId !== deps.expectedAccountServerId
+      || admission && (requester.attribution.accountId !== admission.actorAccountId
+        || requester.attribution.machineId !== admission.machineId
+        || requester.attribution.installationId !== admission.installationId)
+      || !await requester.isCurrent())) {
+      return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    }
+    const credentials = requester?.credentials ?? await deps.readCredentials();
     if (!credentials) {
       return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
     }
     const source = await resolveSource(credentials, sessionId, hostInput.signal);
     if (!source.ok) return source;
+    if (requester && (source.sourceMachineId !== requester.attribution.machineId || !await requester.isCurrent())) {
+      return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    }
     const managedTarget = source.directoryKind === 'managed';
     if (managedTarget) targetPath = null;
     const {
@@ -229,6 +252,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       targetDirectory: _untrustedTargetDirectory,
       operationId: _untrustedOperationId,
       workspaceAction: _untrustedWorkspaceAction,
+      stateTransfer: _untrustedStateTransfer,
       ...forwardedActionInput
     } = rawInput;
     const privateStartInput = {
@@ -240,6 +264,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       preferredTransportStrategies: ['direct_peer', 'server_routed_stream'] as const,
       ...(managedTarget ? { operationId, targetDirectory: { kind: 'managed' as const } } : {}),
       ...(targetPath ? { targetPath } : {}),
+      ...(stateTransfer ? { stateTransfer } : {}),
     };
 
     const parsedWorkspaceAction = managedTarget || rawInput.workspaceAction === undefined
@@ -264,14 +289,27 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
     }
     const daemonMaterializesEndpoints = workspaceAction?.kind === 'create_relationship' || workspaceAction?.kind === 'copy_once';
+    const daemonResolvesWorkspaceMembership = workspaceAction?.kind === 'relationship' || workspaceAction?.kind === 'linked_workspace';
     const accountServerId = readNonEmptyString(rawInput.accountServerId);
-    if (daemonMaterializesEndpoints && accountServerId !== deps.expectedAccountServerId.trim()) {
-      return { ok: false, errorCode: 'workspace_ref_not_ready', error: 'workspace_ref_not_ready' };
+    let workspaceAccountServerId = deps.expectedAccountServerId.trim();
+    if (daemonMaterializesEndpoints || daemonResolvesWorkspaceMembership) {
+      try {
+        hostInput.signal.throwIfAborted();
+        const observedHome = deps.resolveWorkspaceAccountServerId
+          ? await deps.resolveWorkspaceAccountServerId(hostInput.signal, { requireFreshHome: daemonMaterializesEndpoints }) : workspaceAccountServerId;
+        hostInput.signal.throwIfAborted();
+        if (!observedHome || (daemonMaterializesEndpoints || accountServerId !== null) && accountServerId !== observedHome.trim()) {
+          return { ok: false, errorCode: 'workspace_ref_not_ready', error: 'workspace_ref_not_ready' };
+        }
+        workspaceAccountServerId = observedHome.trim();
+      } catch (error) {
+        return readWorkspaceFailure(error, 'workspace_ref_not_ready');
+      }
     }
     if (targetReplacementApproval && (
       !daemonMaterializesEndpoints
       || targetReplacementApproval.operationId !== operationId
-      || targetReplacementApproval.serverId !== deps.expectedAccountServerId.trim()
+      || targetReplacementApproval.serverId !== workspaceAccountServerId
       || targetReplacementApproval.machineId !== targetMachineId
     )) {
       return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
@@ -281,47 +319,52 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
     let sourceWorkspaceRootPath = source.sourceRootPath;
     if (workspaceAction?.kind === 'relationship' || workspaceAction?.kind === 'linked_workspace') {
       try {
-        // Endpoint identity and the settings version that proves it are
-        // daemon-owned: read the canonical Account settings owner rather than
-        // trusting a caller-supplied ref id or version floor.
-        const settings = await refreshWorkspaceSettings({ credentials });
+        // Endpoint identity is read from the authenticated Home's Project rows.
+        const projectSnapshot = await refreshProjectSnapshot({
+          credentials, serverId: workspaceAccountServerId, signal: hostInput.signal,
+        });
         const sessionCwd = source.sourceRootPath;
         if (!sessionCwd) throw Object.assign(new Error('Source workspace path is unavailable'), { code: 'workspace_ref_not_ready' });
         const selectedRelationship = workspaceAction.kind === 'relationship'
-          ? settings.settings.workspaceSyncRelationshipsV1.find((relationship) => relationship.relationshipId === workspaceAction.relationshipId)
+          ? projectSnapshot.relationships.find((relationship) => relationship.relationshipId === workspaceAction.relationshipId)
           : undefined;
-        const sourceCandidates = settings.settings.workspaceRefsV1.filter((ref) => (
-          ref.machineId === source.sourceMachineId
+        const childMachines = await readWorkspaceSyncChildMachineFacts({
+          serverId: workspaceAccountServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), credentials,
+          machineIds: [source.sourceMachineId, targetMachineId], signal: hostInput.signal,
+        });
+        const sourceCandidates = projectSnapshot.workspaceRefs.filter((ref) => (
+          ref.serverId.trim() === workspaceAccountServerId
+          && ref.machineId === source.sourceMachineId
           && getPathRemainderWithinBase(sessionCwd, ref.rootPath) !== null
-          && (workspaceAction.kind !== 'relationship' || !selectedRelationship
-            || ref.id === selectedRelationship.alphaWorkspaceRefId || ref.id === selectedRelationship.betaWorkspaceRefId)
-        ));
+        )).filter((ref) => {
+          const endpoint = resolveWorkspaceSyncEndpoint({ workspace: ref, workspaceRefs: projectSnapshot.workspaceRefs, childMachines });
+          if (!endpoint.ok) throw Object.assign(new Error('Child workspace Sync endpoint is unavailable'), { code: endpoint.code });
+          return workspaceAction.kind !== 'relationship' || !selectedRelationship
+            || endpoint.endpoint.id === selectedRelationship.alphaWorkspaceRefId || endpoint.endpoint.id === selectedRelationship.betaWorkspaceRefId;
+        });
         if (sourceCandidates.length !== 1) {
           throw Object.assign(new Error('Source workspace is not uniquely identified'), { code: 'relationship_source_mismatch' });
         }
         sourceWorkspaceRootPath = sourceCandidates[0]!.rootPath;
         sessionRelativeCwd = getPathRemainderWithinBase(sessionCwd, sourceWorkspaceRootPath)!;
-        const sourceHasGitLink = workspaceAction.kind === 'relationship'
-          ? selectedRelationship?.contentPolicy.selection === 'git_worktree'
-          : settings.settings.workspaceSyncRelationshipsV1.some((relationship) => (
-            (relationship.alphaWorkspaceRefId === sourceCandidates[0]!.id || relationship.betaWorkspaceRefId === sourceCandidates[0]!.id)
-            && relationship.contentPolicy.selection === 'git_worktree'
-          ));
+        workspaceContext = resolveSessionHandoffWorkspaceContext({
+          serverId: workspaceAccountServerId,
+          action: workspaceAction,
+          workspaceRefs: projectSnapshot.workspaceRefs,
+          relationships: projectSnapshot.relationships,
+          childMachines,
+          sourceMachineId: source.sourceMachineId,
+          sourceRootPath: sourceWorkspaceRootPath,
+          targetMachineId,
+          ...(targetPath ? { targetRootPath: targetPath } : {}),
+        });
+        const sourceHasGitLink = workspaceContext.contentSelection === 'git_worktree';
         if (sourceHasGitLink) {
           const transferRoot = await resolveWorkspaceTransferRoot({ sessionCwd });
           if (!transferRoot || transferRoot.repositoryRoot !== sourceWorkspaceRootPath) {
             throw Object.assign(new Error('Git worktree selection is unavailable for the source'), { code: 'git_selection_unavailable' });
           }
         }
-        workspaceContext = resolveSessionHandoffWorkspaceContext({
-          action: workspaceAction,
-          workspaceRefs: settings.settings.workspaceRefsV1,
-          relationships: settings.settings.workspaceSyncRelationshipsV1,
-          sourceMachineId: source.sourceMachineId,
-          sourceRootPath: sourceWorkspaceRootPath,
-          targetMachineId,
-          ...(targetPath ? { targetRootPath: targetPath } : {}),
-        });
       } catch (error) {
         return readWorkspaceFailure(error, 'workspace_ref_not_ready');
       }
@@ -357,6 +400,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
 
     let spawnResult: unknown;
     let spawnNonce: string | null = null;
+    let acceptedHandoffId: string | null = null;
     const workspaceHandoffMethods = new Set<string>([
       RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
       RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3,
@@ -364,14 +408,59 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT_V3,
       RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3,
     ]);
-    const rpc = async (machineId: string, method: string, request: unknown, signal?: AbortSignal) => {
+    const rpc = async (machineId: string, method: string, request: unknown, signal?: AbortSignal,
+      observation?: Pick<Parameters<MachineCall>[0], 'timeoutMs' | 'reattachOnReconnect'>) => {
+      if (requester && !await requester.isCurrent()) {
+        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      }
       try {
+        const root = hostInput.context?.externalActionExecutionAuthorization;
+        let externalAction: Parameters<MachineCall>[0]['externalAction'];
+        if (root) {
+          const boundary = deps.handoffAuthorization;
+          const phaseInput = request && typeof request === 'object'
+            && Reflect.get(request, 'kind') === 'requester_session_handoff_bootstrap_v1' ? Reflect.get(request, 'input') : request;
+          const requestHandoffId = phaseInput && typeof phaseInput === 'object' ? readNonEmptyString(Reflect.get(phaseInput, 'handoffId')) : null;
+          const handoffId = requestHandoffId ?? acceptedHandoffId;
+          const custody = handoffId && boundary ? await boundary.sourceExportStore.load(handoffId) : null;
+          const signer = boundary?.readSourceInstallation();
+          const admission = root.binding.handoffAdmission;
+          const actionId = resolveMachineRpcExternalActionEffectV1(method, root.binding,
+            { machineId, installationId: root.binding.handoffAdmission?.targetInstallationId ?? '' });
+          if (!boundary || !handoffId || !signer || !admission || !actionId
+            || custody?.acceptedHandoffAuthorization?.token !== root.token
+            || custody.sessionId !== sessionId || custody.sourceMachineId !== source.sourceMachineId
+            || custody.targetMachineId !== targetMachineId || admission.sessionId !== sessionId
+            || admission.sourceMachineId !== source.sourceMachineId || admission.targetMachineId !== targetMachineId
+            || signer.machineId !== admission.sourceMachineId || signer.installationId !== admission.sourceInstallationId) {
+            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+          }
+          const childAuthorization = await prepareExternalActionHandoffContinuationAuthorization({ authorization: custody.acceptedHandoffAuthorization,
+            handoffId, actionId, input: request, machineId, sourceMachineId: signer.machineId,
+            sourceInstallationId: signer.installationId, privateKey: signer.privateKey, serverHttpBaseUrl: boundary.serverHttpBaseUrl,
+            ...(credentials.encryption?.type === 'dataKey' ? { material: credentials.encryption } : {}), ...(signal ? { signal } : {}) });
+          const authorization = childAuthorization && requester
+            ? await requester.projectExternalActionAuthorization(childAuthorization,
+                childAuthorization.binding.serverIdentityId, signal) : childAuthorization;
+          const currentSigner = boundary.readSourceInstallation();
+          if (!authorization || !currentSigner || currentSigner.machineId !== signer.machineId
+            || currentSigner.installationId !== signer.installationId) {
+            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+          }
+          acceptedHandoffId = handoffId;
+          externalAction = { context: { ...hostInput.context!, authority: 'account_automation',
+            defaultSessionMachineId: signer.machineId, externalActionTarget: authorization.binding.target,
+            externalActionExecutionAuthorization: authorization }, effectActionId: actionId,
+            installationId: signer.installationId, privateKey: signer.privateKey };
+        }
         return await callMachine(buildTrackedSessionHandoffMachineCall({
           credentials,
           machineId,
           method,
           request,
+          ...(externalAction ? { externalAction, authorityCeiling: 'account_automation' as const } : {}),
           ...(signal ? { signal } : {}),
+          ...(observation ?? {}),
         }));
       } catch (error) {
         if (workspaceAction?.kind !== undefined && workspaceAction.kind !== 'none'
@@ -394,6 +483,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         targetMachineId,
         ...(managedTarget ? { targetDirectory: { kind: 'managed' as const } } : {}),
         ...(targetSessionPath ? { targetPath: targetSessionPath } : {}),
+        ...(stateTransfer ? { stateTransfer } : {}),
         ...(preservesWorkspaceSessionPath && workspaceTargetRootPath
           ? { workspaceSyncTargetSessionRelativeCwd: sessionRelativeCwd }
           : {}),
@@ -401,7 +491,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
           ? { targetSessionStorageMode: rawInput.targetSessionStorageMode }
           : {}),
         ...(workspaceAction ? { workspaceAction } : {}),
-        ...(daemonMaterializesEndpoints ? { accountServerId: deps.expectedAccountServerId.trim() } : {}),
+        ...(daemonMaterializesEndpoints ? { accountServerId: workspaceAccountServerId } : {}),
         ...(targetReplacementApproval ? { targetReplacementApproval } : {}),
         ...(targetReplacementApprovalReceiptId ? {
           targetReplacementApprovalReceiptId,
@@ -418,12 +508,21 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         } : {}),
       },
       signal: hostInput.signal,
+      ...(deps.callWorkspaceSourcePhase && hostInput.context ? {
+        callWorkspaceSourcePhase: descriptor => deps.callWorkspaceSourcePhase!(descriptor, hostInput.context!),
+      } : {}),
       start: async () => await hostInput.start(privateStartInput),
       resolveSource: async () => source,
+      checkExistingTarget: async (request, signal) => await admitSessionHandoffExistingState({
+        credentials, request, context: hostInput.context, rpc: preflightMachineRpc, signal,
+      }) ?? { ok: true },
       prepareTarget: async (request, signal) => await rpc(
         targetMachineId,
         RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
-        request,
+        requester || hostInput.context?.externalActionExecutionAuthorization ? {
+          kind: 'requester_session_handoff_bootstrap_v1', input: { ...request, sessionId },
+          requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(credentials) },
+        } : request,
         signal,
       ),
       getPreparedTargetResult: async (request, signal) => await rpc(
@@ -443,6 +542,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         const options = buildTrackedSessionHandoffSpawnOptions({
           targetMachineId,
           prepared: prepared as PreparedHandoffTarget,
+          ...(stateTransfer ? { stateTransfer } : {}),
         });
         spawnResult = await rpc(
           targetMachineId,
@@ -461,18 +561,22 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
               error: readNonEmptyString(record?.errorMessage) ?? 'session_handoff_resume_failed',
             };
       },
-      confirmTarget: async ({ sessionId: expectedSessionId }) => {
+      confirmTarget: async ({ sessionId: expectedSessionId }, signal) => {
         if (!spawnNonce) {
           return { ok: false, errorCode: 'session_handoff_target_unconfirmed', error: 'session_handoff_target_unconfirmed' };
         }
-        const settled = await awaitTargetCustody({
+        const custodyInput = {
           credentials,
           machineId: targetMachineId,
           sessionId: expectedSessionId,
           spawnNonce,
           spawnResult,
-          signal: hostInput.signal,
-        });
+          signal,
+        };
+        const settled = deps.awaitTargetCustody ? await deps.awaitTargetCustody(custodyInput)
+          : await waitForTargetCustody({ ...custodyInput, callMachine: async input => await rpc(input.machineId,
+              input.method, input.request, input.signal, { timeoutMs: input.timeoutMs,
+                reattachOnReconnect: input.reattachOnReconnect }) });
         return settled.type === 'success' && settled.sessionId === expectedSessionId
           ? { ok: true }
           : {
@@ -500,5 +604,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       workspaceSyncAdapter: deps.workspaceSyncAdapter,
       ...(deps.wait ? { wait: deps.wait } : {}),
     });
+    };
+    return requester ? await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, coordinate) : await coordinate();
   };
 }

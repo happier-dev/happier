@@ -74,6 +74,10 @@ import type {
   ConnectedServiceTurnLifecycleResult,
 } from './connectedServices/connectedServiceTurnLifecycleContract';
 import {
+  CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH,
+  ConnectedServiceAppliedParentSelectionResultSchema,
+  type ConnectedServiceAppliedParentSelectionRequest,
+  type ConnectedServiceAppliedParentSelectionResult,
   CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
   CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
   CONNECTED_SERVICE_RUN_RELEASE_PATH,
@@ -95,6 +99,7 @@ import type {
   TakeoverAdmissionMode,
 } from './spawn/persistedTakeoverAdmission';
 import { daemonPost, type DaemonControlRequestOptions } from './controlHttp';
+import { EXECUTION_RUN_ADMISSION_PATH, ExecutionRunDaemonAdmissionResponseSchema } from './lifecycle/admissionDrain';
 export type { DaemonControlRequestOptions } from './controlHttp';
 export { startDaemonAgentInstallJob, readDaemonAgentInstallJob, cancelDaemonAgentInstallJob, listDaemonAgentInstallJobs } from './agentInstallJobClient';
 import { inspectDaemonPublicationPresence, type DaemonPublicationPresenceInspection } from './controlLiveness';
@@ -134,6 +139,15 @@ import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCata
 import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
 
 const DEFAULT_DAEMON_PING_TIMEOUT_MS = 3_000;
+
+/** Ask the daemon's current admission owner; no state is copied into the Session host. */
+export async function admitDaemonExecutionRunStart(options: DaemonControlRequestOptions = {}): Promise<void> {
+  const response = ExecutionRunDaemonAdmissionResponseSchema.safeParse(await daemonPost(EXECUTION_RUN_ADMISSION_PATH, {}, {
+    ...options, authScope: 'connected-service-run-materialize',
+  }));
+  if (!response.success) throw Object.assign(new Error('Daemon admission is unavailable'), { code: 'daemon_admission_unavailable' });
+  if (!response.data.admitted) throw Object.assign(new Error(response.data.reason), { code: response.data.reason });
+}
 const DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS = 12_000;
 const DEFAULT_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS = 10_000;
 const DAEMON_STATE_FRESHNESS_GRACE_MS = 60_000;
@@ -415,13 +429,18 @@ function parseDaemonPluginChangeReviewResult(
   return parsed.success ? parsed.data : null;
 }
 
+function pluginControlOptions(options: DaemonControlRequestOptions): DaemonControlRequestOptions {
+  // Plugin work follows its caller lifetime, including an explicit untimed wait.
+  return { ...options, timeoutMs: options.timeoutMs ?? null };
+}
+
 export async function requestDaemonPluginChange(
   request: PluginChangeRequest,
   options: DaemonControlRequestOptions = {},
 ): Promise<PluginChangeRequestResult | Readonly<{ kind: 'unavailable'; code: string }>> {
   const result = await daemonPost(PLUGIN_CHANGE_REQUEST_PATH, request, {
-    ...options,
-    timeoutMs: options.timeoutMs ?? 300_000,
+    ...pluginControlOptions(options),
+    mutation: true,
   });
   if (result && typeof result === 'object' && typeof result.error === 'string') {
     return { kind: 'unavailable', code: result.errorCode ?? 'daemon_unavailable' };
@@ -437,8 +456,8 @@ export async function decideDaemonPluginChange(
   options: DaemonControlRequestOptions = {},
 ): Promise<PluginChangeDecisionResult | Readonly<{ kind: 'unavailable'; code: string }>> {
   const result = await daemonPost(PLUGIN_CHANGE_DECISION_PATH, decision, {
-    ...options,
-    timeoutMs: options.timeoutMs ?? 300_000,
+    ...pluginControlOptions(options),
+    mutation: true,
   });
   if (result && typeof result === 'object' && typeof result.error === 'string') {
     return { kind: 'unavailable', code: result.errorCode ?? 'daemon_unavailable' };
@@ -453,10 +472,7 @@ export async function readDaemonPluginChangeStatus(
   request: PluginChangeStatusRequest,
   options: DaemonControlRequestOptions = {},
 ): Promise<PluginChangeStatusResult> {
-  const result = await daemonPost(PLUGIN_CHANGE_STATUS_PATH, request, {
-    ...options,
-    timeoutMs: options.timeoutMs ?? 30_000,
-  });
+  const result = await daemonPost(PLUGIN_CHANGE_STATUS_PATH, request, pluginControlOptions(options));
   if (result && typeof result === 'object' && typeof result.error === 'string') {
     return { kind: 'daemonUnavailable' };
   }
@@ -501,10 +517,7 @@ export async function readDaemonPluginChangeStatus(
 export async function listDaemonPluginChanges(
   options: DaemonControlRequestOptions = {},
 ): Promise<PluginChangeListResult> {
-  const result = await daemonPost(PLUGIN_CHANGE_LIST_PATH, {}, {
-    ...options,
-    timeoutMs: options.timeoutMs ?? 15_000,
-  });
+  const result = await daemonPost(PLUGIN_CHANGE_LIST_PATH, {}, pluginControlOptions(options));
   if (!result || typeof result !== 'object' || typeof result.error === 'string') {
     return { changes: [] };
   }
@@ -544,9 +557,17 @@ export async function controlDaemonPluginDevelopment(
             ?? request.rootPath,
         };
   const result = await daemonPost(PLUGIN_DEVELOPMENT_CONTROL_PATH, normalizedRequest, {
-    ...options,
-    timeoutMs: options.timeoutMs ?? 300_000,
+    ...pluginControlOptions(options),
+    mutation: request.kind !== 'status',
   });
+  if (result && typeof result === 'object' && typeof result.error === 'string') {
+    return {
+      kind: 'failed',
+      code: result.errorCode ?? 'daemon_unavailable',
+      message: result.error,
+      status: { roots: [], plugins: [] },
+    };
+  }
   if (!result || typeof result !== 'object' || typeof result.kind !== 'string') {
     return {
       kind: 'failed',
@@ -570,8 +591,8 @@ export async function requestDaemonPluginActionExecution(request: Readonly<{
   expectedContributorOccurrenceId?: string;
 }>, options: DaemonControlRequestOptions = {}): Promise<PluginActionExecutionAttempt> {
   const result = await daemonPost(PLUGIN_ACTION_EXECUTE_PATH, request, {
-    ...options,
-    timeoutMs: options.timeoutMs ?? 300_000,
+    ...pluginControlOptions(options),
+    mutation: true,
   });
   if (result && typeof result === 'object' && typeof result.error === 'string') {
     return {
@@ -588,7 +609,7 @@ export async function requestDaemonPluginActionExecution(request: Readonly<{
 
 export async function requestDaemonSignedRootActionExecution(
   request: SignedRootActionExecuteRequest,
-  options: DaemonControlRequestOptions = {},
+  options: DaemonControlRequestOptions & Readonly<{ authorityCeiling?: 'account_automation' }> = {},
 ): Promise<ActionExecuteResult> {
   if (options.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   const spec = getActionSpec(request.actionId);
@@ -599,7 +620,10 @@ export async function requestDaemonSignedRootActionExecution(
     // Idle observation owns its deadline; client Actions may wait for approval
     // and completion under the caller lifetime. Neither gets a shorter ACK cutoff.
     timeoutMs: options.timeoutMs !== undefined ? options.timeoutMs
-      : request.actionId === 'session.wait.idle' || executionPlacement === 'client' ? null : 300_000,
+      : request.actionId === 'session.wait.idle' || executionPlacement === 'client'
+        || request.actionId === 'daemon.filesystem.upload' || request.actionId === 'daemon.filesystem.download'
+        || (request.actionId === 'daemon.filesystem.copy' && request.input && typeof request.input === 'object'
+          && 'kind' in request.input && request.input.kind === 'prepared_transfer') ? null : 300_000,
     mutation: sideEffectClass !== 'none' && sideEffectClass !== 'read',
   });
   if (result && typeof result === 'object' && typeof result.error === 'string') {
@@ -607,6 +631,7 @@ export async function requestDaemonSignedRootActionExecution(
       ok: false,
       errorCode: result.errorCode ?? 'daemon_unavailable',
       error: result.error,
+      ...(result.details !== undefined ? { details: result.details } : {}),
     };
   }
   return result as ActionExecuteResult;
@@ -619,6 +644,7 @@ export async function readDaemonPluginCatalog(
       kind: 'available';
       plugins: readonly PluginCatalogEntry[];
       tools: readonly ProjectedPluginToolCatalogEntry[];
+      projection?: import('@/plugins/daemon/catalogProjection').DaemonPluginCatalogProjection;
     }>
   | Readonly<{ kind: 'unavailable'; code: string }>
 > {
@@ -631,6 +657,7 @@ export async function readDaemonPluginCatalog(
         kind: 'available';
         plugins: readonly PluginCatalogEntry[];
         tools?: readonly ProjectedPluginToolCatalogEntry[];
+        projection?: import('@/plugins/daemon/catalogProjection').DaemonPluginCatalogProjection;
       }>
     | Readonly<{ kind: 'unavailable'; code: string }>;
   return parsed.kind === 'available'
@@ -801,6 +828,14 @@ export async function notifyDaemonConnectedServiceTurnLifecycle(
     return response.result;
   }
   return response;
+}
+
+/** Invalidation only: the daemon re-reads the current host and never trusts a reported idle Boolean. */
+export async function notifyDaemonSessionActivityChanged(sessionId: string): Promise<void> {
+  const response: unknown = await daemonPost('/session-activity-changed', { sessionId });
+  if (!response || typeof response !== 'object' || !('ok' in response) || response.ok !== true) {
+    throw new Error('session_activity_notification_unavailable');
+  }
 }
 
 export async function notifyDaemonConnectedServiceUsageLimitWaitResumeCancel(
@@ -1119,6 +1154,16 @@ export async function stopDaemonSshTunnel(
  * Fail closed: callers must treat any `{ error }` / non-ok result as "do not start the run
  * with this connected selection".
  */
+export async function readAppliedParentConnectedServices(
+  request: ConnectedServiceAppliedParentSelectionRequest,
+): Promise<ConnectedServiceAppliedParentSelectionResult> {
+  const response = await daemonPost(CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH, request, {
+    authScope: 'connected-service-run-materialize',
+  });
+  const parsed = ConnectedServiceAppliedParentSelectionResultSchema.safeParse(response);
+  return parsed.success ? parsed.data : { status: 'unavailable' };
+}
+
 export async function requestExecutionRunConnectedServicesMaterialization(
   request: ConnectedServiceRunMaterializeRequest,
 ): Promise<

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { ApiClient } from '@/api/api';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { LiveWorkProducerV1 } from '../lifecycle/managedActivity';
 import type { DaemonAdmissionDrain } from '../lifecycle/admissionDrain';
@@ -87,6 +88,7 @@ import type {
 import { resolveStackDebugDirectPeerStartServer } from './resolveStackDebugDirectPeerStartServer';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessionNotificationContext';
 import type { CatalogAgentId } from '@/agent/catalog/types';
@@ -444,6 +446,7 @@ export async function startDaemonConnectedServiceRuntime(
   'connectedServiceRefreshCoordinator' | 'connectedServiceRefreshLoopHandle'
   | 'connectedServiceQuotasCoordinator' | 'connectedServiceQuotasLoopHandle'
   | 'daemonServerWorkScheduler' | 'setDaemonServerWorkOnline'>> {
+  const accountId = readAccountIdFromToken(params.credentials.token);
   const readAccountSettingsSnapshot = params.accountSettingsSnapshot ?? getActiveAccountSettingsSnapshot;
   const connectedServicesRefreshEnabled =
     parseBooleanEnv(
@@ -836,7 +839,14 @@ export async function startDaemonConnectedServiceRuntime(
         await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
           settings: settingsSnapshot?.settings ?? null,
           settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
+          ...(params.accountSettingsSnapshot ? {
+            notificationChannelCatalog: settingsSnapshot?.notificationChannelCatalog ?? { status: 'loading' as const },
+            savedSecretMaterializer: settingsSnapshot ? createSavedSecretMaterializerFromSnapshotV1(settingsSnapshot) : undefined,
+            isCurrent: params.isAccountRuntimeCurrent,
+          } : {}),
           expoPushSender: params.api.push(), transition,
+          ...(accountId ? { usageNoticeArtifactStore: { accountId,
+            store: createCredentialedAccountArtifactStore(params.credentials) } } : {}),
         }).catch((error) => {
           params.logger.debug('[DAEMON RUN] Connected-service usage notification failed (non-fatal)', error);
         });

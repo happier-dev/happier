@@ -17,6 +17,28 @@ export type CliAccountKvJsonTransportParams = Readonly<{
 class AccountKvJsonTransportError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
 }
+/** One persisted-mode/content-key admission for CLI Account storage adapters. */
+export async function resolveCliAccountStorageContext(params: Readonly<{
+  credentials: StoredCredentials; serverBaseUrl?: string; signal?: AbortSignal; shouldContinue?: () => boolean;
+  authorizationHeaders?: Readonly<Record<string, string>>;
+}>) {
+  const currentness = await fetchAccountEncryptionCurrentness({ token: params.credentials.token,
+    ...(params.serverBaseUrl ? { serverBaseUrl: params.serverBaseUrl } : {}),
+    ...(params.authorizationHeaders ? { authorizationHeaders: params.authorizationHeaders } : {}),
+    ...(params.signal ? { signal: params.signal } : {}) });
+  if (params.signal?.aborted || params.shouldContinue?.() === false) throw new AccountKvJsonTransportError('account_kv_scope_retired', 'The captured Account storage scope retired');
+  if (currentness.mode === 'plain') return { mode: 'plain' as const, material: null };
+  const encryption = params.credentials.encryption;
+  if (!encryption) throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account encryption material is unavailable');
+  const material = encryption.type === 'legacy' ? { type: 'legacy' as const, secret: encryption.secret }
+    : { type: 'dataKey' as const, machineKey: encryption.machineKey };
+  const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
+    ...(encryption.type === 'dataKey' ? { dataKeyPublicKey: encryption.publicKey } : {}) });
+  if (convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint) !== currentness.contentKeyFingerprint) {
+    throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account content-key fingerprint mismatch');
+  }
+  return { mode: 'e2ee' as const, encryption, material };
+}
 const storedItem = z.object({ key: z.string(), value: z.string(), version: z.number().int().nonnegative() }).strict();
 const mutationResponse = z.discriminatedUnion('success', [
   z.object({ success: z.literal(true), results: z.array(z.object({ key: z.string(), version: z.number().int().nonnegative() }).strict()) }).strict(),
@@ -36,19 +58,9 @@ export function createCliAccountKvJsonTransport(params: CliAccountKvJsonTranspor
     return value;
   };
   const context = async () => {
-    const currentness = await fetchAccountEncryptionCurrentness({ token: params.credentials.token, serverBaseUrl: base,
-      authorizationHeaders: headers({ method: 'GET', path: '/v1/account/encryption/currentness' }), ...(params.signal ? { signal: params.signal } : {}) });
-    check();
-    if (currentness.mode === 'plain') return { mode: 'plain' as const };
-    const encryption = params.credentials.encryption;
-    if (!encryption) throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account encryption material is unavailable');
-    const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
-      material: encryption.type === 'legacy' ? { type: 'legacy', secret: encryption.secret } : { type: 'dataKey', machineKey: encryption.machineKey },
-      ...(encryption.type === 'dataKey' ? { dataKeyPublicKey: encryption.publicKey } : {}) });
-    if (convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint) !== currentness.contentKeyFingerprint) {
-      throw new AccountKvJsonTransportError('account_storage_currentness_unavailable', 'Account content-key fingerprint mismatch');
-    }
-    return { mode: 'e2ee' as const, encryption };
+    return resolveCliAccountStorageContext({ credentials: params.credentials, serverBaseUrl: base,
+      authorizationHeaders: headers({ method: 'GET', path: '/v1/account/encryption/currentness' }),
+      signal: params.signal, shouldContinue: params.shouldContinue });
   };
   type Context = Awaited<ReturnType<typeof context>>;
   const encode = (value: unknown, admitted: Context): string => {

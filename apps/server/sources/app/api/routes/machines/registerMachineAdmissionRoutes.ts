@@ -8,10 +8,10 @@ import {
     ExternalActionExecutionAuthorizationV1Schema,
 } from '@happier-dev/protocol';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
-    WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
+    WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSyncHandoffWriterTarget,
     verifyWorkspaceSyncProjectSourceAuthorization, readCurrentWorkspaceSyncProjectSourceAuthorization,
-    hasCurrentExternalActionSessionSource } from '@/app/auth/externalActionExecutionAuthorization';
+    hasCurrentExternalActionSessionSource, readCurrentWorkspaceSyncSeedAuthorization } from '@/app/auth/externalActionExecutionAuthorization';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
@@ -38,6 +38,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.optional(),
                 workspaceSyncSourceWriterTargetRouting: WorkspaceSyncSourceWriterTargetRoutingV1Schema.optional(),
                 workspaceSyncSourceExecution: WorkspaceSyncSourceExecutionV1Schema.optional(),
+                workspaceSyncSeedRouting: WorkspaceSyncSeedRoutingV1Schema.optional(),
                 callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.optional(),
                 custodySubjectAccountId: z.string().min(1).optional(),
                 proof: MachineInstallationProofV1Schema,
@@ -45,11 +46,40 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         const { context, proof, purpose, custodySubjectAccountId, workspaceSyncSourceRouting, workspaceSyncTargetRouting,
-            workspaceSyncSourceWriterTargetRouting: writerRouting, callerInputAuthorization, workspaceSyncSourceExecution } = request.body;
+            workspaceSyncSourceWriterTargetRouting: writerRouting, callerInputAuthorization, workspaceSyncSourceExecution, workspaceSyncSeedRouting } = request.body;
         const method = request.body.method ?? '';
         const targetPhaseMethods = { preflight: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
             prepare: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
             release: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE };
+        if (workspaceSyncSeedRouting) {
+            if (!callerInputAuthorization || !workspaceSyncSourceExecution || purpose || custodySubjectAccountId
+                || workspaceSyncSourceRouting || workspaceSyncTargetRouting || writerRouting
+                || !isDeepStrictEqual(context, workspaceSyncSeedRouting.sourceWriterTarget.source.sourceContext.machineAdmission)) {
+                return reply.code(403).send({ error: 'access_denied' });
+            }
+            const signer = await db.machine.findUnique({ where: { id: request.params.id } });
+            if (!signer?.installationId || !signer.installationPublicKey || signer.accountId !== request.userId
+                || classifyMachineAvailabilityState(signer) !== 'available'
+                || !verifyMachineInstallationProof({ payload: { version: 1, machineId: signer.id, installationId: signer.installationId,
+                    accountId: request.userId, rpcAdmission: { context, method, workspaceSyncSeedRouting, callerInputAuthorization, workspaceSyncSourceExecution } },
+                    proof, publicKey: encodeBase64(signer.installationPublicKey, 'base64url') })) return reply.code(403).send({ error: 'access_denied' });
+            const admitted = await readCurrentWorkspaceSyncSeedAuthorization(callerInputAuthorization, workspaceSyncSeedRouting,
+                workspaceSyncSourceExecution, app.resolveCurrentSessionMachine);
+            const route = admitted?.physicalTarget;
+            if (!admitted || !route || method !== `${admitted.writer.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`
+                || (signer.id === admitted.writer.machineId ? signer.installationId !== admitted.writer.installationId
+                    : signer.id !== route.machineId || signer.installationId !== route.installationId)) {
+                return reply.code(403).send({ error: 'access_denied' });
+            }
+            const destination = await db.machine.findUnique({ where: { id: admitted.writer.machineId } });
+            if (!destination?.installationPublicKey || destination.installationId !== admitted.writer.installationId
+                || classifyMachineAvailabilityState(destination) !== 'available'
+                || !await hasCurrentExternalActionSessionSource(admitted.verified.binding, app.resolveCurrentSessionMachine)) {
+                return reply.code(403).send({ error: 'access_denied' });
+            }
+            return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
+                installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
+        }
         if (!writerRouting && (workspaceSyncSourceExecution || workspaceSyncSourceRouting?.originalActionEnvelope)) {
             // Only the original Project D packet can attest decrypted Source
             // facts to the installed P1. It is not a handoff or generic proof.

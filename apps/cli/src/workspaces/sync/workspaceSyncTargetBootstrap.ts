@@ -14,8 +14,12 @@ import {
   beginWorkspaceTargetMaterialization,
   recoverInterruptedWorkspaceTargetMaterialization,
   rehydrateWorkspaceTargetMaterializationFromReceiptPath,
+  inspectCommittedWorkspaceTargetMaterialization,
+  removeCommittedWorkspaceTargetMaterialization,
+  assertWorkspaceTargetMaterializationWorkerCopyCreation,
   type WorkspaceExportMaterializationCustody,
   type WorkspaceTargetMaterializationFence,
+  type WorkspaceTargetMaterializationWorkerCopyCreation,
 } from '@/scm/workspace/workspaceExportMaterialization';
 import {
   computeWorkspaceSyncAbsentRootFingerprint,
@@ -32,8 +36,12 @@ export type WorkspaceSyncTargetBootstrapInput = Readonly<{
   targetWorkspaceRefId: string;
   policyDigest: string;
   contentSelection: 'git_worktree' | 'all_files';
+  /** Receiving target's current persisted Home definition; never a caller's transient marker. */
+  workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
   /** Host-private Action approval, reinspected at this target under root custody. */
   targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
+  /** Owner-local proof binding the unchanged chosen child root to this physical root. */
+  targetReplacementApprovalTarget?: Readonly<{ canonicalRoot: string; assertCurrent(): Promise<void> }>;
   /**
    * Whether this bootstrap activates exact mirroring, which authorizes deleting
    * target-only files even when the destination is missing or empty today.
@@ -91,8 +99,56 @@ function bootstrapOperationKey(relationshipId: string, endpointRole: 'alpha' | '
     .digest('hex');
 }
 
-function materializationReceiptPath(materializationDirectory: string, relationshipId: string, endpointRole: 'alpha' | 'beta') {
+export function workspaceSyncMaterializationReceiptPath(materializationDirectory: string, relationshipId: string, endpointRole: 'alpha' | 'beta') {
   return join(resolve(materializationDirectory), `${bootstrapOperationKey(relationshipId, endpointRole)}.json`);
+}
+
+export type WorkspaceSyncCommittedCopyRemoval = Readonly<{
+  rootPath: string;
+  relationshipId: string;
+  endpointRole: 'alpha' | 'beta';
+  rootFingerprint: string;
+  materializationDirectory: string;
+  signal?: AbortSignal;
+  workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
+}>;
+
+export async function inspectWorkspaceSyncCommittedCopy(input: Omit<WorkspaceSyncCommittedCopyRemoval, 'rootFingerprint'> & Readonly<{
+  rootFingerprint?: string;
+  measureSize?: true;
+}>): Promise<Readonly<{ rootFingerprint: string; sizeBytes?: number }>> {
+  input.signal?.throwIfAborted();
+  const receipt = await inspectCommittedWorkspaceTargetMaterialization({
+    targetPath: input.rootPath,
+    ...(input.rootFingerprint === undefined ? {} : { rootFingerprint: input.rootFingerprint }),
+    receiptPath: workspaceSyncMaterializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole),
+    ...(input.measureSize ? { measureSize: true } : {}),
+    ...(input.workerCopyCreation ? { workerCopyCreation: input.workerCopyCreation } : {}),
+  });
+  return { rootFingerprint: receipt.committed.rootFingerprint,
+    ...(receipt.sizeBytes === undefined ? {} : { sizeBytes: receipt.sizeBytes }) };
+}
+
+export async function removeWorkspaceSyncCommittedCopy(input: WorkspaceSyncCommittedCopyRemoval & Readonly<{
+  rootOwnershipManager: WorkspaceRootOwnershipManager;
+}>): Promise<void> {
+  await inspectWorkspaceSyncCommittedCopy(input);
+  const ownership = await input.rootOwnershipManager.tryAcquire({
+    ownerId: input.relationshipId, canonicalRoot: input.rootPath, operation: 'bootstrap',
+  });
+  if ('kind' in ownership) throw bootstrapError('workspace_root_in_use', 'Workspace copy root overlaps active work');
+  try {
+    await ownership.assertCurrentRootIdentity(input.rootFingerprint);
+    await removeCommittedWorkspaceTargetMaterialization({
+      targetPath: input.rootPath,
+      rootFingerprint: input.rootFingerprint,
+      receiptPath: workspaceSyncMaterializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole),
+      ...(input.signal ? { signal: input.signal } : {}),
+      ...(input.workerCopyCreation ? { workerCopyCreation: input.workerCopyCreation } : {}),
+    });
+  } finally {
+    await ownership.release();
+  }
 }
 
 function finalReadyPath(materializationDirectory: string, relationshipId: string, endpointRole: 'alpha' | 'beta'): string {
@@ -277,13 +333,14 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
   targetWorkspaceRefId: string;
   policyDigest: string;
   contentSelection: 'git_worktree' | 'all_files';
+  workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
   materializationDirectory: string;
   rootOwnershipManager: WorkspaceRootOwnershipManager;
   /** Restart cleanup probe: do nothing unless the finite receipt exists. */
   requireMaterializationReceipt?: boolean;
   prepareGitTarget?: WorkspaceSyncTargetBootstrapInput['prepareGitTarget'];
 }>, dependencies: Pick<WorkspaceSyncTargetBootstrapDependencies, 'rehydrateMaterializationFromReceiptPath'> = {}): Promise<WorkspaceSyncTargetBootstrapResult | null> {
-  const receiptPath = materializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
+  const receiptPath = workspaceSyncMaterializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
   const readyPath = finalReadyPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
   if (input.requireMaterializationReceipt
     && !(await lstat(receiptPath).catch(() => null))?.isFile()) return null;
@@ -321,6 +378,15 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
     await ownership.release();
     throw bootstrapError('target_bootstrap_required', 'Workspace sync target rollback receipt is unsafe');
   });
+  if (materializationCustody && input.workerCopyCreation) {
+    try {
+      assertWorkspaceTargetMaterializationWorkerCopyCreation(materializationCustody.receipt, input.workerCopyCreation);
+    } catch (error) {
+      // Rejected original custody never enters this invocation's rollback block.
+      await ownership.release();
+      throw error;
+    }
+  }
   let exactReady = false;
   let materializationSettled = false;
   try {
@@ -424,7 +490,7 @@ export async function workspaceSyncTargetBootstrap(
 
   const requested = normalize(resolve(input.rootPath));
   if (requested === resolve('/')) throw bootstrapError('workspace_root_unsafe', 'workspace sync target root is invalid');
-  const receiptPath = materializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
+  const receiptPath = workspaceSyncMaterializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
   const readyPath = finalReadyPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
   let created = false;
   let existingBeforeFence = await lstat(requested).catch((error: unknown) => {
@@ -463,6 +529,7 @@ export async function workspaceSyncTargetBootstrap(
   if ('kind' in ownership) throw bootstrapError('workspace_root_in_use', 'workspace sync target root overlaps an active operation');
   let materializationCustody: WorkspaceExportMaterializationCustody | undefined;
   let trustedReadyRequiresCommitOnlyCleanup = false;
+  let rejectedOriginalMaterialization = false;
   try {
     const interruptedCustody = await (dependencies.rehydrateMaterializationFromReceiptPath
       ?? rehydrateWorkspaceTargetMaterializationFromReceiptPath)({
@@ -473,6 +540,14 @@ export async function workspaceSyncTargetBootstrap(
       throw bootstrapError('target_bootstrap_required', `Workspace sync target recovery failed: ${(error as Error).message}`);
     });
     if (interruptedCustody) {
+      if (input.workerCopyCreation) {
+        try {
+          assertWorkspaceTargetMaterializationWorkerCopyCreation(interruptedCustody.receipt, input.workerCopyCreation);
+        } catch (error) {
+          rejectedOriginalMaterialization = true;
+          throw error;
+        }
+      }
       const restartRoot = await realpath(requested).catch(() => null);
       const restartFingerprint = restartRoot
         ? await computeWorkspaceSyncRootFingerprint(restartRoot).catch(() => null)
@@ -532,7 +607,8 @@ export async function workspaceSyncTargetBootstrap(
     if (existingBeforeFence && (!existingBeforeFence.isDirectory() || existingBeforeFence.isSymbolicLink())) {
       throw bootstrapError('workspace_root_unsafe', 'workspace sync target root must be a real directory');
     }
-    let targetFence: WorkspaceTargetMaterializationFence = { state: 'missing', identity: null };
+    let targetFence: WorkspaceTargetMaterializationFence = { state: 'missing', identity: null,
+      ...(input.workerCopyCreation ? { workerCopyCreation: input.workerCopyCreation } : {}) };
     if (existingBeforeFence || input.activatesExactMirror || input.targetReplacementApproval) {
       let approvalFingerprint = computeWorkspaceSyncAbsentRootFingerprint(canonicalRoot);
       if (existingBeforeFence) {
@@ -544,6 +620,7 @@ export async function workspaceSyncTargetBootstrap(
         targetFence = {
           state: (await readdir(canonicalRoot)).length === 0 ? 'empty' : 'nonempty',
           identity: await readWorkspaceSyncRootObjectIdentity(canonicalRoot),
+          ...(input.workerCopyCreation ? { workerCopyCreation: input.workerCopyCreation } : {}),
         };
       }
       // The complete consequence set is derived here, from the target this
@@ -557,9 +634,10 @@ export async function workspaceSyncTargetBootstrap(
         ...(input.activatesExactMirror ? ['delete_target_only_files_during_exact_mirror'] as const : []),
       ];
       if (requiredConsequences.length > 0 || input.targetReplacementApproval) {
+        await input.targetReplacementApprovalTarget?.assertCurrent();
         const approval = input.targetReplacementApproval;
         if (!approval
-          || approval.canonicalRoot !== canonicalRoot
+          || approval.canonicalRoot !== (input.targetReplacementApprovalTarget?.canonicalRoot ?? canonicalRoot)
           || approval.rootFingerprint !== approvalFingerprint
           || approval.consequences.length !== requiredConsequences.length
           || !requiredConsequences.every((consequence, index) => approval.consequences[index] === consequence)) {
@@ -685,6 +763,12 @@ export async function workspaceSyncTargetBootstrap(
       ...(retainedMaterializationCustody ? { materializationCustody: retainedMaterializationCustody } : {}),
     };
   } catch (error) {
+    if (rejectedOriginalMaterialization) {
+      // This receipt was never admitted to the current operation. Generic
+      // rollback must not abort its original copy after refusing a relabel.
+      await ownership.release();
+      throw error;
+    }
     if (trustedReadyRequiresCommitOnlyCleanup) {
       if (materializationCustody) await materializationCustody.commit().catch(() => undefined);
       await ownership.release();

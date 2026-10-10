@@ -481,7 +481,7 @@ async function readCurrentExternalActionSourceSigningPublicKey(
     binding: ExternalActionExecutionAuthorizationBindingV1,
 ): Promise<Uint8Array | null> {
     let source: Readonly<{ machineId: string; installationId: string }> | undefined;
-    if (binding.handoffContinuation) {
+    if (binding.handoffContinuation || binding.handoffPreflight) {
         if (!binding.handoffAdmission) return null;
         const handoff = await readCurrentExternalActionHandoffBindingInTx(db, {
             accountId: binding.accountId, handoffAdmission: binding.handoffAdmission,
@@ -515,7 +515,7 @@ async function verifyCommon(
         selectedMachineId: binding.machineId,
     })) return null;
     if (!hasMatchingExecutionEffectFamily(binding.actionId, effectActionId.data)
-        || ('authentication' in binding || binding.handoffContinuation) && binding.actionId !== effectActionId.data) return null;
+        || ('authentication' in binding || binding.handoffContinuation || binding.handoffPreflight) && binding.actionId !== effectActionId.data) return null;
     if (binding.serverIdentityId !== await getOrCreateServerIdentityId()) return null;
     const currentnessBody = ExternalActionExecutionAuthorizationVerifyRequestV1Schema.safeParse(proof.body);
     const custodyTarget = currentnessBody.success ? currentnessBody.data.managedFiniteWakeTarget : undefined;
@@ -535,7 +535,7 @@ async function verifyCommon(
         ? ManagedControllerIntentReportV1Schema.safeParse(proof.body) : null;
     const handoffChild = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
     const isHandoffChildIssue = proof.method.toUpperCase() === 'POST' && binding.actionId === 'session.handoff'
-        && binding.handoffAdmission && !binding.handoffContinuation && handoffChild.success
+        && binding.handoffAdmission && !binding.handoffContinuation && !binding.handoffPreflight && handoffChild.success
         && handoffChild.data.handoffContinuation?.authorization.token === proof.authorizationToken
         && readHandoffContinuationIssuanceAction(proof.path) !== null;
     const purpose: ExternalActionVerificationPurpose | undefined = report?.success
@@ -578,7 +578,7 @@ async function verifyCommon(
         && (binding.actionId === 'machines.managed.power.set' || binding.actionId === 'machines.managed.delete')
         && /^\/v1\/machines\/[^/]+$/u.test(proof.path.split('?')[0]);
     // Guest key publication is controller custody, not requester/source custody.
-    if (!signatureCurrent && !custodyTarget && !managedGuestMetadata) {
+    if ((!signatureCurrent || binding.handoffPreflight) && !custodyTarget && !managedGuestMetadata) {
         const sourceKey = await readCurrentExternalActionSourceSigningPublicKey(binding);
         signatureCurrent = sourceKey !== null && verifySignature(sourceKey);
     }
@@ -639,6 +639,8 @@ export async function verifyExternalActionDomainExecutionRequest(
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
     const verified = await verifyCommon(proof);
     if (!verified) return null;
+    if (verified.binding.handoffPreflight && (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
+        || proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`)) return null;
     const relay = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
     const isAdmittedRootRelay = proof.method.toUpperCase() === 'POST'
         && proof.path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${encodeURIComponent(verified.binding.actionId)}`
@@ -648,7 +650,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             machineId: relay.data.machineId, envelope: relay.data.envelope });
     const managedRoot = ManagedMachineActionIdV1Schema.safeParse(verified.binding.actionId);
     let managedGuestActivity: VerifiedExternalActionExecutionRequest['managedGuestActivity'];
-    if (isAdmittedRootRelay) {
+    if (isAdmittedRootRelay || verified.binding.handoffPreflight) {
         // Exact root re-entry is not a family grant or a new originator.
     } else if (managedRoot.success) {
         const path = proof.path.split('?')[0];
@@ -690,8 +692,10 @@ export async function verifyExternalActionDomainExecutionRequest(
         const path = proof.path.split('?')[0];
         const child = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
         if (verified.binding.actionId !== 'session.handoff' || !verified.binding.handoffAdmission
-            || proof.method.toUpperCase() !== 'POST' || !child.success || !child.data.handoffContinuation
-            || readHandoffContinuationIssuanceAction(path) === null) return null;
+            || verified.binding.handoffPreflight
+            || proof.method.toUpperCase() !== 'POST' || !child.success
+            || !(child.data.handoffContinuation && readHandoffContinuationIssuanceAction(path) !== null
+                || child.data.handoffPreflight && path === bindExternalActionExecutionAuthorizationHttpPathV1('session.handoff'))) return null;
     } else if (verified.binding.actionId === 'connectedServices.quota.get') {
         if (verified.effectActionId !== verified.binding.actionId || !isQuotaReadHttpPurpose(proof)) return null;
     } else if (verified.binding.actionId === 'session.pending.resetStart.set'
@@ -757,6 +761,7 @@ function matchesExternalActionAuthorizationBinding(binding: ExternalActionExecut
         || !sameManagedInput(binding.managedContinuation, supplied.managedContinuation)
         || !sameManagedInput(binding.handoffAdmission, supplied.handoffAdmission)
         || !sameManagedInput(binding.handoffContinuation, supplied.handoffContinuation)
+        || !sameManagedInput(binding.handoffPreflight, supplied.handoffPreflight)
         || !sameManagedInput(binding.sessionActionOrigin, supplied.sessionActionOrigin)
         || !sameManagedInput(binding.sessionActionSource, supplied.sessionActionSource)
         || !sameManagedInput(binding.workflowActionOrigin, supplied.workflowActionOrigin)
@@ -775,7 +780,7 @@ export async function verifyWorkspaceSyncHandoffSourceAuthorization(
     const context = routing.sourceContext;
     const claimed = context?.machineAdmission;
     if (!binding || !matchesExternalActionAuthorizationBinding(binding, authorization.binding)
-        || binding.actionId !== 'session.handoff' || binding.handoffContinuation || !binding.handoffAdmission
+        || binding.actionId !== 'session.handoff' || binding.handoffContinuation || binding.handoffPreflight || !binding.handoffAdmission
         || routing.originalActionEnvelope || !context || !claimed
         || binding.serverIdentityId !== await getOrCreateServerIdentityId()
         || routing.accountServerId !== binding.serverIdentityId
@@ -832,7 +837,7 @@ export async function readCurrentWorkspaceSyncProjectSourceAuthorization(
     const binding = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     const envelope = routing.originalActionEnvelope;
     if (!binding || !matchesExternalActionAuthorizationBinding(binding, authorization.binding)
-        || binding.actionId !== 'projects.open' || binding.handoffAdmission || binding.handoffContinuation
+        || binding.actionId !== 'projects.open' || binding.handoffAdmission || binding.handoffContinuation || binding.handoffPreflight
         || routing.phase !== 'prepare' || routing.sourceSessionId !== undefined || !envelope
         || binding.serverIdentityId !== await getOrCreateServerIdentityId() || routing.accountServerId !== binding.serverIdentityId
         || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: 'projects.open', machineId: binding.machineId, envelope })) return null;
@@ -1030,7 +1035,7 @@ export async function verifyExternalActionMachineRpcExecution(
 
     const effect = parseExternalActionEffectAction(binding, execution.effectActionId);
     if (!effect.success || !hasMatchingExecutionEffectFamily(binding.actionId, execution.effectActionId)
-        || binding.handoffContinuation && binding.actionId !== execution.effectActionId) return null;
+        || (binding.handoffContinuation || binding.handoffPreflight) && binding.actionId !== execution.effectActionId) return null;
     const guestMethod = [MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD]
         .find(method => request.method.endsWith(`:${method}`));
     const guestTarget = guestMethod === MANAGED_ACTIVITY_READ_RPC_METHOD
@@ -1049,7 +1054,7 @@ export async function verifyExternalActionMachineRpcExecution(
     // Only the proved private guest phase may cross that target boundary.
     if (ManagedMachineActionIdV1Schema.safeParse(binding.actionId).success
         && (guestMethod && !managedGuestActivity || !request.method.startsWith(`${binding.machineId}:`) && !managedGuestActivity)) return null;
-    if ('authentication' in binding || binding.handoffContinuation) {
+    if ('authentication' in binding || binding.handoffContinuation || binding.handoffPreflight) {
         const prefix = `${binding.machineId}:`;
         const method = managedGuestActivity && guestMethod ? guestMethod
             : request.method.startsWith(prefix) ? request.method.slice(prefix.length) : request.method;
@@ -1058,7 +1063,7 @@ export async function verifyExternalActionMachineRpcExecution(
     }
     // Home proves the original Session or accepted handoff source. RPC effects
     // cannot substitute the destination signer for that original authority.
-    const requiresSource = !managedGuestActivity && Boolean(binding.handoffContinuation
+    const requiresSource = !managedGuestActivity && Boolean(binding.handoffContinuation || binding.handoffPreflight
         || 'authentication' in binding && binding.sessionActionOrigin);
     const sourceKey = requiresSource ? await readCurrentExternalActionSourceSigningPublicKey(binding) : null;
     if (requiresSource && !sourceKey) return null;

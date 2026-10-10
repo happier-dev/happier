@@ -2,12 +2,13 @@ import { readDatabaseTransactionConfigFromEnv, resolveTransactionRetryDelayMs, t
 import { recordDatabaseTransactionRetry } from "@/app/monitoring/metrics/sessionWriteMetrics";
 import { delay } from "@/utils/runtime/delay";
 import { db } from "@/storage/db";
-import { getDbProviderFromEnv, isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
+import { getDbProviderFromEnv, isPrismaErrorCode, withSqliteReadSnapshot, type TransactionClient } from "@/storage/prisma";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
 import { log } from "@/utils/logging/log";
 
 export type Tx = TransactionClient;
 export type InTxOptions = Readonly<{
+    readOnly?: boolean;
     isolationLevel?: "Serializable" | "ReadCommitted";
     timeoutMs?: number;
     maxWaitMs?: number;
@@ -113,6 +114,9 @@ function canStartAnotherSqliteTransactionAttempt(params: Readonly<{
 
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions): Promise<T> {
     const provider = getDbProviderFromEnv(process.env, "postgres");
+    if (provider === "sqlite" && options?.readOnly) {
+        return await withSqliteReadSnapshot(fn, { deadlineAtMs: options.deadlineAtMs });
+    }
     const transactionConfig = readDatabaseTransactionConfigFromEnv(process.env, provider);
     let counter = 0;
     const startedAtMs = Date.now();

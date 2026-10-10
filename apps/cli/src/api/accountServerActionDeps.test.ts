@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   API_TOKEN_FULL_GRANT_V1,
@@ -34,6 +37,39 @@ import {
   createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
+import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+
+function createAccountProjectWorkerActionDeps(input: Parameters<typeof createAccountServerActionDeps>[0]) {
+  const ctx = input.credentials ? resolveSessionEncryptionContextFromCredentials(input.credentials) : null;
+  // This global fixture binds no Session. Account encryption is still read by its real HTTP owner.
+  const cryptoContext = ctx ? { mode: 'e2ee' as const, ctx } : { mode: 'plain' as const, ctx: null };
+  return createCliActionDeps({
+    ...input,
+    ...cryptoContext,
+    sessionId: 'cli-global',
+    projectWorkerAccountAction: createAccountServerActionDeps(input).projectWorkerAction,
+  });
+}
+
+function createWorkerPreferenceCustodyExecutor(input: Parameters<typeof createAccountServerActionDeps>[0]) {
+  // This Account user explicitly waived confirmation for this Action on CLI.
+  // Keep the actual shared approval policy; a confirmation hint is not a waiver.
+  const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+    approvalWaivedSurfaces: { 'projects.worker.preferences.set': ['cli'] } });
+  return createActionExecutor({
+    ...createAccountProjectWorkerActionDeps(input),
+    isActionApprovalRequired: (actionId, context, actionInput) =>
+      isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, actionInput),
+  });
+}
 
 function ownerSessionAccessGrants(grants: readonly unknown[] = []) {
   return {
@@ -88,6 +124,7 @@ const archivedTeamSummary = {
   viewerRole: 'owner',
   capabilities: NO_TEAM_CAPABILITIES_V1,
   admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+  counts: null,
 } as const;
 
 function managedIdentityProviderFixture() {
@@ -133,6 +170,76 @@ describe('Account API token HTTP adapter', () => {
   });
   afterEach(async () => { restore(); await app.close(); });
 
+  it('dispatches preset Actions to the fixed Home and retains typed revision/refusal outcomes', async () => {
+    const bodies: unknown[] = [];
+    const preset = { id: 'preset-a', homeId: 'srv_preset', revision: 1, name: 'Guest',
+      owner: { kind: 'account', accountId: 'owner' },
+      recipe: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'guest', choices: { cores: 2 } },
+      controller: { machineId: 'host-a', installationId: 'installation-a' },
+    } as const;
+    app.post('/v1/machines/presets/list', async (request) => {
+      expect(request.headers.authorization).toBe('Bearer interactive');
+      bodies.push(request.body);
+      return { kind: 'listed', presets: [] };
+    });
+    app.post('/v1/machines/presets/update', async (request, reply) => {
+      bodies.push(request.body);
+      return reply.code(409).send({ kind: 'conflict', currentRevision: 3 });
+    });
+    app.post('/v1/machines/presets/get', async (_request, reply) => reply.code(404).send({ kind: 'refused', code: 'preset_not_found' }));
+    app.post('/v1/machines/presets/archive', async (request, reply) => {
+      bodies.push(request.body);
+      return reply.code(403).send({ kind: 'refused', code: 'permission_denied' });
+    });
+    for (const verb of ['create', 'restore']) {
+      app.post(`/v1/machines/presets/${verb}`, async (request) => { bodies.push(request.body); return { kind: 'saved', preset }; });
+    }
+    const deps = createAccountServerActionDeps({ token: 'interactive', serverId: 'route-preset', serverIdentityId: 'srv_preset', serverHttpBaseUrl: 'http://account.test' });
+    const executor = createActionExecutor(deps as Parameters<typeof createActionExecutor>[0]);
+    const context = { surface: 'cli', serverId: 'route-preset', authority: 'present_user', bypassApprovals: true } as const;
+    expect(await executor.execute('machines.presets.list', { homeId: 'srv_preset' }, context))
+      .toEqual({ ok: true, result: { kind: 'listed', presets: [] } });
+    expect(await executor.execute('machines.presets.update', { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 2, patch: { name: 'Draft' } }, context))
+      .toEqual({ ok: true, result: { kind: 'conflict', currentRevision: 3 } });
+    expect(await executor.execute('machines.presets.get', { homeId: 'srv_preset', id: 'preset-a' }, context))
+      .toEqual({ ok: true, result: { kind: 'refused', code: 'preset_not_found' } });
+    const { revision: _revision, ...create } = preset;
+    expect(await executor.execute('machines.presets.create', create, context)).toMatchObject({ ok: true, result: { kind: 'saved', preset } });
+    expect(await executor.execute('machines.presets.archive', { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }, context))
+      .toEqual({ ok: true, result: { kind: 'refused', code: 'permission_denied' } });
+    expect(await executor.execute('machines.presets.restore', { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }, context))
+      .toMatchObject({ ok: true, result: { kind: 'saved', preset } });
+    expect(await executor.execute('machines.presets.list', { homeId: 'route-preset' }, context))
+      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(bodies).toEqual([{ homeId: 'srv_preset' }, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 2, patch: { name: 'Draft' } },
+      create, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }]);
+  });
+
+  it('qualifies presets through the existing authenticated feature snapshot when CLI has no pre-resolved Home identity', async () => {
+    let requests = 0;
+    app.post('/v1/machines/presets/list', async () => { requests++; return { kind: 'listed', presets: [] }; });
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_preset' } } });
+    const invocation = { actionId: 'machines.presets.list', input: { homeId: 'srv_preset' }, context: { surface: 'cli', serverId: 'route-preset' } } as const;
+    const params = { token: 'interactive', serverId: 'route-preset', serverHttpBaseUrl: 'http://account.test' } as const;
+    const authenticated = createAccountServerActionDeps({ ...params, resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated', features }) });
+    await expect(authenticated.machinePresetAction!(invocation)).resolves.toEqual({ kind: 'listed', presets: [] });
+    const advisory = createAccountServerActionDeps({ ...params, resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'public', features }) });
+    await expect(advisory.machinePresetAction!(invocation)).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    const retired = createAccountServerActionDeps({ ...params, serverIdentityId: 'srv_preset', isCredentialCurrent: () => false });
+    await expect(retired.machinePresetAction!(invocation)).resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+    expect(requests).toBe(1);
+  });
+
+  it('withholds a preset read when its captured Account credential retires before the response', async () => {
+    let current = true;
+    app.post('/v1/machines/presets/list', async () => { current = false; return { kind: 'listed', presets: [] }; });
+    const deps = createAccountServerActionDeps({ token: 'interactive', serverId: 'route-preset', serverIdentityId: 'srv_preset',
+      serverHttpBaseUrl: 'http://account.test', isCredentialCurrent: () => current });
+    await expect(deps.machinePresetAction!({ actionId: 'machines.presets.list', input: { homeId: 'srv_preset' }, context: { surface: 'cli' } }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+    expect(current).toBe(false);
+  });
+
   it('executes token access updates and terminal policy changes through the declared Home owners', async () => {
     const requests: unknown[] = [];
     const tokenId = '12345678-1234-4234-8234-123456789abc';
@@ -175,6 +282,254 @@ describe('Account API token HTTP adapter', () => {
     const partialFixedHome = { token: 'bound-home-token', serverHttpBaseUrl: 'http://account.test' };
     // @ts-expect-error -- Untyped JavaScript callers can still provide a partial fixed-Home binding.
     expect(() => createAccountServerActionDeps(partialFixedHome)).toThrow('fixed_action_server_target_incomplete');
+  });
+
+  it('reads workspace worker preferences through the Action owner for a keyless Account', async () => {
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
+    app.post('/v1/projects/execution/config/read', async (request) => {
+      expect(request.body).toEqual({ address: { serverId: 'home', refId: 'checkout' } });
+      return { status: 'present', revision: 3, content: { t: 'plain', v: {
+        enabled: false, unavailable: 'ask', allowAdHoc: true, scriptOverrides: {}, services: {},
+      } } };
+    });
+    const executor = createActionExecutor(createAccountProjectWorkerActionDeps({
+      token: 'interactive', serverId: 'home', serverHttpBaseUrl: 'http://account.test',
+    }));
+    expect(await executor.execute('projects.worker.preferences.get', { workspace: { serverId: 'home', refId: 'checkout' } }, { surface: 'cli', serverId: 'home' }))
+      .toMatchObject({ ok: true, result: { status: 'ready', revision: 3, provenance: 'saved', preference: { allowAdHoc: true } } });
+  });
+
+  it('does not claim worker effect custody when Account-mode preflight retires before mutation', async () => {
+    const controller = new AbortController();
+    let effectIssued = false;
+    let rowReads = 0;
+    let mutations = 0;
+    app.get('/v1/account/encryption', async () => {
+      controller.abort();
+      return { mode: 'plain', updatedAt: 0 };
+    });
+    app.post('/v1/projects/execution/config/read', async () => {
+      rowReads++;
+      return { status: 'absent' };
+    });
+    app.post('/v1/projects/execution/config/mutate', async () => {
+      mutations++;
+      return { status: 'updated', revision: 1, cursor: 1 };
+    });
+    const executor = createWorkerPreferenceCustodyExecutor({
+      token: 'interactive', serverId: 'home', serverHttpBaseUrl: 'http://account.test',
+      onRequestIssued: () => { effectIssued = true; },
+    });
+    const outcome = await executor.execute('projects.worker.preferences.set', {
+      workspace: { serverId: 'home', refId: 'checkout' }, expectedRevision: 'absent', expected: { kind: 'absent' },
+      next: { enabled: false, unavailable: 'ask', allowAdHoc: true, scriptOverrides: {} },
+    }, { surface: 'cli', serverId: 'home', signal: controller.signal,
+      presentUserConfirmation: { actionId: 'projects.worker.preferences.set' } });
+    expect(outcome).toEqual({ ok: true, result: { status: 'unavailable' } });
+    expect(controller.signal.aborted).toBe(true);
+    expect(effectIssued).toBe(false);
+    expect(rowReads).toBe(0);
+    expect(mutations).toBe(0);
+  });
+
+  it.each(['confirmed', 'malformed'] as const)('retains issued worker preference custody after credential retirement with a %s acknowledgement', async (acknowledgement) => {
+    const workspace = { serverId: 'home', refId: 'checkout' };
+    const next = { enabled: false as const, unavailable: 'ask' as const, allowAdHoc: true, scriptOverrides: {} };
+    let current = true;
+    let effectIssued = false;
+    let rowReads = 0;
+    let mutations = 0;
+    app.get('/v1/account/encryption', async () => {
+      expect(effectIssued).toBe(false);
+      return { mode: 'plain', updatedAt: 0 };
+    });
+    app.post('/v1/projects/execution/config/read', async (request) => {
+      expect(current).toBe(true);
+      expect(effectIssued).toBe(false);
+      expect(request.body).toEqual({ address: workspace });
+      rowReads++;
+      return { status: 'absent' };
+    });
+    app.post('/v1/projects/execution/config/mutate', async (request) => {
+      expect(current).toBe(true);
+      expect(effectIssued).toBe(true);
+      expect(request.body).toEqual({ address: workspace, expectedRevision: 'absent',
+        content: { t: 'plain', v: { ...next, services: {} } } });
+      mutations++;
+      // The HTTP boundary retires this invocation's credential after accepting its exact write.
+      current = false;
+      return acknowledgement === 'confirmed' ? { status: 'updated', revision: 1, cursor: 1 }
+        : { status: 'possibly_updated' };
+    });
+    const executor = createWorkerPreferenceCustodyExecutor({
+      token: 'interactive', serverId: 'home', serverHttpBaseUrl: 'http://account.test',
+      isCredentialCurrent: () => current, onRequestIssued: () => { effectIssued = true; },
+    });
+    const outcome = await executor.execute('projects.worker.preferences.set', {
+      workspace, expectedRevision: 'absent', expected: { kind: 'absent' }, next,
+    }, { surface: 'cli', serverId: 'home',
+      presentUserConfirmation: { actionId: 'projects.worker.preferences.set' } });
+    expect(outcome).toEqual({ ok: true, result: acknowledgement === 'confirmed'
+      ? { status: 'applied', preference: next, provenance: 'saved', revision: 1 }
+      : { status: 'outcomeUnknown' } });
+    expect(effectIssued).toBe(true);
+    expect(current).toBe(false);
+    expect(rowReads).toBe(1);
+    expect(mutations).toBe(1);
+  });
+
+  it('saves a service through the real Account Action HTTP path while preserving finite and other service preferences', async () => {
+    const workspace = { serverId: 'home', refId: 'checkout' };
+    const placement = { runsOn: { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'worker-a' } }, unavailable: 'fail' as const };
+    const prior = { enabled: false, unavailable: 'ask', allowAdHoc: true, scriptOverrides: {},
+      services: { api: { runsOn: { kind: 'primary' }, unavailable: 'primary' } } };
+    let content: unknown = { t: 'plain', v: prior };
+    let revision = 3;
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
+    app.post('/v1/projects/execution/config/read', async (request) => {
+      expect(request.body).toEqual({ address: workspace });
+      return { status: 'present', revision, content };
+    });
+    app.post('/v1/projects/execution/config/mutate', async (request) => {
+      const body = request.body as { address: unknown; expectedRevision: number; content: unknown };
+      expect(body.address).toEqual(workspace);
+      expect(body.expectedRevision).toBe(3);
+      content = body.content;
+      return { status: 'updated', revision: ++revision, cursor: 1 };
+    });
+    const executor = createActionExecutor(createAccountProjectWorkerActionDeps({ token: 'interactive', serverId: 'home', serverHttpBaseUrl: 'http://account.test' }));
+    const result = await executor.execute('projects.service.placement.set', { workspace, serviceName: 'web', expectedRevision: 2,
+      expected: { kind: 'absent' }, value: placement }, { surface: 'cli', serverId: 'home', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'projects.service.placement.set' } });
+    expect(result).toMatchObject({ ok: true, result: { status: 'applied', placement, revision: 4 } });
+    expect(content).toEqual({ t: 'plain', v: { ...prior, services: { ...prior.services, web: placement } } });
+    expect(await executor.execute('projects.service.placement.get', { workspace, serviceName: 'web' }, { surface: 'cli', serverId: 'home' }))
+      .toMatchObject({ ok: true, result: { status: 'ready', placement, revision: 4, provenance: 'saved' } });
+  });
+
+  it.each(['ordinary', 'bind_child_source', 'bind_child_worker'] as const)('reads actual declared service custody through physical endpoints and logical namespaces (%s)', async kind => {
+    const homeId = kind === 'ordinary' ? 'home' : 'srv_service_bind';
+    const sourceParent = { id: 'checkout', serverId: homeId, machineId: 'source', rootPath: '/source', createdAtMs: 1 };
+    const workerParent = { ...sourceParent, id: 'copy', machineId: 'worker', rootPath: '/worker' };
+    const child = { ...sourceParent, id: 'child', machineId: 'child-machine', rootPath: '/work/custom' };
+    const source = kind === 'bind_child_source' ? child : sourceParent;
+    const worker = kind === 'bind_child_worker' ? child : workerParent;
+    const parent = kind === 'bind_child_worker' ? workerParent : sourceParent;
+    const unrelated = { ...sourceParent, id: 'unrelated', machineId: 'elsewhere', rootPath: '/unrelated' };
+    const observation = { nativeResourceId: 'native-child', user: 'coder', workspaceFolder: child.rootPath,
+      storage: { kind: 'bind' as const, hostPath: parent.rootPath, childPath: child.rootPath } };
+    const projection = { relation: { managedMachineId: 'managed-child', managedMachineKind: 'devcontainer' as const,
+      parentMachineId: parent.machineId }, observation };
+    const managedMachine = { id: 'managed-child', homeId, custodianAccountId: 'owner',
+      controller: { machineId: parent.machineId, installationId: `${parent.machineId}-installation` },
+      launch: { provider: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, name: 'Child', choices: {} },
+      resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
+        value: {}, devcontainerObservation: observation }, allocation: 'bound', creationState: 'active', enrolledMachineId: child.machineId,
+      desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    } satisfies ManagedMachineV1;
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const graph = { relationships: [{ v: 1, relationshipId: 'linked', controllerMachineId: 'source',
+      alphaWorkspaceRefId: sourceParent.id, betaWorkspaceRefId: workerParent.id, mode: 'keep_synced', enabled: false,
+      contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 }] };
+    let graphRevision = 1;
+    app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
+    app.get('/v1/machines/:id', async request => {
+      const id = (request.params as { id: string }).id;
+      if (id === unrelated.machineId) throw new Error('Unrelated Machine census');
+      return { machine: { id, active: true, installationId: `${id}-installation`, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
+        metadata: encodePlainMachineStoredContent({ host: id, platform: 'linux', homeDir: '/home/coder', username: 'coder',
+          happyCliVersion: 'test', happyHomeDir: '/home/coder/.happier', ...(id === child.machineId ? { devcontainerChild: projection } : {}) }) } };
+    });
+    if (kind !== 'ordinary') {
+      app.post('/v1/machines/managed/actions/get', async () => managedMachine);
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ features: {},
+        capabilities: { serverIdentity: { serverIdentityId: homeId } } }), { status: 200 }));
+    }
+    app.post('/v1/projects/execution/config/read', async () => ({ status: 'absent' }));
+    app.post('/v1/account/project-rows/list', async () => ({ status: 'listed', coverage: 'complete', rows: [
+      ...[sourceParent, workerParent, ...(kind === 'ordinary' ? [] : [child]), unrelated].map(value => { const key = { kind: 'workspace-ref', serverId: homeId, id: value.id };
+        return { key, revision: 1, content: { t: 'plain', v: { key, value } } }; }),
+      { key: { kind: 'relationship-graph' }, revision: graphRevision, content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: graph } } },
+    ] }));
+    const target = { id: 'actual', source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'instance' },
+      machineId: worker.machineId, workspaceId: worker.id, workspace: { serverId: homeId, workspaceId: worker.id, machineId: worker.machineId, rootPath: worker.rootPath },
+      cwd: worker.rootPath, declaration: { workspaceRefId: worker.id, selection: { kind: 'manifest', name: 'web' } },
+      serviceState: 'running', readiness: 'not_reported', title: 'web', state: 'available', confidence: 'high', actions: ['manage'] };
+    let failWorker = false;
+    let sourceAlsoRunning = false;
+    let workerRunning = true;
+    // This replaces only the remote Machine RPC transport. Account rows, topology, strict
+    // binding validation, desired-row codec and the Action front door remain real.
+    const remote = vi.spyOn(machineRpcTransport, 'callExactMachineRpc').mockImplementation(async request => {
+      if (![sourceParent.machineId, workerParent.machineId, ...(kind === 'ordinary' ? [] : [child.machineId])].includes(request.machineId)) throw new Error('Unrelated Machine census');
+      const ref = [sourceParent, workerParent, child].find(value => value.machineId === request.machineId)!;
+      expect(request.request).toEqual({ machineId: request.machineId, scope: 'workspace',
+        workspaceRoot: ref.rootPath, projection: 'managed_bindings' });
+      if (failWorker && request.machineId === worker.machineId) throw new Error('Worker is offline');
+      return { protocolVersion: 1, snapshot: { v: 1, machineId: request.machineId, updatedAt: 1,
+        targets: request.machineId === worker.machineId ? workerRunning ? [target] : [] : sourceAlsoRunning ? [{ ...target, machineId: source.machineId,
+          workspaceId: source.id, workspace: { serverId: homeId, workspaceId: source.id, machineId: source.machineId, rootPath: source.rootPath },
+          cwd: source.rootPath, declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } } }] : [] } };
+    });
+    const executor = createActionExecutor(createAccountProjectWorkerActionDeps({ token: 'interactive', serverId: homeId, serverHttpBaseUrl: 'http://account.test' }));
+    const get = () => executor.execute('projects.service.placement.get', { workspace: { serverId: homeId, refId: source.id }, serviceName: 'web' },
+      { surface: 'cli', serverId: homeId });
+    try {
+      expect(await get()).toMatchObject({ ok: true, result: { status: 'ready', provenance: 'default', placement: { runsOn: { kind: 'primary' } },
+        actual: { status: 'present', target } } });
+      sourceAlsoRunning = true;
+      expect(await get()).toMatchObject({ ok: true, result: { actual: { status: 'ambiguous', targets: expect.arrayContaining([target]) } } });
+      failWorker = true;
+      expect(await get()).toMatchObject({ ok: true, result: { actual: { status: 'unavailable' } } });
+      failWorker = false;
+      sourceAlsoRunning = false;
+      workerRunning = false;
+      expect(await get()).toMatchObject({ ok: true, result: { actual: { status: 'absent' } } });
+      graph.relationships[0]!.betaWorkspaceRefId = 'missing-copy';
+      graphRevision++;
+      expect(await get()).toMatchObject({ ok: true, result: { actual: { status: 'unavailable' } } });
+    } finally { remote.mockRestore(); }
+  });
+
+  it('reads actual native declaration custody on a linked copy using the original source identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'service-placement-native-'));
+    const source = { id: 'native-source', serverId: 'home', machineId: 'source', rootPath: join(root, 'source'), createdAtMs: 1 };
+    const worker = { ...source, id: 'native-copy', machineId: 'worker', rootPath: join(root, 'copy') };
+    let restoreRemote = () => {};
+    try {
+      for (const ref of [source, worker]) {
+        await mkdir(ref.rootPath);
+        await writeFile(join(ref.rootPath, 'package.json'), JSON.stringify({ name: 'native-service', scripts: { dev: 'package-owned server' } }));
+      }
+      const declarations = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [source, worker] });
+      const sourceTarget = declarations.find(target => 'declaration' in target && target.workspaceId === source.id);
+      const workerTarget = declarations.find(target => 'declaration' in target && target.workspaceId === worker.id);
+      if (!sourceTarget || !workerTarget || !('declaration' in sourceTarget) || !('declaration' in workerTarget)) throw new Error('Expected native declarations');
+      expect(workerTarget.id).not.toBe(sourceTarget.id);
+      const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+      const relationships = [{ v: 1, relationshipId: 'native-linked', controllerMachineId: source.machineId,
+        alphaWorkspaceRefId: source.id, betaWorkspaceRefId: worker.id, mode: 'keep_synced', enabled: false,
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 }];
+      app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
+      app.post('/v1/projects/execution/config/read', async () => ({ status: 'absent' }));
+      app.post('/v1/account/project-rows/list', async () => ({ status: 'listed', coverage: 'complete', rows: [
+        ...[source, worker].map(value => { const key = { kind: 'workspace-ref', serverId: 'home', id: value.id };
+          return { key, revision: 1, content: { t: 'plain', v: { key, value } } }; }),
+        { key: { kind: 'relationship-graph' }, revision: 1, content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships } } } },
+      ] }));
+      const target = { id: workerTarget.id, cwd: workerTarget.cwd, title: workerTarget.title,
+        workspaceId: workerTarget.workspaceId, workspace: workerTarget.workspace, declaration: workerTarget.declaration,
+        source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'native-instance' },
+        machineId: worker.machineId, serviceState: 'running', readiness: 'not_reported', state: 'available', confidence: 'high', actions: ['manage'] };
+      // Only the remote native owner transport is replaced; declaration discovery and identity are real.
+      const remote = vi.spyOn(machineRpcTransport, 'callExactMachineRpc').mockImplementation(async request => ({ protocolVersion: 1,
+        snapshot: { v: 1, machineId: request.machineId, updatedAt: 1, targets: request.machineId === worker.machineId ? [target] : [] } }));
+      restoreRemote = () => remote.mockRestore();
+      const executor = createActionExecutor(createAccountProjectWorkerActionDeps({ token: 'interactive', serverId: 'home', serverHttpBaseUrl: 'http://account.test' }));
+      expect(await executor.execute('projects.service.placement.get', { workspace: { serverId: 'home', refId: source.id }, serviceName: sourceTarget.id },
+        { surface: 'cli', serverId: 'home' })).toMatchObject({ ok: true, result: { actual: { status: 'present', target: { id: workerTarget.id } } } });
+    } finally { restoreRemote(); await rm(root, { recursive: true, force: true }); }
   });
 
   it('uses the one current list route with an empty body and no projection query', async () => {
@@ -850,6 +1205,46 @@ describe('Account API token HTTP adapter', () => {
       },
     })).resolves.toEqual(archivedTeamSummary);
     expect(requests).toBe(1);
+  });
+
+  it('binds preset mutations to their exact signed effect rather than sending the daemon bearer', async () => {
+    const installationIdentity = tweetnacl.sign.keyPair();
+    const body = { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 };
+    const authorization = {
+      v: 1 as const,
+      token: 'home-minted-preset-invocation',
+      binding: {
+        serverIdentityId: 'srv_preset', accountId: 'account-1', principalId: 'principal-1',
+        credentialId: 'credential-1', grant: API_TOKEN_FULL_GRANT_V1, machineId: 'machine-1',
+        actionId: 'machines.presets.archive', requestId: 'request-preset', requestEnvelopeDigest: 'A'.repeat(43),
+        target: { kind: 'machine' as const, machineId: 'machine-1' },
+      },
+    };
+    app.post('/v1/machines/presets/archive', async (request, reply) => {
+      expect(request.headers.authorization).toBeUndefined();
+      expect(request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe('machines.presets.archive');
+      expect(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
+      expect(request.headers[EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]).toBe(encodeExternalActionResolvedTargetV1(authorization.binding.target));
+      const signature = request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
+      expect(typeof signature).toBe('string');
+      expect(verifyExternalActionMachineRequestV1({
+        authorizationToken: authorization.token, effectActionId: 'machines.presets.archive',
+        target: authorization.binding.target, installationId: 'installation-1', requestId: authorization.binding.requestId,
+        method: 'POST', path: '/v1/machines/presets/archive', body,
+        publicKey: installationIdentity.publicKey, signature: signature as string,
+      })).toBe(true);
+      return reply.code(403).send({ kind: 'refused', code: 'permission_denied' });
+    });
+    const deps = createAccountServerActionDeps({
+      token: 'daemon-bearer-must-not-cross', serverId: 'route-preset', serverIdentityId: 'srv_preset',
+      serverHttpBaseUrl: 'http://account.test', externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
+      externalActionMachineInstallationId: 'installation-1',
+    });
+    await expect(deps.machinePresetAction!({
+      actionId: 'machines.presets.archive', input: body,
+      context: { surface: 'api', authority: 'account_automation', externalActionTarget: authorization.binding.target,
+        externalActionExecutionAuthorization: authorization },
+    })).resolves.toEqual({ kind: 'refused', code: 'permission_denied' });
   });
 
   it('does not send an externally authorized request when the Machine signing key is unavailable', async () => {

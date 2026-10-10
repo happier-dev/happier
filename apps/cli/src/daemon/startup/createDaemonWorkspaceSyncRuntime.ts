@@ -10,15 +10,14 @@ import {
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import type { WorkspaceSyncCopyOnceV1, WorkspaceSyncRelationshipV1, WorkspaceSyncRuntimeReadinessV1, WorkspaceSyncStatusV1 } from '@happier-dev/protocol';
-import type { WorkspaceSyncPrepareBetweenRequestV1, WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import {
-  getActiveAccountSettingsSnapshot,
-  subscribeActiveAccountSettingsSnapshot,
-  type ActiveAccountSettingsSnapshot,
-  type ActiveAccountSettingsSnapshotListener,
-} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+  getActiveProjectAccountRowsSnapshot,
+  subscribeActiveProjectAccountRowsSnapshot,
+  type ActiveProjectAccountRowsSnapshot,
+  type ProjectAccountRowsSnapshotListener,
+} from '@/workspaces/projectAccountRows';
 import {
   WorkspaceSyncController,
   type WorkspaceSyncControllerOptions,
@@ -34,12 +33,9 @@ import {
   createWorkspaceSyncHandoffAdapter,
   type PrepareWorkspaceSyncHandoffInput,
   type WorkspaceSyncHandoffAdapter,
+  type WorkspaceSyncHandoffAdapterDeps,
 } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { createWorkspaceSyncMutagenAdapter } from '@/workspaces/sync/workspaceSyncMutagenAdapter';
-import {
-  parseWorkspaceSyncRelationships,
-  WORKSPACE_SYNC_SETTINGS_KEY,
-} from '@/workspaces/sync/workspaceSyncSettings';
 import {
   ensureProtectedLocalStateDirectory,
   type WindowsProtectedLocalStateAclBoundary,
@@ -76,7 +72,7 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   localServerId: string;
   localMachineId: string;
   releaseChannel: PublicReleaseRingId;
-  resolveWorkspaceRef(id: string): WorkspaceSyncResolvedRef | null | Promise<WorkspaceSyncResolvedRef | null>;
+  resolveWorkspaceRef(id: string, copyOperationId?: string): WorkspaceSyncResolvedRef | null | Promise<WorkspaceSyncResolvedRef | null>;
   rootOwnershipManager: WorkspaceRootOwnershipManager;
   prepareRelationshipTarget(definition: WorkspaceSyncRelationshipV1, signal?: AbortSignal, preparation?: WorkspaceSyncRelationshipPreparation): Promise<Readonly<{
     ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
@@ -85,17 +81,15 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
   }>>;
   borrowLinkedSourceRoot?: WorkspaceSyncControllerOptions['borrowLinkedSourceRoot'];
-  bootstrap(input: PrepareWorkspaceSyncHandoffInput): Promise<Readonly<{
-    release(reason: 'abort' | 'commit'): Promise<void>;
-    ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
-  }>>;
+  bootstrap: WorkspaceSyncHandoffAdapterDeps['bootstrap'];
   createBroker: WorkspaceSyncSidecarLifecycleDependencies['createBroker'];
   spawnSidecar: SpawnWorkspaceSyncSidecar;
   launchLocalAgent: LaunchWorkspaceSyncLocalAgent;
   stopRetainedNativeProcesses?: () => Promise<void>;
   openMachineCarrierTunnel?: WorkspaceSyncMachineTunnelOpen;
   handoffRelationshipController?: Pick<ManagedWorkspaceSync, 'flush'>;
-  handoffPrepareBetween?: (request: WorkspaceSyncPrepareBetweenRequestV1, signal?: AbortSignal) => Promise<WorkspaceSyncPrepareBetweenResultV1>;
+  handoffPrepareBetween?: WorkspaceSyncHandoffAdapterDeps['prepareBetween'];
+  resolveHandoffExecutionInput?: WorkspaceSyncHandoffAdapterDeps['resolveExecutionInput'];
   relationshipOwner?: Pick<WorkspaceSyncRelationshipOwner, 'materializeEndpoints' | 'prepareCreate'>;
   stageConflictResolutionAtTarget?: NonNullable<WorkspaceSyncControllerOptions['stageConflictResolutionAtTarget']>;
   applyStagedConflictResolutionAtTarget?: NonNullable<WorkspaceSyncControllerOptions['applyStagedConflictResolutionAtTarget']>;
@@ -105,8 +99,8 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   readFileAtTarget?: WorkspaceSyncTargetFileRead;
   observeEntryAtTarget?: WorkspaceSyncTargetEntryObserve;
   assertConflictResolutionAuthorized?: WorkspaceSyncConflictResolutionAuthorizationAssert;
-  getSettingsSnapshot?: () => ActiveAccountSettingsSnapshot | null;
-  subscribeSettingsSnapshot?: (listener: ActiveAccountSettingsSnapshotListener) => () => void;
+  getProjectSnapshot?: () => ActiveProjectAccountRowsSnapshot | null;
+  subscribeProjectSnapshot?: (listener: ProjectAccountRowsSnapshotListener) => () => void;
   resolveInstalledComponentPaths?: (input: Readonly<{ componentId: 'mutagen-engine'; channel: PublicReleaseRingId }>) => InstalledPaths;
   ensureInstalledComponent?: typeof ensureInstalledFirstPartyComponent;
   resolveArtifactPaths?: (payloadRoot: string, targetTriple: MutagenEngineArtifactTarget) => ArtifactPaths;
@@ -135,8 +129,8 @@ export type DaemonWorkspaceSyncRuntime = Readonly<{
   openRootedAgent: WorkspaceSyncLocalAgentStreamOpen;
   start(): Promise<void>;
   stop(): Promise<void>;
-  whenSettingsSettled(target?: Readonly<{
-    settingsVersion: number;
+  whenProjectsSettled(target?: Readonly<{
+    graphRevision: number | 'absent';
     scopeKey?: string;
     signal?: AbortSignal;
   }>): Promise<void>;
@@ -145,7 +139,7 @@ export type DaemonWorkspaceSyncRuntime = Readonly<{
 /**
  * Daemon composition root for the single workspace-sync manager, broker,
  * controller, and handoff adapter. Durable relationship authority remains in
- * Account Settings and reconciliation remains in WorkspaceSyncController.
+ * Project rows and reconciliation remains in WorkspaceSyncController.
  */
 export function createDaemonWorkspaceSyncRuntime(
   dependencies: DaemonWorkspaceSyncRuntimeDependencies,
@@ -161,8 +155,8 @@ export function createDaemonWorkspaceSyncRuntime(
     daemonDataRoot: dependencies.daemonDataRoot,
     stackDevTargetMutagenDataDir: process.env.MUTAGEN_DATA_DIRECTORY,
   });
-  const getSnapshot = dependencies.getSettingsSnapshot ?? getActiveAccountSettingsSnapshot;
-  const subscribeSnapshot = dependencies.subscribeSettingsSnapshot ?? subscribeActiveAccountSettingsSnapshot;
+  const getSnapshot = dependencies.getProjectSnapshot ?? getActiveProjectAccountRowsSnapshot;
+  const subscribeSnapshot = dependencies.subscribeProjectSnapshot ?? subscribeActiveProjectAccountRowsSnapshot;
   let acceptedRelationships: readonly WorkspaceSyncRelationshipV1[] = [];
 
   let verifiedRuntime: Promise<Readonly<{
@@ -280,38 +274,35 @@ export function createDaemonWorkspaceSyncRuntime(
   });
   const handoffAdapter = createWorkspaceSyncHandoffAdapter({
     sync: controller,
+    localMachineId: dependencies.localMachineId,
     ...(dependencies.handoffRelationshipController
       ? { relationshipController: dependencies.handoffRelationshipController }
       : {}),
     ...(dependencies.handoffPrepareBetween ? { prepareBetween: dependencies.handoffPrepareBetween } : {}),
+    ...(dependencies.resolveHandoffExecutionInput ? { resolveExecutionInput: dependencies.resolveHandoffExecutionInput } : {}),
     ...(dependencies.relationshipOwner ? { relationshipOwner: dependencies.relationshipOwner } : {}),
     bootstrap: dependencies.bootstrap,
   });
 
   let unsubscribe: (() => void) | null = null;
-  let settingsTail: Promise<void> = Promise.resolve();
-  let settingsQueueRevision = 0;
-  let reconciledSnapshot: ActiveAccountSettingsSnapshot | null = null;
-  const settingsQueueWaiters = new Set<() => void>();
+  let projectTail: Promise<void> = Promise.resolve();
+  let projectQueueRevision = 0;
+  let reconciledSnapshot: ActiveProjectAccountRowsSnapshot | null = null;
+  const projectQueueWaiters = new Set<() => void>();
   let startPromise: Promise<void> | null = null;
   let stopPromise: Promise<void> | null = null;
   let started = false;
   let stopped = false;
 
-  const readRelationships = (snapshot: ActiveAccountSettingsSnapshot | null): readonly WorkspaceSyncRelationshipV1[] => {
-    const rawValue = snapshot?.rawSettings
-      ? snapshot.rawSettings[WORKSPACE_SYNC_SETTINGS_KEY]
-      : snapshot?.settings.workspaceSyncRelationshipsV1;
-    try {
-      return parseWorkspaceSyncRelationships(rawValue);
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'Invalid workspace sync settings';
-      throw Object.assign(new Error(message), { code: 'workspace_sync_settings_invalid' as const });
+  const readRelationships = (snapshot: ActiveProjectAccountRowsSnapshot | null): readonly WorkspaceSyncRelationshipV1[] => {
+    if (!snapshot) {
+      throw Object.assign(new Error('Project rows are unavailable'), { code: 'project_account_rows_unavailable' });
     }
+    return snapshot.relationships;
   };
 
-  const applySnapshot = (snapshot: ActiveAccountSettingsSnapshot | null): Promise<void> => {
-    const next = settingsTail.catch(() => undefined).then(async () => {
+  const applySnapshot = (snapshot: ActiveProjectAccountRowsSnapshot | null): Promise<void> => {
+    const next = projectTail.catch(() => undefined).then(async () => {
       const relationships = readRelationships(snapshot);
       acceptedRelationships = relationships;
       await lifecycle.runReconciliation(async () => {
@@ -319,10 +310,10 @@ export function createDaemonWorkspaceSyncRuntime(
       });
       reconciledSnapshot = snapshot;
     });
-    settingsTail = next;
-    settingsQueueRevision += 1;
-    for (const resolve of settingsQueueWaiters) resolve();
-    settingsQueueWaiters.clear();
+    projectTail = next;
+    projectQueueRevision += 1;
+    for (const resolve of projectQueueWaiters) resolve();
+    projectQueueWaiters.clear();
     void next.catch(() => undefined);
     return next;
   };
@@ -347,13 +338,13 @@ export function createDaemonWorkspaceSyncRuntime(
   const stop = (): Promise<void> => {
     if (stopPromise) return stopPromise;
     stopped = true;
-    for (const resolve of settingsQueueWaiters) resolve();
-    settingsQueueWaiters.clear();
+    for (const resolve of projectQueueWaiters) resolve();
+    projectQueueWaiters.clear();
     stopPromise = (async () => {
       await startPromise?.catch(() => undefined);
       unsubscribe?.();
       unsubscribe = null;
-      await settingsTail.catch(() => undefined);
+      await projectTail.catch(() => undefined);
       const cleanupResults = await Promise.allSettled([
         controller.shutdown(),
         dependencies.stopRetainedNativeProcesses?.() ?? Promise.resolve(),
@@ -374,14 +365,15 @@ export function createDaemonWorkspaceSyncRuntime(
   };
 
   const matchesReconciliationTarget = (
-    snapshot: ActiveAccountSettingsSnapshot | null,
-    target: Readonly<{ settingsVersion: number; scopeKey?: string }>,
+    snapshot: ActiveProjectAccountRowsSnapshot | null,
+    target: Readonly<{ graphRevision: number | 'absent'; scopeKey?: string }>,
   ): boolean => snapshot !== null
-    && snapshot.settingsVersion >= target.settingsVersion
+    && (target.graphRevision === 'absent'
+      || (snapshot.graphRevision !== 'absent' && snapshot.graphRevision >= target.graphRevision))
     && (target.scopeKey === undefined || snapshot.scopeKey === target.scopeKey);
 
-  const waitForSettingsQueueAdvance = (revision: number, signal?: AbortSignal): Promise<void> => {
-    if (settingsQueueRevision > revision || stopped) return Promise.resolve();
+  const waitForProjectQueueAdvance = (revision: number, signal?: AbortSignal): Promise<void> => {
+    if (projectQueueRevision > revision || stopped) return Promise.resolve();
     signal?.throwIfAborted();
     return new Promise<void>((resolve, reject) => {
       const finish = () => {
@@ -389,44 +381,47 @@ export function createDaemonWorkspaceSyncRuntime(
         resolve();
       };
       const onAbort = () => {
-        settingsQueueWaiters.delete(finish);
-        reject(signal?.reason ?? Object.assign(new Error('Workspace sync settings wait cancelled'), {
+        projectQueueWaiters.delete(finish);
+        reject(signal?.reason ?? Object.assign(new Error('Workspace sync Project wait cancelled'), {
           name: 'AbortError',
           code: 'cancelled',
         }));
       };
-      settingsQueueWaiters.add(finish);
+      projectQueueWaiters.add(finish);
       signal?.addEventListener('abort', onAbort, { once: true });
-      if (settingsQueueRevision > revision || stopped) {
-        settingsQueueWaiters.delete(finish);
+      if (projectQueueRevision > revision || stopped) {
+        projectQueueWaiters.delete(finish);
         finish();
       }
     });
   };
 
-  const whenSettingsSettled = async (target?: Readonly<{
-    settingsVersion: number;
+  const whenProjectsSettled = async (target?: Readonly<{
+    graphRevision: number | 'absent';
     scopeKey?: string;
     signal?: AbortSignal;
   }>): Promise<void> => {
     if (!target) {
-      await settingsTail;
+      await projectTail;
+      readRelationships(getSnapshot());
       return;
     }
+    readRelationships(getSnapshot());
     while (!matchesReconciliationTarget(reconciledSnapshot, target)) {
       target.signal?.throwIfAborted();
       if (stopped) throw new Error('Daemon workspace sync runtime is stopped');
-      const observedRevision = settingsQueueRevision;
-      await settingsTail;
+      const observedRevision = projectQueueRevision;
+      await projectTail;
       if (matchesReconciliationTarget(reconciledSnapshot, target)) return;
-      if (settingsQueueRevision > observedRevision) continue;
+      if (projectQueueRevision > observedRevision) continue;
       const current = getSnapshot();
       if (matchesReconciliationTarget(current, target)) {
         await applySnapshot(current);
         continue;
       }
-      await waitForSettingsQueueAdvance(observedRevision, target.signal);
+      await waitForProjectQueueAdvance(observedRevision, target.signal);
     }
+    await projectTail;
   };
 
   return {
@@ -436,6 +431,6 @@ export function createDaemonWorkspaceSyncRuntime(
     openRootedAgent,
     start,
     stop,
-    whenSettingsSettled,
+    whenProjectsSettled,
   };
 }

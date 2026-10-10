@@ -47,6 +47,8 @@ import type {
   ResolveRequesterSessionRuntimeContext,
 } from '../sessionEncryption/requesterSessionCredentials';
 import { prepareRequesterAccountActionContext, type RequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionProjection';
+import { createProjectFiniteAction } from '@/workspaces/projectSetup/projectFiniteAction';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import {
   decodeJwtPayload,
@@ -2363,6 +2365,7 @@ export async function startDaemonSessionControlRuntime(
       | undefined;
     externalSessionHostOperationOwner?: ExternalSessionHostOperationOwner;
     runtimeId?: string;
+    readPluginCatalogProjection?: () => import('@/plugins/daemon/catalogProjection').DaemonPluginCatalogProjection;
     credentials: NonNullable<
       Parameters<typeof executeSpawnSessionRequest>[0]['credentials']
     >;
@@ -14336,9 +14339,27 @@ export async function startDaemonSessionControlRuntime(
               },
             }
           : resolvedSessionSpawnDirectTargetTransport;
-      const projectAction = params.resolveProjectAction?.();
       const projectWorkerAction = params.resolveProjectWorkerAction?.();
       const apiMachineForSessions = params.getApiMachineForSessions();
+      const usesProjectPreparation = actionId === 'projects.inspect' || actionId === 'projects.prepare'
+        || actionId === 'projects.script.run' || actionId === 'projects.compute.exec';
+      const capturedProjectIngress: RpcHandlerContext | undefined = usesProjectPreparation && requesterAccountContext && apiMachineForSessions ? {
+        ...requesterAccountOperationContext(apiMachineForSessions, requesterAccountContext, 'use', executionContext?.signal),
+        ...(executionContext?.machineAdmission ? { machineAdmission: executionContext.machineAdmission,
+          verifyMachineAdmissionCurrent: executionContext.verifyMachineAdmissionCurrent } : {}),
+        signal: executionContext?.signal ?? new AbortController().signal,
+        callerInputAuthorization: requesterAccountContext.authorization,
+        ...(executionContext?.callerInputConstraints ? { callerInputConstraints: executionContext.callerInputConstraints } : {}),
+        ...(executionContext?.authority ? { callerAuthority: executionContext.authority } : {}),
+        ...(executionContext?.sessionActionOrigin ? { sessionActionOrigin: executionContext.sessionActionOrigin } : {}),
+        ...(executionContext ? { localActionContext: executionContext } : {}),
+      } : undefined;
+      const projectAction: ActionExecutorDeps['projectAction'] = capturedProjectIngress && apiMachineForSessions
+        ? async request => {
+          const runtime = await apiMachineForSessions.resolveProjectFiniteRuntime(capturedProjectIngress);
+          return runtime ? createProjectFiniteAction(runtime, capturedProjectIngress)(request)
+            : { ok: false, errorCode: 'project_finite_execution_unavailable', error: 'project_finite_execution_unavailable' };
+        } : params.resolveProjectAction?.();
       const resolveInstalledObservationRuntime = async (context: ActionExecutorContext) => {
         if (!context.signal) return null;
         const runtime = await apiMachineForSessions?.resolveInstalledAccountObservationRuntime(context.signal);
@@ -14397,6 +14418,7 @@ export async function startDaemonSessionControlRuntime(
               projectDefinitionAction:
                 apiMachineForSessions.createProjectDefinitionAction(
                   params.serverId,
+                  capturedProjectIngress,
                 ),
             }
           : {}),
@@ -15364,15 +15386,22 @@ export async function startDaemonSessionControlRuntime(
       const result = { kind: 'provider_managed.binding' as const, bindingId, endpointUrl: consumer.endpointUrl,
         headers: { [basis.runtimeCredentialTransport.destination.name]: consumer.renderedCredential } };
       const release = resources.transfer();
-      cleanup = async () => { lifetime.abort(); await release?.(); };
-      const unregister = registerPidSpawnResourceCleanup({ pid: input.tracked.pid, spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
+      let unregister: (() => void) | null = null;
+      cleanup = async () => {
+        lifetime.abort();
+        await release?.();
+        providerBrokerBindingReleaseById.delete(bindingId);
+        unregister?.();
+      };
+      unregister = registerPidSpawnResourceCleanup({ pid: input.tracked.pid, spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
         isCurrentPidOwner: () => params.pidToTrackedSession.get(input.tracked.pid) === input.tracked,
-        cleanup: async () => { await cleanup?.(); providerBrokerBindingReleaseById.delete(bindingId); } });
+        cleanup: async () => { await cleanup?.(); } });
       if (!unregister) { await cleanup(); return null; }
       providerBrokerBindingReleaseById.set(bindingId, { sessionId: input.sessionId,
-        cleanup: async () => { await cleanup?.(); unregister(); },
+        cleanup: async () => { await cleanup?.(); },
         readManagedBinding: async currentProof => {
-          if (!isDeepStrictEqual(currentProof, proof) || !consumer.isCurrent()) return null;
+          if (!isDeepStrictEqual(currentProof, proof)) return null;
+          if (!consumer.isCurrent()) { await cleanup?.(); return null; }
           if (!await opened.revalidate(signal)) { await cleanup?.(); return null; }
           return consumer.isCurrent() ? result : null;
         } });
@@ -15427,6 +15456,7 @@ export async function startDaemonSessionControlRuntime(
       getChildren: () => Array.from(params.pidToTrackedSession.values()),
       machineId: params.machineId,
       runtimeId: params.runtimeId ?? '',
+      ...(params.readPluginCatalogProjection ? { readPluginCatalogProjection: params.readPluginCatalogProjection } : {}),
       stopSession,
       spawnSession,
       requestShutdown: () => params.requestShutdown('happier-cli'),

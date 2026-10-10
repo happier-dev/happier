@@ -342,9 +342,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
 
     /**
      * Preparing an invocation compiles the Action's input and result JSON Schemas, which builds a
-     * schema compiler and generates a validator for each. `refresh()` runs after every on-demand
-     * activation, including the ones that publish nothing, so recompiling an unchanged Action
-     * occurrence is the dominant cost of re-indexing and is pure waste.
+     * schema compiler and generates a validator for each. When activation publishes new facts,
+     * `refresh()` re-indexes every Action, so recompiling an unchanged Action occurrence wastes
+     * preparation even when another plugin is the one that changed.
      *
      * `createPluginActionInvocation` reads only the ids, the two schemas and the registry
      * signal. When all of those are the identical values the previous entry was prepared from,

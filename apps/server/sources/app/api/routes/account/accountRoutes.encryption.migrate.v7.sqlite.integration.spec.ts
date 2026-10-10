@@ -26,6 +26,7 @@ import {
     encodeSessionOwnerMetadataEnvelopeV1,
     sealSessionOwnerMetadataEnvelopeV1,
     sealAccountScopedBlobCiphertext,
+    buildProjectLastOpenedMemoryKeyV1,
     type AccountEncryptionMigrateRequest,
     type AccountEncryptionMigrateUnsignedRequest,
     type SessionOwnerMetadataEnvelopeV1,
@@ -35,6 +36,15 @@ import {
 } from "@happier-dev/protocol";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
+import { buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowPayloadV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { buildWorkspaceExecutionConfigRowIdV1, buildWorkspaceExecutionConfigPhysicalKeyV1, type WorkspaceExecutionConfigContentV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
+import { openProfileRecordContentV1, sealProfileRecordContentV1, type ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { openProfileTransferContentV1, sealProfileTransferContentV1, type ProfileTransferControlV1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1, DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+    ProviderConnectionsCatalogV1Schema, openProviderConnectionsContentV1, sealProviderConnectionsContentV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { buildProfilePhysicalKey, PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, PROFILE_TRANSFER_ACCOUNT_KV_KEY } from '@/app/kv/accountScopedKv';
 
 import { enableErrorHandlers } from "@/app/api/utils/enableErrorHandlers";
 import {
@@ -59,6 +69,7 @@ import { openArtifactStoredContentBytes, storePlainArtifactDbBytes } from "@/app
 import { prepareArtifactBlobWrite, completeArtifactBlobCandidateCustodyInTx, openArtifactBlobBytes } from '@/app/artifacts/artifactBlobService';
 import { stageArtifactBlobAccountEncryptionConversion } from '@/app/artifacts/artifactEncryptionConversionBlobService';
 import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
+import { updateAccountEncryptionMode } from './updateAccountEncryptionMode';
 
 const SESSION_OWNER_MATERIAL = {
     type: "legacy",
@@ -570,6 +581,620 @@ describe("account encryption migration .7 SQLite matrix", () => {
         } finally { await app.close(); }
     });
 
+    it.each(["plain", "e2ee"] as const)("converts current Project Trust atomically without history and replays exact row acknowledgements (%s source)", async (fromMode) => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional", HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1", HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: "none" });
+        const signing = tweetnacl.sign.keyPair();
+        const binding = createSignedContentKeyBinding(signing.secretKey);
+        const account = await db.account.create({ data: {
+            publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)), contentPublicKey: Buffer.from(binding.contentPublicKey, "base64"),
+            contentPublicKeySig: Buffer.from(binding.contentPublicKeySig, "base64"), encryptionMode: fromMode, settings: null,
+        } });
+        const project = { serverId: "home", projectId: randomUUID() };
+        const key = `@happier/account/project-trust/v1/home/${project.projectId}`;
+        const value = { project, reviewedEffectDigest: "reviewed-effect", approvedAtMs: 1 };
+        const encrypted = { t: "encrypted" as const, c: sealAccountScopedBlobCiphertext({ kind: "project_setup_trust",
+            material: { type: "dataKey", machineKey: new Uint8Array(32).fill(7) }, payload: value, randomBytes: length => new Uint8Array(length).fill(11),
+        }) };
+        const plain = { t: "plain" as const, v: value };
+        const source = fromMode === "plain" ? plain : encrypted;
+        const content = fromMode === "plain" ? encrypted : plain;
+        const tombstoneKey = `${key}-revoked`;
+        await db.userKVStore.create({ data: { accountId: account.id, key, version: 3, value: new TextEncoder().encode(JSON.stringify(source)) } });
+        const tombstone = await db.userKVStore.create({ data: { accountId: account.id, key: tombstoneKey, version: 5, value: null } });
+        const toMode = fromMode === "plain" ? "e2ee" as const : "plain" as const;
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const base = { toMode, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: "assert_empty" as const }, automations: { action: "assert_empty" as const }, machines: { action: "assert_empty" as const },
+            todos: { action: "assert_empty" as const }, artifacts: { action: "assert_empty" as const }, sessions: { action: "assert_empty" as const }, ...EMPTY_AMENDMENT9_DIRECTIVES,
+            projectTrust: { items: [{ project, expectedRevision: 3, content }] },
+        };
+        const buildRequest = (candidate: typeof base | Omit<typeof base, "projectTrust">) => toMode === "e2ee" ? signPlainToE2eeRequest({ accountId: account.id, signingSecretKey: signing.secretKey,
+            request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } },
+        }) : candidate;
+        const app = createTestApp();
+        try {
+            const options = { method: "POST" as const, url: "/v1/account/encryption/migrate", headers: { "x-test-user-id": account.id, ...currentCompatibilityHeaders() }, payload: buildRequest(base) };
+            const { projectTrust: _trust, ...missing } = base;
+            for (const candidate of [missing, { ...base, projectTrust: { items: [] } }, { ...base, projectTrust: { items: [{ project, expectedRevision: 2, content }] } }, { ...base, projectTrust: { items: [{ project, expectedRevision: 3, content: source }] } }]) {
+                expect((await app.inject({ ...options, payload: buildRequest(candidate) })).statusCode).toBe(400);
+                expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).encryptionMode).toBe(fromMode);
+                expect((await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key } } })).version).toBe(3);
+            }
+            const response = await app.inject(options);
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ mode: toMode, projectTrust: { rows: [{ project, revision: 4, content }] } });
+            const committed = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key } } });
+            expect(JSON.parse(new TextDecoder().decode(committed.value!))).toEqual(content);
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: tombstoneKey } } })).toEqual(tombstone);
+            socketEmit.mockClear();
+            const replay = await app.inject(options);
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toEqual(response.json());
+            expect(socketEmit).not.toHaveBeenCalled();
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key } } })).toEqual(committed);
+        } finally { await app.close(); }
+    });
+
+    it('refuses an omitted guard-only Profile inventory at both Account mode entry points', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1' });
+        const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee', settings: null } });
+        const guard = await db.userKVStore.create({ data: { accountId: account.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 12, value: null } });
+        expect(await updateAccountEncryptionMode({ accountId: account.id, mode: 'plain' })).toEqual({ status: 'migration_required' });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const request = { toMode: 'plain' as const, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
+            todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES };
+        const app = createTestApp();
+        try {
+            const response = await app.inject({ method: 'POST', url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() }, payload: request });
+            expect(response.statusCode, response.body).toBe(400);
+            expect(response.json()).toEqual({ error: 'invalid-params', reason: 'migration_inventory_changed' });
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: guard.key } } })).toEqual(guard);
+            const admitted = await app.inject({ method: 'POST', url: '/v1/account/encryption/migrate',
+                headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() }, payload: { ...request,
+                    profileRows: { items: [], expectedReferenceGuardRevision: 12, transferControl: { expectedRevision: 'absent', content: null } } } });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json()).toMatchObject({ profileRows: { rows: [], referenceGuardRevision: 12, transferControl: { status: 'absent' } } });
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: guard.key } } })).toEqual(guard);
+        } finally { await app.close(); }
+    });
+
+    it('requires an explicit retained tombstone-only Profile inventory without a reference guard', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1' });
+        const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee', settings: null } });
+        const tombstone = await db.userKVStore.create({ data: { accountId: account.id, key: buildProfilePhysicalKey('retained-tombstone'), version: 12, value: null } });
+        expect(await updateAccountEncryptionMode({ accountId: account.id, mode: 'plain' })).toEqual({ status: 'migration_required' });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const request = { toMode: 'plain' as const, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
+            todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES };
+        const app = createTestApp();
+        try {
+            const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() } };
+            const omitted = await app.inject({ ...options, payload: request });
+            expect(omitted.statusCode, omitted.body).toBe(400);
+            expect(omitted.json()).toEqual({ error: 'invalid-params', reason: 'migration_inventory_changed' });
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+            const admitted = await app.inject({ ...options, payload: { ...request, profileRows: { items: [], expectedReferenceGuardRevision: 'absent',
+                transferControl: { expectedRevision: 'absent', content: null } } } });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json()).toMatchObject({ profileRows: { rows: [{ id: 'retained-tombstone', revision: 12, content: null }],
+                referenceGuardRevision: 'absent', transferControl: { status: 'absent' } } });
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: tombstone.key } } })).toEqual(tombstone);
+        } finally { await app.close(); }
+    });
+
+    it('captures and preserves Provider catalog tombstone revision during mode conversion', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: 'none' });
+        const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee', settings: null } });
+        const tombstone = await db.userKVStore.create({ data: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1, version: 11, value: null } });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const base = { toMode: 'plain' as const, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
+            todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES,
+        };
+        const app = createTestApp();
+        const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() } };
+        try {
+            expect(await updateAccountEncryptionMode({ accountId: account.id, mode: 'plain' })).toEqual({ status: 'migration_required' });
+            for (const candidate of [base, { ...base, providerConnections: { expectedRevision: 10, content: null } }]) {
+                expect((await app.inject({ ...options, payload: candidate })).statusCode).toBe(400);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+            }
+            const payload = { ...base, providerConnections: { expectedRevision: 11, content: null } };
+            const response = await app.inject({ ...options, payload });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().providerConnections).toEqual({ row: { revision: 11, content: null } });
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: tombstone.key } } })).toEqual(tombstone);
+            const replay = await app.inject({ ...options, payload });
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toEqual(response.json());
+        } finally { await app.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('converts populated Provider catalog atomically and refuses omitted, stale or mixed coverage (%s source)', async fromMode => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: 'none' });
+        const signing = tweetnacl.sign.keyPair();
+        const binding = createSignedContentKeyBinding(signing.secretKey);
+        const account = await db.account.create({ data: { publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
+            contentPublicKey: privacyKit.decodeBase64(binding.contentPublicKey), contentPublicKeySig: privacyKit.decodeBase64(binding.contentPublicKeySig),
+            encryptionMode: fromMode, settings: null } });
+        const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [{ v: 1, id: 'pc_a', source: { kind: 'contribution', contributionKey: 'plugin/provider' },
+                role: 'default', displayName: 'Provider', displayNameMode: 'automatic', revision: 2, createdAt: 1, updatedAt: 2 }],
+            connectionTombstones: [{ v: 1, id: 'pc_deleted', contributionKey: null, lastDisplayName: 'Deleted', deletedAt: 3 }],
+            accountGrants: [{ v: 1, connectionId: 'pc_a', connectionSecurityFingerprint: 'security', confirmedAt: 1 }],
+            machineGrants: [{ v: 1, connectionId: 'pc_a', machineId: 'machine-a', endpointSetFingerprint: 'endpoints', connectionSecurityFingerprint: 'security', confirmedAt: 2 }],
+            secretBindingsByConnectionId: { pc_a: { account: { apiKey: formatSharedSavedSecretRefV1('secret-a') },
+                byMachineId: { 'machine-a': { apiKey: formatSharedSavedSecretRefV1('secret-b') } } } },
+            manualModelsByConnectionId: { pc_a: [{ id: 'model-a', addedAt: 1 }] },
+            migration: { v: 1, completedSources: [], pendingCustomProfileIds: ['legacy-profile'], pendingConflicts: [] },
+        });
+        const toMode = fromMode === 'plain' ? 'e2ee' as const : 'plain' as const;
+        const seal = (mode: 'plain' | 'e2ee') => sealProviderConnectionsContentV1({ catalog, mode,
+            material: mode === 'plain' ? null : SESSION_OWNER_MATERIAL, randomBytes: length => new Uint8Array(length).fill(27) });
+        await db.userKVStore.create({ data: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1, version: 7,
+            value: new TextEncoder().encode(JSON.stringify(seal(fromMode))) } });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const base = { toMode, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
+            todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES,
+            providerConnections: { expectedRevision: 7, content: seal(toMode) },
+        };
+        const buildRequest = (candidate: typeof base | Omit<typeof base, 'providerConnections'>) => toMode === 'e2ee'
+            ? signPlainToE2eeRequest({ accountId: account.id, signingSecretKey: signing.secretKey,
+                request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } } }) : candidate;
+        const app = createTestApp();
+        const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() } };
+        const before = await db.userKVStore.findMany({ where: { accountId: account.id } });
+        try {
+            const { providerConnections: _provider, ...missing } = base;
+            for (const candidate of [missing, { ...base, providerConnections: { ...base.providerConnections, expectedRevision: 6 } }]) {
+                const response = await app.inject({ ...options, payload: buildRequest(candidate) });
+                expect(response.statusCode, response.body).toBe(400);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(before);
+            }
+            // Wrong target mode is strict ingress; it never reaches the transaction.
+            const mixed = { ...buildRequest(base), providerConnections: { ...base.providerConnections, content: seal(fromMode) } };
+            expect((await app.inject({ ...options, payload: mixed })).statusCode).toBe(400);
+            const payload = buildRequest(base);
+            if (fromMode === 'plain') {
+                for (const rawCatalog of [{ ...catalog, futureCredential: { secretRef: 'unclassified-secret' } }]) {
+                    const rawContent = { t: 'plain', v: rawCatalog };
+                    await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } },
+                        data: { value: new TextEncoder().encode(JSON.stringify(rawContent)) } });
+                    const incomplete = await db.userKVStore.findMany({ where: { accountId: account.id } });
+                    expect((await app.inject({ ...options, payload })).statusCode).toBe(400);
+                    expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                    expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(incomplete);
+                }
+                await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } },
+                    data: { value: new TextEncoder().encode(JSON.stringify(seal(fromMode))) } });
+            }
+            const response = await app.inject({ ...options, payload });
+            expect(response.statusCode, response.body).toBe(200);
+            const row = response.json().providerConnections.row;
+            expect(row.revision).toBe(8);
+            expect(openProviderConnectionsContentV1({ mode: toMode, material: toMode === 'plain' ? null : SESSION_OWNER_MATERIAL,
+                content: row.content })).toEqual({ status: 'opened', catalog });
+            const committed = await db.userKVStore.findMany({ where: { accountId: account.id } });
+            const replay = await app.inject({ ...options, payload });
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toEqual(response.json());
+            expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(committed);
+            await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } }, data: { version: 9 } });
+            expect((await app.inject({ ...options, payload })).statusCode).toBe(400);
+        } finally { await app.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('retains harmless Provider stored metadata through signed mode conversion (%s source)', async fromMode => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: 'none' });
+        const signing = tweetnacl.sign.keyPair();
+        const binding = createSignedContentKeyBinding(signing.secretKey);
+        const account = await db.account.create({ data: { publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
+            contentPublicKey: privacyKit.decodeBase64(binding.contentPublicKey), contentPublicKeySig: privacyKit.decodeBase64(binding.contentPublicKeySig),
+            encryptionMode: fromMode, settings: null } });
+        const rawCatalog = { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, retainedDisplayNote: 'complete retained metadata',
+            connections: [{ v: 1, id: 'pc_retained', source: { kind: 'contribution', contributionKey: 'plugin/provider' },
+                role: 'default', displayName: 'Provider', displayNameMode: 'automatic', revision: 2, createdAt: 1, updatedAt: 2,
+                retainedDisplayNote: 'nested retained metadata' }] };
+        const toMode = fromMode === 'plain' ? 'e2ee' as const : 'plain' as const;
+        const seal = (mode: 'plain' | 'e2ee') => mode === 'plain' ? { t: 'plain' as const, v: rawCatalog, retainedEnvelopeLabel: 'older-reader metadata' }
+            : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'account_provider_connections',
+                material: SESSION_OWNER_MATERIAL, payload: rawCatalog, randomBytes: length => new Uint8Array(length).fill(27) }), retainedEnvelopeLabel: 'older-reader metadata' };
+        await db.userKVStore.create({ data: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1, version: 7,
+            value: new TextEncoder().encode(JSON.stringify(seal(fromMode))) } });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const candidate = { toMode, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
+            todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES,
+            providerConnections: { expectedRevision: 7, content: seal(toMode) } };
+        const payload = toMode === 'e2ee' ? signPlainToE2eeRequest({ accountId: account.id, signingSecretKey: signing.secretKey,
+            request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } } }) : candidate;
+        const app = createTestApp();
+        const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() }, payload };
+        try {
+            // Keep the valid payload/ciphertext and CAS basis; only the ORIGINAL envelope has an unknown reference.
+            const incompleteSource = { ...seal(fromMode), retainedCredential: { secretRef: formatSharedSavedSecretRefV1('unclassified') } };
+            await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } },
+                data: { value: new TextEncoder().encode(JSON.stringify(incompleteSource)) } });
+            const incompleteRow = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } } });
+            const changesBeforeRefusal = await db.accountChange.count({ where: { accountId: account.id } });
+            const refused = await app.inject(options);
+            expect(refused.statusCode, refused.body).toBe(400);
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: incompleteRow.key } } })).toEqual(incompleteRow);
+            expect(await db.accountChange.count({ where: { accountId: account.id } })).toBe(changesBeforeRefusal);
+            await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } },
+                data: { value: new TextEncoder().encode(JSON.stringify(seal(fromMode))) } });
+            const response = await app.inject(options);
+            expect(response.statusCode, response.body).toBe(200);
+            const row = response.json().providerConnections.row;
+            expect(row.revision).toBe(8);
+            expect(row.content).toMatchObject({ retainedEnvelopeLabel: 'older-reader metadata' });
+            const opened = openProviderConnectionsContentV1({ mode: toMode, material: toMode === 'plain' ? null : SESSION_OWNER_MATERIAL,
+                content: row.content, admission: 'migration' });
+            expect(opened.status).toBe('opened');
+            if (opened.status !== 'opened') throw new Error('Missing complete Provider conversion receipt');
+            expect(opened.migrationSource.payload).toEqual(rawCatalog);
+            const stored = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } } });
+            expect(JSON.parse(new TextDecoder().decode(stored.value!))).toEqual(row.content);
+            const replay = await app.inject(options);
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toEqual(response.json());
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: stored.key } } })).toEqual(stored);
+        } finally { await app.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('converts all five D9 catalogs in one transaction with exact replay and retained tombstones (%s source)', async fromMode => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: 'none' });
+        const signing = tweetnacl.sign.keyPair();
+        const binding = createSignedContentKeyBinding(signing.secretKey);
+        const account = await db.account.create({ data: { publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
+            contentPublicKey: privacyKit.decodeBase64(binding.contentPublicKey), contentPublicKeySig: privacyKit.decodeBase64(binding.contentPublicKeySig),
+            encryptionMode: fromMode, settings: null } });
+        const service = { pluginId: 'happier.connected-account.example', localId: 'cloud' };
+        const consumer = { pluginId: 'happier.agent.example', localId: 'coding' };
+        const catalogs = [
+            { field: 'providerConnections', key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1, kind: 'account_provider_connections',
+                value: ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+                    connections: [{ v: 1, id: 'pc-retained', source: { kind: 'contribution', contributionKey: 'plugin/provider' },
+                        role: 'default', displayName: 'Retained Provider', displayNameMode: 'automatic', revision: 2, createdAt: 1, updatedAt: 2 }],
+                    manualModelsByConnectionId: { 'pc-retained': [{ id: 'retained-model', addedAt: 1 }] } }) },
+            { field: 'connectedConfigurations', key: '@happier/account/connected-configurations/v1/catalog', kind: 'account_connected_configuration',
+                value: { key: 'configurations', value: { v: 1, entries: [{ service, modeId: 'native-api', revision: 'config-1',
+                    values: { region: 'eu', adapter: { preserve: true } }, secretRefs: {} }] } } },
+            { field: 'connectedPurposes', key: '@happier/account/connected-purposes/v1/catalog', kind: 'account_connected_purposes',
+                value: { key: 'purposes', value: { v: 1, bindings: [{ purpose: { consumer, purpose: 'native-api' },
+                    target: { kind: 'group', service, groupId: 'pool' } }], teamResourceSelections: [{ purpose: { consumer, purpose: 'model-api' },
+                    teamId: 'team', selection: { source: 'team_resource', resourceId: 'resource', deliveryMode: 'brokered' } }] } } },
+            { field: 'mcpServerCatalog', key: '@happier/account/mcp/v1/catalog', kind: 'account_mcp_catalog', value: { v: 1,
+                servers: [{ id: 'stdio', name: 'stdio', transport: 'stdio', stdio: { command: 'mcp-tool', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }],
+                bindings: [{ id: 'binding', serverId: 'stdio', enabled: true, target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }] } },
+            { field: 'acpCatalog', key: '@happier/account/acp/v1/catalog', kind: 'account_acp_catalog', value: { v: 1,
+                definitions: [{ id: 'retained-acp', name: 'retained-acp', title: 'Retained ACP', command: 'acp-tool', args: [], env: {},
+                    capabilities: { supportsLoadSession: true, supportsModes: 'unknown', supportsModels: 'unknown', supportsConfigOptions: 'unknown', promptImageSupport: 'unknown' },
+                    createdAt: 1, updatedAt: 2 }] } },
+        ] as const;
+        const toMode = fromMode === 'plain' ? 'e2ee' as const : 'plain' as const;
+        const seal = (catalog: typeof catalogs[number], mode: 'plain' | 'e2ee') => mode === 'plain'
+            ? { t: 'plain' as const, v: catalog.value }
+            : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: catalog.kind, material: SESSION_OWNER_MATERIAL,
+                payload: catalog.value, randomBytes: length => new Uint8Array(length).fill(35) }) };
+        for (const catalog of catalogs) await db.userKVStore.create({ data: { accountId: account.id, key: catalog.key,
+            version: 7, value: new TextEncoder().encode(JSON.stringify(seal(catalog, fromMode))) } });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const base = { toMode, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
+            todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES };
+        const directives = Object.fromEntries(catalogs.map(catalog => [catalog.field, { expectedRevision: 7, content: seal(catalog, toMode) }]));
+        const buildRequest = (candidate: typeof base) => toMode === 'e2ee'
+            ? signPlainToE2eeRequest({ accountId: account.id, signingSecretKey: signing.secretKey,
+                request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } } }) : candidate;
+        const app = createTestApp();
+        const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() } };
+        const before = await db.userKVStore.findMany({ where: { accountId: account.id } });
+        try {
+            for (const catalog of catalogs) {
+                const omitted = { ...directives }; delete omitted[catalog.field];
+                for (const changed of [omitted, { ...directives, [catalog.field]: { expectedRevision: 6, content: seal(catalog, toMode) } },
+                    { ...directives, [catalog.field]: { expectedRevision: 7, content: null } }]) {
+                    const response = await app.inject({ ...options, payload: buildRequest({ ...base, ...changed }) });
+                    expect(response.statusCode, `${catalog.field}: ${response.body}`).toBe(400);
+                    expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                    expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(before);
+                }
+                // The canonical signer rejects mode-invalid inputs itself. Alter a
+                // valid signed request to exercise HTTP admission, not signer setup.
+                const wrongModeResponse = await app.inject({ ...options, payload: {
+                    ...buildRequest({ ...base, ...directives }),
+                    [catalog.field]: { expectedRevision: 7, content: seal(catalog, fromMode) },
+                } });
+                expect(wrongModeResponse.statusCode, `${catalog.field}: ${wrongModeResponse.body}`).toBe(400);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(before);
+            }
+            const payload = buildRequest({ ...base, ...directives });
+            const response = await app.inject({ ...options, payload });
+            expect(response.statusCode, response.body).toBe(200);
+            for (const catalog of catalogs) {
+                const expected = { revision: 8, content: seal(catalog, toMode) };
+                expect(response.json()[catalog.field]).toEqual(catalog.field === 'mcpServerCatalog' ? expected : { row: expected });
+            }
+            const committed = await db.userKVStore.findMany({ where: { accountId: account.id } });
+            const replay = await app.inject({ ...options, payload });
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toEqual(response.json());
+            expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(committed);
+
+            // All five admitted deletions survive the reverse transition without a recreated empty catalog.
+            for (const catalog of catalogs) await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: catalog.key } },
+                data: { version: 11, value: null } });
+            const current = await db.account.findUniqueOrThrow({ where: { id: account.id } });
+            const deletedBase = { ...base, toMode: fromMode, expectedAccountVersion: current.seq,
+                expectedSettingsVersion: current.settingsVersion,
+                ...Object.fromEntries(catalogs.map(catalog => [catalog.field, { expectedRevision: 11, content: null }])) };
+            const deletedPayload = fromMode === 'e2ee' ? signPlainToE2eeRequest({ accountId: account.id, signingSecretKey: signing.secretKey,
+                request: { ...deletedBase, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } } }) : deletedBase;
+            const deletedBefore = await db.userKVStore.findMany({ where: { accountId: account.id } });
+            const deletedResponse = await app.inject({ ...options, payload: deletedPayload });
+            expect(deletedResponse.statusCode, deletedResponse.body).toBe(200);
+            for (const catalog of catalogs) {
+                const expected = { revision: 11, content: null };
+                expect(deletedResponse.json()[catalog.field]).toEqual(catalog.field === 'mcpServerCatalog' ? expected : { row: expected });
+            }
+            expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(deletedBefore);
+        } finally { await app.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('converts all D10 singleton catalogs atomically with exact replay and retained tombstones (%s source)', async fromMode => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1' });
+        const signing = tweetnacl.sign.keyPair();
+        const binding = createSignedContentKeyBinding(signing.secretKey);
+        const account = await db.account.create({ data: { publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
+            contentPublicKey: privacyKit.decodeBase64(binding.contentPublicKey), contentPublicKeySig: privacyKit.decodeBase64(binding.contentPublicKeySig),
+            encryptionMode: fromMode, settings: null } });
+        const catalogs = [
+            { field: 'remoteHosts', key: '@happier/account/remote-hosts/v1/catalog', kind: 'account_remote_host_catalog', value: { v: 1,
+                hosts: [{ id: 'retained-host', name: 'Build box', ssh: { target: 'builder@localhost', authMode: 'agent' },
+                    createdAt: 1, updatedAt: 2, lastUsedAt: null, linkedMachineId: 'exact-machine', linkedRelayProfileId: null }] } },
+            { field: 'notificationChannels', key: '@happier/account/notification-channels/v1/catalog', kind: 'account_notification_channels', value: { v: 1,
+                channels: [{ v: 1, id: 'retained-webhook', kind: 'webhook', enabled: true, url: 'http://localhost:9081/notify', signingSecretRef: null,
+                    topics: { ready: true, permissionRequest: false, userActionRequest: true, connectedServiceAccountSwitch: false,
+                        connectedServiceQuotaBlocked: false, connectedServiceQuotaRecovered: true, connectedServiceUsage: false }, readyIncludeMessageText: false, requestIncludeMessageText: false }] } },
+            { field: 'connectedPresentation', key: '@happier/account/connected-presentation/v1/catalog', kind: 'account_connected_presentation_catalog', value: { v: 1,
+                entries: [{ v: 1, subject: { kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'default' } }, label: 'Work' }] } },
+            { field: 'connectedAcknowledgements', key: '@happier/account/connected-acknowledgements/v1/catalog', kind: 'account_connected_acknowledgement_catalog', value: { v: 1,
+                entries: [{ v: 1, subject: { kind: 'warning', warningId: 'installation', scope: { kind: 'machine', machineId: 'exact-machine' } }, acknowledged: false }] } },
+        ] as const;
+        const toMode = fromMode === 'plain' ? 'e2ee' as const : 'plain' as const;
+        const seal = (catalog: typeof catalogs[number], mode: 'plain' | 'e2ee') => mode === 'plain'
+            ? { t: 'plain' as const, v: catalog.value }
+            : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: catalog.kind, material: SESSION_OWNER_MATERIAL,
+                payload: catalog.value, randomBytes: length => new Uint8Array(length).fill(34) }) };
+        for (const catalog of catalogs) await db.userKVStore.create({ data: { accountId: account.id, key: catalog.key, version: 7,
+            value: new TextEncoder().encode(JSON.stringify(fromMode === 'plain'
+                ? { t: 'plain', v: { ...catalog.value, futureCatalogHint: true } } : seal(catalog, fromMode))) } });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const base = { toMode, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
+            todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES };
+        const directives = Object.fromEntries(catalogs.map(catalog => [catalog.field, { expectedRevision: 7, content: seal(catalog, toMode) }]));
+        const buildRequest = (candidate: typeof base) => toMode === 'e2ee'
+            ? signPlainToE2eeRequest({ accountId: account.id, signingSecretKey: signing.secretKey,
+                request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } } }) : candidate;
+        const app = createTestApp();
+        const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() } };
+        const before = await db.userKVStore.findMany({ where: { accountId: account.id } });
+        try {
+            for (const catalog of catalogs) {
+                const omitted = { ...directives }; delete omitted[catalog.field];
+                for (const changed of [omitted, { ...directives, [catalog.field]: { expectedRevision: 6, content: seal(catalog, toMode) } },
+                    { ...directives, [catalog.field]: { expectedRevision: 7, content: null } }]) {
+                    const response = await app.inject({ ...options, payload: buildRequest({ ...base, ...changed }) });
+                    expect(response.statusCode, response.body).toBe(400);
+                    expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                    expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(before);
+                }
+                // Sign a valid target first, then tamper with its envelope to reach HTTP admission.
+                const wrongModeResponse = await app.inject({ ...options, payload: {
+                    ...buildRequest({ ...base, ...directives }),
+                    [catalog.field]: { expectedRevision: 7, content: seal(catalog, fromMode) },
+                } });
+                expect(wrongModeResponse.statusCode, wrongModeResponse.body).toBe(400);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(before);
+            }
+            const payload = buildRequest({ ...base, ...directives });
+            if (fromMode === 'plain') {
+                for (const catalog of catalogs) {
+                    const collection = 'hosts' in catalog.value ? 'hosts' : 'channels' in catalog.value ? 'channels' : 'entries';
+                    const entries = 'hosts' in catalog.value ? catalog.value.hosts : 'channels' in catalog.value ? catalog.value.channels : catalog.value.entries;
+                    await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: catalog.key } }, data: {
+                        value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { ...catalog.value, [collection]: [...entries, { malformed: true }] } })) } });
+                    const invalidBefore = await db.userKVStore.findMany({ where: { accountId: account.id } });
+                    const invalidResponse = await app.inject({ ...options, payload });
+                    expect(invalidResponse.statusCode, invalidResponse.body).toBe(400);
+                    expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                    expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(invalidBefore);
+                    await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: catalog.key } }, data: {
+                        value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { ...catalog.value, futureCatalogHint: true } })) } });
+                }
+            }
+            const response = await app.inject({ ...options, payload });
+            expect(response.statusCode, response.body).toBe(200);
+            for (const catalog of catalogs) expect(response.json()[catalog.field]).toEqual({ revision: 8, content: seal(catalog, toMode) });
+            const committed = await db.userKVStore.findMany({ where: { accountId: account.id } });
+            const committedAccount = await db.account.findUniqueOrThrow({ where: { id: account.id } });
+            const committedChanges = await db.accountChange.findMany({ where: { accountId: account.id }, orderBy: { cursor: 'asc' } });
+            const replay = await app.inject({ ...options, payload });
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toEqual(response.json());
+            expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(committed);
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(committedAccount);
+            expect(await db.accountChange.findMany({ where: { accountId: account.id }, orderBy: { cursor: 'asc' } })).toEqual(committedChanges);
+            const changedContent = toMode === 'plain'
+                ? { t: 'plain', v: { ...catalogs[0].value, hosts: catalogs[0].value.hosts.map(host => ({ ...host, name: 'Changed after commit' })) } }
+                : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: catalogs[0].kind, material: SESSION_OWNER_MATERIAL,
+                    payload: catalogs[0].value, randomBytes: length => new Uint8Array(length).fill(35) }) };
+            await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: catalogs[0].key } }, data: {
+                value: new TextEncoder().encode(JSON.stringify(changedContent)) } });
+            const changedPostState = await db.userKVStore.findMany({ where: { accountId: account.id } });
+            const divergentReplay = await app.inject({ ...options, payload });
+            expect(divergentReplay.statusCode, divergentReplay.body).toBe(400);
+            expect(await db.userKVStore.findMany({ where: { accountId: account.id } })).toEqual(changedPostState);
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(committedAccount);
+            expect(await db.accountChange.findMany({ where: { accountId: account.id }, orderBy: { cursor: 'asc' } })).toEqual(committedChanges);
+            // A retained deletion has no content to reseal and keeps its exact revision.
+            const deletedSigning = tweetnacl.sign.keyPair();
+            const deletedBinding = createSignedContentKeyBinding(deletedSigning.secretKey);
+            const tombstoneAccount = await db.account.create({ data: { publicKey: privacyKit.encodeHex(new Uint8Array(deletedSigning.publicKey)),
+                contentPublicKey: privacyKit.decodeBase64(deletedBinding.contentPublicKey), contentPublicKeySig: privacyKit.decodeBase64(deletedBinding.contentPublicKeySig),
+                encryptionMode: fromMode, settings: null } });
+            const tombstoneFingerprints = deriveAccountEncryptionMigrationKeyFingerprints(tombstoneAccount);
+            for (const catalog of catalogs) await db.userKVStore.create({ data: { accountId: tombstoneAccount.id, key: catalog.key, version: 11, value: null } });
+            const deletedCandidate = { ...base, expectedAccountVersion: tombstoneAccount.seq,
+                expectedSigningKeyFingerprint: tombstoneFingerprints.signingKeyFingerprint, expectedContentKeyFingerprint: tombstoneFingerprints.contentKeyFingerprint,
+                ...Object.fromEntries(catalogs.map(catalog => [catalog.field, { expectedRevision: 11, content: null }])) };
+            const buildDeletedPayload = (candidate: typeof base) => toMode === 'e2ee'
+                ? signPlainToE2eeRequest({ accountId: tombstoneAccount.id, signingSecretKey: deletedSigning.secretKey,
+                    request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(deletedSigning.publicKey)), ...deletedBinding } } }) : candidate;
+            const deletedPayload = buildDeletedPayload(deletedCandidate);
+            const deletedBefore = await db.userKVStore.findMany({ where: { accountId: tombstoneAccount.id } });
+            const deletedOptions = { ...options, headers: { ...options.headers, 'x-test-user-id': tombstoneAccount.id } };
+            for (const catalog of catalogs) {
+                const omitted: typeof deletedCandidate & Partial<Record<typeof catalog.field, unknown>> = { ...deletedCandidate };
+                delete omitted[catalog.field];
+                for (const candidate of [omitted,
+                    { ...deletedCandidate, [catalog.field]: { expectedRevision: 10, content: null } },
+                    { ...deletedCandidate, [catalog.field]: { expectedRevision: 11, content: seal(catalog, toMode) } }]) {
+                    const rejected = await app.inject({ ...deletedOptions, payload: buildDeletedPayload(candidate) });
+                    expect(rejected.statusCode, rejected.body).toBe(400);
+                    expect(await db.account.findUniqueOrThrow({ where: { id: tombstoneAccount.id } })).toEqual(tombstoneAccount);
+                    expect(await db.userKVStore.findMany({ where: { accountId: tombstoneAccount.id } })).toEqual(deletedBefore);
+                }
+            }
+            const deletedResponse = await app.inject({ ...options, headers: { ...options.headers, 'x-test-user-id': tombstoneAccount.id }, payload: deletedPayload });
+            expect(deletedResponse.statusCode, deletedResponse.body).toBe(200);
+            for (const catalog of catalogs) expect(deletedResponse.json()[catalog.field]).toEqual({ revision: 11, content: null });
+            expect(await db.userKVStore.findMany({ where: { accountId: tombstoneAccount.id } })).toEqual(deletedBefore);
+            expect(await db.accountChange.findMany({ where: { accountId: tombstoneAccount.id,
+                entityId: { in: catalogs.map(catalog => catalog.key) } } })).toEqual([]);
+            const deletedCommittedAccount = await db.account.findUniqueOrThrow({ where: { id: tombstoneAccount.id } });
+            const deletedCommittedChanges = await db.accountChange.findMany({ where: { accountId: tombstoneAccount.id }, orderBy: { cursor: 'asc' } });
+            const deletedReplay = await app.inject({ ...deletedOptions, payload: deletedPayload });
+            expect(deletedReplay.statusCode, deletedReplay.body).toBe(200);
+            expect(deletedReplay.json()).toEqual(deletedResponse.json());
+            expect(await db.userKVStore.findMany({ where: { accountId: tombstoneAccount.id } })).toEqual(deletedBefore);
+            expect(await db.account.findUniqueOrThrow({ where: { id: tombstoneAccount.id } })).toEqual(deletedCommittedAccount);
+            expect(await db.accountChange.findMany({ where: { accountId: tombstoneAccount.id }, orderBy: { cursor: 'asc' } })).toEqual(deletedCommittedChanges);
+        } finally { await app.close(); }
+    });
+
+    it.each(["e2ee", "plain"] as const)("converts all 257 Profile rows atomically and preserves the reference guard (%s source)", async (fromMode) => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional", HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1", HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: "none" });
+        const signing = tweetnacl.sign.keyPair();
+        const binding = createSignedContentKeyBinding(signing.secretKey);
+        const account = await db.account.create({ data: {
+            publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
+            contentPublicKey: privacyKit.decodeBase64(binding.contentPublicKey),
+            contentPublicKeySig: privacyKit.decodeBase64(binding.contentPublicKeySig), encryptionMode: fromMode, settings: null,
+        } });
+        const toMode = fromMode === 'plain' ? 'e2ee' as const : 'plain' as const;
+        const records: ProfileRecordV1[] = Array.from({ length: 257 }, (_, index) => ({
+            v: 1, id: `profile-${index}`, definition: { kind: 'artifact', artifactId: `artifact-${index}` },
+            enabled: index % 2 === 0, promptStack: [], secretBindings: {},
+        }));
+        const seal = (record: ProfileRecordV1, mode: 'plain' | 'e2ee') => sealProfileRecordContentV1({
+            record, mode, material: mode === 'plain' ? null : SESSION_OWNER_MATERIAL,
+            randomBytes: length => new Uint8Array(length).fill(27),
+        });
+        await db.userKVStore.createMany({ data: records.map(record => ({
+            accountId: account.id, key: buildProfilePhysicalKey(record.id), version: 3,
+            value: new TextEncoder().encode(JSON.stringify(seal(record, fromMode))),
+        })) });
+        const guard = await db.userKVStore.create({ data: { accountId: account.id, key: PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, version: 7, value: null } });
+        const tombstone = await db.userKVStore.create({ data: { accountId: account.id, key: buildProfilePhysicalKey('deleted-profile'), version: 9, value: null } });
+        const control: ProfileTransferControlV1 = { v: 1, phase: 'active', sourceSettingsVersion: 0, migratedLogicalRevision: 0,
+            inventory: records.map(record => ({ kind: 'account_row', id: record.id, revision: 3 })) };
+        const sealControl = (mode: 'plain' | 'e2ee') => sealProfileTransferContentV1({ record: control, mode,
+            material: mode === 'plain' ? null : SESSION_OWNER_MATERIAL, randomBytes: length => new Uint8Array(length).fill(31) });
+        await db.userKVStore.create({ data: { accountId: account.id, key: PROFILE_TRANSFER_ACCOUNT_KV_KEY, version: 5,
+            value: new TextEncoder().encode(JSON.stringify(sealControl(fromMode))) } });
+        const ordinaryTombstone = await db.userKVStore.create({ data: { accountId: account.id,
+            key: `${PROFILE_TRANSFER_ACCOUNT_KV_KEY}-ordinary-tombstone`, version: 11, value: null } });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const base = { toMode, expectedAccountVersion: account.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
+            todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES,
+            profileRows: { items: records.map(record => ({ id: record.id, expectedRevision: 3, content: seal(record, toMode) })), expectedReferenceGuardRevision: 7,
+                transferControl: { expectedRevision: 5, content: sealControl(toMode) } },
+        };
+        const buildRequest = (candidate: typeof base | Omit<typeof base, 'profileRows'>) => toMode === 'e2ee' ? signPlainToE2eeRequest({ accountId: account.id, signingSecretKey: signing.secretKey,
+            request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } },
+        }) : candidate;
+        const app = createTestApp();
+        const before = await db.userKVStore.findMany({ where: { accountId: account.id }, orderBy: { key: 'asc' } });
+        const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() } };
+        try {
+            const { profileRows: _profiles, ...missing } = base;
+            const invalidCandidates = [missing,
+                { ...base, profileRows: { ...base.profileRows, items: base.profileRows.items.slice(1) } },
+                { ...base, profileRows: { ...base.profileRows, items: base.profileRows.items.map((item, index) => index === 256 ? { ...item, expectedRevision: 2 } : item) } },
+                { ...base, profileRows: { ...base.profileRows, expectedReferenceGuardRevision: 6 } },
+                { ...base, profileRows: { ...base.profileRows, transferControl: { ...base.profileRows.transferControl, expectedRevision: 4 } } },
+                { ...base, profileRows: { ...base.profileRows, items: base.profileRows.items.map((item, index) => index === 256 ? { ...item, content: seal(records[index]!, fromMode) } : item) } },
+                { ...base, profileRows: { ...base.profileRows, transferControl: { expectedRevision: 5, content: sealControl(fromMode) } } },
+            ];
+            for (const [index, candidate] of invalidCandidates.entries()) {
+                const rejected = await app.inject({ ...options, payload: buildRequest(candidate) });
+                expect(rejected.statusCode, rejected.body).toBe(400);
+                expect(rejected.json()).toEqual(index < 5 ? { error: 'invalid-params', reason: 'migration_inventory_changed' } : { error: 'invalid-params' });
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
+                expect(await db.userKVStore.findMany({ where: { accountId: account.id }, orderBy: { key: 'asc' } })).toEqual(before);
+            }
+            const request = { ...options, payload: buildRequest(base) };
+            const response = await app.inject(request);
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ mode: toMode, profileRows: { referenceGuardRevision: 7 } });
+            expect(response.json().profileRows.transferControl).toMatchObject({ status: 'present', revision: 6 });
+            expect(openProfileTransferContentV1({ mode: toMode, material: toMode === 'plain' ? null : SESSION_OWNER_MATERIAL,
+                content: response.json().profileRows.transferControl.content })).toEqual({ status: 'opened', record: control });
+            const rows = response.json().profileRows.rows;
+            expect(rows.filter((row: { content: unknown }) => row.content !== null)).toHaveLength(257);
+            for (const record of records) {
+                const row = rows.find((candidate: { id: string }) => candidate.id === record.id);
+                expect(row.revision).toBe(4);
+                expect(openProfileRecordContentV1({ mode: toMode, material: toMode === 'plain' ? null : SESSION_OWNER_MATERIAL, expectedId: record.id, content: row.content })).toEqual({ status: 'opened', record });
+            }
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: guard.key } } })).toEqual(guard);
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: tombstone.key } } })).toEqual(tombstone);
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: ordinaryTombstone.key } } })).toEqual(ordinaryTombstone);
+            const committed = await db.userKVStore.findMany({ where: { accountId: account.id }, orderBy: { key: 'asc' } });
+            socketEmit.mockClear();
+            const replay = await app.inject(request);
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json()).toEqual(response.json());
+            expect(socketEmit).not.toHaveBeenCalled();
+            expect(await db.userKVStore.findMany({ where: { accountId: account.id }, orderBy: { key: 'asc' } })).toEqual(committed);
+            await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: guard.key } }, data: { version: 8 } });
+            const staleReplay = await app.inject(request);
+            expect(staleReplay.statusCode, staleReplay.body).toBe(400);
+            expect(staleReplay.json()).toEqual({ error: 'invalid-params', reason: 'migration_inventory_changed' });
+        } finally { await app.close(); }
+    });
+
     it.each(["plain", "e2ee"] as const)("reseals Account authoring memory atomically and replays the exact result (%s source)", async (fromMode) => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -676,6 +1301,170 @@ describe("account encryption migration .7 SQLite matrix", () => {
         } finally {
             await app.close();
         }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('converts populated workspace execution config, requires complete inventory and replays exact acknowledgement (%s source)', async (fromMode) => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1',
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: 'none',
+        });
+        const signing = tweetnacl.sign.keyPair();
+        const binding = createSignedContentKeyBinding(signing.secretKey);
+        const account = await db.account.create({ data: {
+            publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
+            contentPublicKey: privacyKit.decodeBase64(binding.contentPublicKey),
+            contentPublicKeySig: privacyKit.decodeBase64(binding.contentPublicKeySig),
+            encryptionMode: fromMode, settings: null,
+        } });
+        const rowId = buildWorkspaceExecutionConfigRowIdV1({ serverId: 'home-a', refId: 'checkout-a' });
+        const key = buildWorkspaceExecutionConfigPhysicalKeyV1(rowId);
+        const deletedKey = buildWorkspaceExecutionConfigPhysicalKeyV1(buildWorkspaceExecutionConfigRowIdV1({ serverId: 'home-a', refId: 'checkout-deleted' }));
+        const value = {
+            enabled: true as const, destination: { kind: 'machine' as const, machineId: 'worker-a' },
+            unavailable: 'fail' as const, allowAdHoc: true, scriptOverrides: { build: 'workers' as const },
+            services: {
+                web: { runsOn: { kind: 'primary' as const }, unavailable: 'fail' as const },
+                api: { runsOn: { kind: 'workers' as const, destination: { kind: 'pool' as const, poolId: '12345678-1234-4234-8234-123456789abc', selection: 'automatic' as const } }, unavailable: 'primary' as const },
+            },
+        };
+        const plainContent: WorkspaceExecutionConfigContentV1 = { t: 'plain', v: value };
+        const encryptedContent: WorkspaceExecutionConfigContentV1 = { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+            kind: 'workspace_execution_config', material: SESSION_OWNER_MATERIAL, payload: { rowId, value },
+            randomBytes: length => new Uint8Array(length).fill(31),
+        }) };
+        const source = fromMode === 'plain' ? plainContent : encryptedContent;
+        const content = fromMode === 'plain' ? encryptedContent : plainContent;
+        const toMode = fromMode === 'plain' ? 'e2ee' as const : 'plain' as const;
+        await db.userKVStore.createMany({ data: [
+            { accountId: account.id, key, version: 7, value: new TextEncoder().encode(JSON.stringify(source)) },
+            { accountId: account.id, key: deletedKey, version: 8, value: null },
+        ] });
+        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
+        const base = {
+            toMode, expectedAccountVersion: account.seq,
+            expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+            expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint,
+            expectedSettingsVersion: 0, settingsContent: null,
+            connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const },
+            machines: { action: 'assert_empty' as const }, todos: { action: 'assert_empty' as const },
+            artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const },
+            ...EMPTY_AMENDMENT9_DIRECTIVES,
+            workspaceExecutionConfig: { items: [{ rowId, expectedRevision: 7, content }] },
+        };
+        const buildRequest = (candidate: typeof base | Omit<typeof base, 'workspaceExecutionConfig'>) => toMode === 'e2ee' ? signPlainToE2eeRequest({
+            accountId: account.id, signingSecretKey: signing.secretKey,
+            request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } },
+        }) : candidate;
+        const app = createTestApp();
+        try {
+            const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() }, payload: buildRequest(base) };
+            const { workspaceExecutionConfig: _config, ...missingInventory } = base;
+            for (const invalid of [missingInventory, { ...base, workspaceExecutionConfig: { items: [] } }, {
+                ...base, workspaceExecutionConfig: { items: [{ rowId, expectedRevision: 6, content }] },
+            }, { ...base, workspaceExecutionConfig: { items: [{ rowId, expectedRevision: 7, content: source }] } }]) {
+                expect((await app.inject({ ...options, payload: buildRequest(invalid) })).statusCode).toBe(400);
+                expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).encryptionMode).toBe(fromMode);
+                expect((await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key } } })).version).toBe(7);
+            }
+            const response = await app.inject(options);
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toMatchObject({ mode: toMode, workspaceExecutionConfig: { rows: [{ rowId, revision: 8, content }] } });
+            const committed = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key } } });
+            expect(JSON.parse(new TextDecoder().decode(committed.value!))).toEqual(content);
+            expect((await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: deletedKey } } }))).toMatchObject({ version: 8, value: null });
+            socketEmit.mockClear();
+            expect((await app.inject(options)).json()).toEqual(response.json());
+            expect(socketEmit).not.toHaveBeenCalled();
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key } } })).toEqual(committed);
+        } finally { await app.close(); }
+    });
+
+    it('converts every private Project row family and preserves tombstones across Plain to E2EE to Plain', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: 'none' });
+        const signing = tweetnacl.sign.keyPair();
+        const binding = createSignedContentKeyBinding(signing.secretKey);
+        const account = await db.account.create({ data: { encryptionMode: 'plain', settings: null,
+            publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
+            contentPublicKey: Buffer.from(binding.contentPublicKey, 'base64'), contentPublicKeySig: Buffer.from(binding.contentPublicKeySig, 'base64') } });
+        const payloads: ProjectAccountRowPayloadV1[] = [
+            { key: { kind: 'workspace-ref', serverId: 'home', id: 'ref' }, value: { id: 'ref', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 } },
+            { key: { kind: 'workspace-ref', serverId: 'home', id: 'ref-target' }, value: { id: 'ref-target', serverId: 'home', machineId: 'machine-target', rootPath: '/repo-target', createdAtMs: 2 } },
+            { key: { kind: 'relationship-graph' }, value: { relationships: [{ v: 1, relationshipId: 'relationship', controllerMachineId: 'machine',
+                alphaWorkspaceRefId: 'ref', betaWorkspaceRefId: 'ref-target', mode: 'keep_synced', enabled: true, createdAtMs: 3, updatedAtMs: 4,
+                contentPolicy: { v: 1, selection: 'all_files', extraIgnorePatterns: [], extraIncludePatterns: [],
+                    policyDigest: computeWorkspaceSyncPolicyDigest({ v: 1, selection: 'all_files', extraIgnorePatterns: [], extraIncludePatterns: [] }) } }] } },
+            { key: { kind: 'project-organization', serverId: 'home', projectKey: 'project' }, value: { hidden: true, pinned: true } },
+        ];
+        for (const payload of payloads) await db.userKVStore.create({ data: { accountId: account.id,
+            key: buildProjectAccountRowPhysicalKeyV1(payload.key), version: 3, value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: payload })) } });
+        const tombstoneKey = buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: 'home', id: 'deleted' });
+        await db.userKVStore.create({ data: { accountId: account.id, key: tombstoneKey, version: 9, value: null } });
+        const recencyKey = buildProjectLastOpenedMemoryKeyV1({ serverId: 'home', projectKey: 'project' });
+        const recencyPhysicalKey = `@happier/account/authoring-memory/v1/${recencyKey}`;
+        const recencyTombstoneKey = `@happier/account/authoring-memory/v1/${buildProjectLastOpenedMemoryKeyV1({ serverId: 'home', projectKey: 'deleted-project' })}`;
+        await db.userKVStore.create({ data: { accountId: account.id, key: recencyPhysicalKey, version: 6, value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: 123 })) } });
+        await db.userKVStore.create({ data: { accountId: account.id, key: recencyTombstoneKey, version: 12, value: null } });
+        const app = createTestApp();
+        try {
+            for (const toMode of ['e2ee', 'plain'] as const) {
+                const current = await db.account.findUniqueOrThrow({ where: { id: account.id } });
+                const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(current);
+                const items = payloads.map(payload => ({ key: payload.key, expectedRevision: toMode === 'e2ee' ? 3 : 4,
+                    content: toMode === 'plain' ? { t: 'plain' as const, v: payload } : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({
+                        kind: 'project_account_row', material: SESSION_OWNER_MATERIAL, payload, randomBytes: length => new Uint8Array(length).fill(31),
+                    }) } }));
+                const recencyItem = { key: recencyKey, expectedRevision: toMode === 'e2ee' ? 6 : 7,
+                    content: toMode === 'plain' ? { t: 'plain' as const, v: 123 } : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({
+                        kind: 'authoring_memory', material: SESSION_OWNER_MATERIAL, payload: { key: recencyKey, value: 123 }, randomBytes: length => new Uint8Array(length).fill(32),
+                    }) } };
+                const base = { toMode, expectedAccountVersion: current.seq, expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+                    expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint, expectedSettingsVersion: current.settingsVersion, settingsContent: null,
+                    connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const },
+                    machines: { action: 'assert_empty' as const }, todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const },
+                    sessions: { action: 'assert_empty' as const }, ...EMPTY_AMENDMENT9_DIRECTIVES, authoringMemory: { items: [recencyItem] } };
+                const build = (projectRows?: { items: typeof items }) => {
+                    const candidate = { ...base, ...(projectRows ? { projectRows } : {}) };
+                    return toMode === 'e2ee' ? signPlainToE2eeRequest({ accountId: account.id, signingSecretKey: signing.secretKey,
+                        request: { ...candidate, keyProof: { v: 1, publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)), ...binding } } }) : candidate;
+                };
+                const options = { method: 'POST' as const, url: '/v1/account/encryption/migrate', headers: { 'x-test-user-id': account.id, ...currentCompatibilityHeaders() } };
+                const before = await db.userKVStore.findMany({ where: { accountId: account.id }, orderBy: { key: 'asc' } });
+                for (const incomplete of [undefined, { items: items.slice(1) }, { items: items.map(item => ({ ...item, expectedRevision: 1 })) }]) {
+                    expect((await app.inject({ ...options, payload: build(incomplete) })).statusCode).toBe(400);
+                    expect(await db.userKVStore.findMany({ where: { accountId: account.id }, orderBy: { key: 'asc' } })).toEqual(before);
+                    expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(current);
+                }
+                const firstPhysicalKey = buildProjectAccountRowPhysicalKeyV1(payloads[0]!.key);
+                const firstBefore = before.find(row => row.key === firstPhysicalKey)!;
+                await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: firstPhysicalKey } },
+                    data: { value: new TextEncoder().encode(JSON.stringify(items[0]!.content)) } });
+                const mixed = await app.inject({ ...options, payload: build({ items }) });
+                expect(mixed.statusCode).toBe(400);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(current);
+                expect((await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: firstPhysicalKey } } })).version).toBe(firstBefore.version);
+                await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: firstPhysicalKey } }, data: { value: firstBefore.value } });
+                const response = await app.inject({ ...options, payload: build({ items }) });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({ mode: toMode });
+                expect(response.json().projectRows.rows).toHaveLength(items.length);
+                expect(response.json().projectRows.rows).toEqual(expect.arrayContaining(items.map(item => ({ key: item.key, revision: item.expectedRevision + 1, content: item.content }))));
+                expect(response.json()).toMatchObject({ authoringMemory: { rows: [{ key: recencyKey, revision: recencyItem.expectedRevision + 1, content: recencyItem.content }] } });
+                const replay = await app.inject({ ...options, payload: build({ items }) });
+                expect(replay.json()).toEqual(response.json());
+                expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: tombstoneKey } } })).toMatchObject({ version: 9, value: null });
+                expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: recencyTombstoneKey } } })).toMatchObject({ version: 12, value: null });
+            }
+            for (const payload of payloads) {
+                const row = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: buildProjectAccountRowPhysicalKeyV1(payload.key) } } });
+                expect(row.version).toBe(5);
+                expect(JSON.parse(new TextDecoder().decode(row.value!))).toEqual({ t: 'plain', v: payload });
+            }
+            const recency = await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: account.id, key: recencyPhysicalKey } } });
+            expect(recency.version).toBe(8);
+            expect(JSON.parse(new TextDecoder().decode(recency.value!))).toEqual({ t: 'plain', v: 123 });
+        } finally { await app.close(); }
     });
 
     it("migrates the complete active and archived layout-1 Session inventory before the Account mode", async () => {

@@ -6,6 +6,9 @@ import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionSpecSurfaceBindings, ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionFollowSourceKeyPreparationResultV1Schema, SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_ACTION_ERROR_V1, projectSessionFollowSourceKeyPreparationAfterSetV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
+import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { ActionOperationFailureV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 import {
     dispatchActionFromRpc,
@@ -13,6 +16,8 @@ import {
 } from './_actionDispatchAdapter';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { isSessionActionRpcMethodV1 } from '@happier-dev/protocol/socketRpc';
+import { canUseCustodianAccountForMachineRequest } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { isAdmittedRequesterSessionBootstrapCurrent } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { ACTION_SPEC_RPC_EXCEPTIONS } from './actionSpecRpcExceptions';
 import {
     type ActionSpecRpcRegistrationScope,
@@ -44,7 +49,15 @@ export type ActionSpecRpcRegistrar = Readonly<{
 export type RegisterActionSpecRpcHandlersParams = Readonly<{
     rpcHandlerManager: ActionSpecRpcRegistrar;
     actionExecutor?: RpcActionExecutor;
-    resolveActionExecutor?: () => RpcActionExecutor | Promise<RpcActionExecutor>;
+    resolveActionExecutor?: (request: Readonly<{
+        actionId: ActionId;
+        method: string;
+        isAlias: boolean;
+        /** Original transport input, before a compatibility adapter maps it. */
+        input: unknown;
+        /** Genuine receiving transport custody, never reconstructed from Action context/input. */
+        ingress?: RpcHandlerContext;
+    }>) => RpcActionExecutor | Promise<RpcActionExecutor>;
     actionSpecs?: readonly ActionSpecRpcHandlerSpec[];
     exceptions?: readonly ActionSpecRpcExceptionLike[];
     actionIds?: readonly string[];
@@ -53,16 +66,23 @@ export type RegisterActionSpecRpcHandlersParams = Readonly<{
     /** Authority stamped by the host-owned RPC ingress; never inferred from surface. */
     /** Exact current daemon Machine; enables strict transport-target request wrappers. */
     targetMachineId?: string;
+    /** Machine-scoped handlers must not let an input Session selector choose a different ingress. */
+    defaultMachineTarget?: true;
     observeExecution?: (request: Readonly<{
         actionId: string;
         input: unknown;
         actionRequestId?: string;
         sessionId?: string;
+        rpcContext?: RpcHandlerContext;
         execute: (context: Readonly<{
             actionRequestId?: string;
             signal: AbortSignal;
             operationProgress: NonNullable<RpcHandlerContext['localActionContext']>['operationProgress'];
             operationOwnerUpdate: NonNullable<RpcHandlerContext['localActionContext']>['operationOwnerUpdate'];
+            operationAcceptance?: NonNullable<RpcHandlerContext['localActionContext']>['operationAcceptance'];
+            operationCancellation?: NonNullable<RpcHandlerContext['localActionContext']>['operationCancellation'];
+            operationReview?: NonNullable<RpcHandlerContext['localActionContext']>['operationReview'];
+            requesterWorkAttributionV1?: NonNullable<RpcHandlerContext['localActionContext']>['requesterWorkAttributionV1'];
         }>) => Promise<ActionExecuteResult>;
     }>) => Promise<ActionExecuteResult>;
     mapResponseForMethod?: (context: Readonly<{
@@ -113,12 +133,24 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
     if (result.ok) {
         return result.result;
     }
-    const details = actionId === 'execution.run.start'
+    let details: unknown = actionId === 'execution.run.start'
         ? withExecutionRunStartFailureDetails(
             undefined,
             readExecutionRunStartRunCreation(result.details),
         )
         : undefined;
+    if (Object.prototype.hasOwnProperty.call(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId)) {
+        const projected = ActionOperationFailureV1Schema.safeParse({ errorCode: result.errorCode, error: result.error, details: result.details });
+        details = projected.success ? projected.data.details : undefined;
+    }
+    if (actionId === 'projects.worker.copy.retire') {
+        const outcomeUnknown = readObjectValue(result.details, 'kind') === 'outcomeUnknown';
+        if (result.errorCode === 'workspace_sync_relationship_in_use') {
+            const dependencies = ProjectWorkerDependencyV1Schema.array().safeParse(readObjectValue(result.details, 'dependencies'));
+            if (dependencies.success) details = { ...(outcomeUnknown ? { kind: 'outcomeUnknown' } : {}), dependencies: dependencies.data };
+        }
+        if (outcomeUnknown && details === undefined) details = { kind: 'outcomeUnknown' };
+    }
     if (actionId === 'session.spawn_new'
         && result.errorCode === SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_ACTION_ERROR_V1
         && readObjectValue(result.details, 'status') === 'waiting'
@@ -144,12 +176,15 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
 
 async function resolveActionExecutor(
     params: Pick<RegisterActionSpecRpcHandlersParams, 'actionExecutor' | 'resolveActionExecutor'>,
+    request: Parameters<NonNullable<RegisterActionSpecRpcHandlersParams['resolveActionExecutor']>>[0],
 ): Promise<RpcActionExecutor> {
+    const requester = request.ingress?.callerInputAuthorization?.requesterAccountExecutor;
+    if (requester) return requester;
     if (params.actionExecutor) {
         return params.actionExecutor;
     }
     if (params.resolveActionExecutor) {
-        return await params.resolveActionExecutor();
+        return await params.resolveActionExecutor(request);
     }
     throw new Error('action_spec_rpc_executor_required');
 }
@@ -257,6 +292,18 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
             isAlias: boolean = method !== rpcMethod,
         ) => {
             const typedActionId = actionId as ActionId;
+            if (context?.machineAdmission
+                && (typedActionId === 'session.spawn_new' || typedActionId === 'execution.run.start'
+                    || typedActionId === 'workflow.run.start')
+                && !await canUseCustodianAccountForMachineRequest(context)
+                && !(typedActionId !== 'session.spawn_new' && context.callerInputAuthorization?.requesterAccountExecutor
+                    && await context.callerInputAuthorization.requesterAccountProjection?.isCurrent())
+                && !(typedActionId === 'session.spawn_new' && await isAdmittedRequesterSessionBootstrapCurrent(context))) {
+                return unwrapActionResultForRpc(typedActionId, {
+                    ok: false, errorCode: context.signal.aborted ? 'cancelled' : 'target_unavailable',
+                    error: context.signal.aborted ? 'cancelled' : 'target_unavailable',
+                });
+            }
             // Older Homes drop unknown origin headers. Never reinterpret an
             // unstamped autonomous Session edit as local or human authority.
             if (isSessionActionRpcMethodV1(method) && !context?.sessionActionOrigin
@@ -272,7 +319,8 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
             if (!mappedRequest.accepted) {
                 return mappedRequest.response;
             }
-            let externalActionTarget: ActionExecutorContext['externalActionTarget'];
+            let externalActionTarget: ActionExecutorContext['externalActionTarget'] = params.defaultMachineTarget && targetMachineId
+                ? { kind: 'machine', machineId: targetMachineId } : undefined;
             let envelopeDefaultSessionId: string | undefined;
             let transportInput = mappedRequest.input;
             if (readObjectValue(mappedRequest.input, 'kind') === 'targeted_action_rpc') {
@@ -317,12 +365,17 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
             if (envelopeDefaultSessionId && inputSessionId && inputSessionId !== envelopeDefaultSessionId) {
                 return unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_input'));
             }
-            const executor = await resolveActionExecutor(params);
+            const executor = await resolveActionExecutor(params, { actionId: typedActionId, method, isAlias, input,
+                ...(context ? { ingress: context } : {}) });
             const execute = async (execution: Readonly<{
                 actionRequestId?: string;
                 signal?: AbortSignal;
                 operationProgress?: NonNullable<RpcHandlerContext['localActionContext']>['operationProgress'];
                 operationOwnerUpdate?: NonNullable<RpcHandlerContext['localActionContext']>['operationOwnerUpdate'];
+                operationAcceptance?: NonNullable<RpcHandlerContext['localActionContext']>['operationAcceptance'];
+                operationCancellation?: NonNullable<RpcHandlerContext['localActionContext']>['operationCancellation'];
+                operationReview?: NonNullable<RpcHandlerContext['localActionContext']>['operationReview'];
+                requesterWorkAttributionV1?: NonNullable<RpcHandlerContext['localActionContext']>['requesterWorkAttributionV1'];
             }>): Promise<ActionExecuteResult> => {
                 const actionRequestId = execution.actionRequestId ?? context?.transportRequestId;
                 return await dispatchActionFromRpc({
@@ -335,8 +388,20 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
                     ...(execution.signal ? { signal: execution.signal } : {}),
                     ...(context?.callerAuthority ? { callerAuthority: context.callerAuthority } : {}),
                     ...(context?.sessionActionOrigin ? { sessionActionOrigin: context.sessionActionOrigin } : {}),
+                    ...(context?.authorization?.kind === 'session.write'
+                        ? { rpcSessionAuthorization: context.authorization } : {}),
+                    ...(context?.machineAdmission ? { runtimeAccountId: context.machineAdmission.actorAccountId } : {}),
+                    ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission } : {}),
+                    ...(context?.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : {}),
+                    ...(context?.requesterSessionBootstrap ? { requesterSessionBootstrap: context.requesterSessionBootstrap } : {}),
+                    ...(context?.callerInputAuthorization ? { callerInputAuthorization: context.callerInputAuthorization } : {}),
+                    ...(context?.callerInputConstraints ? { callerInputConstraints: context.callerInputConstraints } : {}),
+                    ...(context?.callerInputAuthorization && (context.callerInputAuthorization.requesterAccountProjection
+                        || context.sessionActionOrigin && 'authentication' in context.callerInputAuthorization.binding
+                          && context.callerInputAuthorization.binding.sessionActionOrigin)
+                        ? { externalActionExecutionAuthorization: context.callerInputAuthorization } : {}),
                     ...(
-                        context?.localActionContext || actionRequestId || execution.operationProgress || execution.operationOwnerUpdate
+                        context?.localActionContext || actionRequestId || execution.operationProgress || execution.operationOwnerUpdate || execution.operationAcceptance || execution.operationCancellation
                             ? {
                                 localActionContext: {
                                     ...context?.localActionContext,
@@ -348,6 +413,18 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
                                         : {}),
                                     ...(execution.operationOwnerUpdate
                                         ? { operationOwnerUpdate: execution.operationOwnerUpdate }
+                                        : {}),
+                                    ...(execution.operationAcceptance
+                                        ? { operationAcceptance: execution.operationAcceptance }
+                                        : {}),
+                                    ...(execution.operationCancellation
+                                        ? { operationCancellation: execution.operationCancellation }
+                                        : {}),
+                                    ...(execution.operationReview
+                                        ? { operationReview: execution.operationReview }
+                                        : {}),
+                                    ...(execution.requesterWorkAttributionV1
+                                        ? { requesterWorkAttributionV1: execution.requesterWorkAttributionV1 }
                                         : {}),
                                 },
                             }
@@ -361,15 +438,20 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
                 ? await params.observeExecution({
                     actionId,
                     input: semanticInput,
+                    ...(context ? { rpcContext: context } : {}),
                     ...(context?.localActionContext?.actionRequestId
                         ? { actionRequestId: context.localActionContext.actionRequestId }
                         : {}),
                     ...(sessionId ? { sessionId } : {}),
-                    execute: async ({ actionRequestId, signal, operationProgress, operationOwnerUpdate }) => await execute({
+                    execute: async ({ actionRequestId, signal, operationProgress, operationOwnerUpdate, operationAcceptance, operationCancellation, requesterWorkAttributionV1, operationReview }) => await execute({
                         ...(actionRequestId ? { actionRequestId } : {}),
                         signal,
                         operationProgress,
                         operationOwnerUpdate,
+                        ...(operationAcceptance ? { operationAcceptance } : {}),
+                        ...(operationCancellation ? { operationCancellation } : {}),
+                        ...(operationReview ? { operationReview } : {}),
+                        ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
                     }),
                 })
                 : await execute({ ...(context?.signal ? { signal: context.signal } : {}) });

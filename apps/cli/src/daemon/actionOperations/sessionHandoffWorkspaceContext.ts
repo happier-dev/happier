@@ -1,8 +1,9 @@
 import { normalizeSessionHandoffWorkspaceRootPath } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
-import { resolveWorkspaceSyncTransferRoute } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransferRoute,
+  type WorkspaceSyncChildMachineFacts } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import type { HandoffWorkspaceActionV1, WorkspaceRefV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 
-import { resolveWorkspaceRefForMachineRoot } from '@/settings/accountSettings/workspaceRefsV1';
+import { resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import { validateWorkspaceSyncRelationship } from '@/workspaces/sync/workspaceSyncSettings';
 
 export type SessionHandoffWorkspaceContext = Readonly<{
@@ -11,7 +12,7 @@ export type SessionHandoffWorkspaceContext = Readonly<{
   sourceRootPath: string;
   targetRootPath: string;
   controllerMachineId: string;
-  contentSelection: 'git_worktree' | 'all_files';
+  contentSelection?: 'git_worktree' | 'all_files';
   relationshipIds: readonly string[];
   contentSelections: readonly ('git_worktree' | 'all_files')[];
 }>;
@@ -23,9 +24,11 @@ export type SessionHandoffWorkspaceContext = Readonly<{
  * representable here.
  */
 export type ResolveSessionHandoffWorkspaceContextInput = Readonly<{
+  serverId: string;
   action: Extract<HandoffWorkspaceActionV1, Readonly<{ kind: 'relationship' | 'linked_workspace' }>>;
   workspaceRefs: readonly WorkspaceRefV1[];
   relationships: readonly WorkspaceSyncRelationshipV1[];
+  childMachines?: readonly WorkspaceSyncChildMachineFacts[];
   sourceMachineId: string;
   sourceRootPath?: string;
   targetMachineId: string;
@@ -38,10 +41,11 @@ function contextError(code: string, message: string): Error {
 
 function exactRefByScope(
   refs: readonly WorkspaceRefV1[],
+  serverId: string,
   machineId: string,
   rootPath: string,
 ): WorkspaceRefV1 | null {
-  return resolveWorkspaceRefForMachineRoot(refs, { machineId, rootPath });
+  return resolveWorkspaceRefForMachineRoot(refs, { serverId, machineId, rootPath });
 }
 
 function normalizedRoot(value: unknown): string {
@@ -53,29 +57,40 @@ export function resolveSessionHandoffWorkspaceContext(
   input: ResolveSessionHandoffWorkspaceContextInput,
 ): SessionHandoffWorkspaceContext {
   const action = input.action;
+  const serverId = input.serverId.trim();
   const sourceMachineId = input.sourceMachineId.trim();
   const targetMachineId = input.targetMachineId.trim();
   const sourceRootPath = normalizedRoot(input.sourceRootPath);
-  if (!sourceMachineId || !targetMachineId) {
+  if (!serverId || !sourceMachineId || !targetMachineId) {
     throw contextError('workspace_ref_not_ready', 'Workspace sync machine identity is unavailable');
   }
 
-  const sourceByScope = exactRefByScope(input.workspaceRefs, sourceMachineId, sourceRootPath);
+  const workspaceRefs = input.workspaceRefs.filter((ref) => ref.serverId.trim() === serverId);
+  const sourceByScope = exactRefByScope(workspaceRefs, serverId, sourceMachineId, sourceRootPath);
   if (!sourceByScope) throw contextError('relationship_source_mismatch', 'Source workspace is not uniquely identified');
+  const sourceEndpoint = resolveWorkspaceSyncEndpoint({ workspace: sourceByScope, workspaceRefs, childMachines: input.childMachines });
+  if (!sourceEndpoint.ok) throw contextError(sourceEndpoint.code, 'Child workspace Sync endpoint is unavailable');
   const requestedTargetRoot = input.targetRootPath === undefined ? null : normalizedRoot(input.targetRootPath);
-  const targetCandidates = input.workspaceRefs.filter((ref) => (
-    ref.machineId.trim() === targetMachineId
-    && (requestedTargetRoot === null || normalizedRoot(ref.rootPath) === requestedTargetRoot)
-  ));
+  const requestedTarget = requestedTargetRoot === null
+    ? null
+    : exactRefByScope(workspaceRefs, serverId, targetMachineId, requestedTargetRoot);
+  const targetCandidates = requestedTargetRoot === null
+    ? workspaceRefs.filter((ref) => ref.machineId.trim() === targetMachineId)
+    : requestedTarget ? [requestedTarget] : [];
   const relationships = input.relationships.map(validateWorkspaceSyncRelationship);
   const routeCandidates = targetCandidates.flatMap((target) => {
     const route = resolveWorkspaceSyncTransferRoute({
-      workspaceRefs: input.workspaceRefs,
+      serverId,
+      workspaceRefs,
       relationships,
+      childMachines: input.childMachines,
       sourceWorkspaceRefId: sourceByScope.id,
       targetWorkspaceRefId: target.id,
     });
-    if (!route.ok || route.kind === 'same_workspace') return [];
+    if (!route.ok) {
+      if (route.code === 'workspace_sync_child_unavailable') throw contextError(route.code, 'Child workspace Sync endpoint is unavailable');
+      return [];
+    }
     if (action.kind === 'relationship' && (
       route.kind !== 'direct'
       || route.relationships[0]?.relationshipId !== action.relationshipId.trim()
@@ -87,19 +102,13 @@ export function resolveSessionHandoffWorkspaceContext(
   }
   const { target, route } = routeCandidates[0]!;
   const targetRootPath = normalizedRoot(target.rootPath);
-  if (requestedTargetRoot !== null) {
-    const requestedTarget = exactRefByScope(input.workspaceRefs, targetMachineId, requestedTargetRoot);
-    if (!requestedTarget || requestedTarget.id !== target.id) {
-      throw contextError('relationship_target_mismatch', 'Target path is not the opposite relationship endpoint');
-    }
-  }
   return {
     sourceWorkspaceRefId: sourceByScope.id,
     targetWorkspaceRefId: target.id,
     sourceRootPath: sourceByScope.rootPath,
     targetRootPath,
-    controllerMachineId: route.controllerMachineId,
-    contentSelection: route.relationships[0]!.contentPolicy.selection,
+    controllerMachineId: route.kind === 'same_workspace' ? sourceEndpoint.endpoint.machineId : route.controllerMachineId,
+    ...(route.relationships[0] ? { contentSelection: route.relationships[0].contentPolicy.selection } : {}),
     relationshipIds: route.relationships.map(({ relationshipId }) => relationshipId),
     contentSelections: route.relationships.map(({ contentPolicy }) => contentPolicy.selection),
   };

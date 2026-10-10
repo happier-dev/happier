@@ -1,5 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
@@ -31,6 +34,7 @@ import type {
     ManagedServiceCredentialFileOwner,
 } from './managedServicesAdapter';
 import { createManagedServicesOwner, type ProjectManagedServiceSupervisionInput } from './managedServicesOwner';
+import { createProductionPluginInvocationServiceOwners } from './production';
 import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
 import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
@@ -64,20 +68,34 @@ import {
     authorizeResolvedProjectExecLaunchForHost,
     createProjectNativeEnvironmentIoForHost,
     createStablePluginExecService,
+    readPluginExecProcessCustodyForHost,
 } from './exec';
 import { associateSupervisedPluginProcessHandleForHost, readSupervisedPluginProcessIdForHost } from '../../exec/processSupervisor';
 import * as processTreeBoundary from '@/agent/runtime/process/killProcessTree';
+import { waitForProcessExit } from '@/testkit/process/spawn';
 import {
     createLoggerAndEventsAvailablePluginInvocationServiceBinding,
     createPluginInvocationServicesFactory,
 } from './factory';
 import { withPluginInvocationServiceBindingAvailability } from './unavailable';
+import { createSharedManagedProviderSessionAccess } from '@/daemon/startup/sharedManagedProviderSessionAccess';
 
 type CredentialFileMaterializeInput = Parameters<
     ManagedServiceCredentialFileOwner['materialize']
 >[0];
 
 const exec = Object.freeze({}) as ExecService;
+
+function gatewayRequestAuthUses(purpose = 'upstream', origins = ['https://example.com']) {
+    const materialization = (origin: string) => ({ kind: 'httpHeaders' as const, origin, headerNames: ['authorization'] });
+    return {
+        requestAuthUses: origins.map(origin => ({ purpose, materialization: materialization(origin) })),
+        qualifiedRequestAuthUses: origins.map(origin => ({
+            purpose: { consumer: { pluginId: 'acme.providers', localId: 'gateway' }, purpose },
+            materialization: materialization(origin),
+        })),
+    };
+}
 
 const MANAGED_SERVICE_CLEAN_EXIT: PluginProcessResult = Object.freeze({
     termination: Object.freeze({
@@ -88,6 +106,96 @@ const MANAGED_SERVICE_CLEAN_EXIT: PluginProcessResult = Object.freeze({
     stderr: new Uint8Array(),
     stdoutTruncated: false,
     stderrTruncated: false,
+});
+
+describe('shared managed Provider physical Exec custody', () => {
+    it.each(['running', 'establishing'] as const)('keeps a real shared child serving the remaining consumer after the first invocation closes (%s)', async stage => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-shared-exec-custody-'));
+        const firstInvocation = new AbortController();
+        const executable = { kind: 'systemTool', id: 'fixture.shared-node' } as const;
+        const entered = deferred<void>();
+        const proceed = deferred<void>();
+        const resolver = async () => {
+            entered.resolve();
+            if (stage === 'establishing') await proceed.promise;
+            return { command: process.execPath };
+        };
+        const service = createStablePluginExecService({
+            allowedExecutables: [executable], signal: firstInvocation.signal,
+            isOccurrenceCurrent: () => true, resolveExecutable: resolver,
+            resolveManagedExecutable: resolver,
+            resolvePath: async () => directory,
+        });
+        const { owner } = createLifecycleHarness([], 'daemon', { sharedGatewayAccessDirectory: directory });
+        const spec: ManagedServiceSpec = {
+            id: 'shared-real-child',
+            mode: { kind: 'spawn', launch: { executable, args: ['-e',
+                'require("node:http").createServer((req,res)=>{res.end(req.url==="/pid"?String(process.pid):req.url)}).listen(Number(process.env.PORT),"127.0.0.1")',
+            ] }, endpoint: { kind: 'assignAndInject', port: { kind: 'allocated' }, inject: { portEnvironmentKey: 'PORT' } } },
+            healthCheck: { kind: 'http', target: { path: '/healthz' } },
+            requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
+            clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' },
+        };
+        const bind = (consumerId: string, signal?: AbortSignal) => owner.bindScope(
+            lifecycleScope({ occurrenceId: 'shared-real-occurrence', operationId: consumerId, signal }), service,
+            { managedProvider: { realm: 'managedProviderStart', providerLocalId: 'gateway', isCurrent: () => !signal?.aborted,
+                isPhysicalOccurrenceCurrent: () => true,
+                sharedGateway: { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine', consumerId } },
+            requestAuth: { realm: 'managedProviderStart', capabilityPath: join(directory, `${consumerId}.capability`), isCurrent: () => !signal?.aborted,
+                ...gatewayRequestAuthUses() } },
+        );
+        let first: ManagedServiceHandle | undefined;
+        let second: ManagedServiceHandle | undefined;
+        let firstFailure: unknown;
+        let completed = false;
+        let pid: number | undefined;
+        const readChildPid = async (handle: ManagedServiceHandle) => {
+            await handle.waitUntilHealthy();
+            const response = await handle.request({ pathAndQuery: '/pid' });
+            expect(response.status).toBe(200);
+            const observed = Number(await new Response(response.body).text());
+            expect(Number.isInteger(observed) && observed > 0).toBe(true);
+            return observed;
+        };
+        const firstStart = bind('first', firstInvocation.signal).supervise(spec).then(
+            handle => { first = handle; }, error => { firstFailure = error; },
+        );
+        try {
+            if (stage === 'running') await firstStart;
+            else await entered.promise;
+            const secondStart = bind('second').supervise(spec);
+            if (stage === 'running') {
+                second = await secondStart;
+                pid = await readChildPid(second);
+            }
+            firstInvocation.abort();
+            await readPluginExecProcessCustodyForHost(service).requestStop();
+            await readPluginExecProcessCustodyForHost(service).waitForSettlement();
+            proceed.resolve();
+            second ??= await secondStart;
+            await firstStart;
+            if (stage === 'establishing') expect(firstFailure).toBeInstanceOf(Error);
+            pid ??= await readChildPid(second);
+            expect(process.kill(pid, 0)).toBe(true);
+            await first?.dispose();
+            const response = await second.request({ pathAndQuery: '/v1/models' });
+            expect(response.status).toBe(200);
+            expect(await new Response(response.body).text()).toBe('/v1/models');
+            await second.dispose();
+            expect(await waitForProcessExit(pid)).toBe(true);
+            completed = true;
+        } finally {
+            proceed.resolve();
+            await firstStart;
+            // Preserve the contract failure if already-retired consumer
+            // settlement also refuses. Successful scenarios still require
+            // every cleanup to succeed.
+            const cleanup = await Promise.allSettled([first?.dispose(), second?.dispose()]);
+            await owner.dispose();
+            await rm(directory, { recursive: true, force: true });
+            if (completed) for (const result of cleanup) if (result.status === 'rejected') throw result.reason;
+        }
+    });
 });
 
 function deferred<T>(): Readonly<{
@@ -214,7 +322,7 @@ function lifecycleScope(input: Readonly<{
 function createLifecycleHarness(
     processes: PluginProcessHandle[] = [],
     custodyOwner: 'daemon' | 'sessionRunner' = 'sessionRunner',
-    boundaryOptions: Pick<Parameters<typeof createManagedServicesOwner>[0], 'fetch' | 'registerRawForRedaction' | 'resolveNativeLifecycle'> = {},
+    boundaryOptions: Pick<Parameters<typeof createManagedServicesOwner>[0], 'fetch' | 'registerRawForRedaction' | 'resolveNativeLifecycle' | 'sharedGatewayAccessDirectory'> = {},
 ) {
     let nextInstance = 0;
     const processSupervisorHost = createManagedServiceProcessSupervisorHost({
@@ -422,6 +530,303 @@ function createProjectLifecycleInput(options: Readonly<{
 }
 
 describe('managed-services SVC09 owner', () => {
+    it('G1 retries projection cleanup after consumer settlement is unavailable', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-shared-settlement-retry-'));
+        const process = createLifecycleProcess(4_503);
+        let settlementAvailable = false;
+        const harness = createLifecycleHarness([process], 'daemon', {
+            sharedGatewayAccessDirectory: directory,
+            fetch: async url => new Response(null, { status: String(url).endsWith('/_happier/consumer-access/settle')
+                ? settlementAvailable ? 200 : 503 : 204 }),
+        });
+        const service = await harness.owner.bindScope(lifecycleScope({ occurrenceId: 'shared-retry-occurrence', operationId: 'shared-retry' }), harness.exec, {
+            managedProvider: { realm: 'managedProviderStart', providerLocalId: 'gateway', isCurrent: () => true, isPhysicalOccurrenceCurrent: () => true,
+                sharedGateway: { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine', consumerId: 'shared-retry' } },
+            requestAuth: { realm: 'managedProviderStart', capabilityPath: join(directory, 'consumer.capability'), isCurrent: () => true,
+                ...gatewayRequestAuthUses() },
+        }).supervise({ ...lifecycleSpec({ id: 'retry-gateway', port: 4_353 }),
+            requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
+            clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' },
+        });
+        try {
+            const projection = await harness.owner.projectManagedProviderEndpointAccess({
+                service, endpoints: [{ endpointTemplateId: 'responses', servicePath: '/v1' }],
+                signal: new AbortController().signal, isCurrent: () => true,
+            });
+            expect(projection).not.toBeNull();
+            await expect(projection!.cleanup()).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+            expect(process.dispose).not.toHaveBeenCalled();
+            settlementAvailable = true;
+            await projection!.cleanup();
+            expect(process.dispose).toHaveBeenCalledOnce();
+        } finally {
+            settlementAvailable = true;
+            await service.dispose();
+            await harness.owner.dispose();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+    it('G1 admits shared consumers through the production Provider service factory', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-shared-provider-factory-'));
+        const { owner } = createLifecycleHarness([], 'daemon', { sharedGatewayAccessDirectory: directory });
+        const executable = { kind: 'packaged-runtime-binary', directorySegments: ['tools'], executableBaseName: 'gateway' } as const;
+        const owners = createProductionPluginInvocationServiceOwners({
+            loggerSink: { write() {} }, managedServices: owner,
+            exec: { resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory },
+        });
+        const signal = new AbortController().signal;
+        const invocation = owners.createManagedProviderRuntimeInvocationServices({
+            plugin: { id: 'acme.providers', version: '1' },
+            contribution: { id: 'gateway', qualifiedId: 'acme.providers/providers/gateway' },
+            occurrenceId: 'shared-factory-occurrence', correlationId: 'shared-factory-consumer', surface: 'cli',
+            signal, isOccurrenceCurrent: () => true,
+        }, {
+            filesystemRoots: { pluginData: directory, workspace: directory, projects: new Map() },
+            hostAccessRequests: [],
+            managedProviderRuntime: {
+                realm: 'managedProviderStart', providerLocalId: 'gateway', operationClaimId: 'factory-consumer',
+                sharedGateway: { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine', consumerId: 'factory-consumer' },
+                isPhysicalOccurrenceCurrent: () => true,
+                isCurrent: () => true,
+                requestAuth: { realm: 'managedProviderStart', capabilityPath: join(directory, 'consumer.capability'), isCurrent: () => true,
+                    ...gatewayRequestAuthUses() },
+            },
+        });
+        let service: ManagedServiceHandle | undefined;
+        try {
+            expect(invocation).not.toBeNull();
+            service = await invocation!.managedServices.supervise({
+                id: 'factory-gateway', mode: { kind: 'spawn', launch: { executable, args: ['-e',
+                    'require("node:http").createServer((req,res)=>{res.end(req.url==="/pid"?String(process.pid):req.url)}).listen(Number(process.env.PORT),"127.0.0.1")',
+                ] }, endpoint: { kind: 'assignAndInject', port: { kind: 'allocated' }, inject: { portEnvironmentKey: 'PORT' } } },
+                healthCheck: { kind: 'http', target: { path: '/healthz' } },
+                requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
+                clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' },
+            });
+            await service.waitUntilHealthy();
+            const response = await service.request({ pathAndQuery: '/v1/models' });
+            expect(response.status).toBe(200);
+            expect(await new Response(response.body).text()).toBe('/v1/models');
+            const processResponse = await service.request({ pathAndQuery: '/pid' });
+            const pid = Number(await new Response(processResponse.body).text());
+            await service.dispose();
+            if (!Number.isInteger(pid) || pid <= 0) throw new Error('Expected a physical Provider process');
+            expect(await waitForProcessExit(pid)).toBe(true);
+        } finally {
+            await service?.dispose();
+            await owner.dispose();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+    it('releases only the withdrawn Session consumer after access materialization refuses, not on request cancellation', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-gateway-access-refusal-'));
+        const process = createLifecycleProcess(4_601);
+        const harness = createLifecycleHarness([process], 'daemon', {
+            sharedGatewayAccessDirectory: directory,
+            // OS process and gateway HTTP are system boundaries; consumer
+            // admission, projection, materialization and disposal remain real.
+            fetch: async (url) => new Response(null, { status: String(url).endsWith('/_happier/consumer-access/settle') ? 200 : 204 }),
+        });
+        let firstCurrent = true;
+        let cancellationOnWithdrawal: AbortController | null = null;
+        let cancellationDuringMaterialization: AbortController | null = null;
+        const isFirstCurrent = () => {
+            cancellationDuringMaterialization?.abort();
+            if (!firstCurrent) cancellationOnWithdrawal?.abort();
+            return firstCurrent;
+        };
+        const signal = new AbortController().signal;
+        const bind = (consumerId: string, isCurrent: () => boolean) => harness.owner.bindScope(
+            lifecycleScope({ occurrenceId: 'gateway-access-occurrence', operationId: consumerId }), harness.exec,
+            {
+                managedProvider: { realm: 'managedProviderStart', providerLocalId: 'gateway', isCurrent, isPhysicalOccurrenceCurrent: () => true,
+                    sharedGateway: { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine', consumerId } },
+                requestAuth: { realm: 'managedProviderStart', capabilityPath: join(directory, `${consumerId}.capability`), isCurrent,
+                    ...gatewayRequestAuthUses() },
+            },
+        );
+        const spec: ManagedServiceSpec = { ...lifecycleSpec({ id: 'gateway-access', port: 4_361 }),
+            requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
+            clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' } };
+        try {
+            const first = await bind('first', isFirstCurrent).supervise(spec);
+            const second = await bind('second', () => true).supervise(spec);
+            const projection = await harness.owner.projectManagedProviderEndpointAccess({ service: first,
+                endpoints: [{ endpointTemplateId: 'responses', servicePath: '/v1' }], signal, isCurrent: isFirstCurrent });
+            if (!projection) throw new Error('Expected admitted first consumer projection');
+            const registryPath = harness.exec.spawn.mock.calls[0]?.[0].env?.CONSUMER_ACCESS_PATH;
+            if (!registryPath) throw new Error('Expected a shared consumer access path');
+            const readConsumerCount = async () => (JSON.parse(await readFile(registryPath, 'utf8')) as { consumers: unknown[] }).consumers.length;
+            let withdraw = false;
+            let cancelledRequest: AbortController | null = new AbortController();
+            const read = createSharedManagedProviderSessionAccess({
+                start: async () => undefined,
+                readProjection: () => ({ service: first, projection }),
+                materialize: harness.owner.materializeManagedProviderAgentBinding,
+                endpointTemplateId: 'responses',
+                revalidate: async () => {
+                    // Abort only when the real materializer reads current
+                    // authority; a successful result must not retire custody.
+                    cancellationDuringMaterialization = cancelledRequest;
+                    if (withdraw) firstCurrent = false;
+                    return true;
+                },
+                cleanup: async () => { await projection.cleanup(); },
+            });
+            await expect(read(cancelledRequest.signal)).rejects.toMatchObject({ name: 'AbortError' });
+            expect(await readConsumerCount()).toBe(2);
+            await first.request({ pathAndQuery: '/v1/models' });
+            cancelledRequest = null;
+            withdraw = true;
+            cancellationOnWithdrawal = new AbortController();
+            await expect(read(cancellationOnWithdrawal.signal)).rejects.toMatchObject({ code: 'plugin_services_managed_provider_authority_unavailable' });
+            expect(cancellationOnWithdrawal.signal.aborted).toBe(true);
+            expect(await readConsumerCount()).toBe(1);
+            await second.request({ pathAndQuery: '/v1/models' });
+            expect(process.dispose).not.toHaveBeenCalled();
+            await second.dispose();
+        } finally {
+            await harness.owner.dispose();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+    it.each(['deferred', 'failed'] as const)('G1 settles the previous physical occurrence before concurrent replacement consumers (%s)', async settlement => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-gateway-replacement-'));
+        const cleanupEntered = deferred<void>();
+        const cleanupProceed = deferred<void>();
+        let cleanupAvailable = settlement === 'deferred';
+        let previousCurrent = true;
+        const previous = createLifecycleProcess(4_511, async () => {
+            cleanupEntered.resolve();
+            await cleanupProceed.promise;
+            if (!cleanupAvailable) throw new Error('Physical process settlement is unavailable');
+        });
+        const replacement = createLifecycleProcess(4_512);
+        const harness = createLifecycleHarness([previous, replacement], 'daemon', {
+            sharedGatewayAccessDirectory: directory,
+            fetch: async () => new Response(null, { status: 200 }),
+        });
+        const spec: ManagedServiceSpec = { ...lifecycleSpec({ id: 'replacement-gateway', port: 4_352 }),
+            requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
+            clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' } };
+        const bind = (consumerId: string, occurrenceId: string, isPhysicalOccurrenceCurrent: () => boolean) => harness.owner.bindScope(
+            lifecycleScope({ occurrenceId, operationId: consumerId }), harness.exec,
+            { managedProvider: { realm: 'managedProviderStart', providerLocalId: 'gateway', isCurrent: () => true, isPhysicalOccurrenceCurrent,
+                sharedGateway: { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine', consumerId } },
+            requestAuth: { realm: 'managedProviderStart', capabilityPath: join(directory, `${consumerId}.capability`), isCurrent: () => true,
+                ...gatewayRequestAuthUses() } },
+        );
+        try {
+            await bind('old', 'previous-occurrence', () => previousCurrent).supervise(spec);
+            previousCurrent = false;
+            const first = bind('new-first', 'replacement-occurrence', () => true).supervise(spec);
+            // Attach rejection handling before the deliberate cleanup failure.
+            const firstResult = Promise.allSettled([first]);
+            await cleanupEntered.promise;
+            const second = bind('new-second', 'replacement-occurrence', () => true).supervise(spec);
+            const secondResult = Promise.allSettled([second]);
+            cleanupProceed.resolve();
+            const results = [...await firstResult, ...await secondResult];
+            if (settlement === 'failed') {
+                expect(results.map(result => result.status)).toEqual(['rejected', 'rejected']);
+                expect(harness.exec.spawn).toHaveBeenCalledOnce();
+                cleanupAvailable = true;
+                const retried = await bind('new-retry', 'replacement-occurrence', () => true).supervise(spec);
+                expect(harness.exec.spawn).toHaveBeenCalledTimes(2);
+                await retried.dispose();
+            } else {
+                expect(results.map(result => result.status)).toEqual(['fulfilled', 'fulfilled']);
+                expect(previous.dispose).toHaveBeenCalledOnce();
+                expect(harness.exec.spawn).toHaveBeenCalledTimes(2);
+                for (const result of results) if (result.status === 'fulfilled') await result.value.dispose();
+                expect(replacement.dispose).toHaveBeenCalledOnce();
+            }
+        } finally {
+            cleanupAvailable = true;
+            cleanupProceed.resolve();
+            await harness.owner.dispose();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+    it('G1 coalesces gateway custody while isolating consumer tokens and last-consumer stop/restart', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-gateway-consumers-'));
+        const process = createLifecycleProcess(4_501);
+        const restarted = createLifecycleProcess(4_502);
+        const headers: Headers[] = [];
+        const harness = createLifecycleHarness([process, restarted], 'daemon', {
+            sharedGatewayAccessDirectory: directory,
+            fetch: async (url, init) => {
+                headers.push(new Headers(init?.headers));
+                return new Response(null, { status: String(url).endsWith('/_happier/consumer-access/settle') ? 200 : 204 });
+            },
+        });
+        const spec: ManagedServiceSpec = {
+            ...lifecycleSpec({ id: 'gateway', port: 4_351 }),
+            requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
+            clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' },
+        };
+        const bind = (consumerId: string, purpose: string) => harness.owner.bindScope(
+            lifecycleScope({ occurrenceId: 'gateway-occurrence', operationId: consumerId }),
+            harness.exec,
+            {
+                managedProvider: {
+                    realm: 'managedProviderStart', providerLocalId: 'gateway', isCurrent: () => true, isPhysicalOccurrenceCurrent: () => true,
+                    sharedGateway: { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine', consumerId },
+                },
+                requestAuth: {
+                    realm: 'managedProviderStart', capabilityPath: join(directory, `${consumerId}.capability`), isCurrent: () => true,
+                    ...gatewayRequestAuthUses(purpose, ['https://example.com', 'https://other.example.com']),
+                },
+            },
+        );
+        const gateway = { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine' };
+        try {
+            expect(harness.owner.readSharedProviderGatewayRuntime(gateway)).toEqual({ status: 'idle', reachability: 'not_checked' });
+            const [first, second] = await Promise.all([
+                bind('session-one', 'first-purpose').supervise(spec),
+                bind('session-two', 'second-purpose').supervise(spec),
+            ]);
+            expect(harness.exec.spawn).toHaveBeenCalledOnce();
+            expect(harness.owner.readSharedProviderGatewayRuntime(gateway)).toEqual({ status: 'running', reachability: 'not_checked' });
+            expect(harness.owner.readSharedProviderGatewayRuntime({ ...gateway, accountId: 'other-account' })).toEqual({ status: 'idle', reachability: 'not_checked' });
+            const registryPath = harness.exec.spawn.mock.calls[0]?.[0].env?.CONSUMER_ACCESS_PATH;
+            expect(registryPath).toBeTypeOf('string');
+            const registry = JSON.parse(await readFile(registryPath!, 'utf8'));
+            expect(registry.consumers).toHaveLength(2);
+            expect(new Set(registry.consumers.map((consumer: { token: string }) => consumer.token)).size).toBe(2);
+            expect(registry.consumers).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    capabilityPath: join(directory, 'session-one.capability'),
+                    purposes: [{ consumer: { pluginId: 'acme.providers', localId: 'gateway' }, purpose: 'first-purpose' }],
+                }),
+                expect.objectContaining({
+                    capabilityPath: join(directory, 'session-two.capability'),
+                    purposes: [{ consumer: { pluginId: 'acme.providers', localId: 'gateway' }, purpose: 'second-purpose' }],
+                }),
+            ]));
+            await first.request({ pathAndQuery: '/v1/models' });
+            await second.request({ pathAndQuery: '/v1/models' });
+            expect(headers[0]?.get('authorization')).not.toBe(headers[1]?.get('authorization'));
+            await first.dispose();
+            expect(process.dispose).not.toHaveBeenCalled();
+            expect(harness.owner.readSharedProviderGatewayRuntime(gateway).status).toBe('running');
+            await expect(first.request({ pathAndQuery: '/v1/models' })).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+            await second.request({ pathAndQuery: '/v1/models' });
+            const remaining = JSON.parse(await readFile(registryPath!, 'utf8'));
+            expect(remaining.consumers).toHaveLength(1);
+            await second.dispose();
+            expect(process.dispose).toHaveBeenCalledOnce();
+            expect(harness.owner.readSharedProviderGatewayRuntime(gateway).status).toBe('idle');
+            const third = await bind('session-three', 'first-purpose').supervise(spec);
+            expect(harness.exec.spawn).toHaveBeenCalledTimes(2);
+            expect(harness.owner.readSharedProviderGatewayRuntime(gateway).status).toBe('running');
+            await third.dispose();
+            expect(restarted.dispose).toHaveBeenCalledOnce();
+        } finally {
+            await harness.owner.dispose();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
     it('awaits the real final launch capture when Project access retires before tuple handoff', async () => {
         const { owner } = createLifecycleHarness([], 'daemon');
         let admitted = true;
@@ -974,7 +1379,7 @@ describe('managed-services SVC09 owner', () => {
 
         expect(harness.supervise).toHaveBeenCalledWith(
             expect.objectContaining({
-                startupTimeoutMs: 30_000,
+                startupTimeoutMs: undefined,
                 healthCheck: expect.objectContaining({
                     timeoutMs: 5_000,
                 }),
@@ -995,13 +1400,13 @@ describe('managed-services SVC09 owner', () => {
             state: 'healthy',
         });
         expect(harness.legacyHandle.waitUntilHealthy).toHaveBeenCalledWith({
-            timeoutMs: 30_000,
+            timeoutMs: undefined,
         });
     });
 
     it.each([
         ['startup minimum', { startupTimeoutMs: 1 }, 'startupTimeoutMs', 1],
-        ['startup maximum', { startupTimeoutMs: 300_000 }, 'startupTimeoutMs', 300_000],
+        ['startup beyond former ceiling', { startupTimeoutMs: 600_000 }, 'startupTimeoutMs', 600_000],
         ['health timeout minimum', {
             healthCheck: { kind: 'http', timeoutMs: 1 },
         }, 'healthCheck.timeoutMs', 1],
@@ -1061,7 +1466,7 @@ describe('managed-services SVC09 owner', () => {
 
     it.each([
         ['startup below minimum', { startupTimeoutMs: 0 }],
-        ['startup above maximum', { startupTimeoutMs: 300_001 }],
+        ['startup non-integer', { startupTimeoutMs: 1.5 }],
         ['health timeout below minimum', {
             healthCheck: { kind: 'http', timeoutMs: 0 },
         }],
@@ -1154,7 +1559,7 @@ describe('managed-services SVC09 owner', () => {
         expect(harness.supervise).not.toHaveBeenCalled();
     });
 
-    it('bounds public healthy waits and defaults them to the validated startup timeout', async () => {
+    it('retains authored startup and caller healthy-wait deadlines beyond the former ceiling', async () => {
         const harness = createHarness();
         const services = harness.owner.bindScope(harness.scope, exec);
         const handle = await services.supervise({
@@ -1169,18 +1574,18 @@ describe('managed-services SVC09 owner', () => {
 
         await handle.waitUntilHealthy();
         await handle.waitUntilHealthy({ timeoutMs: 1 });
-        await handle.waitUntilHealthy({ timeoutMs: 300_000 });
+        await handle.waitUntilHealthy({ timeoutMs: 600_000 });
         expect(harness.legacyHandle.waitUntilHealthy.mock.calls).toEqual([
             [{ timeoutMs: 12_345 }],
             [{ timeoutMs: 1 }],
-            [{ timeoutMs: 300_000 }],
+            [{ timeoutMs: 600_000 }],
         ]);
 
         await expect(handle.waitUntilHealthy({ timeoutMs: 0 }))
             .rejects.toMatchObject({
                 code: 'plugin_managed_service_spec_invalid',
             });
-        await expect(handle.waitUntilHealthy({ timeoutMs: 300_001 }))
+        await expect(handle.waitUntilHealthy({ timeoutMs: Number.NaN }))
             .rejects.toMatchObject({
                 code: 'plugin_managed_service_spec_invalid',
             });
@@ -2741,7 +3146,7 @@ describe('managed-services SVC09 owner', () => {
                 intervalMs: 5_000,
                 missedIntervals: 3,
             },
-            startupTimeoutMs: 30_000,
+            startupTimeoutMs: undefined,
         }, expect.objectContaining({
             signal: expect.objectContaining({ aborted: false }),
             registerEstablishmentCleanup: expect.any(Function),
@@ -6173,6 +6578,7 @@ describe('Project Local Services control composition', () => {
             });
             if (!registration.ok) throw new Error(registration.reasonCode);
             const previewRoutes = createLocalServicePreviewRoutes({ machineId: workspace.machineId, registry: previewRegistry,
+                projectManagedServices: owner,
                 server: { token: 'custodian-token', serverBaseUrl: 'https://home.example.test', http: {
                     async post(_url, resource) { return { data: { resource, accessUrl: 'https://web.preview.example.test/?previewToken=current', expiresAt: 61_000 } }; },
                     async delete() { return { data: { ok: true } }; },

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type {
     ExecService,
@@ -11,6 +13,7 @@ import {
     createManagedServiceProcessSupervisorHost as createProductionManagedServiceProcessSupervisorHost,
 } from './managedProcessSupervisor';
 import { retainManagedServiceDiagnostic } from './managedProcessSupervisor';
+import { normalizeManagedServiceSpec } from './managedServiceSpecNormalization';
 import type {
     ManagedServiceDiagnosticRetention,
     ManagedServiceProcessHealthCheck,
@@ -19,6 +22,13 @@ import type {
 } from './managedProcessSupervisor';
 import type { ManagedServiceProcessDurabilityOwner } from './managedServiceDurability';
 import { associateSupervisedPluginProcessHandleForHost } from '../../exec/processSupervisor';
+import * as processTree from '@/agent/runtime/process/killProcessTree';
+import * as localServiceScan from '@/daemon/local/services/inventory/platform/scan';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { createManagedServicesOwner } from './managedServicesOwner';
+import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
+import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
+import { createLocalServiceActionConfirmationNonceV1, isLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 
 const CLEAN_EXIT: PluginProcessResult = Object.freeze({
     termination: Object.freeze({
@@ -144,6 +154,407 @@ function createDurability(): ManagedServiceProcessDurabilityOwner & {
 describe('createManagedServiceProcessSupervisorHost', () => {
     afterEach(() => {
         vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it('discovers an owned endpoint after the former startup cutoff without an authored deadline', async () => {
+        vi.useFakeTimers();
+        const firstScan = deferred<localServiceScan.LocalServicesScanResult>();
+        const emptyScan: localServiceScan.LocalServicesScanResult = { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] };
+        const scan = vi.spyOn(localServiceScan, 'scanPlatformLocalServices')
+            .mockImplementationOnce(async () => await firstScan.promise)
+            .mockResolvedValue({
+                ...emptyScan,
+                listeners: [{ address: '127.0.0.1', port: 4312, protocol: 'tcp', pid: 42 }],
+                processes: new Map([[42, { pid: 42, command: 'fixture server', processOwnership: 'self' }]]),
+            });
+        const { servers } = createHarness();
+        const normalized = normalizeManagedServiceSpec({
+            id: 'late-endpoint',
+            mode: { kind: 'spawn', launch: { executable: { kind: 'systemTool', id: 'fixture.server' } }, endpoint: { kind: 'detectAfterLaunch' } },
+        });
+        const pending = servers.supervise(managedSpec('late-endpoint', {
+            startupTimeoutMs: normalized.startupTimeoutMs,
+            mode: { kind: 'managedSpawn', endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'medium' } },
+        }));
+        const outcome = pending.then((handle) => ({ handle }), (error: unknown) => ({ error }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(scan).toHaveBeenCalledOnce();
+        await vi.advanceTimersByTimeAsync(30_001);
+        firstScan.resolve(emptyScan);
+        await vi.advanceTimersByTimeAsync(25);
+        const result = await outcome;
+        expect(result).toHaveProperty('handle');
+        if (!('handle' in result)) throw result.error;
+        expect(result.handle.snapshot()).toMatchObject({ state: 'healthy', baseUrl: 'http://127.0.0.1:4312' });
+        await result.handle.dispose();
+    });
+
+    it.each(['cancel', 'exit', 'failure', 'authored deadline'] as const)('ends endpoint discovery on real %s and fences its late scan from the successor', async (cause) => {
+        vi.useFakeTimers();
+        const stalledScan = deferred<localServiceScan.LocalServicesScanResult>();
+        const successorScan: localServiceScan.LocalServicesScanResult = {
+            listeners: [{ address: '127.0.0.1', port: 4312, protocol: 'tcp', pid: 43 }],
+            processes: new Map([[43, { pid: 43, command: 'fixture server', processOwnership: 'self' }]]), workspaces: [], diagnostics: [],
+        };
+        const scan = vi.spyOn(localServiceScan, 'scanPlatformLocalServices')
+            .mockImplementationOnce(async () => await stalledScan.promise)
+            .mockResolvedValue(successorScan);
+        const terminal = deferred<PluginProcessResult>();
+        const firstProcess = createProcess(42, terminal);
+        const { servers } = createHarness([firstProcess, createProcess(43)]);
+        const spec = managedSpec('same-service', {
+            mode: { kind: 'managedSpawn', endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'medium' } },
+        });
+        const cancellation = new AbortController();
+        const first = servers.supervise(spec, { signal: cancellation.signal }).then((handle) => ({ handle }), (error: unknown) => ({ error }));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(scan).toHaveBeenCalledOnce();
+        if (cause === 'cancel') cancellation.abort();
+        else if (cause === 'failure') terminal.reject(new Error('Process observation failed'));
+        else if (cause === 'authored deadline') await vi.advanceTimersByTimeAsync(30_001);
+        else terminal.resolve(CLEAN_EXIT);
+        await vi.advanceTimersByTimeAsync(0);
+        let result: Awaited<typeof first> | undefined;
+        void first.then((value) => { result = value; });
+        await vi.advanceTimersByTimeAsync(0);
+        const codes = {
+            cancel: 'plugin_managed_server_aborted',
+            exit: 'plugin_managed_server_process_exited',
+            failure: 'plugin_managed_server_process_failed',
+            'authored deadline': 'plugin_managed_server_endpoint_unavailable',
+        };
+        if (cause === 'failure') {
+            // A failed process observer cannot prove physical settlement; preserve the cleanup aggregate.
+            expect(result).toMatchObject({ error: { code: 'plugin_managed_server_cleanup_failed',
+                errors: expect.arrayContaining([expect.objectContaining({ details: expect.objectContaining({
+                    phase: 'establishment',
+                }) })]),
+            } });
+        } else {
+            expect(result).toMatchObject({ error: { code: codes[cause] } });
+        }
+        const successor = await servers.supervise(spec);
+        stalledScan.resolve({ ...successorScan, listeners: [{ address: '127.0.0.1', port: 9999, protocol: 'tcp', pid: 42 }] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(successor.snapshot()).toMatchObject({ state: 'healthy', baseUrl: 'http://127.0.0.1:4312', pid: 43 });
+        await successor.dispose();
+    });
+
+    it.skipIf(process.platform === 'win32').each(['managedSpawn', 'native'] as const)(
+        'retains the Project %s launch capture through root exit and unconfirmed tree Stop until physical settlement', async (mode) => {
+            await withTempDir('project-service-launch-capture-', async (directory) => {
+                const release = vi.fn();
+                let nativeStopped = false;
+                const host = createManagedServiceProcessSupervisorHost();
+                const owner = createManagedServicesOwner({ processSupervisorHost: host,
+                    dependencies: () => { throw new Error('Project final tuples do not resolve managed dependencies'); },
+                    resolveScope: () => null });
+                const workspace = { id: 'workspace-one', serverId: 'server-one', machineId: 'machine-one',
+                    rootPath: directory, createdAtMs: 1 };
+                const pidsPath = join(directory, 'owned-pids');
+                const handle = await owner.superviseProject({
+                    workspace, declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'worker' } },
+                    cwd: directory, requester: { serverId: workspace.serverId, accountId: 'requester-one',
+                        machineId: workspace.machineId, installationId: 'installation-one' },
+                    serviceId: `project-capture-${mode}`, specIdentity: 'reviewed-service-effect', isCurrent: () => true,
+                    processSpec: { startupTimeoutMs: 30_000,
+                    mode: mode === 'managedSpawn' ? { kind: 'managedSpawn', endpointNone: true } : {
+                        kind: 'native',
+                        instance: { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'owned-project-resource' },
+                        lifecycle: {
+                            inspect: async () => ({ phase: nativeStopped ? 'stopped' : 'running', readiness: 'not_reported', endpoint: null }),
+                            stop: async () => { nativeStopped = true; return { status: 'stopped' }; },
+                        },
+                    } },
+                    authorizeLaunch: async () => ({ command: process.execPath,
+                        args: ['-e', "const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});require('node:fs').writeFileSync(process.argv[1],process.pid+','+child.pid);setInterval(()=>{},1000)", pidsPath],
+                        env: {}, release }),
+                });
+                let rootPid = 0;
+                const target = { kind: 'managed_service' as const, machineId: workspace.machineId,
+                    managedServiceId: handle.instanceId, workspaceId: workspace.id, cwd: handle.cwd, declaration: handle.declaration };
+                const control = { requestId: `stop-${mode}`, action: 'stop_managed' as const, force: false, target };
+                const request = LocalServiceActionRequestV1Schema.parse({ ...control,
+                    confirmationNonce: createLocalServiceActionConfirmationNonceV1(control) });
+                const routes = createLocalServiceActionRoutes({ machineId: workspace.machineId,
+                    inventoryRegistry: createLocalServiceInventoryRegistry(), projectManagedServices: owner,
+                    verifyConfirmationNonce: isLocalServiceActionConfirmationNonceV1 });
+                const terminateTree = processTree.killProcessTree;
+                let restoreTerminationBoundary = () => {};
+                try {
+                    let childPid = 0;
+                    await vi.waitFor(async () => {
+                        [rootPid, childPid] = (await readFile(pidsPath, 'utf8')).split(',').map(Number);
+                        expect(rootPid).toBeGreaterThan(0);
+                        expect(childPid).toBeGreaterThan(0);
+                    });
+                    // Automatic root-exit cleanup and explicit Stop share the real owner; only OS termination refuses.
+                    const terminationBoundary = vi.spyOn(processTree, 'killProcessTree').mockRejectedValue(new PluginError({
+                        code: 'plugin_exec_termination_incomplete', message: 'Owned process tree remains live',
+                    }));
+                    restoreTerminationBoundary = () => terminationBoundary.mockRestore();
+                    process.kill(rootPid, 'SIGTERM');
+                    await vi.waitFor(() => expect(() => process.kill(rootPid, 0)).toThrow());
+                    expect(() => process.kill(childPid, 0)).not.toThrow();
+                    expect(release).not.toHaveBeenCalled();
+                    await expect(routes.execute(request)).resolves.toMatchObject({ status: 'failed',
+                        reasonCode: 'plugin_managed_server_termination_incomplete' });
+                    if (mode === 'managedSpawn') expect(handle.snapshot().state).not.toBe('stopped');
+                    else expect(handle.snapshot().nativePhase).toBe('stopped');
+                    expect(release).not.toHaveBeenCalled();
+                    expect(owner.resolveProjectService(target)).toMatchObject({ status: 'found', handle });
+                    expect(() => process.kill(childPid, 0)).not.toThrow();
+                    restoreTerminationBoundary();
+                    const retry = { ...request, requestId: `retry-${mode}` };
+                    const retried = await routes.execute({ ...retry, confirmationNonce: createLocalServiceActionConfirmationNonceV1(retry) });
+                    expect(retried.reasonCode ?? retried.status).toBe('succeeded');
+                    await handle.dispose();
+                    expect(release).toHaveBeenCalledOnce();
+                } finally {
+                    restoreTerminationBoundary();
+                    await handle.dispose().catch(() => undefined);
+                    if (rootPid > 0) await terminateTree({ pid: rootPid }, { ownedProcessGroup: true });
+                }
+            });
+        },
+    );
+
+    it('releases the Project launch capture when cancellation prevents process acquisition', async () => {
+        const cancellation = new AbortController();
+        const release = vi.fn();
+        const supervisor = createManagedServiceProcessSupervisorHost().bind({ kind: 'project', isOccurrenceCurrent: () => true });
+        await expect(supervisor.supervise({
+            id: 'project-no-launch', startupTimeoutMs: 30_000,
+            watchdog: { intervalMs: 5_000, missedIntervals: 2 },
+            mode: { kind: 'managedSpawn', endpointNone: true },
+            authorizeLaunch: async () => {
+                cancellation.abort();
+                return { command: process.execPath, args: ['-e', 'process.exit(0)'], env: {}, release };
+            },
+        }, { signal: cancellation.signal })).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+        expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('owns a URL-less process without assigning a port or inventing readiness', async () => {
+        const process = createProcess();
+        const { servers } = createHarness([process]);
+        const handle = await servers.supervise(managedSpec('worker', {
+            mode: { kind: 'managedSpawn', endpointNone: true },
+        }));
+        expect(handle.snapshot()).toMatchObject({ state: 'running', baseUrl: null, port: null });
+        await expect(handle.waitUntilHealthy({ timeoutMs: 100 })).rejects.toMatchObject({
+            code: 'plugin_managed_service_unavailable',
+        });
+        expect(await handle.stop()).toEqual({ status: 'stopped' });
+        expect(handle.snapshot().state).toBe('stopped');
+
+        const commandReady = await servers.supervise(managedSpec('worker-command', {
+            mode: { kind: 'managedSpawn', endpointNone: true },
+            healthCheck: {
+                kind: 'command',
+                executable: { kind: 'systemTool', id: 'fixture.health' },
+                timeoutMs: 100,
+            },
+        }));
+        await expect(commandReady.waitUntilHealthy({ timeoutMs: 100 })).resolves.toMatchObject({
+            state: 'healthy', baseUrl: null, port: null,
+        });
+        await commandReady.stop();
+    });
+
+    it('observes optional owned-tree endpoints without blocking URL-less lifetime or inventing readiness', async () => {
+        vi.useFakeTimers();
+        const listeners: Array<localServiceScan.LocalServicesScanResult['listeners'][number]> = [];
+        const scanResult: localServiceScan.LocalServicesScanResult = {
+            listeners, processes: new Map([[42, { pid: 42, command: 'fixture server', processOwnership: 'self' }]]),
+            workspaces: [], diagnostics: [],
+        };
+        vi.spyOn(localServiceScan, 'scanPlatformLocalServices').mockImplementation(async () => scanResult);
+        const { servers } = createHarness();
+        const cancellation = new AbortController();
+        let handle: Awaited<ReturnType<typeof servers.supervise>> | undefined;
+        const pending = servers.supervise(managedSpec('optional-address', {
+            mode: { kind: 'managedSpawn', endpointNone: true,
+                endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'high' } },
+        }), { signal: cancellation.signal }).then(value => { handle = value; });
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            expect(handle?.snapshot()).toMatchObject({ state: 'running', baseUrl: null, port: null, lastHealthyAtMs: null });
+            listeners.push({ address: '127.0.0.1', port: 4312, protocol: 'tcp', pid: 42 });
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(handle?.snapshot()).toMatchObject({ state: 'running', baseUrl: 'http://127.0.0.1:4312', port: 4312, lastHealthyAtMs: null });
+            await expect(handle!.waitUntilHealthy()).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+            listeners.push({ address: '127.0.0.1', port: 4313, protocol: 'tcp', pid: 42 });
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(handle?.snapshot()).toMatchObject({ state: 'running', baseUrl: null, port: null });
+        } finally {
+            cancellation.abort();
+            await pending.catch(() => undefined);
+            await handle?.stop();
+        }
+    });
+
+    it('withdraws stale native running evidence when the current inspect fails without releasing custody', async () => {
+        vi.useFakeTimers();
+        const { servers } = createHarness();
+        let observationFails = false;
+        const handle = await servers.supervise(managedSpec('native-observation', {
+            mode: { kind: 'native',
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'web' }, nativeResourceId: 'exact-web' },
+                lifecycle: {
+                    inspect: async () => {
+                        if (observationFails) throw new Error('Native runtime is unavailable');
+                        return { phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:4312' };
+                    },
+                    stop: async () => ({ status: 'stopped' }),
+                },
+            },
+        }));
+        try {
+            expect(handle.snapshot()).toMatchObject({ state: 'healthy', nativePhase: 'running', baseUrl: 'http://127.0.0.1:4312' });
+            observationFails = true;
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(handle.snapshot()).toMatchObject({ state: 'unhealthy', nativePhase: 'unknown', readiness: 'not_reported', baseUrl: null, port: null });
+            await expect(handle.waitUntilHealthy()).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
+            expect(await handle.stop()).toEqual({ status: 'stopped' });
+        } finally {
+            await handle.stop();
+        }
+    });
+
+    it('retains a native instance after starter exit and trusts a definitive stop witness', async () => {
+        const terminal = deferred<PluginProcessResult>();
+        const { servers } = createHarness([createProcess(42, terminal)]);
+        const instance = { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'exact-project' };
+        const inspect = vi.fn(async () => ({ phase: 'running' as const, readiness: 'not_reported' as const, endpoint: null }));
+        const handle = await servers.supervise(managedSpec('compose', {
+            mode: { kind: 'native', instance, lifecycle: { inspect, stop: async () => ({ status: 'stopped' as const }) } },
+        }));
+        terminal.resolve(CLEAN_EXIT);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(handle.snapshot()).toMatchObject({ state: 'running', baseUrl: null });
+        expect(await handle.stop()).toEqual({ status: 'stopped' });
+        expect(handle.snapshot().state).toBe('stopped');
+    });
+
+    it.each(['accepted', 'unsupported', 'termination_incomplete'] as const)(
+        'keeps native custody when %s stop has no stopped observation', async (status) => {
+            const { servers } = createHarness([createProcess()]);
+            const handle = await servers.supervise(managedSpec('compose', {
+                mode: { kind: 'native',
+                    instance: { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'exact-project' },
+                    lifecycle: {
+                        inspect: async () => ({ phase: 'unknown' as const, readiness: 'not_reported' as const, endpoint: null }),
+                        stop: async () => ({ status }),
+                    },
+                },
+            }));
+            expect(await handle.stop()).toEqual({ status: status === 'unsupported' ? 'unsupported' : 'termination_incomplete' });
+            expect(handle.snapshot().state).not.toBe('stopped');
+        },
+    );
+
+    it('settles an accepted native stop only after inspection proves the exact instance stopped', async () => {
+        const { servers } = createHarness([createProcess()]);
+        let stopped = false;
+        const instance = { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'exact-project' };
+        const handle = await servers.supervise(managedSpec('compose', {
+            mode: { kind: 'native', instance, lifecycle: {
+                inspect: async (selected) => {
+                    expect(selected).toBe(instance);
+                    return { phase: stopped ? 'stopped' : 'running', readiness: 'not_reported', endpoint: null };
+                },
+                stop: async (selected) => {
+                    expect(selected).toBe(instance);
+                    stopped = true;
+                    return { status: 'accepted' };
+                },
+            } },
+        }));
+        expect(await handle.stop()).toEqual({ status: 'stopped' });
+        expect(handle.snapshot()).toMatchObject({ state: 'stopped', nativePhase: 'stopped' });
+    });
+
+    it('consumes native readiness and endpoint from one observation after the starter exits', async () => {
+        const terminal = deferred<PluginProcessResult>();
+        const { servers } = createHarness([createProcess(42, terminal)]);
+        const handle = await servers.supervise(managedSpec('compose', {
+            mode: { kind: 'native',
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'exact-project' },
+                lifecycle: {
+                    inspect: async () => ({ phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:4312' }),
+                    stop: async () => ({ status: 'stopped' }),
+                },
+            },
+        }));
+        terminal.resolve(CLEAN_EXIT);
+        await Promise.resolve();
+        expect(await handle.waitUntilHealthy({ timeoutMs: 100 })).toMatchObject({
+            state: 'healthy', nativePhase: 'running', readiness: 'ready', baseUrl: 'http://127.0.0.1:4312',
+        });
+        await handle.stop();
+    });
+
+    it.each(['cancel', 'authored deadline'] as const)('retires a stalled native healthy wait on %s without publishing its late observation', async (cause) => {
+        vi.useFakeTimers();
+        const pendingObservation = deferred<{ phase: 'running'; readiness: 'ready'; endpoint: string }>();
+        let observing = false;
+        const { servers } = createHarness();
+        // Native inspection is the external resource adapter boundary, not a mocked host owner.
+        const handle = await servers.supervise(managedSpec('compose', {
+            startupTimeoutMs: undefined,
+            mode: { kind: 'native',
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'exact-project' },
+                lifecycle: {
+                    inspect: async () => observing ? pendingObservation.promise : { phase: 'running', readiness: 'not_ready', endpoint: null },
+                    stop: async () => ({ status: 'stopped' }),
+                },
+            },
+        }));
+        observing = true;
+        const caller = new AbortController();
+        let result: unknown;
+        const pending = handle.waitUntilHealthy({ signal: caller.signal,
+            ...(cause === 'authored deadline' ? { timeoutMs: 1_000 } : {}) }).catch((error: unknown) => { result = error; });
+        await vi.advanceTimersByTimeAsync(0);
+        if (cause === 'cancel') caller.abort();
+        else await vi.advanceTimersByTimeAsync(1_001);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(result).toMatchObject({ code: cause === 'cancel' ? 'plugin_managed_server_aborted' : 'plugin_managed_server_health_timeout' });
+        const terminalSnapshot = handle.snapshot();
+        pendingObservation.resolve({ phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:9999' });
+        await vi.advanceTimersByTimeAsync(0);
+        await pending;
+        expect(handle.snapshot()).toBe(terminalSnapshot);
+        await handle.dispose();
+    });
+
+    it('continues native observation after an unconfirmed stop and ignores a read completed after definitive stop', async () => {
+        vi.useFakeTimers();
+        const { servers } = createHarness([createProcess()]);
+        const pendingObservation = deferred<{ phase: 'running'; readiness: 'ready'; endpoint: null }>();
+        let observing = false;
+        let definitive = false;
+        const handle = await servers.supervise(managedSpec('compose', {
+            mode: { kind: 'native',
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'compose' }, nativeResourceId: 'exact-project' },
+                lifecycle: {
+                    inspect: async () => observing ? pendingObservation.promise : { phase: 'running', readiness: 'not_reported', endpoint: null },
+                    stop: async () => ({ status: definitive ? 'stopped' : 'accepted' }),
+                },
+            },
+        }));
+        expect(await handle.stop()).toEqual({ status: 'termination_incomplete' });
+        observing = true;
+        await vi.advanceTimersByTimeAsync(5_000);
+        definitive = true;
+        expect(await handle.stop()).toEqual({ status: 'stopped' });
+        pendingObservation.resolve({ phase: 'running', readiness: 'ready', endpoint: null });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(handle.snapshot().state).toBe('stopped');
     });
 
     it('retains managed-service diagnostics in chronological insertion order', () => {
@@ -1561,7 +1972,7 @@ describe('createManagedServiceProcessSupervisorHost', () => {
     });
 
     it.each([
-        ['startup timeout', { startupTimeoutMs: 300_001 }, 'plugin_managed_server_timeout_invalid'],
+        ['startup timeout', { startupTimeoutMs: 0 }, 'plugin_managed_server_timeout_invalid'],
         ['health timeout', {
             healthCheck: { kind: 'http' as const, timeoutMs: 60_001 },
         }, 'plugin_managed_server_health_timeout_invalid'],
@@ -1584,10 +1995,6 @@ describe('createManagedServiceProcessSupervisorHost', () => {
     });
 
     it.each([
-        ['startup timeout', () => {
-            const { startupTimeoutMs: _omitted, ...spec } = managedSpec('missing-startup');
-            return spec;
-        }, 'plugin_managed_server_timeout_invalid'],
         ['watchdog policy', () => {
             const { watchdog: _omitted, ...spec } = managedSpec('missing-watchdog');
             return spec;
@@ -1620,19 +2027,23 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         },
     );
 
-    it('rejects an omitted lower healthy-wait timeout instead of inheriting startup policy', async () => {
-        const { servers } = createHarness();
-        const handle = await servers.supervise(externalSpec('missing-wait-timeout'));
+    it('keeps an omitted healthy-wait deadline pending until late health succeeds', async () => {
+        vi.useFakeTimers();
+        let ready = false;
+        const host = createManagedServiceProcessSupervisorHost({ fetch: async () => new Response('', { status: ready ? 200 : 503 }) });
+        const servers = host.bind({ occurrenceId: 'late-health', pluginId: 'fixture.plugin', contributionId: 'fixture.agent', isOccurrenceCurrent: () => true, exec: createExec() });
+        const handle = await servers.supervise({ ...externalSpec('late-health'), healthCheck: { kind: 'http', timeoutMs: 5_000 } });
 
-        const outcome = await handle.waitUntilHealthy(undefined as never).then(
-            () => null,
+        const outcome = handle.waitUntilHealthy().then(
+            (snapshot) => snapshot,
             (error: unknown) => error,
         );
+        await vi.advanceTimersByTimeAsync(30_001);
+        expect(handle.snapshot().state).toBe('starting');
+        ready = true;
+        await vi.advanceTimersByTimeAsync(25);
+        expect(await outcome).toMatchObject({ state: 'healthy' });
         await handle.dispose();
-
-        expect(outcome).toMatchObject({
-            code: 'plugin_managed_server_timeout_invalid',
-        });
     });
 
     it('honors a pre-aborted stop without beginning process termination', async () => {

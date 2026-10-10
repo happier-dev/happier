@@ -1,16 +1,35 @@
 import { randomBytes } from 'node:crypto';
+import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { Buffer } from 'node:buffer';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provenance';
+import { createPrivateBearerCredential, replacePrivateBearerFile } from '@/daemon/privateBearerFile';
+import {
+    WorkspaceRefV1Schema,
+    type WorkspaceRefV1,
+} from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import {
+    ProjectServiceDeclarationRefV1Schema,
+    type ProjectServiceDeclarationRefV1,
+    type LocalServiceActionTargetV1,
+} from '@happier-dev/protocol/local/services/actions/v1';
+import {
+    RequesterWorkAttributionV1Schema,
+    type RequesterWorkAttributionV1,
+} from '@/daemon/lifecycle/requesterWorkAttribution';
+import type { LiveWorkProducerV1, LiveWorkInventoryV1, LiveWorkItemV1 } from '@/daemon/lifecycle/managedActivity';
 
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
     AgentProviderBindingMaterializationV1,
+    ManagedExecutableRef,
 } from '@happier-dev/protocol';
 import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
 import { managedServiceEndpointHostPolicyForMode, readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
 import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '@happier-dev/protocol/providers/capabilities/v1';
 import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type {
     ManagedDependenciesService,
     ManagedServiceCredentialBinding,
@@ -20,6 +39,8 @@ import type {
     ManagedServiceSnapshot,
     ManagedServiceSpec,
     ManagedServices,
+    ManagedServiceNativeInstanceV1,
+    ManagedServiceNativeLifecycleV1,
 } from '@happier-dev/plugin-sdk/managed-services';
 import type {
     ConnectedAccountMaterialization as PluginConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -34,12 +55,15 @@ import {
     type ManagedServiceProcessSnapshot,
     type ManagedServiceProcessSpec,
     type ManagedServiceProcessSupervisorHost,
+    type ProjectManagedServiceLaunchAuthorizer,
     readManagedServiceProcessCredentialRedactionValues,
 } from './managedProcessSupervisor';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
+import type { ResolvedPluginExecutable } from './exec';
 import {
     normalizeManagedServiceHealthyWaitTimeout,
     normalizeManagedServiceSpec,
+    MANAGED_SERVICE_NUMERIC_CONTRACT,
     type NormalizedManagedServiceSpec,
 } from './managedServiceSpecNormalization';
 import type {
@@ -65,9 +89,55 @@ type ManagedServicesScope = Readonly<{
     contributionQualifiedId: string;
     sessionId?: string;
     operationId?: string;
+    independentInvocation?: true;
     signal?: AbortSignal;
     declaredSecretReadPort?: DeclaredPluginSecretReadPort;
     isOccurrenceCurrent(): boolean;
+}>;
+
+export type ProjectManagedServiceWitness = Readonly<{
+    workspace: WorkspaceRefV1;
+    declaration: ProjectServiceDeclarationRefV1;
+    cwd: string;
+    requester: RequesterWorkAttributionV1;
+    serviceId: string;
+}>;
+export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedServiceWitness & Readonly<{
+    instanceId: string;
+    endpointKind: NonNullable<LocalServiceLaunchTargetV1['endpointKind']>;
+    retirementSignal: AbortSignal;
+    isCurrent(): boolean;
+}>;
+export type ProjectManagedServiceSupervisionInput = ProjectManagedServiceWitness & Readonly<{
+    specIdentity: string;
+    signal?: AbortSignal;
+    isCurrent(): boolean;
+    processSpec: Readonly<{
+        mode: Extract<ManagedServiceProcessSpec['mode'], { kind: 'managedSpawn' | 'native' }>;
+        startupTimeoutMs?: number;
+        watchdog?: ManagedServiceProcessSpec['watchdog'];
+        healthCheck?: Extract<NonNullable<ManagedServiceProcessSpec['healthCheck']>, { kind: 'http' }>;
+    }>;
+    authorizeLaunch: ProjectManagedServiceLaunchAuthorizer;
+}>;
+export type ProjectServiceAccessLossResult = ProjectManagedServiceWitness & (
+    | Readonly<{ status: 'cancelled_preparation'; instanceId: null }>
+    | Readonly<{
+        status: 'stopped' | 'unsupported' | 'termination_incomplete';
+        instanceId: string | null;
+        snapshot: ManagedServiceSnapshot | null;
+    }>
+);
+export type ProjectManagedServiceResolution =
+    | Readonly<{ status: 'found'; handle: ProjectManagedServiceHandle }>
+    | Readonly<{ status: 'unknown' | 'mismatch' }>;
+type ProjectManagedServicesScope = Readonly<{
+    signal: AbortSignal;
+    isOccurrenceCurrent(): boolean;
+    sessionId?: never;
+    operationId?: never;
+    pluginId?: never;
+    contributionQualifiedId?: never;
 }>;
 
 type ValidatedManagedServiceClientAccess =
@@ -176,6 +246,7 @@ function translateError(error: unknown): never {
     const code = (() => {
         if (
             error.code.startsWith('plugin_managed_service_')
+            || error.code === 'plugin_managed_server_termination_incomplete'
             || error.code === 'plugin_operation_aborted'
         ) return error.code;
         switch (error.code) {
@@ -273,6 +344,9 @@ function canonicalSpecIdentity(spec: ManagedServiceSpec): string {
             mode: { ...spec.mode, baseUrl },
             healthCheck,
         });
+    }
+    if (spec.mode.kind === 'native') {
+        return stableJson({ ...spec, healthCheck });
     }
     const endpoint = spec.mode.endpoint;
     return stableJson({
@@ -417,7 +491,8 @@ function validateRequestAuth(
     if (requestAuth === undefined) return null;
     if (
         typeof requestAuth !== 'object'
-        || requestAuth.kind !== 'connectedAccountCapabilityPath'
+        || (requestAuth.kind !== 'connectedAccountCapabilityPath'
+            && requestAuth.kind !== 'connectedAccountConsumerAccessPath')
         || Object.keys(requestAuth).length !== 2
         || !Object.hasOwn(requestAuth, 'kind')
         || !Object.hasOwn(requestAuth, 'injectEnvironmentKey')
@@ -809,7 +884,7 @@ function createHostClientCredential(
     if (access.kind === 'declaredSecretBasic') return undefined;
     return renderHostClientCredential(
         access,
-        randomBytes(32).toString('base64url'),
+        createPrivateBearerCredential(),
     );
 }
 
@@ -931,6 +1006,7 @@ function translateSpec(
     resolveHealthHeaders:
         | ((signal?: AbortSignal) => Promise<ManagedServiceProcessHealthHeaderLease>)
         | undefined,
+    nativeLifecycle?: ManagedServiceNativeLifecycleV1,
 ): ManagedServiceProcessSpec {
     const healthCheck = translateHealthCheck(
         spec.healthCheck,
@@ -953,6 +1029,46 @@ function translateSpec(
             ...(healthCheck ? { healthCheck } : {}),
             watchdog,
             startupTimeoutMs: spec.startupTimeoutMs,
+        });
+    }
+    if (spec.mode.kind === 'native') {
+        if (!nativeLifecycle) {
+            return fail('plugin_managed_service_unavailable', 'Declared native service lifecycle is unavailable');
+        }
+        return Object.freeze({
+            id: spec.id,
+            mode: Object.freeze({
+                kind: 'native' as const,
+                instance: spec.mode.instance,
+                lifecycle: nativeLifecycle,
+            }),
+            launch: spec.mode.launch,
+            watchdog,
+            startupTimeoutMs: spec.startupTimeoutMs,
+        });
+    }
+    if (spec.mode.endpoint.kind === 'none') {
+        return Object.freeze({
+            id: spec.id,
+            mode: Object.freeze({
+                kind: 'managedSpawn' as const,
+                endpointNone: true as const,
+                ...(credential ? { credential } : {}),
+            }),
+            launch: Object.freeze({
+                ...spec.mode.launch,
+                env: Object.freeze({
+                    ...(spec.mode.launch.env ?? {}),
+                    ...materialized.environment,
+                    ...(requestAuth
+                        ? { [requestAuth.injectEnvironmentKey]: requestAuth.capabilityPath }
+                        : {}),
+                }),
+            }),
+            ...(healthCheck ? { healthCheck } : {}),
+            watchdog,
+            startupTimeoutMs: spec.startupTimeoutMs,
+            ...(spec.durableLog ? { durableLog: spec.durableLog } : {}),
         });
     }
     if (spec.mode.endpoint.kind === 'detectAfterLaunch') {
@@ -1067,16 +1183,22 @@ async function stopInvalidatedManagedService(
     handle: ManagedServiceProcessHandle,
 ): Promise<void> {
     let stopFailure: unknown;
+    let result: Awaited<ReturnType<ManagedServiceProcessHandle['stop']>> | undefined;
     try {
-        const result = await handle.stop();
-        if (result.status !== 'termination_incomplete') return;
+        result = await handle.stop();
+    } catch (error) {
+        stopFailure = error;
+    }
+    if (result?.status === 'stopped' || result?.status === 'detached') return;
+    if (result?.status === 'unsupported') {
+        return fail('plugin_managed_service_unavailable', 'Managed service Stop is unsupported');
+    }
+    if (stopFailure === undefined) {
         stopFailure = new PluginError({
             code: 'plugin_managed_server_termination_incomplete',
             message: 'Managed server termination could not be verified',
             retryable: true,
         });
-    } catch (error) {
-        stopFailure = error;
     }
     try {
         await handle.dispose();
@@ -1460,7 +1582,9 @@ function translateSnapshot(
     return Object.freeze({
         id: value.id,
         state: value.state,
-        mode: value.mode === 'managedSpawn' ? 'spawn' : 'attach',
+        mode: value.mode === 'managedSpawn' ? 'spawn' : value.mode === 'native' ? 'native' : 'attach',
+        ...(value.readiness ? { readiness: value.readiness } : {}),
+        ...(value.nativePhase ? { nativePhase: value.nativePhase } : {}),
         baseUrl: value.baseUrl,
         startedAtMs: value.startedAtMs,
         lastHealthyAtMs: value.lastHealthyAtMs,
@@ -1473,7 +1597,7 @@ function wrapHandle(
     handle: ManagedServiceProcessHandle,
     cleanupCredentials: () => Promise<void>,
     stopResult: Readonly<{ status: 'stopped' | 'detached' }>,
-    healthyWaitDefaultTimeoutMs: number,
+    healthyWaitDefaultTimeoutMs: number | undefined,
     request: (
         request: ManagedServiceRequest,
         lifetimeSignal: AbortSignal,
@@ -1481,6 +1605,7 @@ function wrapHandle(
     signal?: AbortSignal,
     onTerminalDetected?: () => void,
     onTerminalComplete?: () => void,
+    stopOnAuthorityAbort = true,
 ): ManagedServiceHandle {
     let underlyingCleanupPromise: Promise<void> | null = null;
     let cleanupPromise: Promise<void> | null = null;
@@ -1527,10 +1652,11 @@ function wrapHandle(
                     result !== null
                     && typeof result === 'object'
                     && 'status' in result
-                    && result.status === 'termination_incomplete'
+                    && result.status !== 'stopped'
+                    && result.status !== 'detached'
                 ) {
                     throw new PluginError({
-                        code: 'plugin_managed_server_termination_incomplete',
+                        code: result.status === 'unsupported' ? 'plugin_managed_service_unavailable' : 'plugin_managed_server_termination_incomplete',
                         message: 'Managed server termination could not be verified',
                         retryable: true,
                     });
@@ -1598,6 +1724,8 @@ function wrapHandle(
         }
     };
     abort = (): void => {
+        requestLifetime.abort('Managed-service serving authority retired');
+        if (!stopOnAuthorityAbort) return;
         void runWithFinalization(
             async () => await stopInvalidatedManagedService(handle),
         ).catch(() => undefined);
@@ -2337,7 +2465,7 @@ function composeAbortSignals(
 }
 
 type ManagedServiceLifecycle = Readonly<{
-    kind: 'session' | 'operation' | 'occurrenceId';
+    kind: 'session' | 'operation' | 'occurrenceId' | 'project';
     identity: string;
     retainedAcrossOrdinaryGenerationRetirement: boolean;
 }>;
@@ -2346,11 +2474,21 @@ type ManagedServiceSemanticEntry = {
     readonly kind: 'service';
     readonly effectiveOwnerKey: string;
     readonly lifecycle: ManagedServiceLifecycle;
-    readonly occurrenceId: string;
-    readonly pluginId: string;
     readonly specIdentity: string;
-    readonly scope: ManagedServicesScope;
     readonly establishmentAbort: AbortController;
+    /** Consumer authority belongs to this existing physical custody entry. */
+    sharedConsumers?: {
+        path: string;
+        pending: number;
+        unsettled: Set<string>;
+        healthPaths: readonly string[];
+        claims: Map<string, Readonly<{
+            token: string;
+            capabilityPath: string;
+            purposes: readonly NonNullable<NonNullable<ManagedServicesInvocationBindingContext['requestAuth']>['qualifiedRequestAuthUses']>[number]['purpose'][];
+        }>>;
+        mutation: Promise<void>;
+    };
     establishment: Promise<ManagedServiceHandle>;
     establishmentSettled: boolean;
     waiterCount: number;
@@ -2358,10 +2496,27 @@ type ManagedServiceSemanticEntry = {
     processHandle: ManagedServiceProcessHandle | null;
     // Observation only: successful wrapping transfers all process cleanup custody to the public handle.
     readProcessSnapshot: (() => ManagedServiceProcessSnapshot) | null;
+    activityObservation?: Readonly<{ dispose(): void }>;
+    readAcquiredCustody?: () => boolean;
     establishmentCleanup: (() => Promise<void>) | null;
     credentialCleanup: CredentialBindingCleanupOwner | null;
     retirement: Promise<void> | null;
-};
+} & (
+    | Readonly<{
+        authority: 'plugin';
+        occurrenceId: string;
+        pluginId: string;
+        scope: ManagedServicesScope;
+        project?: never;
+    }>
+    | Readonly<{
+        authority: 'project';
+        occurrenceId?: never;
+        pluginId?: never;
+        scope: ProjectManagedServicesScope;
+        project: ProjectManagedServiceWitness & { handle: ProjectManagedServiceHandle | null };
+    }>
+);
 
 export type ManagedProviderExplicitStartOperationOutcome = Readonly<{
     status: 'running';
@@ -2378,6 +2533,8 @@ export type ManagedProviderExplicitStartOperationResult =
     | Readonly<{ status: 'unavailable' }>;
 
 export type ManagedProviderExplicitStartOperationInput = Readonly<{
+    /** Only admitted shared Provider claims belong to controller custody. */
+    sharedProvider?: true;
     operationId: string;
     pluginId: string;
     contributionQualifiedId: string;
@@ -2397,6 +2554,7 @@ export type ManagedProviderExplicitStartOperationInput = Readonly<{
 }>;
 
 type ManagedProviderExplicitStartOperationEntry = {
+    readonly sharedProvider?: true;
     readonly kind: 'explicitStartOperation';
     readonly operationId: string;
     readonly pluginId: string;
@@ -2477,6 +2635,18 @@ function isManagedServiceSemanticEntry(
     entry: ManagedServicesSemanticEntry,
 ): entry is ManagedServiceSemanticEntry {
     return entry.kind === 'service';
+}
+
+function isPluginManagedServiceSemanticEntry(
+    entry: ManagedServicesSemanticEntry,
+): entry is ManagedServiceSemanticEntry & { authority: 'plugin' } {
+    return isManagedServiceSemanticEntry(entry) && entry.authority === 'plugin';
+}
+
+function isProjectManagedServiceSemanticEntry(
+    entry: ManagedServicesSemanticEntry,
+): entry is ManagedServiceSemanticEntry & { authority: 'project' } {
+    return isManagedServiceSemanticEntry(entry) && entry.authority === 'project';
 }
 
 function managedProviderExplicitStartOperationEntryKey(input: Readonly<{
@@ -2587,8 +2757,12 @@ type SessionManagedServiceIdentity = Readonly<{
     | Readonly<{ instanceId: string; occurrenceId?: never }>
 );
 
-export function createManagedServicesOwner(input: Readonly<{
+export type ManagedServicesOwnerInput = Readonly<{
     processSupervisorHost: ManagedServiceProcessSupervisorHost;
+    sharedGatewayAccessDirectory?: string;
+    resolveManagedExecutable?(scope: ManagedServicesScope, executable: ManagedExecutableRef, isCurrent: () => boolean): Promise<ResolvedPluginExecutable>;
+    /** Resolves only the currently admitted manifest-declared native service role. */
+    resolveNativeLifecycle?(scope: ManagedServicesScope, instance: ManagedServiceNativeInstanceV1): Promise<ManagedServiceNativeLifecycleV1 | null>;
     fetch?: typeof globalThis.fetch;
     registerRawForRedaction?: (
         scope: ManagedServicesScope,
@@ -2614,10 +2788,25 @@ export function createManagedServicesOwner(input: Readonly<{
         isOccurrenceCurrent(): boolean;
     }>, context?: ManagedServicesInvocationBindingContext):
         ManagedServicesScope | null;
-}>): ManagedServicesInvocationOwner & Readonly<{
-    dispose(): Promise<void>;
+}>;
+
+export function createManagedServicesOwner(input: ManagedServicesOwnerInput): ManagedServicesInvocationOwner & Readonly<{
+    /** Private daemon projection of the same retained supervisor custody. */
+    activity: LiveWorkProducerV1;
+    dispose(options?: Readonly<{ preserveProjectServices?: boolean; preserveSharedProviderServices?: boolean }>): Promise<void>;
+    /** Updated only at the controller's synchronous publication boundary. */
+    configureHostBindings(bindings: Omit<ManagedServicesOwnerInput, 'processSupervisorHost' | 'sharedGatewayAccessDirectory'>): void;
+    retireSharedProviderServices(pluginIds?: readonly string[]): Promise<void>;
+    retireProjectServices(): Promise<void>;
     /** Host-private visibility for bounded custody diagnostics and owner-level tests. */
     readRetainedSemanticCustodyCount(): number;
+    superviseProject(input: ProjectManagedServiceSupervisionInput): Promise<ProjectManagedServiceHandle>;
+    stopForAccessLoss(requester: RequesterWorkAttributionV1, options?: Readonly<{
+        /** Host-private frozen signed request; never a plugin/public service input. */
+        verifyCurrentMachineAdmission: () => Promise<boolean>;
+    }>): Promise<readonly ProjectServiceAccessLossResult[]>;
+    resolveProjectService(target: Extract<LocalServiceActionTargetV1, { kind: 'managed_service' }>): ProjectManagedServiceResolution;
+    listProjectServices(options?: Readonly<{ requireComplete?: true; workspaceRoot?: string }>): readonly ProjectManagedServiceHandle[];
     bindScope(
         scope: ManagedServicesScope,
         exec: ExecService,
@@ -2653,6 +2842,8 @@ export function createManagedServicesOwner(input: Readonly<{
     }>): Promise<Readonly<{
         materialization: AgentProviderBindingMaterializationV1;
         redactionValues: readonly string[];
+        /** Host-private exact rendered binding; never a plugin result. */
+        httpBinding: Readonly<{ endpointUrl: string; headers: Readonly<Record<string, string>> }>;
         transformLaunchEnvironment(
             environment: Readonly<Record<string, string>>,
         ): Readonly<Record<string, string>>;
@@ -2674,13 +2865,49 @@ export function createManagedServicesOwner(input: Readonly<{
         string,
         ManagedServicesSemanticEntry
     >();
+    const activityListeners = new Set<() => void>();
+    const notifyActivity = (): void => {
+        for (const listener of activityListeners) {
+            try { listener(); } catch { /* Observation cannot alter service custody. */ }
+        }
+    };
+    const observeServiceProcess = (entry: ManagedServiceSemanticEntry, process: ManagedServiceProcessHandle): void => {
+        entry.activityObservation?.dispose();
+        entry.activityObservation = process.observe?.(notifyActivity);
+        notifyActivity();
+    };
+    const activity: LiveWorkProducerV1 = Object.freeze({
+        read(): Omit<LiveWorkInventoryV1, 'idleSince'> {
+            const items: LiveWorkItemV1[] = [...semanticEntries.values()].map(entry => {
+                if (!isManagedServiceSemanticEntry(entry)) return {
+                    category: 'service', ownerRef: entry.operationId,
+                    attribution: { kind: 'unknown' }, state: 'unknown',
+                };
+                const snapshot = entry.readProcessSnapshot?.();
+                return {
+                    category: 'service', ownerRef: snapshot?.instanceId ?? entry.effectiveOwnerKey,
+                    attribution: isProjectManagedServiceSemanticEntry(entry) ? entry.project.requester : { kind: 'unknown' },
+                    // Health/access retirement is not process exit. Only the supervisor's stopped fact settles custody.
+                    state: snapshot?.state === 'stopped' ? 'settled' : snapshot ? 'active'
+                        : !entry.establishmentSettled ? 'active' : 'unknown',
+                };
+            });
+            return { items, coverage: 'complete' };
+        },
+        subscribe(listener: () => void): () => void {
+            activityListeners.add(listener);
+            return () => { activityListeners.delete(listener); };
+        },
+    });
     let permanentRetirementStarted = false;
+    let projectRetirementStarted = false;
+    let sharedProviderRetirementStarted = false;
     const resolveSessionManagedServiceEntry = (
         identity: SessionManagedServiceIdentity,
-    ): ManagedServiceSemanticEntry | null => {
+    ): (ManagedServiceSemanticEntry & { authority: 'plugin' }) | null => {
         if (permanentRetirementStarted) return null;
-        const matchesIdentity = (entry: ManagedServicesSemanticEntry): entry is ManagedServiceSemanticEntry => (
-            isManagedServiceSemanticEntry(entry)
+        const matchesIdentity = (entry: ManagedServicesSemanticEntry): entry is ManagedServiceSemanticEntry & { authority: 'plugin' } => (
+            isPluginManagedServiceSemanticEntry(entry)
             && !entry.terminal
             && entry.lifecycle.kind === 'session'
             && entry.scope.sessionId === identity.sessionId
@@ -2695,7 +2922,7 @@ export function createManagedServicesOwner(input: Readonly<{
             }));
             return entry && matchesIdentity(entry) ? entry : null;
         }
-        const matches = [...semanticEntries.entries()].filter((candidate): candidate is [string, ManagedServiceSemanticEntry] => {
+        const matches = [...semanticEntries.entries()].filter((candidate): candidate is [string, ManagedServiceSemanticEntry & { authority: 'plugin' }] => {
             const [key, entry] = candidate;
             if (!matchesIdentity(entry)) return false;
             const snapshot = entry.readProcessSnapshot?.();
@@ -2709,8 +2936,8 @@ export function createManagedServicesOwner(input: Readonly<{
         });
         return matches.length === 1 ? matches[0]![1] : null;
     };
-    const assertAcceptingSupervision = (): void => {
-        if (permanentRetirementStarted) {
+    const assertAcceptingSupervision = (sharedProvider = false): void => {
+        if (sharedProvider ? sharedProviderRetirementStarted : permanentRetirementStarted) {
             return fail(
                 'plugin_managed_service_unavailable',
                 'Managed-service owner is permanently retired',
@@ -2721,9 +2948,14 @@ export function createManagedServicesOwner(input: Readonly<{
     const removeSemanticEntry = (
         entry: ManagedServicesSemanticEntry,
     ): void => {
+        if (isManagedServiceSemanticEntry(entry)) {
+            entry.activityObservation?.dispose();
+            entry.activityObservation = undefined;
+        }
         for (const [key, candidate] of semanticEntries) {
             if (candidate === entry) semanticEntries.delete(key);
         }
+        notifyActivity();
     };
     const releaseEntryCredentialCleanup = async (
         entry: ManagedServiceSemanticEntry,
@@ -2755,6 +2987,11 @@ export function createManagedServicesOwner(input: Readonly<{
         }
         if (entry.processHandle === handle) {
             entry.processHandle = null;
+            // A retained credential-cleanup failure does not keep an observer
+            // attached to a process whose physical handle was released.
+            const activityObservation = entry.activityObservation;
+            activityObservation?.dispose();
+            if (entry.activityObservation === activityObservation) entry.activityObservation = undefined;
         }
     };
     const releaseEntryEstablishmentCleanup = async (
@@ -2866,9 +3103,9 @@ export function createManagedServicesOwner(input: Readonly<{
             contributionQualifiedId: string;
             occurrenceId: string;
         }>,
-    ): readonly ManagedServiceSemanticEntry[] => (
+    ): readonly (ManagedServiceSemanticEntry & { authority: 'plugin' })[] => (
         [...semanticEntries.values()]
-            .filter(isManagedServiceSemanticEntry)
+            .filter(isPluginManagedServiceSemanticEntry)
             .filter((entry) => (
                 entry.scope.operationId === operation.operationId
                 && entry.pluginId === operation.pluginId
@@ -2956,17 +3193,141 @@ export function createManagedServicesOwner(input: Readonly<{
         }
         await retireExplicitStartOperation(entry);
     };
-    const bindScope = (
+    const acquireSharedConsumer = async (
+        entry: ManagedServiceSemanticEntry,
         scope: ManagedServicesScope,
+        context: ManagedServicesInvocationBindingContext,
+        signal?: AbortSignal,
+    ): Promise<ManagedServiceHandle> => {
+        const census = entry.sharedConsumers!;
+        census.pending += 1;
+        let physical: ManagedServiceHandle;
+        try {
+            physical = await waitForManagedServiceEstablishment(entry, signal);
+        } catch (error) {
+            census.pending -= 1;
+            throw error;
+        }
+        const serialize = async (effect: () => Promise<void>): Promise<void> => {
+            const mutation = census.mutation.then(effect);
+            census.mutation = mutation.catch(() => undefined);
+            await mutation;
+        };
+        const publish = () => replacePrivateBearerFile({
+            path: census.path,
+            contents: JSON.stringify({ v: 1, consumers: [...census.claims.values()] }),
+        });
+        const token = createPrivateBearerCredential();
+        let active = true;
+        const lifetime = new AbortController();
+        let cleanup: Promise<void> | null = null;
+        const isCurrent = () => active && !entry.terminal
+            && !scope.signal?.aborted && !signal?.aborted
+            && readsCurrent(scope.isOccurrenceCurrent)
+            && readsCurrent(context.managedProvider!.isCurrent)
+            && readsCurrent(context.requestAuth!.isCurrent);
+        try {
+            await serialize(async () => {
+                census.pending -= 1;
+                if (!isCurrent()) return requestUnavailable('Managed Provider consumer authority is unavailable');
+                census.claims.set(token, {
+                    token,
+                    capabilityPath: context.requestAuth!.capabilityPath,
+                    purposes: [...new Map(context.requestAuth!.qualifiedRequestAuthUses!.map(({ purpose }) => (
+                        [qualifiedPurposeKey(purpose), purpose] as const
+                    ))).values()],
+                });
+                try { await publish(); } catch (error) { census.claims.delete(token); throw error; }
+            });
+        } catch (error) {
+            if (census.claims.size === 0 && census.pending === 0 && census.unsettled.size === 0) await retireEntry(entry);
+            throw error;
+        }
+        const release = (): Promise<void> => {
+            active = false;
+            lifetime.abort('Managed Provider consumer retired');
+            if (cleanup) return cleanup;
+            cleanup = serialize(async () => {
+                census.claims.delete(token);
+                census.unsettled.add(token);
+                await publish();
+                // Revocation precedes settlement. The wrapper owns complete
+                // HTTP/stream/WebSocket lifetime, including requests made by
+                // an Agent rather than through this host request adapter.
+                if (entry.terminal) await retireEntry(entry);
+                // A hard source fence may have already retired this exact
+                // physical process. Its canonical stopped witness settles all
+                // ingress; stale HTTP authority is neither needed nor usable.
+                const physicallySettled = entry.terminal && entry.readProcessSnapshot?.().state === 'stopped';
+                if (!physicallySettled) {
+                    const settled = await physical.request({
+                        pathAndQuery: '/_happier/consumer-access/settle', method: 'POST',
+                        headers: { 'content-type': 'application/json' },
+                        body: Buffer.from(JSON.stringify({ token })),
+                    });
+                    await settled.body?.cancel();
+                    if (settled.status !== 200) {
+                        return requestUnavailable('Managed Provider consumer settlement is unavailable');
+                    }
+                }
+                census.unsettled.delete(token);
+                if (census.claims.size === 0 && census.pending === 0 && census.unsettled.size === 0) await retireEntry(entry);
+            }).catch(error => { cleanup = null; throw error; });
+            return cleanup;
+        };
+        const physicalFacts = endpointAccessByService.get(physical)!;
+        const credential = renderHostClientCredential(physicalFacts.clientAccess, token)!;
+        const consumer: ManagedServiceHandle = Object.freeze({
+            snapshot: () => active ? physical.snapshot() : { ...physical.snapshot(), state: 'stopped' as const, baseUrl: null },
+            observe: physical.observe,
+            async waitUntilHealthy(options?: Parameters<ManagedServiceHandle['waitUntilHealthy']>[0]) {
+                if (!isCurrent()) return requestUnavailable('Managed Provider consumer authority is unavailable');
+                return await physical.waitUntilHealthy(options);
+            },
+            async request(request: ManagedServiceRequest) {
+                if (!isCurrent()) return requestUnavailable('Managed Provider consumer authority is unavailable');
+                const normalized = normalizeManagedServiceRequest(request);
+                if (census.healthPaths.includes(normalized.pathAndQuery)) return await physical.request(request);
+                const endpoint = readHealthyServiceEndpoint(physical);
+                if (!endpoint) return requestUnavailable('Managed Provider endpoint is unavailable');
+                const current = () => isCurrent() && readHealthyServiceEndpoint(physical)?.baseUrl.toString() === endpoint.baseUrl.toString();
+                return await executeManagedServiceFetch({
+                    fetch: hostFetch,
+                    target: resolveManagedServiceRequestTarget(endpoint.baseUrl, normalized.pathAndQuery),
+                    init: {
+                        method: normalized.method,
+                        headers: mergeManagedServiceRequestHeaders(normalized.headers, { [credential.httpHeader!.name]: credential.httpHeader!.value }),
+                        ...(normalized.body === undefined ? {} : { body: Uint8Array.from(normalized.body) }),
+                    },
+                    signals: [lifetime.signal, scope.signal, signal, normalized.signal],
+                    ...(normalized.signal ? { callerSignal: normalized.signal } : {}),
+                    timeoutMs: normalized.timeoutMs,
+                    isCurrent: current,
+                });
+            },
+            async stop() { await release(); return { status: 'stopped' as const }; },
+            dispose: release,
+        });
+        endpointAccessByService.set(consumer, {
+            ...physicalFacts,
+            scope,
+            binding: { ...context.managedProvider!, isCurrent },
+            credential,
+        });
+        input.registerRawForRedaction?.(scope, token);
+        return consumer;
+    };
+    const bindScope = (
+        suppliedScope: ManagedServicesScope,
         exec: ExecService,
         suppliedContext: Partial<
             ManagedServicesInvocationBindingContext
         > = {},
     ): ManagedServices => {
         const dependencies = typeof input.dependencies === 'function'
-            ? input.dependencies(scope)
+            ? input.dependencies(suppliedScope)
             : input.dependencies;
-        const context: ManagedServicesInvocationBindingContext =
+        const suppliedBindingContext: ManagedServicesInvocationBindingContext =
             Object.freeze({
                 connectedAccounts:
                     suppliedContext.connectedAccounts ?? null,
@@ -2979,27 +3340,82 @@ export function createManagedServicesOwner(input: Readonly<{
                 requestAuth:
                     suppliedContext.requestAuth ?? null,
             });
-        const processSupervisor = input.processSupervisorHost.bind({
-            occurrenceId: scope.occurrenceId,
-            ...(scope.sourceCustody
-                ? { sourceCustody: scope.sourceCustody }
-                : {}),
-            pluginId: scope.pluginId,
-            contributionId: scope.contributionQualifiedId,
-            ...(scope.sessionId ? { sessionId: scope.sessionId } : {}),
-            ...(scope.operationId ? { operationId: scope.operationId } : {}),
-            isOccurrenceCurrent: scope.isOccurrenceCurrent,
-            exec,
-        });
-        return Object.freeze({
+        const services: ManagedServices = Object.freeze({
             dependencies,
             async supervise(spec, options) {
-                assertAcceptingSupervision();
-                const normalizedSpec = normalizeManagedServiceSpec(spec);
-                const requestAuth = validateRequestAuth(
+                assertAcceptingSupervision('requestAuth' in spec && spec.requestAuth?.kind === 'connectedAccountConsumerAccessPath');
+                let scope = suppliedScope;
+                let context = suppliedBindingContext;
+                let normalizedSpec = normalizeManagedServiceSpec(spec);
+                let requestAuth = validateRequestAuth(
                     normalizedSpec,
                     context,
                 );
+                let sharedConsumers: ManagedServiceSemanticEntry['sharedConsumers'];
+                if ('requestAuth' in normalizedSpec && normalizedSpec.requestAuth?.kind === 'connectedAccountConsumerAccessPath') {
+                    const gateway = context.managedProvider?.sharedGateway;
+                    const isPhysicalOccurrenceCurrent = context.managedProvider?.isPhysicalOccurrenceCurrent;
+                    if (!gateway || !isPhysicalOccurrenceCurrent || !context.requestAuth?.qualifiedRequestAuthUses?.length || !input.sharedGatewayAccessDirectory
+                        || input.processSupervisorHost.custodyOwner !== 'daemon'
+                        || normalizedSpec.mode.kind !== 'spawn'
+                        || normalizedSpec.clientAccess?.kind !== 'hostBearer'
+                        || (normalizedSpec.credentialBindings?.length ?? 0) !== 0
+                        || Object.values(gateway).some(value => typeof value !== 'string' || !value || value.trim() !== value || CONTROL_CHARACTER_PATTERN.test(value))) {
+                        return requestUnavailable('Shared managed Provider custody is unavailable');
+                    }
+                    assertScopeCurrent(scope);
+                    validateCredentialBindings(normalizedSpec, requestAuth, context);
+                    const physicalOperationId = `sharedGateway:${JSON.stringify([gateway.homeId, gateway.accountId, gateway.connectionId, gateway.machineId])}`;
+                    scope = {
+                        occurrenceId: scope.occurrenceId,
+                        ...(scope.sourceCustody ? { sourceCustody: scope.sourceCustody } : {}),
+                        pluginId: scope.pluginId, contributionQualifiedId: scope.contributionQualifiedId,
+                        operationId: physicalOperationId,
+                        independentInvocation: true,
+                        // Generation retirement still belongs to semanticEntries;
+                        // an individual consumer's abort is not physical custody.
+                        isOccurrenceCurrent: () => !sharedProviderRetirementStarted && readsCurrent(isPhysicalOccurrenceCurrent),
+                    };
+                    const prior = semanticEntries.get(managedServiceSemanticEntryKey({
+                        lifecycleIdentity: `operation:${physicalOperationId}`,
+                        pluginId: scope.pluginId, contributionQualifiedId: scope.contributionQualifiedId,
+                        serviceId: normalizedSpec.id, occurrenceId: scope.occurrenceId,
+                    }));
+                    sharedConsumers = prior && isManagedServiceSemanticEntry(prior)
+                        ? prior.sharedConsumers : undefined;
+                    sharedConsumers ??= {
+                        path: join(input.sharedGatewayAccessDirectory, createPrivateBearerCredential(), 'request-auth', 'consumers.json'),
+                        pending: 0, unsettled: new Set(),
+                        healthPaths: normalizedSpec.healthCheck?.kind === 'http'
+                            ? normalizedSpec.healthCheck.target ? [normalizedSpec.healthCheck.target.path]
+                                : (normalizedSpec.healthCheck.alternatives ?? []).map(probe => probe.target.path)
+                            : [],
+                        claims: new Map(), mutation: Promise.resolve(),
+                    };
+                    const { requestAuth: declaration, ...physicalSpec } = normalizedSpec;
+                    normalizedSpec = normalizeManagedServiceSpec({
+                        ...physicalSpec,
+                        mode: { ...normalizedSpec.mode, launch: {
+                            ...normalizedSpec.mode.launch,
+                            env: { ...normalizedSpec.mode.launch.env, [declaration.injectEnvironmentKey]: sharedConsumers.path },
+                        } },
+                    });
+                    context = { ...context, requestAuth: null,
+                        managedProvider: { ...context.managedProvider!, isCurrent: scope.isOccurrenceCurrent } };
+                    requestAuth = null;
+                }
+                const processSupervisor = input.processSupervisorHost.bind({
+                    occurrenceId: scope.occurrenceId,
+                    ...(scope.sourceCustody ? { sourceCustody: scope.sourceCustody } : {}),
+                    pluginId: scope.pluginId, contributionId: scope.contributionQualifiedId,
+                    ...(scope.sessionId ? { sessionId: scope.sessionId } : {}),
+                    ...(scope.operationId ? { operationId: scope.operationId } : {}),
+                    ...(scope.independentInvocation ? { independentInvocation: true as const } : {}),
+                    ...(scope.independentInvocation && input.resolveManagedExecutable ? {
+                        resolveManagedExecutable: (executable: ManagedExecutableRef, isCurrent: () => boolean) => input.resolveManagedExecutable!(scope, executable, isCurrent),
+                    } : {}),
+                    isOccurrenceCurrent: scope.isOccurrenceCurrent, exec,
+                });
                 const clientAccess = validateClientAccess(
                     normalizedSpec,
                     scope,
@@ -3101,26 +3517,28 @@ export function createManagedServicesOwner(input: Readonly<{
                             'Managed-service handle is terminal and cannot be reused',
                         );
                     }
-                    return await waitForManagedServiceEstablishment(
-                        existing,
-                        options?.signal,
-                    );
+                    return sharedConsumers
+                        ? await acquireSharedConsumer(existing, suppliedScope, suppliedBindingContext, options?.signal)
+                        : await waitForManagedServiceEstablishment(existing, options?.signal);
                 }
 
                 const priorEffectiveOwners = [...semanticEntries.values()]
-                    .filter(isManagedServiceSemanticEntry)
+                    .filter(isPluginManagedServiceSemanticEntry)
                     .filter((entry) => (
                         entry.effectiveOwnerKey === effectiveOwnerKey
                         && entry.occurrenceId !== scope.occurrenceId
-                        && !entry.terminal
                     ));
                 for (const prior of priorEffectiveOwners) {
                     if (
-                        prior.lifecycle.kind !== 'session'
-                        && !readsCurrent(prior.scope.isOccurrenceCurrent)
+                        prior.terminal
+                        || (prior.lifecycle.kind !== 'session'
+                            && !readsCurrent(prior.scope.isOccurrenceCurrent))
                     ) {
                         await retireEntry(prior);
-                        continue;
+                        // Settlement yields to concurrent admissions. Re-enter
+                        // the canonical acquisition so they share whichever
+                        // exact entry and private census now owns this scope.
+                        return await services.supervise(spec, options);
                     }
                     return fail(
                         'plugin_managed_service_unavailable',
@@ -3128,12 +3546,13 @@ export function createManagedServicesOwner(input: Readonly<{
                     );
                 }
 
-                assertAcceptingSupervision();
+                assertAcceptingSupervision(Boolean(sharedConsumers));
 
                 const credentialCleanup =
                     createCredentialBindingCleanupOwner();
                 const entry: ManagedServiceSemanticEntry = {
                     kind: 'service',
+                    authority: 'plugin',
                     effectiveOwnerKey,
                     lifecycle,
                     occurrenceId: scope.occurrenceId,
@@ -3150,6 +3569,7 @@ export function createManagedServicesOwner(input: Readonly<{
                     establishmentCleanup: null,
                     credentialCleanup,
                     retirement: null,
+                    ...(sharedConsumers ? { sharedConsumers } : {}),
                 };
                 entry.establishment = (async () => {
                     const establishmentSignals = composeAbortSignals([
@@ -3162,7 +3582,11 @@ export function createManagedServicesOwner(input: Readonly<{
                             : createHostClientCredential(clientAccess);
                     let materialized: MaterializedCredentialSpec | null = null;
                     try {
-                        assertAcceptingSupervision();
+                        assertAcceptingSupervision(Boolean(sharedConsumers));
+                        if (sharedConsumers) await replacePrivateBearerFile({
+                            path: sharedConsumers.path,
+                            contents: JSON.stringify({ v: 1, consumers: [] }),
+                        });
                         assertScopeCurrent(scope);
                         if (context.managedProvider) {
                             assertManagedProviderCurrent(
@@ -3177,7 +3601,7 @@ export function createManagedServicesOwner(input: Readonly<{
                             cleanup: credentialCleanup,
                             signal: establishmentSignals.signal,
                         });
-                        assertAcceptingSupervision();
+                        assertAcceptingSupervision(Boolean(sharedConsumers));
                         assertScopeCurrent(scope);
                         if (context.managedProvider) {
                             assertManagedProviderCurrent(
@@ -3273,6 +3697,13 @@ export function createManagedServicesOwner(input: Readonly<{
                                     });
                                 }
                                 : undefined;
+                        const nativeLifecycle = normalizedSpec.mode.kind === 'native'
+                            ? await input.resolveNativeLifecycle?.(scope, normalizedSpec.mode.instance)
+                            : undefined;
+                        assertScopeCurrent(scope);
+                        if (normalizedSpec.mode.kind === 'native' && !nativeLifecycle) {
+                            return fail('plugin_managed_service_unavailable', 'Declared native service lifecycle is unavailable');
+                        }
                         const handle = await processSupervisor.supervise(
                             translateSpec(
                                 normalizedSpec,
@@ -3280,6 +3711,7 @@ export function createManagedServicesOwner(input: Readonly<{
                                 requestAuth,
                                 staticClientCredential,
                                 resolveCurrentHealthHeaders,
+                                nativeLifecycle ?? undefined,
                             ),
                             {
                                 signal: establishmentSignals.signal,
@@ -3302,6 +3734,7 @@ export function createManagedServicesOwner(input: Readonly<{
                         );
                         entry.processHandle = handle;
                         entry.readProcessSnapshot = () => handle.snapshot();
+                        observeServiceProcess(entry, handle);
                         entry.establishmentCleanup = null;
                         if (
                             entry.establishmentAbort.signal.aborted
@@ -3462,7 +3895,7 @@ export function createManagedServicesOwner(input: Readonly<{
                             handle,
                             cleanupCredentials,
                             Object.freeze({
-                                status: normalizedSpec.mode.kind === 'spawn'
+                                status: normalizedSpec.mode.kind !== 'attach'
                                     ? 'stopped'
                                     : 'detached',
                             }),
@@ -3566,6 +3999,7 @@ export function createManagedServicesOwner(input: Readonly<{
                     }
                 })().finally(() => {
                     entry.establishmentSettled = true;
+                    notifyActivity();
                 }).catch((error) => {
                     entry.terminal = true;
                     if (
@@ -3584,15 +4018,350 @@ export function createManagedServicesOwner(input: Readonly<{
                     return translateError(error);
                 });
                 semanticEntries.set(entryKey, entry);
-                return await waitForManagedServiceEstablishment(
-                    entry,
-                    options?.signal,
-                );
+                notifyActivity();
+                return sharedConsumers
+                    ? await acquireSharedConsumer(entry, suppliedScope, suppliedBindingContext, options?.signal)
+                    : await waitForManagedServiceEstablishment(entry, options?.signal);
             },
         } satisfies ManagedServices);
+        return services;
+    };
+    const projectEntries = () => [...semanticEntries.values()]
+        .filter(isProjectManagedServiceSemanticEntry);
+    const listProjectServices = (options?: Readonly<{ requireComplete?: true; workspaceRoot?: string }>): readonly ProjectManagedServiceHandle[] => {
+        const matching = projectEntries().filter(entry => !options?.workspaceRoot
+            || isWorkspacePathWithin(options.workspaceRoot, entry.project.cwd));
+        if (options?.requireComplete && (projectRetirementStarted
+            || matching.some(entry => !entry.project.handle || !entry.project.handle.isCurrent()))) {
+            return fail('plugin_managed_service_unavailable', 'Project service native custody is unsettled');
+        }
+        return Object.freeze(matching.flatMap(entry => entry.project.handle ? [entry.project.handle] : []));
+    };
+    const superviseProject = async (
+        request: ProjectManagedServiceSupervisionInput,
+    ): Promise<ProjectManagedServiceHandle> => {
+        const assertAcceptingProjectSupervision = (): void => {
+            if (projectRetirementStarted) {
+                fail('plugin_managed_service_unavailable', 'Project service custody owner is retired');
+            }
+        };
+        assertAcceptingProjectSupervision();
+        if (request.signal?.aborted) {
+            return fail('plugin_operation_aborted', 'Project service supervision was aborted');
+        }
+        if (
+            input.processSupervisorHost.custodyOwner !== 'daemon'
+            || !readsCurrent(request.isCurrent)
+        ) {
+            return fail('plugin_managed_service_unavailable', 'Current Project service admission is unavailable');
+        }
+        const workspace = Object.freeze(WorkspaceRefV1Schema.parse(request.workspace));
+        const declaration = Object.freeze(ProjectServiceDeclarationRefV1Schema.parse(request.declaration));
+        const requester = Object.freeze(RequesterWorkAttributionV1Schema.parse(request.requester));
+        if (
+            !isAbsolute(request.cwd)
+            || declaration.workspaceRefId !== workspace.id
+            || requester.serverId !== workspace.serverId
+            || requester.machineId !== workspace.machineId
+            || !request.serviceId.trim()
+            || !request.specIdentity.trim()
+        ) {
+            return fail('plugin_managed_service_unavailable', 'Project service provenance does not match its admitted Workspace');
+        }
+        const witness = Object.freeze({
+            workspace,
+            declaration,
+            requester,
+            cwd: request.cwd,
+            serviceId: request.serviceId,
+        });
+        const entryKey = JSON.stringify([
+            'project-service', workspace.serverId, workspace.machineId,
+            workspace.id, declaration, request.cwd,
+        ]);
+        const existing = semanticEntries.get(entryKey);
+        if (existing) {
+            if (
+                !isProjectManagedServiceSemanticEntry(existing)
+                || existing.specIdentity !== request.specIdentity
+            ) {
+                return fail('plugin_managed_service_spec_conflict', 'A different reviewed service effect owns this Project declaration');
+            }
+            if (existing.terminal || existing.establishmentAbort.signal.aborted) {
+                await retireEntry(existing);
+                return await superviseProject(request);
+            }
+            await waitForManagedServiceEstablishment(existing, request.signal);
+            if (!existing.project.handle || !readsCurrent(request.isCurrent)) {
+                return fail('plugin_managed_service_unavailable', 'Project service admission changed');
+            }
+            return existing.project.handle;
+        }
+        const lifetime = new AbortController();
+        const isCurrent = (): boolean => (
+            !lifetime.signal.aborted && readsCurrent(request.isCurrent)
+        );
+        const scope: ProjectManagedServicesScope = {
+            signal: lifetime.signal,
+            isOccurrenceCurrent: isCurrent,
+        };
+        const entry: ManagedServiceSemanticEntry & { authority: 'project' } = {
+            kind: 'service',
+            authority: 'project',
+            effectiveOwnerKey: entryKey,
+            lifecycle: {
+                kind: 'project',
+                identity: entryKey,
+                retainedAcrossOrdinaryGenerationRetirement: false,
+            },
+            scope,
+            specIdentity: request.specIdentity,
+            project: { ...witness, handle: null },
+            establishmentAbort: lifetime,
+            establishment: Promise.resolve(null as never),
+            establishmentSettled: false,
+            waiterCount: 0,
+            terminal: false,
+            processHandle: null,
+            readProcessSnapshot: null,
+            establishmentCleanup: null,
+            credentialCleanup: null,
+            retirement: null,
+        };
+        const assertCurrent = (): void => {
+            assertAcceptingProjectSupervision();
+            if (!isCurrent()) {
+                fail('plugin_managed_service_unavailable', 'Project service admission changed');
+            }
+        };
+        entry.establishment = (async () => {
+            assertCurrent();
+            const commonSpec = {
+                id: request.serviceId,
+                startupTimeoutMs: request.processSpec.startupTimeoutMs,
+                ...(request.processSpec.healthCheck ? { healthCheck: request.processSpec.healthCheck } : {}),
+                watchdog: request.processSpec.watchdog ?? {
+                    intervalMs: MANAGED_SERVICE_NUMERIC_CONTRACT.healthIntervalMs.defaultValue,
+                    missedIntervals: MANAGED_SERVICE_NUMERIC_CONTRACT.consecutiveFailures.defaultValue,
+                },
+                authorizeLaunch: async (launchInput: Parameters<ProjectManagedServiceLaunchAuthorizer>[0]) => {
+                    assertCurrent();
+                    const authorized = await request.authorizeLaunch(launchInput);
+                    try {
+                        assertCurrent();
+                    } catch (error) {
+                        await authorized.release();
+                        throw error;
+                    }
+                    return authorized;
+                },
+            };
+            const processSpec: ManagedServiceProcessSpec = request.processSpec.mode.kind === 'native'
+                ? { ...commonSpec, mode: request.processSpec.mode }
+                : { ...commonSpec, mode: request.processSpec.mode };
+            const processSupervisor = input.processSupervisorHost.bind({
+                kind: 'project',
+                isOccurrenceCurrent: isCurrent,
+            });
+            const process = await processSupervisor.supervise(processSpec, {
+                signal: lifetime.signal,
+                registerEstablishmentCleanup(cleanup, observation) {
+                    entry.establishmentCleanup = cleanup;
+                    entry.readProcessSnapshot = observation.snapshot;
+                    entry.readAcquiredCustody = observation.hasAcquiredCustody;
+                    return Object.freeze({
+                        release() {
+                            if (entry.establishmentCleanup === cleanup) {
+                                entry.establishmentCleanup = null;
+                            }
+                        },
+                    });
+                },
+            });
+            entry.processHandle = process;
+            entry.readProcessSnapshot = () => process.snapshot();
+            observeServiceProcess(entry, process);
+            entry.establishmentCleanup = null;
+            try {
+                assertCurrent();
+            } catch (error) {
+                await releaseEntryProcessHandle(entry, true);
+                throw error;
+            }
+            const wrapped = wrapHandle(
+                process,
+                async () => {},
+                { status: 'stopped' },
+                request.processSpec.startupTimeoutMs,
+                async (rawRequest, requestLifetime) => {
+                    const normalized = normalizeManagedServiceRequest(rawRequest);
+                    const endpoint = readHealthyServiceProcessEndpoint(process);
+                    if (!endpoint) {
+                        return requestUnavailable('Project service endpoint is unavailable');
+                    }
+                    const dispatchCurrent = (): boolean => {
+                        const current = readHealthyServiceProcessEndpoint(process);
+                        return isCurrent()
+                            && !requestLifetime.aborted
+                            && current !== null
+                            && current.instanceId === endpoint.instanceId
+                            && current.baseUrl.toString() === endpoint.baseUrl.toString();
+                    };
+                    return await executeManagedServiceFetch({
+                        fetch: hostFetch,
+                        target: resolveManagedServiceRequestTarget(endpoint.baseUrl, normalized.pathAndQuery),
+                        init: {
+                            method: normalized.method,
+                            headers: normalized.headers,
+                            ...(normalized.body ? { body: Uint8Array.from(normalized.body) } : {}),
+                        },
+                        signals: [lifetime.signal, requestLifetime, normalized.signal],
+                        ...(normalized.signal ? { callerSignal: normalized.signal } : {}),
+                        timeoutMs: normalized.timeoutMs,
+                        isCurrent: dispatchCurrent,
+                    });
+                },
+                lifetime.signal,
+                () => {
+                    entry.terminal = true;
+                },
+                () => {
+                    lifetime.abort('Project service custody settled');
+                    removeSemanticEntry(entry);
+                },
+                // The Project lifetime retires serving immediately. Its trusted
+                // custody owner performs Stop after the final Home recheck.
+                false,
+            );
+            const handle = Object.freeze({
+                ...wrapped,
+                ...witness,
+                instanceId: process.snapshot().instanceId,
+                endpointKind: request.processSpec.mode.kind === 'native' ? 'native' as const
+                    : request.processSpec.mode.endpointNone ? 'none' as const : 'http' as const,
+                retirementSignal: lifetime.signal,
+                isCurrent,
+            });
+            entry.project.handle = handle;
+            entry.processHandle = null;
+            return handle;
+        })().finally(() => {
+            entry.establishmentSettled = true;
+            notifyActivity();
+        }).catch((error) => {
+            entry.terminal = true;
+            if (!entry.processHandle && !entry.establishmentCleanup) {
+                removeSemanticEntry(entry);
+            }
+            return translateError(error);
+        });
+        semanticEntries.set(entryKey, entry);
+        notifyActivity();
+        await waitForManagedServiceEstablishment(entry, request.signal);
+        if (!entry.project.handle) {
+            return fail('plugin_managed_service_unavailable', 'Project service establishment is unavailable');
+        }
+        return entry.project.handle;
     };
     return Object.freeze({
+        activity,
         readRetainedSemanticCustodyCount: () => semanticEntries.size,
+        superviseProject,
+        listProjectServices,
+        resolveProjectService(target: Extract<LocalServiceActionTargetV1, { kind: 'managed_service' }>) {
+            const handle = listProjectServices().find(candidate => candidate.instanceId === target.managedServiceId);
+            if (!handle) {
+                return Object.freeze({ status: 'unknown' as const });
+            }
+            const declaration = ProjectServiceDeclarationRefV1Schema.safeParse(target.declaration);
+            if (
+                target.machineId !== handle.workspace.machineId
+                || target.cwd !== handle.cwd
+                || !declaration.success
+                || JSON.stringify(declaration.data) !== JSON.stringify(handle.declaration)
+                || target.workspaceId !== undefined && target.workspaceId !== handle.workspace.id
+                || target.sessionId !== undefined
+            ) {
+                return Object.freeze({ status: 'mismatch' as const });
+            }
+            return Object.freeze({ status: 'found' as const, handle });
+        },
+        async stopForAccessLoss(requester: RequesterWorkAttributionV1, options?: Readonly<{
+            verifyCurrentMachineAdmission: () => Promise<boolean>;
+        }>) {
+            const matching = projectEntries().filter(entry => (
+                entry.project.requester.serverId === requester.serverId
+                && entry.project.requester.accountId === requester.accountId
+                && entry.project.requester.machineId === requester.machineId
+                && entry.project.requester.installationId === requester.installationId
+            ));
+            return await Promise.all(matching.map(async (entry): Promise<ProjectServiceAccessLossResult> => {
+                const { handle: _handle, ...witness } = entry.project;
+                const incomplete = (): ProjectServiceAccessLossResult => {
+                    const handle = entry.project.handle;
+                    const rawSnapshot = entry.readProcessSnapshot?.();
+                    return Object.freeze({
+                        ...witness,
+                        status: 'termination_incomplete',
+                        instanceId: handle?.instanceId ?? rawSnapshot?.instanceId ?? null,
+                        snapshot: handle?.snapshot() ?? (rawSnapshot ? translateSnapshot(rawSnapshot) : null),
+                    });
+                };
+                const currentLoss = async (): Promise<boolean> => {
+                    try {
+                        return !options || await options.verifyCurrentMachineAdmission() === true;
+                    } catch {
+                        return false;
+                    }
+                };
+                if (!await currentLoss()) return incomplete();
+                entry.terminal = true;
+                entry.establishmentAbort.abort('Requester lost final effective Machine access');
+                try {
+                    const established = await entry.establishment.catch(() => null);
+                    if (!await currentLoss()) return incomplete();
+                    if (established && entry.project.handle) {
+                        await established.stop();
+                        if (!await currentLoss()) return incomplete();
+                        return Object.freeze({
+                            ...witness,
+                            status: 'stopped',
+                            instanceId: entry.project.handle.instanceId,
+                            snapshot: established.snapshot(),
+                        });
+                    }
+                    await retireEntry(entry);
+                    if (!await currentLoss()) return incomplete();
+                    if (entry.readAcquiredCustody?.()) {
+                        const snapshot = entry.readProcessSnapshot?.();
+                        if (!snapshot || snapshot.state !== 'stopped') {
+                            return Object.freeze({
+                                ...witness,
+                                status: 'termination_incomplete',
+                                instanceId: snapshot?.instanceId ?? null,
+                                snapshot: snapshot ? translateSnapshot(snapshot) : null,
+                            });
+                        }
+                        return Object.freeze({
+                            ...witness,
+                            status: 'stopped',
+                            instanceId: snapshot.instanceId,
+                            snapshot: translateSnapshot(snapshot),
+                        });
+                    }
+                    return Object.freeze({ ...witness, status: 'cancelled_preparation', instanceId: null });
+                } catch (error) {
+                    const handle = entry.project.handle;
+                    return Object.freeze({
+                        ...witness,
+                        status: isPluginError(error) && error.code === 'plugin_managed_service_unavailable'
+                            ? 'unsupported' : 'termination_incomplete',
+                        instanceId: handle?.instanceId ?? entry.readProcessSnapshot?.().instanceId ?? null,
+                        snapshot: handle?.snapshot() ?? (entry.readProcessSnapshot ? translateSnapshot(entry.readProcessSnapshot()) : null),
+                    });
+                }
+            }));
+        },
         isAvailable({ occurrenceId, contributionQualifiedId }) {
             return input.resolveScope({
                 occurrenceId,
@@ -3640,7 +4409,9 @@ export function createManagedServicesOwner(input: Readonly<{
             return bindScope(scope, exec, context);
         },
         async runManagedProviderExplicitStart(operationInput) {
-            if (permanentRetirementStarted) {
+            const acceptsOperation = () => operationInput.sharedProvider
+                ? !sharedProviderRetirementStarted : !permanentRetirementStarted;
+            if (!acceptsOperation()) {
                 return Object.freeze({ status: 'unavailable' as const });
             }
             if (operationInput.retirementGroup) {
@@ -3745,7 +4516,7 @@ export function createManagedServicesOwner(input: Readonly<{
                             status: 'not_current' as const,
                         });
                     }
-                    return !permanentRetirementStarted
+                    return acceptsOperation()
                         && semanticEntries.get(entryKey) === existing
                         && readsCurrent(operationInput.isCurrent)
                         ? Object.freeze({
@@ -3788,9 +4559,13 @@ export function createManagedServicesOwner(input: Readonly<{
                 released = true;
                 entry.terminal = true;
                 abort.abort('Managed Provider explicit-start operation retired');
-                if (!entry.retirementGroup) removeSemanticEntry(entry);
+                // The canonical retirement owns removal once every closer
+                // settles. Its projection can release this claim while an
+                // earlier resource failed; keep the exact entry for retry.
+                if (!entry.retirementGroup && !entry.retirement) removeSemanticEntry(entry);
             };
             entry = {
+                ...(operationInput.sharedProvider ? { sharedProvider: true as const } : {}),
                 kind: 'explicitStartOperation',
                 operationId,
                 pluginId,
@@ -3811,7 +4586,7 @@ export function createManagedServicesOwner(input: Readonly<{
             };
             entry.establishment = Promise.resolve().then(async () => {
                 if (
-                    permanentRetirementStarted
+                    !acceptsOperation()
                     || entry.terminal
                     || !readsCurrent(operationInput.isCurrent)
                 ) {
@@ -3830,9 +4605,10 @@ export function createManagedServicesOwner(input: Readonly<{
                 throw error;
             });
             semanticEntries.set(entryKey, entry);
+            notifyActivity();
             try {
                 const value = await entry.establishment;
-                return !permanentRetirementStarted
+                return acceptsOperation()
                     && !entry.terminal
                     && semanticEntries.get(entryKey) === entry
                     && readsCurrent(operationInput.isCurrent)
@@ -3877,12 +4653,19 @@ export function createManagedServicesOwner(input: Readonly<{
             const candidates = [...semanticEntries.values()].filter(
                 (entry): entry is ManagedProviderExplicitStartOperationEntry => (
                     !isManagedServiceSemanticEntry(entry)
-                    && !entry.terminal
-                    && entry.revalidateRetainedCurrentness !== null
+                    && (entry.terminal || entry.revalidateRetainedCurrentness !== null)
                 ),
             );
             const results = await Promise.all(candidates.map(async (entry) => {
                 signal?.throwIfAborted();
+                if (semanticEntries.get(managedProviderExplicitStartOperationEntryKey(entry)) !== entry) return false;
+                // A failed closer already withdrew authority. Its exact claim
+                // remains here solely for cleanup, not another currentness
+                // decision or acquisition.
+                if (entry.terminal) {
+                    await retireExplicitStartOperation(entry);
+                    return true;
+                }
                 let current = false;
                 try {
                     const established = await entry.establishment;
@@ -4085,13 +4868,14 @@ export function createManagedServicesOwner(input: Readonly<{
             return Object.freeze({
                 access,
                 isCurrent: readsAccessCurrent,
-                cleanup() {
+                async cleanup() {
                     if (cleaned) return;
-                    cleaned = true;
                     active = false;
                     lifetime.abort(
                         'Managed Provider endpoint access retired',
                     );
+                    if (facts.binding.sharedGateway) await service.dispose();
+                    cleaned = true;
                 },
             });
         },
@@ -4137,6 +4921,7 @@ export function createManagedServicesOwner(input: Readonly<{
                             rawMaterialization,
                         ),
                     redactionValues: Object.freeze([]),
+                    httpBinding: Object.freeze({ endpointUrl, headers: Object.freeze({}) }),
                     transformLaunchEnvironment: (
                         environment: Readonly<Record<string, string>>,
                     ) => environment,
@@ -4186,11 +4971,13 @@ export function createManagedServicesOwner(input: Readonly<{
             return Object.freeze({
                 materialization: transformer.materialization,
                 redactionValues: transformer.redactionValues,
+                httpBinding: Object.freeze({ endpointUrl, headers: Object.freeze({ [credential.httpHeader!.name]: renderedCredential }) }),
                 transformLaunchEnvironment: transformer.transform,
             });
         },
         async retireGeneration(occurrenceId, pluginId) {
             const retiring = [...semanticEntries.values()].filter((entry) => {
+                if (isManagedServiceSemanticEntry(entry) ? entry.sharedConsumers !== undefined : entry.sharedProvider === true) return false;
                 if (!isManagedServiceSemanticEntry(entry)) {
                     return entry.occurrenceId === occurrenceId
                         && entry.pluginId === pluginId;
@@ -4220,14 +5007,43 @@ export function createManagedServicesOwner(input: Readonly<{
                 );
             }
         },
-        async dispose() {
+        async retireProjectServices() {
+            projectRetirementStarted = true;
+            const results = await Promise.allSettled(projectEntries().map(retireEntry));
+            const failures = flattenManagedServiceCleanupFailures(results.flatMap(result => (
+                result.status === 'rejected' ? [result.reason] : []
+            )));
+            if (failures.length > 0) {
+                throw new AggregateError(failures, 'Failed to retire Project service custody');
+            }
+        },
+        configureHostBindings(bindings) {
+            input = Object.freeze({ ...input, ...bindings });
+        },
+        async retireSharedProviderServices(pluginIds) {
+            if (!pluginIds) sharedProviderRetirementStarted = true;
+            const entries = [...semanticEntries.values()].filter(entry => (
+                (isManagedServiceSemanticEntry(entry) ? entry.sharedConsumers !== undefined : entry.sharedProvider === true)
+                && (!pluginIds || (entry.pluginId !== undefined && pluginIds.includes(entry.pluginId)))
+            ));
+            const results = await Promise.allSettled(entries.map(retireSemanticEntry));
+            const failures = flattenManagedServiceCleanupFailures(results.flatMap(result => result.status === 'rejected' ? [result.reason] : []));
+            if (failures.length > 0) throw new AggregateError(failures, 'Failed to retire shared Provider custody');
+        },
+        async dispose(options?: Readonly<{ preserveProjectServices?: boolean; preserveSharedProviderServices?: boolean }>) {
             permanentRetirementStarted = true;
-            while (semanticEntries.size > 0) {
+            if (!options?.preserveProjectServices) projectRetirementStarted = true;
+            if (!options?.preserveSharedProviderServices) sharedProviderRetirementStarted = true;
+            while (true) {
                 // Physical service custody is the leaf authority. Retire it
                 // before its explicit-start claim so two semantic entries do
                 // not concurrently join and then erase the same failed
                 // cleanup attempt.
-                const entries = [...semanticEntries.values()];
+                const entries = [...semanticEntries.values()].filter(entry => (
+                    (!options?.preserveProjectServices || !isProjectManagedServiceSemanticEntry(entry))
+                    && (!options?.preserveSharedProviderServices || !(isManagedServiceSemanticEntry(entry) ? entry.sharedConsumers !== undefined : entry.sharedProvider === true))
+                ));
+                if (entries.length === 0) break;
                 const physical = entries.filter(
                     isManagedServiceSemanticEntry,
                 );

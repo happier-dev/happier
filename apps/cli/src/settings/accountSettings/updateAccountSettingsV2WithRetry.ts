@@ -12,8 +12,9 @@ import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLo
 import { logger } from '@/ui/logger';
 import { decryptAccountSettingsCiphertext } from '@/settings/accountSettingsClient';
 import { applyAccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
-import { assertAccountWorkspaceSettingsTransition, accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateRequestSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateRequestSchema, AccountSettingsV2UpdateResponseSchema,
+  type AccountSettingsV2UpdateRequest } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { AccountSettingsPersistedObjectSchema } from '@happier-dev/protocol/account/settings/accountSettingsPersistedObject';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { resealSecretsDeepV1, unsealSecretsDeepWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
@@ -119,10 +120,10 @@ function hasOwnRecordKey(record: Readonly<Record<string, unknown>>, key: string)
 
 function mergeMutationResultWithRawBase(params: Readonly<{
   rawBase: AccountSettingsPersistedObject;
+  parsedBase: AccountSettings;
   mutatedRaw: AccountSettingsPersistedObject;
 }>): AccountSettingsPersistedObject {
-  const runtimeDefaults = accountSettingsParse({});
-  const parsedBase = accountSettingsParse(params.rawBase);
+  let runtimeDefaults: AccountSettings | undefined;
   const next: Record<string, unknown> = {};
 
   for (const [key, baseValue] of Object.entries(params.rawBase)) {
@@ -132,7 +133,7 @@ function mergeMutationResultWithRawBase(params: Readonly<{
     }
 
     const mutatedValue = params.mutatedRaw[key];
-    const parsedBaseValue = parsedBase[key];
+    const parsedBaseValue = params.parsedBase[key];
     const looksLikeParserMaterializedValue =
       !isDeepStrictEqual(baseValue, parsedBaseValue)
       && isDeepStrictEqual(mutatedValue, parsedBaseValue);
@@ -143,6 +144,7 @@ function mergeMutationResultWithRawBase(params: Readonly<{
   for (const [key, mutatedValue] of Object.entries(params.mutatedRaw)) {
     if (hasOwnRecordKey(params.rawBase, key)) continue;
 
+    runtimeDefaults ??= accountSettingsParse({});
     const isRuntimeDefaultAddition =
       hasOwnRecordKey(runtimeDefaults, key)
       && isDeepStrictEqual(mutatedValue, runtimeDefaults[key]);
@@ -185,7 +187,35 @@ function normalizeSettingsSecretsForEnvelope(params: Readonly<{
   );
 }
 
-async function parseSettingsFromContent(params: Readonly<{
+/** Preserve recorded bytes apart from the caller's explicit normalization. */
+export function sealAccountSettingsV2RawContent(params: Readonly<{
+  credentials: StoredCredentials;
+  raw: AccountSettingsPersistedObject;
+  envelopeKind: 'plain' | 'encrypted';
+  randomBytes: (n: number) => Uint8Array;
+}>): AccountSettingsStoredContentEnvelope {
+  if (params.envelopeKind === 'plain') return { t: 'plain', v: params.raw };
+  return { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
+    material: resolveMaterial(requireAccountSettingsEncryptionCredentials(params.credentials)),
+    payload: params.raw, randomBytes: params.randomBytes,
+  }) };
+}
+
+/** Composite transactions borrow the same nested SecretString and envelope writer without dispatch. */
+export function prepareAccountSettingsV2Content(params: Readonly<{
+  credentials: StoredCredentials;
+  raw: Readonly<Record<string, unknown>>;
+  envelopeKind: 'plain' | 'encrypted';
+  randomBytes?: (n: number) => Uint8Array;
+}>): AccountSettingsStoredContentEnvelope {
+  const randomBytes = params.randomBytes ?? resolveDefaultRandomBytes();
+  const raw = normalizeSettingsSecretsForEnvelope({ ...params, raw: parsePersistedAccountSettingsObject(params.raw), randomBytes });
+  if (params.envelopeKind === 'plain') assertAccountEncryptionModeAllowedByEffectiveClientRequirement('plain', accountSettingsParse(raw));
+  return sealAccountSettingsV2RawContent({ ...params, raw, randomBytes });
+}
+
+/** Recorded envelopes open in their recorded mode, independently of current Account mode. */
+export async function parseSettingsFromContent(params: Readonly<{
   content: AccountSettingsStoredContentEnvelope | null;
   credentials: StoredCredentials;
   emptyEnvelopeKind: 'plain' | 'encrypted';
@@ -220,9 +250,11 @@ async function parseSettingsFromContent(params: Readonly<{
   throw new AccountSettingsContentUnreadableError();
 }
 
+type AccountSettingsUpdateRequestV2 = Readonly<Pick<AccountSettingsV2UpdateRequest, 'expectedVersion' | 'content' | 'expectedProfileTransferRevision'>>;
+
 export type AccountSettingsUpdateV2Deps = Readonly<{
   fetchSettings?: () => Promise<{ content: AccountSettingsStoredContentEnvelope | null; version: number }>;
-  updateSettings?: (req: Readonly<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }>) => Promise<AccountSettingsV2UpdateResponse>;
+  updateSettings?: (req: AccountSettingsUpdateRequestV2) => Promise<AccountSettingsV2UpdateResponse>;
   resolveAccountEncryptionMode?: () => Promise<'plain' | 'e2ee'>;
   randomBytes?: (n: number) => Uint8Array;
   nowMs?: () => number;
@@ -238,6 +270,8 @@ type UpdateAccountSettingsV2WithRetryCommonParams = Readonly<{
   credentials: StoredCredentials;
   deps?: AccountSettingsUpdateV2Deps;
   signal?: AbortSignal;
+  /** Captured Profile authority; never re-derived from a later winning control. */
+  expectedProfileTransferRevision?: AccountSettingsV2UpdateRequest['expectedProfileTransferRevision'];
   /**
    * A caller-owned lifetime fence evaluated only before the transport write is
    * invoked. Once the write starts, its result must settle without re-running
@@ -276,7 +310,7 @@ export type UpdateAccountSettingsV2OnceAgainstLatestParams = UpdateAccountSettin
   mutation?: never;
 }>);
 
-export type UpdateAccountSettingsV2OnceParams = UpdateAccountSettingsV2WithRetryCommonParams & Readonly<{
+export type UpdateAccountSettingsV2OnceParams = UpdateAccountSettingsV2OnceAgainstLatestParams & Readonly<{
   /**
    * The caller's observed Account Settings version.  Unlike the retrying
    * operation, this owner must not evaluate the mutation against a newer
@@ -285,7 +319,6 @@ export type UpdateAccountSettingsV2OnceParams = UpdateAccountSettingsV2WithRetry
   expectedVersion: number;
   /** Destination-first 0.2 import only; never a general unknown-key mutation. */
   retireLegacyAuthoringMemoryKey?: LegacyAuthoringMemorySettingsKey;
-  mutate: AccountSettingsMutationCallback;
 }>;
 
 export type UpdateAccountSettingsV2OnceResult = AccountSettingsMutationResult;
@@ -297,10 +330,7 @@ export type AccountSettingsMutationSuccess = Extract<AccountSettingsMutationResu
 type ResolvedAccountSettingsV2UpdateDeps = Readonly<{
   fetchSettings(): Promise<{ content: AccountSettingsStoredContentEnvelope | null; version: number }>;
   rereadSettings(): Promise<{ content: AccountSettingsStoredContentEnvelope | null; version: number }>;
-  updateSettings(req: Readonly<{
-    expectedVersion: number;
-    content: AccountSettingsStoredContentEnvelope | null;
-  }>): Promise<AccountSettingsV2UpdateResponse>;
+  updateSettings(req: AccountSettingsUpdateRequestV2): Promise<AccountSettingsV2UpdateResponse>;
   resolveAccountEncryptionMode(): Promise<'plain' | 'e2ee'>;
   resolveAccountEncryptionModeForReadback(): Promise<'plain' | 'e2ee'>;
   randomBytes(n: number): Uint8Array;
@@ -381,10 +411,7 @@ function resolveAccountSettingsV2UpdateDeps(params: Readonly<{
 
   const updateSettings = params.deps?.updateSettings ?? (async (req) => {
     const accountSettingsBaseUrl = resolveAccountSettingsHttpBaseUrl();
-    const response = await axios.post(`${accountSettingsBaseUrl}/v2/account/settings`, {
-      content: req.content,
-      expectedVersion: req.expectedVersion,
-    }, {
+    const response = await axios.post(`${accountSettingsBaseUrl}/v2/account/settings`, AccountSettingsV2UpdateRequestSchema.parse(req), {
       headers: {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${params.credentials.token}`,
@@ -466,23 +493,51 @@ async function openAccountSettingsV2RawBaseline(params: Readonly<{
     credentials: params.credentials,
     emptyEnvelopeKind,
   });
-  if (parsed.envelopeKind === 'plain') {
-    assertAccountEncryptionModeAllowedByEffectiveClientRequirement('plain', accountSettingsParse(parsed.raw));
+  const settings = parsed.envelopeKind === 'plain' ? accountSettingsParse(parsed.raw) : undefined;
+  if (settings) {
+    assertAccountEncryptionModeAllowedByEffectiveClientRequirement('plain', settings);
   }
   params.signal?.throwIfAborted();
-  return parsed;
+  return { ...parsed, settings };
 }
 
-/** Exact raw source observation for the destination-first three-key 0.2 importer. */
-export async function readAccountSettingsV2RawForLegacyAuthoringMemoryImport(params: Readonly<{
+/** Exact opened raw baseline shared by bounded owner cutovers. */
+export async function readAccountSettingsV2Raw(params: Readonly<{
   credentials: StoredCredentials;
   deps?: AccountSettingsUpdateV2Deps;
   signal?: AbortSignal;
-}>): Promise<Readonly<{ raw: AccountSettingsPersistedObject; version: number }>> {
+}>): Promise<Readonly<{ raw: AccountSettingsPersistedObject; version: number; envelopeKind: 'plain' | 'encrypted' }>> {
   const deps = resolveAccountSettingsV2UpdateDeps(params);
   const fetched = await deps.fetchSettings();
   const parsed = await openAccountSettingsV2RawBaseline({ ...params, deps, content: fetched.content });
-  return { raw: parsed.raw, version: fetched.version };
+  return { raw: parsed.raw, version: fetched.version, envelopeKind: parsed.envelopeKind };
+}
+
+/** Existing destination-first predecessor importer consumes the same raw owner. */
+export async function readAccountSettingsV2RawForLegacyAuthoringMemoryImport(params: Parameters<typeof readAccountSettingsV2Raw>[0]): Promise<Readonly<{ raw: AccountSettingsPersistedObject; version: number }>> {
+  const { raw, version } = await readAccountSettingsV2Raw(params);
+  return { raw, version };
+}
+
+/** Bounded owner cutovers replace only their reviewed raw baseline under exact source CAS. */
+export async function replaceAccountSettingsV2RawForOwnerCutover(params: Readonly<{
+  credentials: StoredCredentials;
+  expectedVersion: number;
+  raw: AccountSettingsPersistedObject;
+  envelopeKind: 'plain' | 'encrypted';
+  expectedProfileTransferRevision?: AccountSettingsV2UpdateRequest['expectedProfileTransferRevision'];
+  deps?: AccountSettingsUpdateV2Deps;
+  signal?: AbortSignal;
+}>): Promise<AccountSettingsV2UpdateResponse> {
+  params.signal?.throwIfAborted();
+  const deps = resolveAccountSettingsV2UpdateDeps(params);
+  const mode = await deps.resolveAccountEncryptionMode();
+  if ((mode === 'plain') !== (params.envelopeKind === 'plain')) throw new AccountSettingsModeMismatchError();
+  const raw = parsePersistedAccountSettingsObject(params.raw);
+  const content = sealAccountSettingsV2RawContent({ credentials: params.credentials, raw,
+    envelopeKind: params.envelopeKind, randomBytes: deps.randomBytes });
+  return await deps.updateSettings(AccountSettingsV2UpdateRequestSchema.parse({ expectedVersion: params.expectedVersion, content,
+    ...(params.expectedProfileTransferRevision !== undefined ? { expectedProfileTransferRevision: params.expectedProfileTransferRevision } : {}) }));
 }
 
 async function prepareAccountSettingsV2Mutation(params: Readonly<{
@@ -505,6 +560,7 @@ async function prepareAccountSettingsV2Mutation(params: Readonly<{
   mutation: AccountSettingMutationV1 | null;
 }>> {
   const parsed = await openAccountSettingsV2RawBaseline(params);
+  let baselineSettings = parsed.settings;
   let mergedRaw: AccountSettingsPersistedObject;
   let mutation: AccountSettingMutationV1 | null = null;
   if (params.retireLegacyAuthoringMemoryKey) {
@@ -519,9 +575,13 @@ async function prepareAccountSettingsV2Mutation(params: Readonly<{
     }
     mergedRaw = applied.raw;
   } else {
+    baselineSettings ??= accountSettingsParse(parsed.raw);
     mergedRaw = mergeMutationResultWithRawBase({
       rawBase: parsed.raw,
-      mutatedRaw: parsePersistedAccountSettingsObject(await params.application.mutate(parsed.raw)),
+      parsedBase: baselineSettings,
+      // A callback may mutate its input in place. Keep the validated baseline
+      // separate so changed bytes still receive full canonical validation.
+      mutatedRaw: parsePersistedAccountSettingsObject(await params.application.mutate(parsePersistedAccountSettingsObject(parsed.raw))),
     });
   }
   params.signal?.throwIfAborted();
@@ -531,13 +591,13 @@ async function prepareAccountSettingsV2Mutation(params: Readonly<{
     credentials: params.credentials,
     randomBytes: params.deps.randomBytes,
   });
-  const settings = accountSettingsParse(nextRaw);
+  const didChange = !isDeepStrictEqual(nextRaw, parsed.raw);
+  const settings = didChange || !baselineSettings ? accountSettingsParse(nextRaw) : baselineSettings;
   if (parsed.envelopeKind === 'plain') {
     assertAccountEncryptionModeAllowedByEffectiveClientRequirement('plain', settings);
   }
-  assertAccountWorkspaceSettingsTransition(parsed.raw, nextRaw);
 
-  if (isDeepStrictEqual(nextRaw, parsed.raw)) {
+  if (!didChange) {
     return Object.freeze({
       didChange: false,
       content: params.content,
@@ -550,17 +610,8 @@ async function prepareAccountSettingsV2Mutation(params: Readonly<{
 
   return Object.freeze({
     didChange: true,
-    content: parsed.envelopeKind === 'plain'
-      ? { t: 'plain' as const, v: nextRaw }
-      : {
-        t: 'encrypted' as const,
-        c: sealAccountScopedBlobCiphertext({
-          kind: 'account_settings',
-          material: resolveMaterial(requireAccountSettingsEncryptionCredentials(params.credentials)),
-          payload: nextRaw,
-          randomBytes: params.deps.randomBytes,
-        }),
-      },
+    content: sealAccountSettingsV2RawContent({ credentials: params.credentials, raw: nextRaw,
+      envelopeKind: parsed.envelopeKind, randomBytes: params.deps.randomBytes }),
     raw: nextRaw,
     envelopeKind: parsed.envelopeKind,
     settings,
@@ -636,6 +687,10 @@ function unavailableResultForBoundaryError(error: unknown): AccountSettingsMutat
   const reason = readRecordedBoundaryRefusalCode(error);
   return Object.freeze({ status: 'unavailable', retryable, ...(reason ? { reason } : {}) });
 }
+
+const profileTransferMismatchResult = Object.freeze({
+  status: 'unavailable', retryable: false, reason: 'profile-transfer-mismatch',
+} satisfies AccountSettingsMutationResult);
 
 async function settleSubmittedImmutableWrite(params: Readonly<{
   credentials: StoredCredentials;
@@ -725,7 +780,8 @@ export async function updateAccountSettingsV2WithRetry(
       return Object.freeze({ status: 'unchanged' as const, version, settings: prepared.settings });
     }
 
-    const updateRequest = { expectedVersion: version, content: prepared.content };
+    const updateRequest = { expectedVersion: version, content: prepared.content,
+      ...(params.expectedProfileTransferRevision !== undefined ? { expectedProfileTransferRevision: params.expectedProfileTransferRevision } : {}) };
     if (!accountSettingsV2WriteFitsProtocolLimits(updateRequest)) {
       return Object.freeze({ status: 'invalid' as const, reason: 'tooLarge' as const });
     }
@@ -759,6 +815,7 @@ export async function updateAccountSettingsV2WithRetry(
     if (response.error === 'invalid') {
       return Object.freeze({ status: 'invalid' as const, reason: response.reason });
     }
+    if (response.error === 'profile-transfer-mismatch') return profileTransferMismatchResult;
 
     // Version mismatch: retry only while the caller remains current. A
     // received conflict is a truthful terminal result after cancellation.
@@ -826,7 +883,8 @@ async function updateAccountSettingsV2OnceInternal(
     return Object.freeze({ status: 'unchanged', version: fetched.version, settings: prepared.settings });
   }
 
-  const updateRequest = { expectedVersion: fetched.version, content: prepared.content };
+  const updateRequest = { expectedVersion: fetched.version, content: prepared.content,
+    ...(params.expectedProfileTransferRevision !== undefined ? { expectedProfileTransferRevision: params.expectedProfileTransferRevision } : {}) };
   if (!accountSettingsV2WriteFitsProtocolLimits(updateRequest)) {
     return Object.freeze({ status: 'invalid', reason: 'tooLarge' });
   }
@@ -840,6 +898,7 @@ async function updateAccountSettingsV2OnceInternal(
   if (response.success === false && response.error === 'invalid') {
     return Object.freeze({ status: 'invalid', reason: response.reason });
   }
+  if (response.success === false && response.error === 'profile-transfer-mismatch') return profileTransferMismatchResult;
   if (response.success === false) {
     return Object.freeze({ status: 'conflict', currentVersion: response.currentVersion });
   }

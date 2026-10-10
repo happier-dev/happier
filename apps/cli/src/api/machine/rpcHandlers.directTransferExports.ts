@@ -2,14 +2,16 @@ import { ComposerContentHandleV1Schema, MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 } 
 import { PromptAssetExternalRefV1Schema } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
 import { PromptAssetScopeV1Schema } from '@happier-dev/protocol/prompts/library/promptAssetDescriptorsV1';
 import { PromptRegistryConfiguredSourceV1Schema } from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
-import { WorkspaceContentPolicyV1Schema, WorkspaceSyncTargetConflictStageV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import type { ComposerContentHandleV1, PromptAssetReadRequest, PromptRegistryFetchItemRequestV1, TransferEndpointCandidate, WorkspaceContentPolicyV1, WorkspaceSyncTargetConflictStageV1 } from '@happier-dev/protocol';
+import { WorkspaceSyncSeedExportPrepareV1Schema, WorkspaceSyncTargetConflictStageV1Schema, type WorkspaceSyncSeedExportPrepareV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ComposerContentHandleV1, PromptAssetReadRequest, PromptRegistryFetchItemRequestV1, TransferEndpointCandidate, WorkspaceSyncTargetConflictStageV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod';
 
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 import type { RpcHandlerRegistrar } from '../rpc/types';
+import type { PreparedFilesystemTransferScope } from '@/machines/transfer/preparedFilesystemTransferScope';
+import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 export type DirectTransferExportPrepareRequest =
     | Readonly<{
@@ -25,14 +27,7 @@ export type DirectTransferExportPrepareRequest =
         asZip: boolean;
         confinedToWorkingDirectory?: boolean;
     }>
-    | Readonly<{
-        t: 'workspace_sync_seed_v1';
-        operationId: string;
-        sourceWorkspaceRefId: string;
-        targetMachineId: string;
-        /** Complete bounded selection policy, self-verified by its canonical digest. */
-        contentPolicy: WorkspaceContentPolicyV1;
-    }>
+    | Readonly<WorkspaceSyncSeedExportPrepareV1>
     | Readonly<{ t: 'workspace_sync_resolution_v1' } & WorkspaceSyncTargetConflictStageV1>
     | Readonly<{
         t: 'composer_media_stage_inspect_v1';
@@ -62,13 +57,7 @@ const DirectTransferExportPrepareRequestSchema = z.union([
         asZip: z.boolean(),
         confinedToWorkingDirectory: z.boolean().optional(),
     }).strict(),
-    z.object({
-        t: z.literal('workspace_sync_seed_v1'),
-        operationId: z.string().min(1),
-        sourceWorkspaceRefId: z.string().min(1),
-        targetMachineId: z.string().min(1),
-        contentPolicy: asHostProtocolZod(WorkspaceContentPolicyV1Schema),
-    }).strict(),
+    asHostProtocolZod(WorkspaceSyncSeedExportPrepareV1Schema),
     asHostProtocolZod(WorkspaceSyncTargetConflictStageV1Schema.extend({
         t: z.literal('workspace_sync_resolution_v1'),
     }).strict()),
@@ -104,8 +93,9 @@ type DirectTransferExportPrepareResponse = Readonly<
 >;
 
 export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<{
+    admissionDrain?: Pick<DaemonAdmissionDrain, 'isQuiescing' | 'isFinalShutdown'>;
     rpcHandlerManager: RpcHandlerRegistrar;
-    prepareExportSession: (input: DirectTransferExportPrepareRequest) => Promise<Readonly<{
+    prepareExportSession: (input: DirectTransferExportPrepareRequest, filesystemScope?: PreparedFilesystemTransferScope) => Promise<Readonly<{
         transferId: string;
         expiresAt: number;
         endpointCandidates: readonly TransferEndpointCandidate[];
@@ -113,14 +103,21 @@ export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<
         sizeBytes?: number;
         manifestHash?: string;
     }>>;
-    releaseExportSession?: (transferId: string) => Promise<void> | void;
+    releaseExportSession?: (transferId: string, filesystemScope?: PreparedFilesystemTransferScope | null) => Promise<void> | void;
 }>): void {
-    params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE, async (data: unknown) => {
+    params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE, async (data: unknown, context) => {
         const parsed = DirectTransferExportPrepareRequestSchema.safeParse(data);
         if (!parsed.success) {
             return { success: false, error: 'Invalid direct transfer export request' } satisfies DirectTransferExportPrepareResponse;
         }
         const request: DirectTransferExportPrepareRequest = parsed.data;
+        if (context?.workspaceSyncSeedRouting && request.t !== 'workspace_sync_seed_v1') {
+            return { success: false, error: 'Invalid workspace seed export purpose' } satisfies DirectTransferExportPrepareResponse;
+        }
+        if (params.admissionDrain?.isQuiescing()) {
+            return { success: false, error: params.admissionDrain.isFinalShutdown()
+                ? 'The daemon is shutting down.' : 'The daemon is draining.' } satisfies DirectTransferExportPrepareResponse;
+        }
 
         try {
             const prepared = await params.prepareExportSession(request);
@@ -153,7 +150,7 @@ export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<
                 return { success: false, error: 'Invalid direct transfer export release request' } as const;
             }
             try {
-                await params.releaseExportSession?.(transferId);
+                await params.releaseExportSession?.(transferId, null);
                 return { success: true } as const;
             } catch (error) {
                 return {

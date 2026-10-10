@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol';
+import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '../preview/registry';
 import { createLocalServiceLauncherFeed } from './feed';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 
 function inventoryEntry(
     overrides: Partial<NormalizedLocalServiceInventoryEntry> = {},
@@ -63,6 +65,46 @@ function inventoryEntry(
 }
 
 describe('createLocalServiceLauncherFeed', () => {
+    it.each(['unknown', 'stopped'] as const)('projects %s native custody as uncertain while preserving exact manage rights', async nativePhase => {
+        let phase: 'running' | 'stopped' | 'unknown' = nativePhase;
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            // This Project launch never reaches plugin dependency installation.
+            dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
+        });
+        const handle = await owner.superviseProject({
+            workspace: { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 },
+            declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'native-service' } },
+            cwd: process.cwd(), serviceId: 'native-service', specIdentity: 'native-service', isCurrent: () => true,
+            requester: { serverId: 'home', accountId: 'owner', machineId: 'machine-a', installationId: 'installation' },
+            processSpec: { mode: { kind: 'native',
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'native-service' }, nativeResourceId: 'exact-instance' },
+                lifecycle: { inspect: async () => ({ phase, readiness: 'not_reported', endpoint: null }),
+                    stop: async () => { phase = 'stopped'; return { status: 'stopped' }; } } } },
+            authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'],
+                env: {}, release: async () => undefined }),
+        });
+        try {
+            const feed = createLocalServiceLauncherFeed({ machineId: 'machine-a', projectManagedServices: owner,
+                inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry() });
+            const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(await feed.getSnapshot());
+            expect(snapshot.targets).toEqual([expect.objectContaining({
+                state: 'available', serviceState: 'unhealthy', actions: ['manage'],
+                sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId },
+                unavailableReason: nativePhase === 'unknown' ? 'managed_service_native_state_unknown' : 'managed_service_native_cleanup_unconfirmed',
+            })]);
+            expect(owner.listProjectServices()).toEqual([handle]);
+        } finally { await handle.stop(); await owner.dispose(); }
+    });
+
+    it('refuses an unmounted managed binding owner instead of reporting authoritative absence', async () => {
+        const feed = createLocalServiceLauncherFeed({ machineId: 'machine-a',
+            inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry() });
+        const request = { workspaceRoot: '/repo', projection: 'managed_bindings' as const };
+        await expect(feed.getSnapshot(request)).rejects.toMatchObject({ code: 'project_service_bindings_unavailable' });
+        expect((await feed.getSnapshot()).targets).toEqual([]);
+    });
+
     it('projects daemon registries into a fail-closed launcher snapshot', async () => {
         const inventoryRegistry = createLocalServiceInventoryRegistry();
         const previewRegistry = createLocalServicePreviewRegistry();

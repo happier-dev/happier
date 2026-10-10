@@ -6,11 +6,12 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
-import { createExternalActionDaemonDispatchResponse, ExternalActionRequestEnvelopeSchema, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions';
+import { createExternalActionDaemonDispatchResponse, ExternalActionRequestEnvelopeSchema, normalizeActionsSettingsV1,
+  sealExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { TokenStorage } from '../../../../ui/sources/auth/storage/tokenStorage';
 import { resetScopedHomeActionExecutorsForTests } from '../../../../ui/sources/sync/ops/actions/scopedHomeActionExecutor';
@@ -36,7 +37,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { mintExternalActionExecutionAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { updateSettings, type StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -52,20 +53,21 @@ describe('managed catalog original Account transport', () => {
   afterEach(() => vi.restoreAllMocks());
   afterAll(async () => { await home.reset(); await database.close(); });
 
-  it('round-trips the real UI provisioner catalog through Home minting and installed daemon admission with recovery-key crypto', async () => {
-    const secret = new Uint8Array(32).fill(29);
+  it.each(['account', 'terminal'] as const)('round-trips the real provisioner catalog through Home minting and installed daemon admission with recovery-key crypto for %s credentials', async kind => {
+    const secret = new Uint8Array(32).fill(kind === 'account' ? 29 : 30);
     const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
     const signing = tweetnacl.sign.keyPair.fromSeed(secret);
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
     const account = await db.account.create({ data: { publicKey: Buffer.from(signing.publicKey).toString('hex'), encryptionMode: 'e2ee',
       contentPublicKey: publicKey, contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey: publicKey }) } });
     const homeId = await getOrCreateServerIdentityId();
-    const controller = { machineId: 'fx16-controller', installationId: 'fx16-installation' };
+    const controller = { machineId: `fx18-${kind}-controller`, installationId: `fx18-${kind}-installation` };
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(22));
     await db.machine.create({ data: { id: controller.machineId, accountId: account.id, installationId: controller.installationId,
       installationPublicKey: installation.publicKey, metadata: 'opaque', metadataVersion: 1,
       active: true, lastActiveAt: new Date(), operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
-    const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+    const token = await auth.createToken(account.id, undefined, { kind,
+      authority: kind === 'account' ? 'present_user' : 'account_automation' });
     const credentials: StoredCredentials = { token, encryption: { type: 'legacy', secret } };
     const serverUrl = 'https://fx16-home.example';
     const uiServerId = await home.addHome({ name: 'FX16', serverUrl, serverIdentityId: homeId, accountId: account.id,
@@ -167,8 +169,31 @@ describe('managed catalog original Account transport', () => {
       return { status: response.statusCode, body: response.json() };
     } });
     try {
-      const result = await createManagedProvisionerClient({ serverId: uiServerId, accountId: account.id }, homeId)
-        .read('machines.provisioners.list', { homeId, controller });
+      const result = kind === 'account'
+        ? await createManagedProvisionerClient({ serverId: uiServerId, accountId: account.id }, homeId)
+          .read('machines.provisioners.list', { homeId, controller })
+        : await (async () => {
+          // Paired CLI credentials use the real authorization client. UI login
+          // deliberately requires an Account token rather than a terminal token.
+          const binding = { serverIdentityId: homeId, accountId: account.id, actionId: 'machines.provisioners.list',
+            requestId: 'fx18-terminal-catalog', target: { kind: 'machine' as const, machineId: controller.machineId },
+            authentication: { kind: 'terminal' as const, tokenEpoch: account.tokenEpoch } };
+          const material = { type: 'dataKey' as const, machineKey };
+          const envelope = sealExternalActionRequestV2({ binding, input: { homeId, controller }, material,
+            randomBytes: length => new Uint8Array(length).fill(17) });
+          const minted = await mintExternalActionExecutionAuthorization({ actionId: binding.actionId, envelope,
+            machineId: controller.machineId, pat: token, serverHttpBaseUrl: serverUrl });
+          expect(minted).toMatchObject({ ok: true });
+          if (!minted.ok) throw new Error(`Catalog authorization rejected: ${minted.code}`);
+          const response = await app.inject({ method: 'POST', url: '/v1/actions/machines.provisioners.list',
+            headers: { authorization: `Bearer ${token}`, [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' },
+            payload: { v: 1, machineId: controller.machineId, envelope, executionAuthorization: minted.authorization } });
+          const capabilityRow = await db.machine.findUnique({ where: { id: controller.machineId },
+            select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true } });
+          expect(response.statusCode, JSON.stringify({ response: response.json(), capabilityRow })).toBe(200);
+          const execution = openExternalActionResponseV2({ envelope: response.json(), binding, material, request: envelope });
+          return execution?.ok ? { kind: 'succeeded', value: execution.result } : { kind: 'failed', execution };
+        })();
       expect(admissionResult, JSON.stringify({ admissionResult, authorizationVerified, requesterContextPrepared, homeResponses, result }))
         .toMatchObject({ kind: 'response', response: { v: 2 } });
       expect(result).toEqual({ kind: 'succeeded', value: { controller, provisioners: [] } });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
-import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, getActionSpec, ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol';
 import { decodeBase64, decrypt, encodeBase64, encrypt, getRandomBytes } from '@/api/encryption';
 import { createSocketIoManagerStub } from '@/testkit/backends/apiSessionSocketHarness';
 
@@ -50,12 +50,15 @@ vi.mock('axios', () => ({
     get: (...args: unknown[]) => axiosGet(...args),
   },
 }));
-vi.mock('@/configuration', () => ({
-  configuration: {
-    serverUrl: 'https://api.example.test',
-    apiServerUrl: 'https://api.example.test',
-  },
-}));
+vi.mock('@/configuration', async () => {
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  return { configuration: {
+    serverUrl: 'https://api.example.test', apiServerUrl: 'https://api.example.test',
+    activeServerId: 'home', activeServerDir: join(tmpdir(), 'happier-machine-rpc-test'),
+    happyHomeDir: join(tmpdir(), 'happier-machine-rpc-test'),
+  } };
+});
 
 import {
   TERMINAL_STREAM_MAX_ENCODED_BYTES,
@@ -83,6 +86,14 @@ import { callExactMachineRpc, callMachineRpc, readMachineRpcRequestDisposition }
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { io } from 'socket.io-client';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import { awaitSpawnedSessionId, abandonSpawnedSessionBestEffort } from '@/session/services/awaitSpawnedSessionId';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import { openSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { createManagedGuestActivityTransport } from '@/machines/managed/managedActivityTransport';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 /** Account content material exactly as the CLI persists it: a box seed plus its own public key. */
 function accountDataKeyCredentials(seedByte: number) {
@@ -136,8 +147,73 @@ async function responseForRequest(key: Uint8Array, request: { method: string; pa
 }
 
 describe('callMachineRpc', () => {
+  it.each(['success', 'error', 'abandon'] as const)('recovers the original accepted spawn observation after disconnect (%s)', async (kind) => {
+    if (kind === 'abandon') vi.stubEnv('HAPPIER_SPAWN_ABANDON_TIMEOUT_MS', '5000');
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    const requests: { spawnNonce: string; timeoutMs: number }[] = [];
+    let staleAck: ((value: unknown) => void) | undefined;
+    const terminal = kind === 'error'
+      ? { status: 'error' as const, errorCode: 'spawn_failed', errorMessage: 'Original startup failed' }
+      : { status: 'success' as const, sessionId: 'original-session' };
+    socket.emit.mockImplementation((event, payload, ack) => {
+      if (event !== SOCKET_RPC_EVENTS.CALL) return;
+      expect(payload.method).toBe(`machine-session:${RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE}`);
+      requests.push(payload.params);
+      if (requests.length === 1) staleAck = ack;
+      else ack({ ok: true, result: terminal });
+    });
+    // Socket and HTTP adapters are boundaries; the nonce waiter and transport
+    // reconnect supervisor remain real, including their cancellation scope.
+    const resolver = async (spawnNonce: string, timeoutMs?: number, observation?: Readonly<{
+      signal: AbortSignal; readRemainingTimeoutMs: () => number;
+    }>) => normalizeSpawnSessionNonceResolution(await callMachineRpc({
+      credentials: { token: 'token', encryption: null }, machineId: 'machine-session',
+      method: RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
+      request: { spawnNonce, timeoutMs }, timeoutMs: null,
+      ...(observation ? { signal: observation.signal, reattachOnReconnect: {
+        readRequest: () => ({ spawnNonce, timeoutMs: observation.readRemainingTimeoutMs() }),
+      } } : {}),
+    }));
+    const controller = new AbortController();
+    const stopSession = vi.fn(async () => true);
+    const archiveSession = vi.fn(async () => {});
+    const wait = kind === 'abandon' ? null : awaitSpawnedSessionId({
+      result: { type: 'success' }, spawnNonce: 'accepted-nonce', resolveSpawnSessionByNonce: resolver,
+      timeoutMs: 5_000, signal: controller.signal,
+    });
+    if (kind === 'abandon') abandonSpawnedSessionBestEffort({
+      spawnNonce: 'accepted-nonce', reason: 'caller cancelled', resolveSpawnSessionByNonce: resolver,
+      stopSession, archiveSession,
+    });
+    try {
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      socketHandlers.get('disconnect')?.();
+      // An obsolete connection cannot settle success or failure for the waiter.
+      staleAck?.({ ok: true, result: { status: 'success', sessionId: 'obsolete-session' } });
+      socketHandlers.get('connect')?.();
+      await vi.waitFor(() => expect(requests).toHaveLength(2));
+      expect(requests.map((request) => request.spawnNonce)).toEqual(['accepted-nonce', 'accepted-nonce']);
+      expect(requests[1].timeoutMs).toBeLessThanOrEqual(requests[0].timeoutMs);
+      if (kind === 'abandon') {
+        await vi.waitFor(() => expect(archiveSession).toHaveBeenCalledWith('original-session'));
+        expect(stopSession).toHaveBeenCalledWith('original-session');
+      } else {
+        await expect(wait).resolves.toMatchObject(kind === 'success'
+          ? { type: 'success', sessionId: 'original-session' }
+          : { type: 'error', errorCode: 'SPAWN_FAILED' });
+      }
+      expect(socket.close).toHaveBeenCalled();
+    } finally {
+      controller.abort();
+      await wait;
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('reattaches a read-only observation on reconnect with the same target and cursor', async () => {
-    axiosGet.mockResolvedValue({ data: { machine: { id: 'machine-session',
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
       dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
     } } });
     const requests: unknown[] = [];
@@ -180,7 +256,7 @@ describe('callMachineRpc', () => {
     axiosGet.mockResolvedValue({
       data: {
         machine: {
-          id: 'machine-session',
+          storageMode: 'e2ee', id: 'machine-session',
           dataEncryptionKey: undefined,
         },
       },
@@ -188,7 +264,7 @@ describe('callMachineRpc', () => {
   });
 
   it('keeps exact Machine projection requests on the captured Home', async () => {
-    axiosGet.mockResolvedValue({ data: { machine: { id: 'machine-session',
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
       dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
     } } });
     socket.emit.mockImplementation((_event, _payload, ack) => ack({ ok: true, result: { generation: 1 } }));
@@ -202,8 +278,134 @@ describe('callMachineRpc', () => {
     }));
   });
 
+  it('seals requester Account material to the current installation on a Plain Machine before socket emission', async () => {
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+    const request = { kind: 'requester_session_bootstrap_v1',
+      input: { executionTarget: { serverId: 'home', machineId: 'machine-session' },
+        directory: { kind: 'path', path: '/workspace' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+      requesterBootstrap: { v: 1, disposition: 'ordinary_requester',
+        credentials: { token: 'private-bob-token', secret: encodeBase64(new Uint8Array(32).fill(8)) } },
+    } as const;
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
+      installationId: 'installed-current', installationPublicKey: encodeBase64(installation.publicKey),
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      expect(payload.method).toBe(`machine-session:${RPC_METHODS.SESSION_SPAWN_NEW}`);
+      expect(JSON.stringify(payload)).not.toContain('private-bob-token');
+      expect(JSON.stringify(payload)).not.toContain(request.requesterBootstrap.credentials.secret);
+      expect(openSessionRequesterBootstrapRpcRequestV1({ request: payload.params,
+        machineId: 'machine-session', installationId: 'installed-current',
+        installationPrivateKey: installation.secretKey })).toEqual(request);
+      ack({ ok: true, result: { sessionId: 'bob-session' } });
+    });
+    await expect(callExactMachineRpc({ credentials: { token: 'bob-token', encryption: null },
+      machineId: 'machine-session', method: RPC_METHODS.SESSION_SPAWN_NEW, request,
+      requireCurrentMachine: true })).resolves.toEqual({ sessionId: 'bob-session' });
+  });
+
+  it.each(['prepare', 'preflight'] as const)('keeps existing-Session handoff %s custody confidential on the same installed-key Machine carrier', async phase => {
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+    const secret = encodeBase64(new Uint8Array(32).fill(8));
+    const request = { kind: phase === 'prepare' ? 'requester_session_handoff_bootstrap_v1' : 'requester_session_handoff_preflight_bootstrap_v1', input: {
+      ...(phase === 'prepare' ? {
+      handoffId: 'handoff-bob', operationId: 'prepare-bob', sessionId: 'bob-existing-session',
+      negotiatedTransportStrategy: 'server_routed_stream',
+      } : { sessionId: 'bob-existing-session' }),
+      sourceMachineId: 'source', targetMachineId: 'machine-session', sourceSessionStorageMode: 'persisted',
+      targetPath: '/workspace',
+    }, requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: { token: 'private-bob-token', secret } } } as const;
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
+      installationId: 'installed-current', installationPublicKey: encodeBase64(installation.publicKey),
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    let emitted: unknown;
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      emitted = payload;
+      ack({ ok: true, result: { handoffId: 'handoff-bob', status: { status: 'pending' } } });
+    });
+    const method = phase === 'prepare' ? RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3 : RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
+    await callExactMachineRpc({ credentials: { token: 'bob-token', encryption: null }, machineId: 'machine-session',
+      method, request, requireCurrentMachine: true });
+    expect(emitted).toMatchObject({ method: `machine-session:${method}`,
+      params: { kind: request.kind, input: request.input,
+        requesterBootstrap: { kind: 'installation_sealed_v1', installationId: 'installed-current' } } });
+    expect(JSON.stringify(emitted)).not.toContain('private-bob-token');
+    expect(JSON.stringify(emitted)).not.toContain(secret);
+  });
+
+  it('refuses requester Account material before socket emission when a Plain target has no usable installed key', async () => {
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
+      installationId: 'installed-current', installationPublicKey: encodeBase64(new Uint8Array(32)),
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    const request = { kind: 'requester_session_bootstrap_v1',
+      input: { executionTarget: { serverId: 'home', machineId: 'machine-session' },
+        directory: { kind: 'path', path: '/workspace' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+      requesterBootstrap: { v: 1, disposition: 'ordinary_requester',
+        credentials: { token: 'private-bob-token', secret: encodeBase64(new Uint8Array(32).fill(8)) } },
+    } as const;
+    await expect(callExactMachineRpc({ credentials: { token: 'bob-token', encryption: null },
+      machineId: 'machine-session', method: RPC_METHODS.SESSION_SPAWN_NEW, request })).rejects.toThrow();
+    expect(socket.emit).not.toHaveBeenCalled();
+  });
+
+  it.each(['human', 'unbound-agent', 'declined', 'undisclosed', 'notification-only'] as const)('preserves public CLI requester spawn authority for %s', async (callerKind) => {
+    const disclosures: unknown[] = [];
+    const effects: string[] = [];
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+    const input = { executionTarget: { serverId: 'home', machineId: 'machine-session' },
+      creationKey: 'caller-creation-key', directory: { kind: 'path', path: '/workspace' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } as const;
+    axiosGet.mockImplementation(async (url) => {
+      if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob',
+        timestamp: 1, firstName: null, lastName: null, avatar: null, github: null } };
+      if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      return { status: 200, data: { machine: { storageMode: 'plain', id: 'machine-session',
+        installationId: 'installed-current', installationPublicKey: encodeBase64(installation.publicKey),
+        access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
+        dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+      } } };
+    });
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      effects.push('rpc');
+      expect(payload.method).toBe(`machine-session:${RPC_METHODS.SESSION_SPAWN_NEW}`);
+      expect(payload.params).toEqual({ kind: 'requester_session_bootstrap_v1', input,
+        requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: { token: 'bob-token' } } });
+      ack({ ok: true, result: { type: 'success', disposition: 'created', sessionId: 'bob-session',
+        executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+        initialInput: { status: 'notRequested' } } });
+    });
+    const executor = createCliActionExecutorFromCredentials({ credentials: { token: 'bob-token', encryption: null },
+      serverId: 'home', serverApiUrl: 'https://api.example.test',
+      ...(callerKind === 'undisclosed' ? {} : { onRequesterSessionCredentialDisclosure: (disclosure: unknown) => {
+        disclosures.push(disclosure); effects.push('disclosure'); return callerKind === 'notification-only' ? undefined : callerKind !== 'declined';
+      } }),
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}) },
+    });
+    const result = await executor.execute('session.spawn_new', input, callerKind !== 'unbound-agent'
+      ? { surface: 'cli' } : { surface: 'agent', causalPermissionAuthority: null,
+        actionCaller: { kind: 'host' } });
+    if (callerKind === 'human') {
+      expect(result).toMatchObject({ ok: true, result: { type: 'success', disposition: 'created', sessionId: 'bob-session' } });
+      expect(socket.emit).toHaveBeenCalled();
+      expect(disclosures).toEqual([{ disposition: 'ordinary_requester', accountId: 'bob', machineId: 'machine-session',
+        fullSignIn: true, selectedPurposeRuntimeAuth: true, hostCanInspectLocalProcess: true }]);
+      expect(effects).toEqual(['disclosure', 'rpc']);
+    } else if (callerKind === 'unbound-agent') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+      expect(socket.emit).not.toHaveBeenCalled();
+    } else {
+      expect(result).toMatchObject({ ok: false });
+      expect(socket.emit).not.toHaveBeenCalled();
+      expect(effects).toEqual(callerKind === 'undisclosed' ? [] : ['disclosure']);
+    }
+  });
+
   it('keeps passive change reads on the exact Machine socket and advances the accepted snapshot', async () => {
-    axiosGet.mockResolvedValue({ data: { machine: { id: 'machine-session',
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
       dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
     } } });
     const accepted: number[] = [];
@@ -223,6 +425,164 @@ describe('callMachineRpc', () => {
     expect(accepted).toEqual([1, 2]);
   });
 
+  it('keeps original Session Project authority through the actual CLI Project Open port and exact socket RPC', async () => {
+    const source = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(27));
+    const target = { kind: 'machine' as const, machineId: 'machine-target' };
+    const origin = { v: 1 as const, requestId: 'project-root', sourceTurnId: 'turn',
+      caller: { kind: 'session' as const, sessionId: 'bob-session', starterDepth: 1, turnDepth: 2 },
+      callerPermissionMode: 'read-only' as const, workspaceWrites: 'deny' as const };
+    const authorization = { v: 1 as const, token: 'original-bob-project-proof', binding: {
+      accountId: 'bob', authentication: { kind: 'account' as const, tokenEpoch: 7 }, serverIdentityId: 'srv_home',
+      machineId: target.machineId, custodianAccountId: 'alice', installationId: 'target-installation',
+      actionId: 'projects.open', requestId: origin.requestId, requestEnvelopeDigest: 'a'.repeat(43), target,
+      sessionActionOrigin: origin, sessionActionSource: { machineId: 'machine-source', installationId: 'source-installation' },
+    } };
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: target.machineId,
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))) } } });
+    let emitted: unknown;
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      emitted = payload;
+      ack({ ok: true, result: { kind: 'refused', code: 'project_open_unavailable' } });
+    });
+    const deps = createCliActionDeps({ token: 'bob', credentials: { token: 'bob', encryption: null },
+      sessionId: 'bob-session', mode: 'plain', ctx: null, serverId: 'home',
+      externalActionMachineInstallationId: 'source-installation', externalActionMachineRequestPrivateKey: source.secretKey });
+    await expect(deps.projectsOpen!({ serverId: 'home', machineId: target.machineId,
+      source: { kind: 'folder', path: '/target' } }, { surface: 'agent', authority: 'account_automation',
+      actionCaller: origin.caller, actionRequestId: origin.requestId,
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target }))
+      .resolves.toMatchObject({ kind: 'refused', code: 'project_open_unavailable' });
+    expect(emitted).toMatchObject({ externalActionExecution: { authorization,
+      effectActionId: 'projects.open', installationId: 'target-installation' } });
+  });
+
+  it('signs a managed selected-controller RPC with the originating installation key and the destination installation tuple', async () => {
+    const source = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(27));
+    const receiver = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(28));
+    const target = { kind: 'machine' as const, machineId: 'machine-target' };
+    const actionId = 'machines.provisioners.check';
+    const origin = { v: 1 as const, requestId: 'managed-root', sourceTurnId: 'turn',
+      caller: { kind: 'session' as const, sessionId: 'source-session', starterDepth: 1, turnDepth: 2 },
+      callerPermissionMode: 'read-only' as const };
+    const authorization = { v: 1 as const, token: 'managed-home-proof', binding: {
+      accountId: 'account', authentication: { kind: 'account' as const, tokenEpoch: 0 }, serverIdentityId: 'srv_home',
+      machineId: target.machineId, custodianAccountId: 'account', installationId: 'target-installation',
+      actionId, requestId: origin.requestId, requestEnvelopeDigest: 'a'.repeat(43), target,
+      sessionActionOrigin: origin, sessionActionSource: { machineId: 'machine-source', installationId: 'source-installation' },
+    } };
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: target.machineId,
+      installationId: 'target-installation', dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      expect(payload.externalActionExecution).toMatchObject({ installationId: 'target-installation', authorization });
+      const signature = { authorizationToken: authorization.token, effectActionId: actionId, target,
+        installationId: 'target-installation', event: SOCKET_RPC_EVENTS.CALL, method: payload.method,
+        requestId: payload.requestId, params: payload.params, signature: payload.externalActionExecution.machineSignature };
+      expect(verifyExternalActionMachineRpcRequestV1({ ...signature, publicKey: source.publicKey })).toBe(true);
+      expect(verifyExternalActionMachineRpcRequestV1({ ...signature, publicKey: receiver.publicKey })).toBe(false);
+      ack({ ok: true, result: { available: true } });
+    });
+    await expect(callExactMachineRpc({ credentials: { token: 'account-token', encryption: null }, machineId: target.machineId,
+      method: actionId, request: { kind: 'targeted_action_rpc', v: 1, target,
+        input: { homeId: 'srv_home', controller: { machineId: target.machineId, installationId: 'target-installation' },
+          contribution: { pluginId: 'acme.compute', localId: 'vm' } } }, requestId: origin.requestId,
+      externalAction: { context: { surface: 'agent', defaultSessionMachineId: 'machine-source',
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target }, effectActionId: actionId,
+        installationId: 'source-installation', privateKey: source.secretKey },
+    })).resolves.toEqual({ available: true });
+    expect(axiosGet).toHaveBeenCalledWith(expect.stringContaining('/v1/machines/machine-target'),
+      expect.objectContaining({ headers: expect.objectContaining({
+        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+      }) }));
+    const headers = axiosGet.mock.calls.at(-1)?.[1]?.headers;
+    expect(headers).not.toHaveProperty('Authorization');
+    expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: actionId,
+      target, installationId: 'target-installation', requestId: origin.requestId, method: 'GET',
+      path: '/v1/machines/machine-target', signature: headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER],
+      publicKey: source.publicKey })).toBe(true);
+  });
+
+  it('carries after-idle guest read and reversible drain through the original signed controller authority', async () => {
+    const controllerKeys = tweetnacl.sign.keyPair();
+    const controller = { machineId: 'controller', installationId: 'controller-installation' };
+    const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_home', custodianAccountId: 'owner', controller,
+      launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      allocation: 'bound', creationState: 'active', resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+      enrolledMachineId: 'guest', desired: 'stop', desiredWhen: 'after-idle', intentRevision: 2,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    const target = { kind: 'machine' as const, machineId: controller.machineId };
+    const authorization = { v: 1 as const, token: 'home-original-control', binding: {
+      accountId: 'requester', principalId: 'requester', credentialId: '11111111-1111-4111-8111-111111111111',
+      grant: API_TOKEN_FULL_GRANT_V1, serverIdentityId: machine.homeId, custodianAccountId: 'owner', ...controller,
+      actionId: 'machines.managed.power.set', requestId: 'original-control', requestEnvelopeDigest: 'a'.repeat(43), target } };
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'guest', installationId: 'guest-installation',
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))) } } });
+    const requests: { method: string; params: { action?: string } }[] = [];
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      requests.push(payload);
+      if (payload.params.action === 'resume') {
+        expect(payload.externalActionExecution).toBeUndefined();
+      } else {
+        expect(payload.externalActionExecution).toMatchObject({ authorization, target, installationId: controller.installationId });
+        expect(verifyExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+          effectActionId: authorization.binding.actionId, target, installationId: controller.installationId,
+          event: SOCKET_RPC_EVENTS.CALL, method: payload.method, requestId: payload.requestId, params: payload.params,
+          signature: payload.externalActionExecution.machineSignature, publicKey: controllerKeys.publicKey })).toBe(true);
+      }
+      ack({ ok: true, result: { kind: 'busy', reasons: ['finite'] } });
+    });
+    const bridge = createManagedGuestActivityTransport({ token: 'owner-daemon-token', serverUrl: 'https://api.example.test',
+      credentials: { token: 'owner-daemon-token', encryption: null }, externalActionMachineRequestPrivateKey: controllerKeys.secretKey },
+      { requestId: 'original-control', context: { surface: 'agent', externalActionExecutionAuthorization: authorization,
+        externalActionTarget: target } }, machine);
+    try {
+      await expect(bridge.read(machine)).resolves.toMatchObject({ kind: 'busy' });
+      await expect(bridge.confirmIdle(machine)).resolves.toMatchObject({ kind: 'busy' });
+      await bridge.reopen(machine);
+      expect(requests.map(request => [request.method, request.params.action])).toEqual([
+        ['guest:managed.activity.read', undefined], ['guest:managed.admission.drain.confirm', 'begin'],
+        ['guest:managed.admission.drain.confirm', 'resume'] ]);
+      expect(axiosGet.mock.calls.slice(0, 2).map(call => call[1]?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]))
+        .toEqual([authorization.token, authorization.token]);
+      expect(axiosGet.mock.calls.at(-1)?.[1]?.headers?.Authorization).toBe('Bearer owner-daemon-token');
+    } finally { await bridge.dispose?.(); }
+  });
+
+  it('retains the captured source signer for PAT handoff children without borrowing the target key', async () => {
+    const source = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
+    const receiver = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(30));
+    const target = { kind: 'machine' as const, machineId: 'machine-target' };
+    const authorization = { v: 1 as const, token: 'home-pat-handoff-child', binding: { accountId: 'bob', principalId: 'bob',
+      credentialId: '11111111-1111-4111-8111-111111111111', grant: API_TOKEN_FULL_GRANT_V1, serverIdentityId: 'srv_home',
+      machineId: target.machineId, custodianAccountId: 'alice', installationId: 'target-installation',
+      actionId: 'session.spawn_new', requestId: 'pat-handoff-root', requestEnvelopeDigest: 'a'.repeat(43), target,
+      handoffAdmission: { sessionId: 'same-session', sourceMachineId: 'machine-source', targetMachineId: target.machineId,
+        sourceInstallationId: 'source-installation', targetInstallationId: 'target-installation' },
+      handoffContinuation: { rootRequestId: 'pat-handoff-root', rootRequestEnvelopeDigest: 'b'.repeat(43), handoffId: 'handoff' } } };
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: target.machineId,
+      installationId: 'target-installation', dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))) } } });
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      const execution = payload.externalActionExecution;
+      expect(execution.installationId).toBe('target-installation');
+      const signed = { authorizationToken: authorization.token, effectActionId: 'session.spawn_new', target,
+        installationId: 'target-installation', event: SOCKET_RPC_EVENTS.CALL, method: payload.method,
+        requestId: payload.requestId, params: payload.params, signature: execution.machineSignature };
+      expect(verifyExternalActionMachineRpcRequestV1({ ...signed, publicKey: source.publicKey })).toBe(true);
+      expect(verifyExternalActionMachineRpcRequestV1({ ...signed, publicKey: receiver.publicKey })).toBe(false);
+      ack({ ok: true, result: { type: 'success' } });
+    });
+    await expect(callExactMachineRpc({ credentials: { token: 'bob-requester-content', encryption: null }, machineId: target.machineId,
+      method: RPC_METHODS.SPAWN_HAPPY_SESSION, request: { type: 'resume-session', sessionId: 'same-session', directory: '/target', resume: 'native-original' },
+      externalAction: { context: { surface: 'api', defaultSessionMachineId: 'machine-source', externalActionTarget: target,
+        externalActionExecutionAuthorization: authorization }, effectActionId: 'session.spawn_new',
+        installationId: 'source-installation', privateKey: source.secretKey } })).resolves.toMatchObject({ type: 'success' });
+    const headers = axiosGet.mock.calls.at(-1)?.[1]?.headers;
+    expect(headers).not.toHaveProperty('Authorization');
+    expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: 'session.spawn_new',
+      target, installationId: 'target-installation', requestId: authorization.binding.requestId, method: 'GET',
+      path: '/v1/machines/machine-target', signature: headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER], publicKey: source.publicKey })).toBe(true);
+  });
+
   it.each([
     'session.board.item.upsert',
     'session.follow.sources.set',
@@ -240,7 +600,7 @@ describe('callMachineRpc', () => {
         requestEnvelopeDigest: 'A'.repeat(43), target,
       },
     };
-    axiosGet.mockResolvedValue({ data: { machine: { id: 'machine-session',
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: 'machine-session',
       dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
     } } });
     socket.emit.mockImplementation((_event, payload, ack) => {
@@ -299,7 +659,7 @@ describe('callMachineRpc', () => {
     axiosGet.mockResolvedValue({
       data: {
         machine: {
-          id: 'machine-session',
+          storageMode: 'e2ee', id: 'machine-session',
           dataEncryptionKey: publishedMachineDataEncryptionKey({
             contentKey: machineKey,
             recipientPublicKey: credentials.encryption.publicKey,
@@ -341,7 +701,7 @@ describe('callMachineRpc', () => {
     axiosGet.mockResolvedValue({
       data: {
         machine: {
-          id: 'machine-session',
+          storageMode: 'e2ee', id: 'machine-session',
           dataEncryptionKey: publishedMachineDataEncryptionKey({
             contentKey: machineKey,
             recipientPublicKey: credentials.encryption.publicKey,
@@ -428,7 +788,7 @@ describe('callMachineRpc', () => {
       axiosGet.mockResolvedValue({
         data: {
           machine: {
-            id: 'machine-scoped',
+            storageMode: 'e2ee', id: 'machine-scoped',
             dataEncryptionKey: publishedMachineDataEncryptionKey({
               contentKey: scopedMachineKey,
               recipientPublicKey: credentials.encryption.publicKey,
@@ -470,7 +830,7 @@ describe('callMachineRpc', () => {
 
     it('rejects a substituted plain marker before emitting an explicitly encrypted exact call', async () => {
       axiosGet.mockResolvedValue({ data: { machine: {
-        id: 'machine-scoped',
+        storageMode: 'e2ee', id: 'machine-scoped',
         dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
       } } });
       socket.emit.mockImplementation((_event, _payload, callback) => callback({ ok: true, result: { ok: true } }));
@@ -490,7 +850,7 @@ describe('callMachineRpc', () => {
       { name: 'replaced', currentness: { replacedByMachineId: 'runner-successor' } },
     ])('rejects a $name exact target before encrypting private material', async ({ currentness }) => {
       axiosGet.mockResolvedValue({ data: { machine: {
-        id: 'runner-stale',
+        storageMode: 'plain', id: 'runner-stale',
         dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
         ...currentness,
       } } });
@@ -512,7 +872,7 @@ describe('callMachineRpc', () => {
 
     it('rejects a substituted exact Machine projection before private RPC emission', async () => {
       axiosGet.mockResolvedValue({ data: { machine: {
-        id: 'runner-substituted',
+        storageMode: 'plain', id: 'runner-substituted',
         dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
       } } });
 
@@ -535,7 +895,7 @@ describe('callMachineRpc', () => {
 
     it('rejects a persistent Machine before emitting a Runner-only private RPC', async () => {
       axiosGet.mockResolvedValue({ data: { machine: {
-        id: 'machine-persistent',
+        storageMode: 'plain', id: 'machine-persistent',
         kind: 'persistent',
         dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
       } } });
@@ -589,7 +949,7 @@ describe('callMachineRpc', () => {
         }),
       };
       const machine = {
-        id: 'runner-one',
+        storageMode: 'e2ee', id: 'runner-one',
         kind: 'ephemeral_session_runner',
         installationId: 'runner-installation',
         dataEncryptionKey: publishedMachineDataEncryptionKey({
@@ -723,7 +1083,7 @@ describe('callMachineRpc', () => {
     });
 
     it.each(['', '   ', {}, 42])('rejects malformed-present envelope %j before sending', async (published) => {
-      axiosGet.mockResolvedValue({ data: { machine: { id: 'machine-scoped', dataEncryptionKey: published } } });
+      axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'e2ee', id: 'machine-scoped', dataEncryptionKey: published } } });
       const error = await callMachineRpc({
         credentials: accountDataKeyCredentials(11),
         machineId: 'machine-scoped', method: 'status', request: { secret: 'private' }, timeoutMs: 100,
@@ -739,7 +1099,7 @@ describe('callMachineRpc', () => {
         contentKey: new Uint8Array(32).fill(29),
         recipientPublicKey: credentials.encryption.publicKey,
       });
-      axiosGet.mockResolvedValue({ data: { machine: { id: 'machine-scoped', dataEncryptionKey: `!${envelope}` } } });
+      axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'e2ee', id: 'machine-scoped', dataEncryptionKey: `!${envelope}` } } });
       const error = await callExactMachineRpc({
         credentials,
         machineId: 'machine-scoped', method: 'status', request: { secret: 'private' }, timeoutMs: 100,
@@ -754,7 +1114,7 @@ describe('callMachineRpc', () => {
       const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
       const scopedMachineKey = new Uint8Array(32).fill(29);
       axiosGet.mockResolvedValue({ data: { machine: {
-        id: 'machine-scoped',
+        storageMode: 'e2ee', id: 'machine-scoped',
         dataEncryptionKey: publishedMachineDataEncryptionKey({
           contentKey: scopedMachineKey,
           recipientPublicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey,
@@ -778,7 +1138,7 @@ describe('callMachineRpc', () => {
       const credentials = accountDataKeyCredentials(5);
       const machineKey = credentials.encryption.machineKey;
       axiosGet.mockResolvedValue({
-        data: { machine: { id: 'machine-historical' } },
+        data: { machine: { storageMode: 'e2ee', id: 'machine-historical' } },
       });
       socket.emit.mockImplementation(async (_event, payload, callback) => {
         expect(await openedWith(machineKey, payload.params, payload.method)).toEqual({ ping: true });
@@ -804,7 +1164,7 @@ describe('callMachineRpc', () => {
         encryption: { type: 'legacy' as const, secret },
       };
       axiosGet.mockResolvedValue({
-        data: { machine: { id: 'machine-legacy' } },
+        data: { machine: { storageMode: 'e2ee', id: 'machine-legacy' } },
       });
       socket.emit.mockImplementation(async (_event, payload, callback) => {
         expect(await openedWith(secret, payload.params, payload.method, 'legacy'))
@@ -825,6 +1185,52 @@ describe('callMachineRpc', () => {
     });
   });
 
+  it('preserves a confirmed retirement acknowledgement when cancellation arrives during response consumption', async () => {
+    const controller = new AbortController();
+    const request = ProjectWorkerActionInputSchemasV1['projects.worker.copy.retire'].parse(
+      JSON.parse(getActionSpec('projects.worker.copy.retire').examples!.voice!.argsExample!),
+    );
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: request.machineId,
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    const receipt = { status: 'retired' };
+    socket.emit.mockImplementation((event, payload, acknowledge) => {
+      if (event !== SOCKET_RPC_EVENTS.CALL) return;
+      expect(payload.method).toBe(`${request.machineId}:projects.worker.copy.retire`);
+      // A network-response accessor injects cancellation only after the real codec
+      // consumes an accepted ACK, without replacing codec or cancellation logic.
+      acknowledge({ ok: true, get result() { controller.abort(); return receipt; } });
+    });
+    await expect(callExactMachineRpc({ credentials: { token: 'plain-token', encryption: null },
+      machineId: request.machineId, method: 'projects.worker.copy.retire', request,
+      timeoutMs: null, signal: controller.signal,
+    })).resolves.toEqual(receipt);
+    expect(socket.emit.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL)).toHaveLength(1);
+    expect(socket.emit.mock.calls.some(([event]) => event === SOCKET_RPC_EVENTS.CANCEL)).toBe(false);
+  });
+
+  it('withdraws a cancelled passive status observation even when its acknowledgement was accepted', async () => {
+    const controller = new AbortController();
+    const request = ProjectWorkerActionInputSchemasV1['projects.worker.status'].parse(
+      JSON.parse(getActionSpec('projects.worker.status').examples!.voice!.argsExample!),
+    );
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: request.destination.machineId,
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    const result = { eligible: true, candidate: { serverId: request.workspace.serverId, machineId: request.destination.machineId },
+      load: { kind: 'unknown' }, explanation: 'load_unknown' };
+    socket.emit.mockImplementation((event, _payload, acknowledge) => {
+      if (event !== SOCKET_RPC_EVENTS.CALL) return;
+      acknowledge({ ok: true, get result() { controller.abort(); return result; } });
+    });
+    await expect(callExactMachineRpc({ credentials: { token: 'plain-token', encryption: null },
+      machineId: request.destination.machineId, method: 'projects.worker.status', request,
+      reattachOnReconnect: {}, timeoutMs: null, signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(socket.emit.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL)).toHaveLength(1);
+    expect(socket.emit.mock.calls.some(([event]) => event === SOCKET_RPC_EVENTS.CANCEL)).toBe(false);
+  });
+
   it('sends plaintext RPC for a marker-backed machine with token-only credentials', async () => {
     const semanticallyEquivalentPlainMarker = encodeBase64(
       new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }, null, 2)),
@@ -833,7 +1239,7 @@ describe('callMachineRpc', () => {
     axiosGet.mockResolvedValue({
       data: {
         machine: {
-          id: 'machine-plain',
+          storageMode: 'plain', id: 'machine-plain',
           dataEncryptionKey: semanticallyEquivalentPlainMarker,
         },
       },
@@ -884,7 +1290,7 @@ describe('callMachineRpc', () => {
     axiosGet.mockResolvedValueOnce({
       data: {
         machine: {
-          id: 'machine-plain',
+          storageMode: 'plain', id: 'machine-plain',
           dataEncryptionKey: encodeBase64(
             new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null })),
             'base64',
@@ -908,7 +1314,7 @@ describe('callMachineRpc', () => {
     axiosGet.mockResolvedValueOnce({
       data: {
         machine: {
-          id: 'machine-plain',
+          storageMode: 'plain', id: 'machine-plain',
           dataEncryptionKey: encodeBase64(
             new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null })),
             'base64',
@@ -946,7 +1352,7 @@ describe('callMachineRpc', () => {
     axiosGet.mockResolvedValueOnce({
       data: {
         machine: {
-          id: 'machine-plain',
+          storageMode: 'plain', id: 'machine-plain',
           dataEncryptionKey: encodeBase64(
             new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null })),
             'base64',
@@ -983,7 +1389,7 @@ describe('callMachineRpc', () => {
     axiosGet.mockResolvedValueOnce({
       data: {
         machine: {
-          id: 'machine-plain',
+          storageMode: 'plain', id: 'machine-plain',
           dataEncryptionKey: encodeBase64(
             new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null })),
             'base64',
@@ -1036,7 +1442,7 @@ describe('callMachineRpc', () => {
         const href = String(url);
         if (/\/v1\/machines$/.test(href)) return { data: machines };
         const machineId = href.slice(href.lastIndexOf('/') + 1);
-        return { data: { machine: { id: machineId, dataEncryptionKey: PLAIN_MARKER } } };
+        return { data: { machine: { storageMode: 'plain', id: machineId, dataEncryptionKey: PLAIN_MARKER } } };
       });
     }
 
@@ -1052,7 +1458,7 @@ describe('callMachineRpc', () => {
 
     it('reaches the successor when the addressed machine was replaced', async () => {
       mockServerReads([
-        { id: 'machine-old', replacedByMachineId: 'machine-mid' },
+        { storageMode: 'plain', id: 'machine-old', replacedByMachineId: 'machine-mid' },
         { id: 'machine-mid', replacedByMachineId: 'machine-new' },
         { id: 'machine-new', replacedByMachineId: null },
       ]);
@@ -1092,7 +1498,7 @@ describe('callMachineRpc', () => {
      */
     it('never redirects an exact-machine call to a replacement', async () => {
       mockServerReads([
-        { id: 'machine-old', replacedByMachineId: 'machine-new' },
+        { storageMode: 'plain', id: 'machine-old', replacedByMachineId: 'machine-new' },
         { id: 'machine-new', replacedByMachineId: null },
       ]);
       socket.emit.mockImplementation((_event, _payload, callback) => callback(unreachable()));
@@ -1115,7 +1521,7 @@ describe('callMachineRpc', () => {
     });
 
     it('surfaces the original error unchanged when the machine has no successor', async () => {
-      mockServerReads([{ id: 'machine-old', replacedByMachineId: null }]);
+      mockServerReads([{ storageMode: 'plain', id: 'machine-old', replacedByMachineId: null }]);
       socket.emit.mockImplementation((_event, _payload, callback) => callback(unreachable()));
 
       const error = await callMachineRpc({
@@ -1138,7 +1544,7 @@ describe('callMachineRpc', () => {
       axiosGet.mockImplementation(async (url: unknown) => {
         const href = String(url);
         if (/\/v1\/machines$/.test(href)) throw new Error('chain lookup failed');
-        return { data: { machine: { id: 'machine-old', dataEncryptionKey: PLAIN_MARKER } } };
+        return { data: { machine: { storageMode: 'plain', id: 'machine-old', dataEncryptionKey: PLAIN_MARKER } } };
       });
       socket.emit.mockImplementation((_event, _payload, callback) => callback(unreachable()));
 
@@ -1157,7 +1563,7 @@ describe('callMachineRpc', () => {
 
     it('never re-addresses an error the machine itself answered with', async () => {
       mockServerReads([
-        { id: 'machine-old', replacedByMachineId: 'machine-new' },
+        { storageMode: 'plain', id: 'machine-old', replacedByMachineId: 'machine-new' },
         { id: 'machine-new', replacedByMachineId: null },
       ]);
       socket.emit.mockImplementation((_event, _payload, callback) => callback({

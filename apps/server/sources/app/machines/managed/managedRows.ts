@@ -173,6 +173,30 @@ async function readCurrentMachineManagedEnrollmentInTx(tx: Tx, machineId: string
     return row;
 }
 
+/** A current workspace executes on its bind controller, or on the admitted Machine's own storage. */
+export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, input: Readonly<{
+    accountServerId: string; machineId: string; rootPath: string;
+}>): Promise<Readonly<{ custodianAccountId: string; machineId: string; installationId: string }> | null> {
+    if (input.accountServerId !== await readCurrentServerIdentityId(process.env, tx)) return null;
+    const machine = await tx.machine.findUnique({ where: { id: input.machineId } });
+    if (!machine?.installationId || classifyMachineAvailabilityState(machine) !== 'available') return null;
+    const enrollment = await tx.managedMachine.findUnique({ where: { enrolledMachineId: input.machineId } });
+    if (!enrollment) return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
+    // A stale or malformed retained row is not an ordinary-Machine fallback.
+    const row = await readCurrentMachineManagedEnrollmentInTx(tx, input.machineId);
+    if (!row || row.homeId !== input.accountServerId) return null;
+    const child = readStoredManagedDevcontainerChild(row);
+    if (!child || child.observation.storage.childPath !== input.rootPath) return null;
+    if (child.observation.storage.kind === 'child') {
+        return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
+    }
+    const parent = await tx.machine.findUnique({ where: { id: row.controllerMachineId } });
+    if (!parent || parent.accountId !== row.custodianAccountId
+        || classifyMachineAvailabilityState(parent) !== 'available'
+        || parent.installationId !== row.controllerInstallationId) return null;
+    return { custodianAccountId: row.custodianAccountId, machineId: parent.id, installationId: row.controllerInstallationId };
+}
+
 /** Physical workspace routing consumes the retained enrollment/controller fact, never Machine metadata. */
 export async function readMachineDevcontainerWorkspaceSyncRouteInTx(tx: Tx, input: Readonly<{
     accountServerId: string; childMachineId: string; childRootPath: string;
@@ -193,18 +217,11 @@ export async function readMachineDevcontainerWorkspaceSyncRouteInTx(tx: Tx, inpu
         return { custodianAccountId: source.accountId, parentMachineId: input.parentMachineId,
             parentInstallationId: parent.installationId };
     }
-    const row = await readCurrentMachineManagedEnrollmentInTx(tx, input.childMachineId);
-    if (!row || row.enrolledMachineId !== input.childMachineId || row.homeId !== input.accountServerId
-        || row.controllerMachineId !== input.parentMachineId) return null;
-    const child = readStoredManagedDevcontainerChild(row);
-    if (!child || child.observation.storage.kind !== 'bind'
-        || child.observation.storage.childPath !== input.childRootPath) return null;
-    const parent = await tx.machine.findUnique({ where: { id: row.controllerMachineId } });
-    if (!parent || parent.accountId !== row.custodianAccountId
-        || classifyMachineAvailabilityState(parent) !== 'available'
-        || parent.installationId !== row.controllerInstallationId) return null;
-    return { custodianAccountId: row.custodianAccountId, parentMachineId: row.controllerMachineId,
-        parentInstallationId: row.controllerInstallationId };
+    const endpoint = await readMachineDevcontainerWorkspaceSyncEndpointInTx(tx, {
+        accountServerId: input.accountServerId, machineId: input.childMachineId, rootPath: input.childRootPath });
+    if (!endpoint || endpoint.machineId === input.childMachineId || endpoint.machineId !== input.parentMachineId) return null;
+    return { custodianAccountId: endpoint.custodianAccountId, parentMachineId: endpoint.machineId,
+        parentInstallationId: endpoint.installationId };
 }
 
 function readStoredManagedDevcontainerChild(row: StoredManagedMachine): DevcontainerChildProjectionV1 | null {

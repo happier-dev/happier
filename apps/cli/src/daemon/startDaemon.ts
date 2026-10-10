@@ -122,7 +122,7 @@ import { createAccountServerWorkspaceWorkerPreferenceClient } from '@/api/worksp
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { readProjectFiniteIngressRefusal } from '@/workspaces/projectSetup/projectFiniteAction';
-import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountActionContext, resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createWorkspaceSyncWorkerPreparation } from '@/workspaces/sync/workspaceSyncPreparation';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readInstallationIdentityIfExistsSync } from './identity/store';
@@ -172,7 +172,7 @@ import {
   prepareDaemonHomeIrohTransport,
   type DaemonHomeTransport,
 } from './peer/iroh/daemonHomeIrohTransport';
-import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
+import { resolveCliHomeTarget, resolveCurrentCliHomeTarget } from '@/server/homeTarget';
 import { getServerProfile } from '@/server/serverProfiles';
 import { createDaemonSessionMutationCustody } from './connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import { installPeerMediationObservabilityRuntimeActionContextProvider } from './peer/mediation/observability/runtimeActionContextProvider';
@@ -192,6 +192,8 @@ import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocati
 import { DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY } from '@/plugins/runtime/context/daemonDatabaseLimitsPolicy';
 import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
 import { createDaemonPluginRegistryProjectionInvalidation } from './pluginRegistryProjectionInvalidation';
+import { withTrackedSessionRpc } from './sessionEncryption/withTrackedSessionRpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import { resolveConnectedServiceQuotaFetcherDescriptors } from '@/plugins/projection/registry/connectedServiceQuotaFetchers';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -249,6 +251,7 @@ import { createProviderConnectionTeamCredentialSourceSnapshot } from '@/provider
 import { createProviderConnectionCpxBridge } from '@/providers/broker/providerConnectionCpxBridge';
 import { createAccountConnectionBrokerSourceOpen, retireAccountConnectionBrokerSource } from '@/providers/broker/accountConnectionSource';
 import { openAccountConnectionProviderBrokerAccess } from '@/providers/broker/accountConnectionClient';
+import { createDaemonAccountConnectionManagedConsumerOpen } from './providers/accountConnectionManagedConsumerComposition';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { resolveProviderContributionRegistryView } from '@/providers/registry';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';
@@ -406,7 +409,7 @@ export async function startDaemon(
     }
     daemonLockHandle = credentialsGate.daemonLockHandle;
 
-    const homeTarget = await resolveCurrentCliHomeTarget();
+    let homeTarget = await resolveCurrentCliHomeTarget();
     const bootstrapContext = await prepareDaemonBootstrapContext({
       daemonLockHandle,
       initialMachineMetadata,
@@ -463,6 +466,11 @@ export async function startDaemon(
     daemonLockHandle = bootstrapContext.daemonLockHandle;
     const credentials = bootstrapContext.credentials;
     const api = bootstrapContext.api;
+    // Authentication can establish a descriptor for a credential-seeded or
+    // predecessor profile. Downstream owners consume that same persisted binding.
+    if (homeTarget.profileId) {
+      homeTarget = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: homeTarget.profileId });
+    }
     // Missing/refused Project rows leave Project effects unavailable, while
     // unrelated daemon services remain usable with supported older Homes.
     await readProjectAccountRows({
@@ -726,10 +734,12 @@ export async function startDaemon(
     let stopPeerMediationLoopbackServer: () => Promise<void> = async () => {};
     let daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null = null;
     const isDaemonQuiescing = admissionDrain.isQuiescing;
+    let publishSessionPluginCatalogInvalidation = (_revision: number): void => {};
     const pluginRegistryProjectionInvalidation =
       createDaemonPluginRegistryProjectionInvalidation({
         getApiMachine: () => apiMachine,
         isDaemonQuiescing: admissionDrain.isPublicationQuiescing,
+        onProjectionInvalidated: revision => publishSessionPluginCatalogInvalidation(revision),
         onPublicationFailure: (error) => {
           logger.warn('[DAEMON RUN] Failed to publish durable plugin registry invalidation', {
             error: error instanceof Error ? error.message : String(error),
@@ -1683,6 +1693,43 @@ export async function startDaemon(
     let createRequesterRuntime: ((bootstrap: AdmittedRequesterSessionBootstrap) => Promise<RequesterSessionRuntimeContext | null>) | null = null;
     const requesterRuntimeServerId = configuration.activeServerId;
     const requesterRuntimeServerHttpBaseUrl = resolveServerHttpBaseUrl();
+    const openRunAccountConnectionSource = managedPolicyHomeId && externalActionAccountId
+      ? createDaemonAccountConnectionManagedConsumerOpen({
+          homeId: managedPolicyHomeId, accountId: externalActionAccountId, machineId: () => machineId,
+          isHomeCurrent: () => !isDaemonQuiescing() && configuration.activeServerId === requesterRuntimeServerId,
+          custody: targetMachineId => createManagedProviderExplicitStartCustody({ machineId: targetMachineId,
+            happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController }),
+          withRegistry: async read => {
+            const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+              happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,
+            });
+            try { return await read(resolveProviderContributionRegistryView(lease.registry.contributes,
+              lease.durableRevision, lease.registry.readPluginOccurrenceId)); }
+            finally { await lease.release(); }
+          },
+          projectModelsForAccount: async (request, context) => {
+            const producer = providerOperationsProducer;
+            if (!producer) throw new Error('provider_source_projection_unavailable');
+            return await producer.machineServices.projectModelsForAccount(request, context);
+          },
+          openRemote: async (request, isCurrent) => {
+            const runtime = machineIrohRuntime;
+            if (!runtime) return null;
+            return await openAccountConnectionProviderBrokerAccess({
+              ...request,
+              homeId: managedPolicyHomeId, accountId: externalActionAccountId, initiatorMachineId: machineId,
+              openBroker: async (request, signal) => await api.openAccountConnectionProviderBroker(request, { signal }),
+              admitConsumer: async (authority, signal) => await isCurrent()
+                && (await api.admitAccountConnectionProviderBroker({ v: 2, authority }, { signal })).ok
+                && await isCurrent(),
+              openTunnel: createProviderBrokerMachineCarrierTunnelOpen({
+                homeId: managedPolicyHomeId, accountId: externalActionAccountId, localMachineId: machineId,
+                runtime, resolveTrustRoots: resolvePeerMediationTrustRoots,
+              }),
+            });
+          },
+        })
+      : undefined;
     const requesterMachineAdmissionBoundary = (attribution?: AdmittedRequesterSessionBootstrap['attribution']) => ({
       machineId, daemonToken: credentials.token, readInstallation: readInstallationIdentityIfExistsSync,
       isHomeCurrent: () => configuration.activeServerId === requesterRuntimeServerId
@@ -1731,6 +1778,28 @@ export async function startDaemon(
         if (context) await context.dispose();
       }
       return recovered;
+    };
+    publishSessionPluginCatalogInvalidation = revision => {
+      const projection = { runtimeId, contributionRegistryProjectionRevision: revision };
+      for (const tracked of pidToTrackedSession.values()) {
+        if (!tracked.happySessionId) continue;
+        void (async () => {
+          const requester = await resolveRequesterSessionRuntimeContext(tracked.happySessionId!, tracked.requesterWorkAttributionV1);
+          const result = await withTrackedSessionRpc({
+            tracked, credentials, custodianAccountId: externalActionAccountId,
+            serverId: requesterRuntimeServerId, machineId,
+            serverHttpBaseUrl: requesterRuntimeServerHttpBaseUrl,
+            ...(requester ? { requesterBootstrap: requester.bootstrap } : {}),
+            isTrackedCurrent: () => !admissionDrain.isPublicationQuiescing()
+              && pidToTrackedSession.get(tracked.pid) === tracked,
+          }, callRpc => callRpc(SESSION_RPC_METHODS.SESSION_PLUGIN_CATALOG_INVALIDATE_V1, projection));
+          if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) {
+            logger.debug('[DAEMON RUN] Session plugin catalog hint unavailable', { sessionId: tracked.happySessionId });
+          }
+        })().catch(error => logger.debug('[DAEMON RUN] Session plugin catalog hint failed', {
+          sessionId: tracked.happySessionId, error: error instanceof Error ? error.message : String(error),
+        }));
+      }
     };
     const ownedConnectedServiceRuntimeRegistry = connectedServiceRuntimeRegistry.scopeToRequester(target => {
       const tracked = pidToTrackedSession.get(target.pid)
@@ -1807,6 +1876,8 @@ export async function startDaemon(
       externalSessionHostOperationOwner,
       runtimeId,
       credentials,
+      readPluginCatalogProjection: () => ({ runtimeId,
+        contributionRegistryProjectionRevision: pluginRegistryProjectionInvalidation.readRevision() }),
       createRequesterSessionRuntimeContext: async bootstrap => await createRequesterRuntime?.(bootstrap) ?? null,
       resolveRequesterSessionRuntimeContext,
       daemonSessionMutationCustody,
@@ -1815,6 +1886,7 @@ export async function startDaemon(
       deviceLocalSecretStorage,
       api,
       ...(openTeamCredentialProviderBinding ? { openTeamCredentialProviderBinding } : {}),
+      ...(openRunAccountConnectionSource ? { openAccountConnectionManagedConsumerSource: openRunAccountConnectionSource } : {}),
       ...(managedPolicyHomeId && externalActionAccountId ? {
         openAccountConnectionProviderBrokerAccess: async request => {
           const runtime = machineIrohRuntime;
@@ -2217,6 +2289,7 @@ export async function startDaemon(
         stopRequesterSessionForHandoff,
         daemonSessionMutationCustody,
         deviceLocalSecretStorage,
+        ...(openRunAccountConnectionSource ? { openAccountConnectionManagedConsumerSource: openRunAccountConnectionSource } : {}),
         ...(openTeamCredentialProviderBinding
           ? {
               prepareRunTeamCredentialProviderBinding: async (request) => {
@@ -2392,6 +2465,7 @@ export async function startDaemon(
                         homeId: managedPolicyHomeId,
                         accountId: externalActionAccountId,
                         machineId: registeredMachineId,
+                        expectedAccountSettingsScopeKey: resolveAccountSettingsScopeKey(credentials),
                         custody: brokerManagedProviderCustody,
                         withRegistry: withBrokerProviderRegistry,
                         getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
@@ -2745,6 +2819,13 @@ export async function startDaemon(
                 return await client.callWorkspaceSyncTargetPhase({ ...descriptor, credentials: custodianCredentials,
                   context: buildActionExecutorContextForRpc({ ...ingress, serverId: finiteServerId }) });
               },
+              callWorkspaceSeedExport: async (descriptor, ingress) => {
+                const client = apiMachineForSessions;
+                const custodianCredentials = await readStoredCredentialsForServerId(finiteServerId).catch(() => null);
+                if (!client || !custodianCredentials) throw Object.assign(new Error('Workspace seed authority is unavailable'), { code: 'peer_unavailable' });
+                return await client.callWorkspaceSyncSeedExport({ ...descriptor, credentials: custodianCredentials,
+                  context: buildActionExecutorContextForRpc({ ...ingress, serverId: finiteServerId }) });
+              },
               readProjectWorkerDependencies: (workspaceRefId, relationshipId) => admission.dependencies({ workspaceRefId,
                 ...(relationshipId ? { relationshipId } : {}) }),
               onReadinessPublished,
@@ -2770,6 +2851,7 @@ export async function startDaemon(
               const currentCredentials = requester ? null : await readStoredCredentialsForServerId(finiteServerId).catch(() => null);
               if (!requester && (!currentCredentials || !sameStoredCredentials(credentials, currentCredentials)) || !await isCurrent()) return null;
               const runtimeCurrent = requester?.isCurrent ?? isCurrent;
+              const requesterContext = requester ? readRequesterAccountActionContext(requester.accountAuthorization) : null;
               const io = createProjectNativeIo();
               const accountAccess = requester ?? (currentCredentials ? { serverId: finiteServerId, machineId: registeredMachineId,
                 accountId: externalActionAccountId, credentials: currentCredentials, serverHttpBaseUrl: finiteServerHttpBaseUrl } : null);
@@ -2795,8 +2877,8 @@ export async function startDaemon(
                   credentials: currentCredentials, isCurrent,
                   prepareBetween: (request, signal) => runtime.handoffAdapter.prepareBetween(request, signal) }) } : {}),
                 resolveWorkspaceExecutionConfig: async (context, currentIngress, actionId) => {
-                  if (!currentCredentials) return null;
-                  if (!await isCurrent()) return null;
+                  const preferenceCredentials = requesterContext?.credentials ?? currentCredentials;
+                  if (!preferenceCredentials || !await runtimeCurrent()) return null;
                   const origin = await resolveCurrentMachineExecutionOriginContext(currentIngress.signal);
                   if (!origin || origin.machineId !== registeredMachineId || !await isCurrent()) return null;
                   const authorization = currentIngress.callerInputAuthorization;
@@ -2806,12 +2888,17 @@ export async function startDaemon(
                   } : {}) };
                   const installation = readInstallationIdentityIfExistsSync();
                   return await createAccountServerWorkspaceWorkerPreferenceClient({
-                    token: currentCredentials.token, credentials: currentCredentials,
-                    serverHttpBaseUrl: finiteServerHttpBaseUrl, signal: currentIngress.signal,
-                    context: requestContext, actionId, isCredentialCurrent: isCurrent,
-                    resolveRequestHeaders: request => {
+                    token: preferenceCredentials.token, credentials: preferenceCredentials,
+                    serverHttpBaseUrl: accountAccess.serverHttpBaseUrl, signal: currentIngress.signal,
+                    context: requestContext, actionId, isCredentialCurrent: runtimeCurrent,
+                    ...(requesterContext ? { operationContext: requesterContext.savedSecretOperationContext } : {}),
+                    resolveRequestHeaders: async request => {
+                      if (requester) return await requester.accountAuthorization.requesterHttpProjection!.createRequestHeaders({
+                        effectActionId: request.effectActionId, method: request.method, path: request.path,
+                        ...(request.body === undefined ? {} : { body: request.body }), signal: currentIngress.signal,
+                      });
                       const result = resolveExternalActionServerRequestHeaders({ ...request,
-                        daemonToken: currentCredentials.token, serverIdentityId: origin.serverIdentityId,
+                        daemonToken: preferenceCredentials.token, serverIdentityId: origin.serverIdentityId,
                         ...(installation ? { privateKey: installation.privateKey, installationId: installation.installationId } : {}),
                       });
                       return result.ok ? result.headers : null;
@@ -3152,6 +3239,9 @@ export async function startDaemon(
     resumeQuiescedMachineRegistration = () => {
       machineRegistrationRuntime?.resume();
     };
+    // Startup reconciliation has populated the existing tracked census.
+    // Reattached Sessions may still hold the previous daemon's catalog.
+    publishSessionPluginCatalogInvalidation(pluginRegistryProjectionInvalidation.readRevision());
 
     // Every 60 seconds:
     // 1. Prune stale sessions

@@ -46,6 +46,7 @@ import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { getActionSpec, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import { isSettingsDeclarationActionIdV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { resolveActionSessionListAccessFailure } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 import { SessionListResultSchema } from '@happier-dev/protocol/sessions/control/listResult';
@@ -1108,6 +1109,15 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         // Both retain terminal policy and exact Machine admission.
         const pairedSessionCreation = actionId === 'session.spawn_new' && provenance?.provenance.kind === 'terminal'
           ? SessionSpawnNewInputV2Schema.safeParse(input) : null;
+        // A standalone CLI has no UI reverse-dispatch connection. The own daemon
+        // already owns client placement, Account binding and terminal policy.
+        const pairedSettingsAction = originalCliCaller && provenance?.provenance.kind === 'terminal'
+          && isSettingsDeclarationActionIdV1(actionId);
+        const pairedSettingsDaemonTarget = params.externalActionClient && pairedSettingsAction
+          ? await resolveLiveDaemonControlTargetForServer(fixedServerId ?? approvalServerId).catch(() => null)
+          : undefined;
+        const pairedSettingsOwnDaemon = pairedSettingsAction && pairedSettingsDaemonTarget?.accountId
+          && pairedSettingsDaemonTarget.accountId === readAccountIdFromToken(credentials.token);
         const originalContext = params.externalActionClient && originalCliCaller && provenance?.provenance.kind === 'terminal'
           ? { ...context, authority: 'account_automation' as const } : context;
         const originalMachineEnvironment = actionId === 'machines.environment.apply' && originalCliCaller
@@ -1118,7 +1128,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           ? context.externalActionTarget.kind === 'machine' : Boolean(params.machineId);
         const originalFiniteProjectAction = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) && originalCliCaller;
         if (params.externalActionClient && hasStoredSessionCredentialProvenance(credentials)
-          && originalCliCaller && (ordinary || pairedSessionCreation?.success || originalMachineTarget || actionId === 'projects.service.relocate')
+          && originalCliCaller && (ordinary || pairedSessionCreation?.success || pairedSettingsOwnDaemon || originalMachineTarget || actionId === 'projects.service.relocate')
           && !mountedFilesystemCopy && !originalFiniteProjectAction) {
           const parsedActionId = SignedRootActionIdSchema.safeParse(actionId);
           if (!parsedActionId.success) return actionFailure('unsupported');
@@ -1143,16 +1153,15 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             }
             target ??= { kind: 'machine', machineId: source.machineId };
           }
-          const daemonControlTarget = fixedServerId
-            ? await resolveLiveDaemonControlTargetForServer(fixedServerId).catch(() => null)
-            : undefined;
+          const daemonControlTarget = pairedSettingsAction ? pairedSettingsDaemonTarget : fixedServerId
+            ? await resolveLiveDaemonControlTargetForServer(fixedServerId).catch(() => null) : undefined;
           if (target?.kind === 'machine') {
             // Home's API URL need not be the daemon's control URL. Preserve
             // the fixed-Home publication's own Account/Machine offline dispatcher.
             const localEndpoint = await resolveLiveDaemonExternalActionEndpoint(resolveActionServerApiUrl()).catch(() => null);
             const accountId = readAccountIdFromToken(credentials.token);
             const localPublication = daemonControlTarget ?? localEndpoint;
-            const ownLocal = (ordinary || pairedSessionCreation?.success) && accountId && localPublication?.machineId === target.machineId
+            const ownLocal = (ordinary || pairedSessionCreation?.success || pairedSettingsAction) && accountId && localPublication?.machineId === target.machineId
               && localPublication.accountId === accountId;
             if (!ownLocal || requiresOriginalAccountMachineActionProof(parsedActionId.data)) {
               try {
@@ -1180,7 +1189,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           }, {
             ...(signal ? { signal } : {}),
             ...(daemonControlTarget ? { target: daemonControlTarget } : {}),
-            ...(pairedSessionCreation?.success
+            ...(pairedSessionCreation?.success || pairedSettingsAction
               ? context.authority === 'account_automation'
                 ? { authorityCeiling: 'account_automation' as const }
                 : buildTerminalAuthorityCeiling({ token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl() })

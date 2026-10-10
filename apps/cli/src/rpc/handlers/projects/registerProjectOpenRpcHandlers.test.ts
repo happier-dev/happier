@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectAccountRowMutationRequestV1Schema, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -23,6 +23,8 @@ import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspace
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ScmHostingProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { createProjectSetupTrustRowCipher } from '@/workspaces/projectSetup/projectSetupTrust';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -41,6 +43,8 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { logger } from '@/ui/logger';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { prepareDaemonHomeIrohTransport } from '@/daemon/peer/iroh/daemonHomeIrohTransport';
+import { getServerProfile } from '@/server/serverProfiles';
 
 const socketIo = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io: socketIo }));
@@ -67,7 +71,7 @@ function register(method: string = RPC_METHODS.PROJECTS_OPEN, runtime?: ProjectO
 }
 
 describe('Project Open RPC', () => {
-  afterEach(() => { vi.restoreAllMocks(); socketIo.mockReset(); withdrawActiveProjectAccountRowsSnapshot(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); socketIo.mockReset(); withdrawActiveProjectAccountRowsSnapshot(); });
 
   it.each(['opened', 'refused', 'outcomeUnknown'] as const)('retains the original Open settlement in Action Operations (%s)', async settlement => {
     const root = await mkdtemp(join(tmpdir(), 'happier-open-operation-'));
@@ -112,7 +116,7 @@ describe('Project Open RPC', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it('settles a public Source clone with real Git, preserving pre-effect refusals and post-effect uncertainty', async () => {
+  it('settles a public Source clone for host browsing despite an unenrolled Devcontainer, preserving refusals and uncertainty', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-qf4-open-'));
     const git = promisify(execFile);
     const remote = join(root, 'remote.git');
@@ -132,10 +136,10 @@ describe('Project Open RPC', () => {
       if (rateLimited) return { ok: false, status: 403, statusText: 'Forbidden',
         headers: new Headers({ 'x-ratelimit-remaining': '0', ...(rateLimited === 'timed'
           ? { 'x-ratelimit-reset': String(retryAt / 1000) } : {}) }),
-        json: async () => ({ message: 'API rate limit exceeded' }), text: async () => '' };
+        json: async () => ({ message: 'API rate limit exceeded' }), text: async (): Promise<string> => '' };
       return { ok: true, status: 200, statusText: 'OK', json: async () => ({ full_name: 'octocat/Hello-World',
         html_url: 'https://github.com/octocat/Hello-World', clone_url: 'https://github.com/octocat/Hello-World.git',
-        visibility: 'public', default_branch: 'master' }), text: async () => '' };
+        visibility: 'public', default_branch: 'master' }), text: async (): Promise<string> => '' };
     });
     const hostingDefinition = GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders?.[0];
     if (!hostingDefinition) throw new Error('GitHub did not declare its hosting provider');
@@ -154,9 +158,9 @@ describe('Project Open RPC', () => {
     // the purpose owner, not inferred from an unavailable token service.
     const hostingRuntimeServices = createHostScmHostingProviderRuntimeServices({
       contributes: { scmHostingProviders: [{ id: provider.id, pluginId: GITHUB_PLUGIN_MANIFEST.id,
-        provenance: 'first_party', source: { kind: 'bundled' }, definition: hostingDefinition }],
+        provenance: 'first_party', source: { kind: 'bundled' }, definition: ScmHostingProviderContributionSchema.parse(hostingDefinition) }],
         connectedAccountDescriptors: [{ pluginId: GITHUB_PLUGIN_MANIFEST.id,
-          provenance: 'first_party', source: { kind: 'bundled' }, definition: accountDefinition }] },
+          provenance: 'first_party', source: { kind: 'bundled' }, definition: PluginConnectedAccountDescriptorContributionV2Schema.parse(accountDefinition) }] },
       scmHostingProvidersById: new Map([[provider.id, { pluginId: GITHUB_PLUGIN_MANIFEST.id, occurrenceId: 'github-test',
         registration: { id: 'github', adapter: { routing: githubHostingProviderAdapter,
           repositoryClone: createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({ fetcher }) }) } } }]]),
@@ -185,6 +189,7 @@ describe('Project Open RPC', () => {
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, source, canManage: true } });
     vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (url.endsWith('/machines/managed/actions/list')) return { status: 200, data: { machines: [] } };
       if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
       const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
       const changed = request.mutations.map(mutation => ({ key: mutation.key, revision: 0, content: mutation.content }));
@@ -201,6 +206,8 @@ describe('Project Open RPC', () => {
       await mkdir(seed);
       await git('git', ['init', '-b', 'master'], { cwd: seed });
       await writeFile(join(seed, 'README.md'), 'hello');
+      await mkdir(join(seed, '.happier'));
+      await writeFile(join(seed, '.happier/project.json'), JSON.stringify({ version: 1, devcontainer: {} }));
       await git('git', ['add', '.'], { cwd: seed });
       await git('git', ['-c', 'user.name=Open test', '-c', 'user.email=open@example.invalid', 'commit', '-m', 'initial'], { cwd: seed });
       expect(await activated.backends[0]?.commitCaptureTarget?.({ context: { cwd: seed, projectKey: 'seed',
@@ -235,6 +242,8 @@ describe('Project Open RPC', () => {
         workspace: { serverId: 'home', machineId: 'machine', rootPath: join(root, 'checkout') },
         facts: { source: { sourceId: source.id, revision: 2 } } });
       expect(rows.some(row => row.key.kind === 'workspace-ref')).toBe(true);
+      await access(join(root, 'checkout', '.happier/project.json'));
+      expect(vi.mocked(axios.post).mock.calls.some(([url]) => url.includes('/sessions') || url.includes('/machines/managed/'))).toBe(false);
       expect((await git('git', ['branch', '--show-current'], { cwd: join(root, 'checkout') })).stdout.trim()).toBe('master');
       diagnostic.mockClear();
       expect(await handler({ ...input, ref: 'missing-ref', materialization: { ...input.materialization, destinationDirectoryName: 'missing-ref' } }, context))
@@ -250,7 +259,7 @@ describe('Project Open RPC', () => {
     } finally { scope.restore(); await rm(root, { recursive: true, force: true }); }
   });
 
-  it('admits the exact QA Home identity through its local profile while refusing wrong targets', async () => {
+  it('establishes a credential-seeded profile identity before Project Open while refusing wrong targets', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-open-home-identity-'));
     const root = join(home, 'checkout');
     const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
@@ -280,9 +289,7 @@ describe('Project Open RPC', () => {
       reloadConfiguration();
       await updateSettings(settings => ({ ...settings, activeServerId: profileId,
         servers: { [profileId]: { id: profileId, name: 'QA', serverUrl, webappUrl: serverUrl,
-          createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptor: { v: 1,
-            homeServerIdentityId: serverId, canonicalServerUrl: serverUrl, revision: 1,
-            endpoints: [{ kind: 'https', url: serverUrl }] } } } }));
+          createdAt: 1, updatedAt: 1, lastUsedAt: 1 } } }));
       await mkdir(root);
       const runtime: ProjectOpenRuntime = { serverId: profileId, machineId, serverHttpBaseUrl: serverUrl,
         accountId: 'account', readCredentials: async () => ({ token, encryption: null }) };
@@ -292,6 +299,21 @@ describe('Project Open RPC', () => {
       const target = { serverId: profileId, machineId };
       const handler = register(RPC_METHODS.PROJECTS_OPEN, runtime, target);
       const folder = { serverId, machineId, source: { kind: 'folder' as const, path: root }, materialization: { kind: 'attach' as const } };
+      expect(await handler(folder, context)).toEqual({ kind: 'refused', code: 'target_mismatch' });
+      // Only the Home HTTP boundary is mocked. Start from the predecessor/Stack
+      // URL-only profile and pass the provisioned credential through real startup verification.
+      vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, init) => {
+        expect(String(url)).toBe(`${serverUrl}/v1/features/authenticated`);
+        expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: serverId } },
+          homeConnectionDescriptor: { v: 1, homeServerIdentityId: serverId, canonicalServerUrl: serverUrl,
+            revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] } });
+      }));
+      const transport = await prepareDaemonHomeIrohTransport({ runtime: null, profile: await getServerProfile(profileId),
+        applicationCarrierEligibility: 'standard_only' });
+      try {
+        expect(await transport.verifyAuthenticated(token)).toEqual({ status: 'ready' });
+      } finally { await transport.release(); vi.unstubAllGlobals(); }
       expect(await handler(folder, context)).toMatchObject({ kind: 'opened', directory: root,
         workspace: { serverId, machineId, rootPath: root } });
       const workspaceRow = rows.find(row => row.key.kind === 'workspace-ref');
@@ -361,15 +383,18 @@ describe('Project Open RPC', () => {
         repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } };
     let current = true;
     // Private ports represent admitted host custody. Only HTTP/crypto system boundaries are supplied here.
-    const authorization = { binding: { accountId: 'bob', machineId: 'machine', custodianAccountId: 'alice',
-      installationId: 'installation', actionId: 'projects.open', accountEncryptionMode: mode },
+    const authorization = { v: 1, token: 'admitted-requester-fixture',
+      binding: { accountId: 'bob', machineId: 'machine', custodianAccountId: 'alice',
+      installationId: 'installation', actionId: 'projects.open', accountEncryptionMode: mode,
+      authentication: { kind: 'terminal', tokenEpoch: 0 }, serverIdentityId: 'identity',
+      requestId: 'requester-open', requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'machine' } },
       requesterAccountProjection: { accountId: 'bob', serverId: 'home', accountEncryptionMode: mode, projectAccountRowCipher: cipher,
         projectTrustRowCipher: createProjectSetupTrustRowCipher({ mode, material }),
         isCurrent: async () => current, readArtifact: async () => null },
       requesterHttpProjection: { accountId: 'bob', serverId: 'home', serverIdentityId: 'identity', serverHttpBaseUrl: 'https://home.example',
         accountEncryptionMode: mode, isCurrent: async () => current,
         createRequestHeaders: async () => current ? { 'x-requester-proof': 'bob' } : null },
-    } as ExternalActionExecutionAuthorizationV1;
+    } satisfies ExternalActionExecutionAuthorizationV1;
     vi.spyOn(axios, 'request').mockImplementation(async request => {
       expect(request.headers).toMatchObject({ 'x-requester-proof': 'bob' });
       return { status: 200, data: { ok: true, source, canManage: false } };
@@ -407,7 +432,7 @@ describe('Project Open RPC', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it('refuses a selected child namespace before accepting the host folder as a Workspace', async () => {
+  it('accepts the requested host folder for browsing despite an unenrolled Devcontainer', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-child-open-'));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const writes: unknown[] = [];
@@ -430,8 +455,14 @@ describe('Project Open RPC', () => {
         machineId: 'machine', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) })({
         serverId: 'home', machineId: 'machine', source: { kind: 'folder', path: root }, materialization: { kind: 'attach' },
       }, context);
-      expect(result).toMatchObject({ kind: 'refused', code: 'child_required' });
-      expect(writes).toEqual([]);
+      expect(result).toMatchObject({ kind: 'opened', directory: root,
+        workspace: { serverId: 'home', machineId: 'machine', rootPath: root } });
+      expect(writes).toHaveLength(1);
+      expect(ProjectAccountRowMutationRequestV1Schema.parse(writes[0]).mutations).toEqual([
+        expect.objectContaining({ key: expect.objectContaining({ kind: 'workspace-ref', serverId: 'home' }) }),
+      ]);
+      await access(join(root, '.happier/project.json'));
+      expect(vi.mocked(axios.post).mock.calls.some(([url]) => url.includes('/sessions') || url.includes('/machines/managed/'))).toBe(false);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
@@ -514,6 +545,26 @@ describe('Project Open RPC', () => {
       if (opened.kind !== 'opened') throw new Error('Actual child was not admitted');
       parentOnline = true;
       const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+      const snapshot = await readProjectAccountRows({ serverId: homeId, credentials: { token, encryption: null } });
+      const noEffect = async (): Promise<never> => { throw new Error('A bind mapping to the same bytes must not copy or launch a process'); };
+      const sync = new WorkspaceSyncController({ localServerId: homeId, localMachineId: 'machine',
+        resolveWorkspaceRef: id => { const resolved = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: homeId, id });
+          return resolved.kind === 'resolved' ? resolved.ref : null; },
+        rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(root, 'locks') }),
+        lifecycle: { start: noEffect, stop: noEffect }, adapter: { discoverCopyOnceRecoveries: noEffect, rehydrate: noEffect,
+          ensure: noEffect, copyOnce: noEffect, get: noEffect, list: noEffect, flush: noEffect, pause: noEffect,
+          resume: noEffect, terminate: noEffect, listConflicts: noEffect, diagnoseSelection: noEffect } });
+      const copiedOpen = await register(RPC_METHODS.PROJECTS_OPEN, { serverId: homeId,
+        serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'account',
+        readCredentials: async () => ({ token, encryption: null }),
+        workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({ sync, bootstrap: noEffect }) })({
+        serverId: homeId, machineId: 'machine', source: { kind: 'workspace', workspaceId: 'parent-workspace',
+          checkout: { serverId: homeId, workspaceId: 'parent-workspace', machineId: 'parent', rootPath: '/host/project' } },
+        materialization: { kind: 'sync', targetPath: root, workspaceAction: { kind: 'copy_once',
+          contentPolicy: { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) } } },
+      }, context);
+      expect(copiedOpen).toMatchObject({ kind: 'opened', directory: root, workspace: opened.workspace,
+        facts: { projectKey: 'parent-project' } });
       const copy = await register(RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN, { serverId: homeId,
         serverHttpBaseUrl: 'https://home.example', machineId: 'parent', accountId: 'account',
         readCredentials: async () => ({ token, encryption: null }) })({
@@ -529,7 +580,8 @@ describe('Project Open RPC', () => {
         machineId: 'machine', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) })({
         serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: root }, materialization: { kind: 'attach' },
       }, context);
-      expect(changedSelection).toMatchObject({ kind: 'refused', code: 'child_required' });
+      expect(changedSelection).toMatchObject({ kind: 'opened', directory: root,
+        workspace: opened.workspace, facts: { projectKey: 'parent-project' } });
       expect(rows).toEqual(acceptedRows);
     } finally { await rm(root, { recursive: true, force: true }); }
   });

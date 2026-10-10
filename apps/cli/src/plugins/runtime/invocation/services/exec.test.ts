@@ -1,38 +1,489 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { delimiter, dirname, join } from 'node:path';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 
 import {
     adaptStablePluginExecLegacyProcessHandle,
     authorizePluginExecLaunchForHost,
+    authorizeResolvedProjectExecLaunchForHost,
     createStableRunnerPluginExecService,
     createStablePluginExecService,
+    installManagedProcessCustodyForHost,
+    createProjectNativeEnvironmentIoForHost,
+    produceProjectLaunchEnvironmentForHost,
     resolvePluginExecManagedDependencyForHost,
     resolvePluginExecSystemToolForHost,
     resolveStablePluginExecInvocation,
 } from './exec';
-import { spawnSupervisedPluginProcess } from '../../exec/processSupervisor';
+import { readSupervisedPluginProcessIdForHost, spawnSupervisedPluginProcess } from '../../exec/processSupervisor';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { resolveProjectNativeCommand } from '@/workspaces/projectSetup/projectNativeResolution';
+import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
+import { ProjectNativeEnvironmentUncertainError } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import { waitForProcessExit } from '@/testkit/process/spawn';
+import { resolvePluginPathWithinRoots } from './filesystem';
+import type { PluginFileSystemRoots } from './types';
 
 const executable = Object.freeze({ kind: 'systemTool', id: 'fixture.node' } as const satisfies ManagedExecutableRef);
 
-function createService(options?: Readonly<{ current?: () => boolean; controller?: AbortController }>) {
+function createService(options?: Readonly<{ current?: () => boolean; controller?: AbortController;
+    recordDisclosureMismatch?: Parameters<typeof createStablePluginExecService>[0]['recordDisclosureMismatch'];
+    filesystemRoots?: PluginFileSystemRoots }>) {
     return createStablePluginExecService({
         allowedExecutables: [executable],
         allowedEnvKeys: ['FIXTURE_VALUE'],
         signal: options?.controller?.signal ?? new AbortController().signal,
         isOccurrenceCurrent: options?.current ?? (() => true),
+        ...(options?.recordDisclosureMismatch ? { recordDisclosureMismatch: options.recordDisclosureMismatch } : {}),
         async resolveExecutable(ref) {
             expect(ref).toEqual(executable);
             return { command: process.execPath, args: [], env: {} };
         },
-        async resolvePath() {
-            throw new Error('path resolution was not expected');
+        async resolvePath(path) {
+            return resolvePluginPathWithinRoots(options?.filesystemRoots ?? {
+                pluginData: process.cwd(), workspace: process.cwd(), projects: new Map(),
+            }, path);
         },
     });
 }
 
 describe('createStablePluginExecService', () => {
+    it('executes a selected absolute process cwd outside plugin filesystem roots through the canonical owner', async () => {
+        await withTempDir('happier selected machine cwd ünicode ', async root => {
+            const mismatches: unknown[] = [];
+            const pluginData = join(root, 'admitted-plugin-root');
+            await mkdir(pluginData);
+            const request = { executable, cwd: root, args: ['-e', 'process.stdout.write(process.cwd())'] };
+            const observed = await createService({ recordDisclosureMismatch: mismatch => mismatches.push(mismatch),
+                filesystemRoots: { pluginData, workspace: pluginData, projects: new Map() } }).run(request);
+            expect(observed.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+            expect(new TextDecoder().decode(observed.stdout)).toBe(await realpath(root));
+            expect(mismatches).toContainEqual({ capability: 'filesystem', path: root, access: 'read' });
+        });
+    });
+
+    it('refuses relative and NUL-bearing process cwd before native effects', async () => {
+        await withTempDir('happier invalid selected cwd ', async root => {
+            for (const cwd of ['.', `${root}\u0000suffix`]) {
+                const request = { executable, cwd, args: ['-e', 'process.stdout.write("unreviewed-effect")'] };
+                await expect(createService({ filesystemRoots: { pluginData: root, workspace: root, projects: new Map() } }).run(request))
+                    .rejects.toMatchObject({ code: 'plugin_exec_invalid_cwd' });
+            }
+        });
+    });
+
+    it('preserves unconfirmed native custody through final authorization even after cancellation', async () => {
+        await withTempDir('happier uncertain native launch ', async root => {
+            await writeFile(join(root, 'mise.toml'), '[env]\nNATIVE = "active"\n');
+            const controller = new AbortController();
+            let releases = 0;
+            const projectLaunch = {
+                status: 'ready' as const, reviewedEffectDigest: 'current-native-effect',
+                environment: {
+                    root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
+                    platform: 'linux' as const, io: {
+                        resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
+                        // The process owner reports unconfirmed cleanup; final admission
+                        // must not relabel it as a settled cancellation or no-launch.
+                        run: async () => {
+                            controller.abort();
+                            throw new PluginError({ code: 'plugin_exec_termination_incomplete', message: 'private native output' });
+                        },
+                    },
+                },
+            };
+            const outcome = await authorizeResolvedProjectExecLaunchForHost({
+                launch: { command: process.execPath, args: [], cwd: root, env: {}, release: () => { releases += 1; } },
+                projectLaunch, signal: controller.signal, assertCurrent: () => undefined,
+            }).then(() => null, (error: unknown) => error);
+            expect(outcome).toBeInstanceOf(ProjectNativeEnvironmentUncertainError);
+            expect(outcome).toMatchObject({ kind: 'outcome_uncertain', code: 'native_environment_termination_incomplete' });
+            expect(String(outcome)).not.toContain('private native output');
+            expect(releases).toBe(1);
+            await expect(produceProjectLaunchEnvironmentForHost({
+                cwd: root, env: {}, projectLaunch, signal: new AbortController().signal, assertCurrent: () => undefined,
+            })).rejects.toBeInstanceOf(ProjectNativeEnvironmentUncertainError);
+        });
+    });
+    it('prepares the admitted complete environment without inventing an executable for environment-only setup', async () => {
+        await withTempDir('happier environment only setup ', async root => {
+            await writeFile(join(root, 'mise.toml'), '[env]\nNATIVE = "active"\n');
+            const input = {
+                cwd: root, env: { REMOVE: 'host' }, signal: new AbortController().signal, assertCurrent: () => undefined,
+                projectLaunch: { status: 'ready' as const, reviewedEffectDigest: 'environment-only-current-effect',
+                    environment: { root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
+                        platform: 'linux' as const, io: {
+                            resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
+                            run: async (request: { cwd: string }) => {
+                                expect(request.cwd).toBe(root);
+                                return { exitCode: 0, stdout: 'NATIVE=active\0' };
+                            },
+                        } },
+                },
+            };
+            await expect(produceProjectLaunchEnvironmentForHost(input)).resolves.toEqual({ NATIVE: 'active' });
+            await expect(produceProjectLaunchEnvironmentForHost({ ...input,
+                projectLaunch: { status: 'refused', kind: 'approval_pending', code: 'project_setup_consent_required' },
+            })).rejects.toMatchObject({ code: 'project_setup_consent_required' });
+            await expect(produceProjectLaunchEnvironmentForHost({ ...input, signal: AbortSignal.abort() }))
+                .rejects.toMatchObject({ code: 'plugin_exec_aborted' });
+        });
+    });
+    it.runIf(process.platform === 'linux' && Boolean(process.env.B3_NATIVE_MISE_PATH))('runs the final admitted tuple with installed Mise, nested cwd and native removals', async ({ onTestFinished }) => {
+        const controller = new AbortController();
+        // The containing test deadline must cancel its actual native capture,
+        // even when a timeout interrupts preparation before a launch is returned.
+        onTestFinished(() => controller.abort());
+        await withTempDir('happier installed native tuple ', async (root) => {
+            const cwd = join(root, 'nested cwd');
+            await mkdir(cwd);
+            await writeFile(join(root, 'mise.toml'), '[env]\nB4_NATIVE = "active"\nB4_REMOVE = false\n');
+            const nativeTool = process.env.B3_NATIVE_MISE_PATH;
+            if (!nativeTool) throw new Error('The native lane requires its verified Mise binary');
+            // Installed-file/PATH boundary only. The real passive resolver and
+            // admitted version producer must reach this binary themselves.
+            vi.stubEnv('PATH', [dirname(nativeTool), process.env.PATH ?? ''].filter(Boolean).join(delimiter));
+            try {
+                const signal = controller.signal;
+                const launch = await authorizeResolvedProjectExecLaunchForHost({
+                    launch: {
+                        command: process.execPath, cwd,
+                        args: ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(1),value:process.env.B4_NATIVE,removed:process.env.B4_REMOVE}))', '--', 'literal $() ; " argument \\'],
+                        env: {
+                            ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+                            B4_REMOVE: 'host', MISE_TRUSTED_CONFIG_PATHS: root,
+                            MISE_DATA_DIR: join(root, 'data'), MISE_CACHE_DIR: join(root, 'cache'),
+                            MISE_STATE_DIR: join(root, 'state'), MISE_CONFIG_DIR: join(root, 'config'),
+                        },
+                    }, signal, assertCurrent: () => signal.throwIfAborted(),
+                    projectLaunch: {
+                        status: 'ready', reviewedEffectDigest: 'native-lane-reviewed-effect',
+                        environment: {
+                            root, selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, platform: 'linux',
+                            io: createProjectNativeIo().environmentIo,
+                        },
+                    },
+                });
+                expect(launch.command).toBe(process.execPath);
+                expect(launch.env).not.toHaveProperty('B4_REMOVE');
+                const owned = spawnSupervisedPluginProcess(launch);
+                try {
+                    const result = await owned.handle.wait();
+                    expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+                    expect(JSON.parse(Buffer.from(result.stdout).toString('utf8'))).toEqual({
+                        cwd, args: ['literal $() ; " argument \\'], value: 'active',
+                    });
+                } finally {
+                    await owned.dispose();
+                    launch.release();
+                }
+            } finally {
+                controller.abort();
+                vi.unstubAllEnvs();
+            }
+        });
+    });
+
+    it('retires actual native-effect descendants that leave the launcher process group', async () => {
+        if (process.platform !== 'linux') return; // The characterized native boundary is Linux.
+        await withTempDir('happier native effect custody ', async (root) => {
+            const pidFile = join(root, 'owned-pids.json');
+            const controller = new AbortController();
+            const io = createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null });
+            const pending = io.run({
+                command: process.execPath, cwd: root,
+                env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+                signal: controller.signal,
+                args: ['-e', [
+                    'const cp=require("node:child_process"),fs=require("node:fs");',
+                    'const child=cp.spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{detached:true,stdio:"ignore"});',
+                    'process.on("SIGTERM",()=>{});child.once("exit",()=>process.exit(0));',
+                    'fs.writeFileSync(process.argv[1],JSON.stringify([process.pid,child.pid]));setInterval(()=>{},1000);',
+                ].join(''), pidFile],
+            }).then(() => null, (error: unknown) => error);
+            let pids: number[] = [];
+            try {
+                await vi.waitFor(async () => {
+                    pids = JSON.parse(await readFile(pidFile, 'utf8'));
+                    expect(pids).toHaveLength(2);
+                });
+                controller.abort();
+                expect(await pending).toMatchObject({ code: 'plugin_exec_aborted' });
+                for (const pid of pids) await expect(waitForProcessExit(pid, { timeoutMs: 3000 })).resolves.toBe(true);
+            } finally {
+                controller.abort();
+                await pending;
+                for (const pid of pids) {
+                    try { process.kill(pid, 'SIGKILL'); } catch { /* Already proven absent on success. */ }
+                }
+            }
+        });
+    });
+
+    it.skipIf(process.platform === 'win32')('does not complete built-in native IO from launcher exit while its owned descendant remains live', async () => {
+        await withTempDir('happier builtin native root exit ', async root => {
+            const pidsPath = join(root, 'owned-pids.json');
+            const io = createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null });
+            const pending = io.run({ command: process.execPath, cwd: root, env: {}, args: ['-e', [
+                'const cp=require("node:child_process"),fs=require("node:fs");',
+                'const child=cp.spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});child.unref();',
+                'fs.writeFileSync(process.argv[1],JSON.stringify([process.pid,child.pid]));process.stdout.write("{}");',
+            ].join(''), pidsPath] });
+            // Observe rejection even when an earlier assertion fails, without
+            // changing the real IO/process owner outcome.
+            void pending.catch(() => undefined);
+            let pids: number[] = [];
+            try {
+                await vi.waitFor(async () => {
+                    pids = JSON.parse(await readFile(pidsPath, 'utf8'));
+                    expect(pids).toHaveLength(2);
+                });
+                await expect(waitForProcessExit(pids[0]!)).resolves.toBe(true);
+                const result = await pending;
+                expect(result).toEqual({ exitCode: 0, stdout: '{}' });
+                // A successful native result must follow full owned-resource
+                // cleanup; an already-dead launcher is not its proof.
+                if (process.platform === 'linux') {
+                    const stat = await readFile(`/proc/${pids[1]!}/stat`, 'utf8').catch(error => {
+                        if (error.code === 'ENOENT') return null;
+                        throw error;
+                    });
+                    // An orphaned zombie cannot execute, even if init has not
+                    // yet reaped its numeric PID (the existing native IO rule).
+                    expect(stat === null || stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z ')).toBe(true);
+                } else {
+                    expect(() => process.kill(pids[1]!, 0)).toThrow();
+                }
+            } finally {
+                for (const pid of pids) {
+                    try { process.kill(pid, 'SIGKILL'); } catch { /* Already absent on success. */ }
+                }
+                await pending.catch(() => undefined);
+            }
+        });
+    });
+
+    it('authorizes an admitted already-resolved host command through the same final environment owner', async () => {
+        await withTempDir('happier resolved Project launch ', async (root) => {
+            const cwd = join(root, 'nested cwd');
+            await mkdir(cwd);
+            await writeFile(join(root, 'mise.toml'), '[env]\nNATIVE = "active"\n');
+            let releases = 0;
+            const input = {
+                launch: { command: process.execPath, args: ['-e', 'process.stdout.write("exact")'], cwd,
+                    env: { REMOVE: 'host' }, stdin: new Uint8Array([255]), maxStdoutBytes: 1024,
+                    release: () => { releases += 1; } },
+                signal: new AbortController().signal, assertCurrent: () => undefined,
+                projectLaunch: {
+                    status: 'ready' as const, reviewedEffectDigest: 'current-reviewed-effect',
+                    environment: { root, selection: { kind: 'toolchain' as const, tool: 'mise' as const, configPath: 'mise.toml' },
+                        platform: 'linux' as const, io: {
+                            resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
+                            run: async (request: { cwd: string; env: Readonly<Record<string, string>> }) => {
+                                expect(request.cwd).toBe(cwd);
+                                expect(request.env.MISE_OVERRIDE_CONFIG_FILENAMES).toBe(join(root, 'mise.toml'));
+                                return { exitCode: 0, stdout: 'NATIVE=active\0' };
+                            },
+                        } },
+                },
+            };
+            const final = await authorizeResolvedProjectExecLaunchForHost(input);
+            expect(final).toMatchObject({ command: process.execPath, args: input.launch.args, cwd,
+                env: { NATIVE: 'active' }, stdin: new Uint8Array([255]), maxStdoutBytes: 1024 });
+            final.release(); final.release();
+            expect(releases).toBe(1);
+            await expect(authorizeResolvedProjectExecLaunchForHost({ ...input,
+                projectLaunch: { status: 'refused', kind: 'child_required', code: 'project_environment_child_required' },
+            })).rejects.toMatchObject({ code: 'project_environment_child_required' });
+        });
+    });
+
+    it('captures the full native environment before authorization without reviving native unsets or changing installed executable identity', async () => {
+        await withTempDir('happier admitted native project ', async (root) => {
+            await writeFile(join(root, 'mise.toml'), '[env]\nNATIVE = "active"\n');
+            let released = 0;
+            const installedArgs = ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(1),env:process.env}))', '--'];
+            const service = createStablePluginExecService({
+                allowedExecutables: [executable],
+                allowedEnvKeys: ['REMOVE', 'KEEP'],
+                environment: { REMOVE: 'host', KEEP: 'host' },
+                signal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => ({
+                    command: process.execPath, args: installedArgs,
+                    release: () => { released += 1; },
+                }),
+                resolvePath: async () => root,
+            });
+            const launch = await authorizePluginExecLaunchForHost(service, {
+                executable, args: ['--session', 'opaque "resume" \\'],
+                cwd: { root: 'workspace', relativePath: '' },
+                stdin: new Uint8Array([0, 255]), maxStdoutBytes: 1024,
+            }, {
+                projectLaunch: {
+                    status: 'ready', reviewedEffectDigest: 'reviewed-current-effect',
+                    environment: {
+                        selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+                        platform: 'linux',
+                        // Tool resolution/native execution are genuine OS boundaries;
+                        // native parsing, file checks and final authorization remain real.
+                        io: {
+                            resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
+                            run: async (request) => {
+                                expect(request.cwd).toBe(root);
+                                expect(request.env.REMOVE).toBe('host');
+                                return { exitCode: 0, stdout: 'KEEP=native\0NATIVE=active\0PROJECT_KEY=native\0' };
+                            },
+                        },
+                    },
+                    secretReferences: {
+                        requirements: [{ name: 'PROJECT_KEY', required: true }],
+                        accountSettings: {}, settingsSecretsReadKeys: [],
+                        secretReferenceOverlay: { v: 1, bindings: {
+                            PROJECT_KEY: { ref: 'happier:shared-secret:v1:project-key', revision: 2 },
+                        } },
+                        savedSecretResources: [{
+                            resourceId: 'project-key', ownerAccountId: 'requester', displayName: 'Project key',
+                            kind: 'apiKey', encryptionMode: 'plain', revision: 2, materialStatus: 'ready',
+                            storedContent: sealSavedSecretResourceStoredContentV1({
+                                resourceId: 'project-key', mode: 'plain',
+                                content: { v: 1, name: 'Project key', kind: 'apiKey', value: 'exact-project-key' },
+                            }),
+                        }],
+                    },
+                },
+            });
+            expect(launch).toMatchObject({
+                command: process.execPath,
+                args: [...installedArgs, '--session', 'opaque "resume" \\'],
+                cwd: root, env: { KEEP: 'native', NATIVE: 'active', PROJECT_KEY: 'exact-project-key' },
+                stdin: new Uint8Array([0, 255]), maxStdoutBytes: 1024,
+            });
+            expect(launch.env).not.toHaveProperty('REMOVE');
+            const processOwner = spawnSupervisedPluginProcess(launch);
+            try {
+                const observed = await processOwner.handle.wait();
+                expect(observed.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+                expect(JSON.parse(Buffer.from(observed.stdout).toString('utf8'))).toEqual({
+                    cwd: root, args: ['--session', 'opaque "resume" \\'],
+                    env: { KEEP: 'native', NATIVE: 'active', PROJECT_KEY: 'exact-project-key' },
+                });
+            } finally {
+                await processOwner.dispose();
+                launch.release(); launch.release();
+            }
+            expect(released).toBe(1);
+        });
+    });
+
+    it('keeps plugin-supplied project purpose/options nonactivating and refuses host preparation holds before resolving a process', async () => {
+        let resolutions = 0;
+        const service = createStablePluginExecService({
+            allowedExecutables: [executable],
+            signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => { resolutions += 1; return { command: process.execPath }; },
+            resolvePath: async () => { throw new Error('cwd must not be resolved'); },
+        });
+        // Extra JS properties are not host authority. Generic Exec must ignore them.
+        const genericOptions = {
+            signal: new AbortController().signal,
+            projectLaunch: { status: 'refused' as const, kind: 'approval_pending' as const, code: 'project_setup_consent_required' },
+        };
+        const genericRequest = { executable, args: ['-e', 'process.stdout.write("ordinary")'], purpose: 'cold Agent launch' };
+        const result = await service.run(genericRequest, genericOptions);
+        expect(Buffer.from(result.stdout).toString('utf8')).toBe('ordinary');
+        expect(resolutions).toBe(1);
+        for (const failure of [
+            { status: 'refused' as const, kind: 'approval_pending' as const, code: 'project_setup_consent_required' },
+            { status: 'refused' as const, kind: 'child_required' as const, code: 'project_environment_child_required' },
+        ]) {
+            await expect(authorizePluginExecLaunchForHost(service, { executable }, { projectLaunch: failure }))
+                .rejects.toMatchObject({ code: failure.code });
+        }
+        expect(resolutions).toBe(1);
+    });
+
+    it('consumes the native command owner fact without double evaluating that command environment', async () => {
+        await withTempDir('happier native command root ', async (root) => {
+            await writeFile(join(root, 'mise.toml'), '[tasks.build]\nrun = "echo build"\n');
+            const command = await resolveProjectNativeCommand({
+                root, source: { kind: 'native', tool: 'mise', file: 'mise.toml', target: 'build' },
+                usage: 'script', io: { resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }) },
+            });
+            expect(command.kind).toBe('resolved');
+            if (command.kind !== 'resolved') throw new Error('Expected the real native command owner to resolve');
+            const service = createStablePluginExecService({
+                allowedExecutables: [executable], signal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => ({ command: command.command, args: command.args, env: command.environmentOverlay }),
+                resolvePath: async () => command.cwd,
+            });
+            const launch = await authorizePluginExecLaunchForHost(service, {
+                executable, cwd: { root: 'workspace', relativePath: '' },
+            }, {
+                projectLaunch: {
+                    status: 'ready', reviewedEffectDigest: 'current-reviewed-native-command',
+                    environment: {
+                        selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' },
+                        nativeCommandEnvironment: command.nativeCommandEnvironment,
+                        platform: 'linux', io: {
+                            resolveTool: async () => { throw new Error('A native command must not be re-probed for wrapping'); },
+                            run: async () => { throw new Error('A native command must not evaluate its environment twice'); },
+                        },
+                    },
+                },
+            });
+            expect(launch).toMatchObject({
+                command: '/tools/mise', args: ['run', 'build'], cwd: root,
+                env: { MISE_OVERRIDE_CONFIG_FILENAMES: join(root, 'mise.toml') },
+            });
+            launch.release();
+        });
+    });
+
+    it('releases the installed executable when native production fails or the invocation retires during evaluation', async () => {
+        await withTempDir('happier refused native project ', async (root) => {
+            await writeFile(join(root, 'mise.toml'), '[env]\nKEY = "native"\n');
+            for (const outcome of ['failed', 'retired'] as const) {
+                const controller = new AbortController();
+                let releases = 0;
+                const service = createStablePluginExecService({
+                    allowedExecutables: [executable],
+                    signal: controller.signal, isOccurrenceCurrent: () => true,
+                    resolveExecutable: async () => ({ command: process.execPath, release: () => { releases += 1; } }),
+                    resolvePath: async () => root,
+                });
+                await expect(authorizePluginExecLaunchForHost(service, {
+                    executable, cwd: { root: 'workspace', relativePath: '' },
+                }, {
+                    signal: new AbortController().signal,
+                    projectLaunch: {
+                        status: 'ready', reviewedEffectDigest: 'reviewed-current-effect',
+                        environment: {
+                            selection: { kind: 'toolchain', tool: 'mise', configPath: 'mise.toml' }, platform: 'linux',
+                            io: {
+                                resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.4' }),
+                                run: async (request) => {
+                                    if (outcome === 'retired') {
+                                        controller.abort();
+                                        expect(request.signal?.aborted).toBe(true);
+                                    }
+                                    return { exitCode: 1, stdout: 'private native diagnostic' };
+                                },
+                            },
+                        },
+                    },
+                })).rejects.toMatchObject({ code: outcome === 'failed' ? 'native_environment_failed' : 'plugin_exec_aborted' });
+                expect(releases).toBe(1);
+            }
+        });
+    });
+
     it('authorizes an exact launch for a runner without spawning in the daemon owner', async () => {
         const release = vi.fn();
         const service = createStablePluginExecService({
@@ -495,20 +946,49 @@ describe('createStablePluginExecService', () => {
                 windowsVerbatimArguments: true,
             });
 
+            const nativeArguments = ['--plain', 'C:/project root\\bin\\input', 'a "quoted" value', 'C:\\trailing path\\'];
             expect(resolveStablePluginExecInvocation({
-                command: 'C:\\tools\\fixture.exe',
-                args: ['--plain'],
+                command: 'C:\\native tools\\fixture.exe',
+                args: nativeArguments,
                 env: {
                     COMSPEC: 'C:\\Windows\\System32\\cmd.exe',
                     PATHEXT: '.CMD;.EXE',
                 },
             })).toEqual({
-                command: 'C:\\tools\\fixture.exe',
-                args: ['--plain'],
+                command: 'C:\\native tools\\fixture.exe',
+                args: nativeArguments,
             });
         } finally {
             Object.defineProperty(process, 'platform', platformDescriptor);
         }
+    });
+
+    it.skipIf(process.platform === 'win32')('executes the resolved tuple with spaced executable/root paths and literal mixed-separator argv', async () => {
+        await withTempDir('happier-exec-final-tuple-', async (root) => {
+            const cwd = join(root, 'native project root');
+            const command = join(root, 'native tool');
+            await mkdir(cwd);
+            await symlink(process.execPath, command);
+            const args = ['value with spaces', 'folder\\mixed/path', 'literal "quotes"', '$HOME;$(echo should-not-run)'];
+            const service = createStablePluginExecService({
+                allowedExecutables: [executable],
+                signal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
+                // Executable and filesystem resolution are the OS boundaries;
+                // authorization, argv composition and supervision remain real.
+                resolveExecutable: async () => ({ command, env: { FINAL_TUPLE_VALUE: 'native value' } }),
+                resolvePath: async () => cwd,
+            });
+            const result = await service.run({
+                executable,
+                cwd: { root: 'workspace', relativePath: 'native project root' },
+                args: ['-e', 'process.stdout.write(JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(1), value: process.env.FINAL_TUPLE_VALUE }))', ...args],
+            });
+            expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+            expect(JSON.parse(Buffer.from(result.stdout).toString('utf8'))).toEqual({
+                cwd: await realpath(cwd), args, value: 'native value',
+            });
+        });
     });
 
     it('runs an allowed managed executable through the sticky binary process owner', async () => {
@@ -678,6 +1158,46 @@ describe('createStablePluginExecService', () => {
         await expect(service.run({ executable })).rejects.toMatchObject({ code: 'plugin_generation_stale' });
     });
 
+    it.each(['source', 'supervisor'] as const)('rechecks the physical %s authority after managed executable resolution before spawning', async retired => {
+        let current = true;
+        const supervisor = new AbortController();
+        let proceed!: () => void;
+        let entered!: () => void;
+        const resolutionEntered = new Promise<void>(resolve => { entered = resolve; });
+        const continuation = new Promise<void>(resolve => { proceed = resolve; });
+        const release = vi.fn();
+        const resolver = async () => {
+            entered();
+            await continuation;
+            return { command: process.execPath, release };
+        };
+        const service = createStablePluginExecService({
+            allowedExecutables: [executable], signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true, resolveExecutable: resolver,
+            resolveManagedExecutable: resolver,
+            resolvePath: async () => { throw new Error('Unexpected path'); },
+        });
+        const request = { executable, args: ['-e', 'process.exit(0)'] };
+        const installation = installManagedProcessCustodyForHost(service, request, null, {
+            signal: supervisor.signal, isOccurrenceCurrent: () => current,
+        });
+        const launch = service.spawn(request, { signal: supervisor.signal });
+        try {
+            await resolutionEntered;
+            if (retired === 'source') current = false;
+            else supervisor.abort();
+            proceed();
+            await expect(launch).rejects.toMatchObject({
+                code: retired === 'source' ? 'plugin_generation_stale' : 'plugin_exec_aborted',
+            });
+            expect(release).toHaveBeenCalledOnce();
+        } finally {
+            proceed();
+            installation.dispose();
+            await launch.then(handle => handle.dispose(), () => undefined);
+        }
+    });
+
     it('distinguishes timeout from a pre-handle spawn rejection', async () => {
         const service = createService();
 
@@ -696,17 +1216,36 @@ describe('createStablePluginExecService', () => {
 
     it('attributes occurrenceId retirement separately from caller disposal', async () => {
         const controller = new AbortController();
-        const service = createService({ controller });
+        const release = vi.fn();
+        const service = createStablePluginExecService({
+            allowedExecutables: [executable],
+            signal: controller.signal,
+            isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath, release }),
+            resolvePath: async () => { throw new Error('unexpected path'); },
+        });
         const handle = await service.spawn({
             executable,
             args: ['-e', 'setInterval(() => {}, 1000)'],
         });
 
-        controller.abort();
+        try {
+            const pid = readSupervisedPluginProcessIdForHost(handle);
+            if (pid === null) throw new Error('Expected a real owned child');
+            expect(process.kill(pid, 0)).toBe(true);
+            expect(release).not.toHaveBeenCalled();
+            controller.abort();
 
-        await expect(handle.wait()).resolves.toMatchObject({
-            termination: { requestedBy: { kind: 'dispose', reason: 'generationRetired' } },
-        });
+            await expect(handle.wait()).resolves.toMatchObject({
+                termination: { requestedBy: { kind: 'dispose', reason: 'generationRetired' } },
+            });
+            await vi.waitFor(() => {
+                expect(() => process.kill(pid, 0)).toThrow();
+                expect(release).toHaveBeenCalledOnce();
+            });
+        } finally {
+            await handle.dispose();
+        }
     });
 
     it('normalizes resolver failure before a process handle exists', async () => {
@@ -724,7 +1263,8 @@ describe('createStablePluginExecService', () => {
         });
     });
 
-    it('holds a managed executable lease until process termination', async () => {
+    it('holds a managed executable lease after root exit until owned tree settlement', async () => {
+        await withTempDir('happier managed executable custody ', async root => {
         const release = vi.fn();
         const service = createStablePluginExecService({
             allowedExecutables: [executable],
@@ -734,13 +1274,35 @@ describe('createStablePluginExecService', () => {
             resolvePath: async () => { throw new Error('unexpected path'); },
         });
 
+        const childPidPath = join(root, 'child.pid');
+        const source = process.platform === 'win32' ? 'process.stdout.write("root output");' : [
+            'const {spawn}=require("node:child_process"),fs=require("node:fs");',
+            'const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});child.unref();',
+            `fs.writeFileSync(${JSON.stringify(childPidPath)},String(child.pid));`,
+            'process.stdout.write("root output");',
+        ].join('');
         const handle = await service.spawn({
             executable,
-            args: ['-e', 'setTimeout(() => {}, 20)'],
+            args: ['-e', source],
         });
-        expect(release).not.toHaveBeenCalled();
-        await handle.wait();
-        await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1));
+        try {
+            expect(release).not.toHaveBeenCalled();
+            const result = await handle.wait();
+            expect(new TextDecoder().decode(result.stdout)).toBe('root output');
+            expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+            const childPid = process.platform === 'win32' ? undefined : Number(await readFile(childPidPath, 'utf8'));
+            if (childPid !== undefined) {
+                expect(Number.isSafeInteger(childPid)).toBe(true);
+                expect(process.kill(childPid, 0)).toBe(true);
+            }
+            expect(release).not.toHaveBeenCalled();
+            await handle.dispose();
+            if (childPid !== undefined) await expect(waitForProcessExit(childPid)).resolves.toBe(true);
+            await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1));
+            // Output/terminal facts stay usable after resource settlement.
+            expect(await handle.wait()).toBe(result);
+        } finally { await handle.dispose(); }
+        });
     });
 
     it('releases a managed executable lease when spawn rejects before a handle exists', async () => {

@@ -257,7 +257,9 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
   method: string;
   requestId?: string;
   params?: unknown;
+  workspaceSyncSourceRouting?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceRoutingV1;
   workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+  workspaceSyncSeedRouting?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSeedRoutingV1;
   privateKey: ExternalActionMachineRequestSigningKey;
 }>): ExternalActionMachineRpcExecutionV1 | null {
   const authorization = input.context?.externalActionExecutionAuthorization;
@@ -279,7 +281,9 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
       method: input.method,
       requestId: input.requestId,
       ...(input.params === undefined ? {} : { params: input.params }),
+      ...(input.workspaceSyncSourceRouting ? { workspaceSyncSourceRouting: input.workspaceSyncSourceRouting } : {}),
       ...(input.workspaceSyncSourceWriterTargetRouting ? { workspaceSyncSourceWriterTargetRouting: input.workspaceSyncSourceWriterTargetRouting } : {}),
+      ...(input.workspaceSyncSeedRouting ? { workspaceSyncSeedRouting: input.workspaceSyncSeedRouting } : {}),
       privateKey: input.privateKey,
     }),
   };
@@ -300,7 +304,7 @@ export function readExternalActionSourceMachineRpcSigner(
     return binding.sessionActionSource;
   }
   const admission = binding.handoffAdmission;
-  if (!binding.handoffContinuation || !admission
+  if (!(binding.handoffContinuation || binding.handoffPreflight) || !admission
     || !(binding.machineId === admission.sourceMachineId && binding.installationId === admission.sourceInstallationId
       || binding.machineId === admission.targetMachineId && binding.installationId === admission.targetInstallationId)) return null;
   return { machineId: admission.sourceMachineId, installationId: admission.sourceInstallationId };
@@ -824,12 +828,25 @@ export async function prepareExternalActionHandoffContinuationAuthorization(inpu
   material?: Extract<AccountScopedCryptoMaterial, Readonly<{ type: 'dataKey' }>>;
   signal?: AbortSignal;
 }>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
+  return prepareExternalActionHandoffAuthorization({ ...input, phase: 'continuation' });
+}
+
+/** Read only the exact admitted peers while the original Session publisher remains current. */
+export async function prepareExternalActionHandoffPreflightAuthorization(input: Omit<
+  Parameters<typeof prepareExternalActionHandoffContinuationAuthorization>[0], 'handoffId' | 'actionId'
+>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
+  return prepareExternalActionHandoffAuthorization({ ...input, phase: 'preflight', actionId: 'session.handoff' });
+}
+
+async function prepareExternalActionHandoffAuthorization(input: Omit<
+  Parameters<typeof prepareExternalActionHandoffContinuationAuthorization>[0], 'handoffId'
+> & Readonly<{ phase: 'preflight'; handoffId?: never } | { phase: 'continuation'; handoffId: string }>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
   try {
     if (input.signal?.aborted) return null;
     const root = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
     const binding = root.binding;
     const admission = binding.handoffAdmission;
-    if (binding.actionId !== 'session.handoff' || binding.handoffContinuation || !admission
+    if (binding.actionId !== 'session.handoff' || binding.handoffContinuation || binding.handoffPreflight || !admission
       || binding.machineId !== input.sourceMachineId || binding.installationId !== input.sourceInstallationId
       || admission.sourceMachineId !== input.sourceMachineId || admission.sourceInstallationId !== input.sourceInstallationId
       || ![admission.sourceMachineId, admission.targetMachineId].includes(input.machineId)) return null;
@@ -847,7 +864,8 @@ export async function prepareExternalActionHandoffContinuationAuthorization(inpu
       : { v: 1 as const, requestId: binding.requestId, target, input: input.input, handoffAdmission };
     const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: input.machineId,
       envelope,
-      handoffContinuation: { authorization: root, handoffId: input.handoffId },
+      ...(input.phase === 'preflight' ? { handoffPreflight: { authorization: root } }
+        : { handoffContinuation: { authorization: root, handoffId: input.handoffId } }),
     });
     const path = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
     const response = await axios.post<unknown>(`${input.serverHttpBaseUrl}${path}`, body, {
@@ -872,8 +890,10 @@ export async function prepareExternalActionHandoffContinuationAuthorization(inpu
       || !sameStrictJsonValue(next.handoffAdmission, admission)
       || !sameStrictJsonValue(next.sessionActionOrigin, binding.sessionActionOrigin)
       || !sameStrictJsonValue(next.sessionActionSource, binding.sessionActionSource)
-      || !sameStrictJsonValue(next.handoffContinuation, { rootRequestId: binding.requestId,
-        rootRequestEnvelopeDigest: binding.requestEnvelopeDigest, handoffId: input.handoffId })
+      || !sameStrictJsonValue(next.handoffContinuation, input.phase === 'preflight' ? undefined : {
+        rootRequestId: binding.requestId, rootRequestEnvelopeDigest: binding.requestEnvelopeDigest, handoffId: input.handoffId })
+      || !sameStrictJsonValue(next.handoffPreflight, input.phase === 'preflight' ? {
+        rootRequestId: binding.requestId, rootRequestEnvelopeDigest: binding.requestEnvelopeDigest } : undefined)
       || ('authentication' in binding ? !('authentication' in next)
         || !sameStrictJsonValue(next.authentication, binding.authentication)
         : !('credentialId' in next) || next.credentialId !== binding.credentialId

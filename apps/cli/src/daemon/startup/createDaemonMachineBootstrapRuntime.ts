@@ -47,6 +47,7 @@ import { createRunnerBrokerReadinessApplicationLifecycle } from '../peer/mediati
 import type { StartPeerMediationLoopbackInput } from '../peer/mediation/rpc/startLoopback';
 import type { DaemonProviderBrokerRuntime } from '@/providers/broker/daemonProviderBrokerRuntime';
 import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
+import type { ExecutionRunManagedProviderSourceOpener } from '@/agent/runtime/bridges/executionRun/runtime/managedProvider';
 import type { DirectRouteGrantTrustRoot } from '../peer/mediation/verifyDirectRouteGrant';
 import type { ManagedActivityRpcOwner } from '@/api/machine/rpcHandlers.managedActivity';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -230,6 +231,7 @@ export function createDaemonMachineBootstrapRuntime(
     resolveManagedPurposeBindingIntent?: BootstrapRuntime['resolveManagedPurposeBindingIntent'];
     openTeamDirect?: BootstrapRuntime['openTeamDirect'];
     prepareRunTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
+    openAccountConnectionManagedConsumerSource?: ExecutionRunManagedProviderSourceOpener;
     createAgentCatalogObservation?: BootstrapRuntime['createAgentCatalogObservation'];
     onAutomationWorkerStarted?: (worker: AutomationWorkerHandle) => void;
     /** Live canonical Workflow feature decision. Missing/unknown remains disabled. */
@@ -261,6 +263,7 @@ export function createDaemonMachineBootstrapRuntime(
       machineId: string;
       apiMachine: ApiMachineClient;
     }>) => Promise<Readonly<{
+      accountConnectionIngress?: boolean;
       resolveProviderBrokerApplicationTarget: NonNullable<NonNullable<
         StartPeerMediationLoopbackInput['irohMachineAdmission']
       >['resolveProviderBrokerApplicationTarget']>;
@@ -361,6 +364,9 @@ export function createDaemonMachineBootstrapRuntime(
     ...(params.openTeamDirect ? { openTeamDirect: params.openTeamDirect } : {}),
     ...(params.prepareRunTeamCredentialProviderBinding
       ? { prepareRunTeamCredentialProviderBinding: params.prepareRunTeamCredentialProviderBinding }
+      : {}),
+    ...(params.openAccountConnectionManagedConsumerSource
+      ? { openAccountConnectionManagedConsumerSource: params.openAccountConnectionManagedConsumerSource }
       : {}),
     isShuttingDown: params.isShuttingDown,
     ...(params.machineIrohRuntime ? { machineIrohRuntime: params.machineIrohRuntime } : {}),
@@ -491,7 +497,7 @@ export function createDaemonMachineBootstrapRuntime(
       }
       if (providerBrokerApplication) {
         providerBrokerApplicationApiMachine = apiMachine;
-        await apiMachine.setProviderBrokerIngressLive(true);
+        await apiMachine.setProviderBrokerIngressLive(true, providerBrokerApplication.accountConnectionIngress);
       }
       return apiMachine;
     },
