@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { deflateRawSync, gzipSync } from 'node:zlib';
 
 import * as tar from 'tar';
@@ -836,6 +836,33 @@ test('extractArchivePayloadToDirectory rejects gzip decompression bombs without 
       }),
       /compression ratio/iu,
     );
+    await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory settles a tar staging-directory filesystem error', { timeout: 2000 }, async (t) => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-cwd-error-'));
+  try {
+    const archivePath = join(rootDir, 'payload.tar.gz');
+    const extractDir = join(rootDir, 'extract');
+    await writeFile(archivePath, createTarGzip([{ name: 'file.txt', contents: 'payload' }]));
+    const originalStat = fs.stat;
+    // Inject a real filesystem boundary failure; tar still owns conversion to
+    // CwdError and its native error/entry/reservation lifecycle.
+    t.mock.method(fs, 'stat', (target, ...args) => {
+      if (!relative(rootDir, String(target)).startsWith('.extract.extract-')) {
+        return originalStat(target, ...args);
+      }
+      const error = Object.assign(new Error('staging stat failed'), { code: 'EIO' });
+      queueMicrotask(() => args.at(-1)(error));
+    });
+    await assert.rejects(
+      extractArchivePayloadToDirectory({ archiveName: 'payload.tar.gz', archivePath, extractDir }),
+      { name: 'CwdError', code: 'EIO' },
+    );
+    assert.deepEqual((await readdir(rootDir)).filter((name) => name.includes('.extract-')), []);
     await assert.rejects(stat(extractDir), { code: 'ENOENT' });
   } finally {
     await rm(rootDir, { recursive: true, force: true });

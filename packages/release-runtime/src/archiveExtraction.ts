@@ -797,8 +797,7 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     strict: true,
   };
   const unpack = tar.x(unpackOptions);
-  let parserAborted = false;
-  unpack.once('abort', () => { parserAborted = true; });
+  let extractionFailed = false;
   const unpackFinished = new Promise<void>((resolveFinished) => {
     unpack.once('finish', resolveFinished);
   });
@@ -829,21 +828,24 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     params.abortContext.throwIfAborted();
     validateEntry.assertValid();
   } catch (error) {
+    extractionFailed = true;
     params.abortContext.throwIfAborted();
     validateEntry.assertValid();
     throw error;
   } finally {
     // Pipeline synthesizes close for node-tar's legacy stream on failure;
-    // that does not drain its pending filesystem callbacks. End the stopped
-    // parser and await Unpack's finish (which includes those callbacks) before
-    // the caller removes staging. Rejected entries never reach the filesystem.
-    if (parserAborted) {
-      // tar's parser abort makes end() a no-op and prevents Unpack's finish.
-      // End every accepted entry, including queued entries, before taking the
-      // reservation barrier so no later entry can begin a staging write.
+    // that does not drain its pending filesystem callbacks. Successful unpack
+    // emits finish after those callbacks, but parser abort and CwdError do not.
+    unpack.end();
+    if (extractionFailed) {
+      // End and consume every accepted entry, including queued entries, before
+      // taking the reservation barrier so no later entry can start a staging
+      // write. Failed extraction discards these bodies; CwdError otherwise
+      // leaves its entry paused forever.
       await Promise.all([...pendingEntries].map((entry) => new Promise<void>((resolveEntry) => {
         entry.once('end', resolveEntry);
         entry.end();
+        entry.resume();
       })));
       if (acceptedRoots.size > 0) {
         await new Promise<void>((resolveDrained) => {
@@ -854,7 +856,6 @@ async function extractTarArchiveToDirectory(params: Readonly<{
         });
       }
     } else {
-      unpack.end();
       await unpackFinished;
     }
   }
