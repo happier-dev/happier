@@ -38,10 +38,11 @@ function contextualBrowserSessionId(actionId: string, context: SessionBoundActio
 
 export function resolveActionToolContextualDefaults(params: Readonly<{
   actionId: string;
+  input?: unknown;
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
 }>): ActionContextualDefaults | null {
-  const builtIn = getActionContextualDefaults(params.actionId);
+  const builtIn = getActionContextualDefaults(params.actionId, params.input);
   if (builtIn) return builtIn;
 
   const projected = params.pluginToolCatalog?.find((tool) => tool.actionId === params.actionId);

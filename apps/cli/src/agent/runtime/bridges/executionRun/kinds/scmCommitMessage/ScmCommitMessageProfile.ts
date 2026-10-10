@@ -7,6 +7,7 @@ import { parseCommitMessageModelOutput } from './parseCommitMessageModelOutput';
 
 export const ScmCommitMessageProfile: ExecutionRunIntentProfile = {
   intent: 'scm_commit_message',
+  supportsDetached: true,
   transcriptMaterialization: 'none',
   prepareStartParams: async ({ request, cwd }) => {
     const input = ExecutionRunScmCommitMessageInputV1Schema.parse(request.intentInput ?? {});
@@ -22,6 +23,7 @@ export const ScmCommitMessageProfile: ExecutionRunIntentProfile = {
     }
 
     return {
+      permissionMode: 'no_tools',
       instructions: buildCommitMessagePrompt({
         snapshot: context.snapshot,
         diffsByPath: context.diffsByPath,

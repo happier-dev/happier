@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import { randomBytes } from 'node:crypto';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -50,13 +51,15 @@ export function createTestRpcManager(params?: { scopePrefix?: string; workingDir
         decryptRaw: async (value) => decrypt(encryptionKey, encryptionVariant, decodeBase64(value)),
     } };
 
-    async function call<TResponse, TRequest>(method: string, request: TRequest): Promise<TResponse> {
+    async function call<TResponse, TRequest>(method: string, request: TRequest, authorization?: SocketRpcAuthorizationContext): Promise<TResponse> {
         const callId = randomBytes(16).toString('hex');
         const prefixedMethod = `${scopePrefix}:${method}`;
         const encryptedParams = await socketRpcCodec.encodeParams(content, request, { method: prefixedMethod, callId });
         const rpcRequest: RpcRequest = {
             method: prefixedMethod,
             params: encryptedParams,
+            // Genuine transport boundary fixture, outside the encrypted caller payload.
+            ...(authorization ? { authorization } : {}),
         };
         const encryptedResponse = await manager.handleRequest(rpcRequest);
         const decrypted = await socketRpcCodec.decodeResult(content, { ok: true, result: encryptedResponse }, callId);

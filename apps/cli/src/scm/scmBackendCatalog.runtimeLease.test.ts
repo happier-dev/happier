@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
@@ -41,6 +42,7 @@ function createRuntimeRegistry(contributes: ResolvedContributionRegistry): Resol
     contributes,
     resolvePromptAssetBlocks: async () => [],
     resolveCaptureSource: async () => null,
+    resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
     hookHandlersByHookId: new Map(),
     agentRuntimesByAgentId: new Map(),
     scmHostingProvidersById: new Map(),

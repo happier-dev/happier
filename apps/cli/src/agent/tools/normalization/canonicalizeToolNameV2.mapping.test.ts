@@ -54,7 +54,7 @@ describe('canonicalizeToolNameV2 mappings', () => {
     expect(canonicalize('find')).toBe('Glob');
   });
 
-  it.each(['TaskCreate', 'TaskList', 'TaskUpdate', 'task', 'Agent', 'SubAgent'])('normalizes `%s` to SubAgent', (toolName) => {
+  it.each(['TaskCreate', 'TaskList', 'TaskUpdate', 'task', 'Agent', 'SubAgent', 'subagent'])('normalizes `%s` to SubAgent', (toolName) => {
     expect(canonicalize(toolName)).toBe('SubAgent');
   });
 

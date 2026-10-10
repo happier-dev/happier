@@ -64,6 +64,15 @@ On phone-sized layouts the same surfaces live in the
 
 ## Files
 
+<Callout type="info">
+  In unreleased 0.3 development source, Project Code uses the same qualified
+  workspace browser as Session Files. A folder name opens its page; its
+  disclosure control expands the inline tree separately. Code reads the actual
+  latest commit touching the current file or folder and each visible entry,
+  rather than showing the branch tip for every row. Missing or shallow history
+  is shown as unavailable, and a failed refresh keeps known content marked stale.
+</Callout>
+
 The **Files** tab is the in-session file manager for the current workspace.
 
 ### What you can do
@@ -170,6 +179,9 @@ Typical use cases:
 For text inside files, use [Search → Text in files](/organize/search#search-inside-workspace-files).
 The Files field searches names and paths. Text in files searches the workspace
 on the selected machine and opens a hit at its line with Find on the query.
+In the 0.3 development channel, a directory-path search also finds files
+below that directory. An unavailable or failed search shows an error; it does
+not mean the directory contains no matching files.
 
 ### Create files and folders
 
@@ -323,6 +335,13 @@ selected renderer. **Monaco keeps its own Find widget**, including when a
 Search hit supplies the query; there is no second Happier Find bar above it.
 The native CodeMirror editor uses the live document's search with Happier's
 Find controls. Images and binary previews have no text Find control.
+
+An Agent or MCP caller can also control a mounted file, diff or review's Find
+through `ui.find` when the app is connected to the addressed machine. It
+returns status and counts rather than file text. Monaco accepts Find controls
+but reports its counts as engine-owned and unavailable to the Action.
+See [Agent Search and Find](/organize/search#let-an-agent-use-search-and-find)
+for connection and approval outcomes.
 
 ### Find in terminal output
 

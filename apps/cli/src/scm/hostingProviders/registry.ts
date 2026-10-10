@@ -120,6 +120,7 @@ export type ResolvedScmHostingProviderRegistry = Readonly<{
     getPullRequestCheckout: (id: string) => HostingProviderPullRequestCheckoutCapability | undefined;
     getRepositoryPublishing: (id: string) => HostingProviderRepositoryPublishingCapability | undefined;
     getRepositoryClone: (id: string) => HostingProviderRepositoryCloneCapability | undefined;
+    listDeployments?: (input?: Readonly<{ providerId?: string; providerKind?: string }>) => readonly ScmHostingProviderResolvedRemote[];
     detectRemote: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderRemoteDetectionResult;
     buildCompareUrl: (input: Readonly<{
         provider: HostingProviderResolvedRemote | UnresolvedScmHostingProvider;
@@ -536,6 +537,25 @@ export function createScmHostingProviderRegistry(params: Readonly<{
             const runtime = providersById.get(id)?.runtime;
             const capability = runtime?.registration.adapter.repositoryClone;
             return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+        },
+        listDeployments(input = {}) {
+            const deployments = new Map<string, ScmHostingProviderResolvedRemote>();
+            for (const provider of providers) {
+                if (input.providerId && input.providerId !== provider.id) continue;
+                if (input.providerKind && input.providerKind !== provider.kind) continue;
+                try {
+                    const routing = provider.runtime?.registration.adapter.routing;
+                    for (const deployment of routing?.listDeployments?.({
+                        ...(provider.connectedAccountBases ? { connectedAccountBases: provider.connectedAccountBases } : {}),
+                    }) ?? []) {
+                        const normalized = normalizeDetectedProvider(deployment, provider);
+                        if (normalized) deployments.set(`${normalized.id}\n${normalized.baseUrl}`, normalized);
+                    }
+                } catch {
+                    // Failed admission cannot supply a deployment, nor block another provider.
+                }
+            }
+            return Object.freeze([...deployments.values()]);
         },
         detectRemote(input) {
             for (const provider of providers) {

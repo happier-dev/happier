@@ -3,7 +3,7 @@ import type { ScmComparison } from '@happier-dev/protocol/scm';
 import { createAccountScopedCryptoMaterialSnapshotV1, convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol';
 import { encrypt, encodeBase64, decodeBase64, decryptResult } from '@/api/encryption';
 import tweetnacl from 'tweetnacl';
-import { createCliScmReviewedMarkAction } from './executeScmReviewedMarkAction';
+import { createCliScmReviewedMarkAction, clearCliScmReviewedMarks } from './executeScmReviewedMarkAction';
 
 const network = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 // Only the HTTP boundary is replaced; currentness, encryption and intent reconciliation are real.
@@ -54,6 +54,27 @@ describe('explicit CLI personal reviewed Action', () => {
     await expect(createCliScmReviewedMarkAction({ credentials: { token: 'token', encryption: null }, serverBaseUrl: 'https://home',
       resolveAuthorizationHeaders: () => null, comparison, changeRefs: ['exact'], reviewed: true })).resolves.toMatchObject({ success: false, errorCode: 'not_authenticated' });
     expect(network.post).not.toHaveBeenCalled();
+  });
+  it('never writes or clears the custodian personal record on behalf of another authenticated Machine actor', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`;
+    let retainedRecord: string | undefined;
+    network.get.mockImplementation(async (url: string) => url.endsWith('/currentness') ? { status: 200, data: currentness }
+      : { status: 404 });
+    network.post.mockImplementation(async (_url: string, body: { mutations: { key: string; value: string }[] }) => {
+      retainedRecord = body.mutations[0].value;
+      return { status: 200, data: { success: true, results: [{ key: body.mutations[0].key, version: 0 }] } };
+    });
+    const params = { credentials: { token, encryption: null }, serverBaseUrl: 'https://home',
+      resolveAuthorizationHeaders: () => ({ Authorization: `Bearer ${token}` }), comparison };
+    await expect(createCliScmReviewedMarkAction({ ...params, requesterAccountId: 'collaborator',
+      changeRefs: ['exact'], reviewed: true })).resolves.toMatchObject({ success: false, errorCode: 'reviewed_marks_unavailable' });
+    await expect(clearCliScmReviewedMarks({ ...params, requesterAccountId: 'collaborator' }))
+      .resolves.toMatchObject({ success: false, errorCode: 'reviewed_marks_unavailable' });
+    expect(retainedRecord).toBeUndefined();
+    await expect(createCliScmReviewedMarkAction({ ...params, requesterAccountId: 'custodian',
+      changeRefs: ['exact'], reviewed: true })).resolves.toMatchObject({ success: true,
+        record: { comparisonId: 'basis', reviewedChangeRefs: ['exact'] } });
+    expect(retainedRecord).toBeDefined();
   });
   it.each(['legacy', 'dataKey'] as const)('writes and opens marks with the actual %s Account codec', async type => {
     const key = new Uint8Array(32).fill(7);

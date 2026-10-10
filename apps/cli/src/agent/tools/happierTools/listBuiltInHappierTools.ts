@@ -2,6 +2,7 @@ import { HAPPIER_BUILT_IN_TOOLS } from './catalog';
 import {
   filterBuiltInToolsForSurface,
   listPluginActionBackedTools,
+  createActionToolNameToIdMap,
 } from './actionToolCatalog';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -12,6 +13,16 @@ import type { ActionId, ActionsSettingsV1, FeatureId, SessionRunPromptReadAction
 import type { HappierBuiltInToolDefinition } from './types';
 
 export type BuiltInHappierToolsSurface = 'mcp' | 'cli' | 'agent';
+
+export type HappierToolInventory = Readonly<{
+  tools: readonly HappierBuiltInToolDefinition[];
+  actionToolNameToId: ReadonlyMap<string, string>;
+}>;
+
+/** Both consumers use the same admitted projection, rather than filtering it again. */
+export function createHappierToolInventory(params: Parameters<typeof listBuiltInHappierTools>[0]): HappierToolInventory {
+  return { tools: listBuiltInHappierTools(params), actionToolNameToId: createActionToolNameToIdMap(params) };
+}
 
 function dedupeToolsByName<T extends Readonly<{ name: string }>>(tools: readonly T[]): readonly T[] {
   const deduped = new Map<string, T>();
@@ -48,6 +59,8 @@ export function listBuiltInHappierTools(params?: Readonly<{
   /** Exact Home feature decision for Session-scoped native tool advertisement. */
   isServerFeatureEnabled?: (id: FeatureId) => boolean;
   actionsSettings?: ActionsSettingsV1 | null;
+  /** Undefined preserves Account-host exposure; Session hosts provide their choice. */
+  sessionMemoryEnabled?: boolean;
   requiredDirectActionIds?: readonly ActionId[];
 }>) {
   const surface = params?.surface ?? 'agent';
@@ -72,6 +85,7 @@ export function listBuiltInHappierTools(params?: Readonly<{
         surface,
         isActionEnabled,
         actionsSettings,
+        sessionMemoryEnabled: params?.sessionMemoryEnabled,
         requiredDirectActionIds: params?.requiredDirectActionIds,
         registry: params?.registry,
         pluginToolCatalog: params?.pluginToolCatalog,
@@ -85,6 +99,7 @@ export function listBuiltInHappierTools(params?: Readonly<{
         surface,
         isActionEnabled,
         actionsSettings,
+        sessionMemoryEnabled: params?.sessionMemoryEnabled,
         requiredDirectActionIds: params?.requiredDirectActionIds,
         registry: params?.registry,
         pluginToolCatalog: params?.pluginToolCatalog,

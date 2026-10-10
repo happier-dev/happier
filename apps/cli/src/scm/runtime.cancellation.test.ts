@@ -48,6 +48,48 @@ function createFakeChild(pid: number): FakeChild {
 }
 
 describe('runScmCommand cancellation', () => {
+  it.each([false, true])('settles a streamed read after owned cleanup and honors late cancellation (%s)', async (cancelAfterClose) => {
+    const child = createFakeChild(41006);
+    mocks.spawn.mockReset();
+    mocks.spawn.mockReturnValue(child);
+    let settleCleanup!: () => void;
+    mocks.killProcessTree.mockReset();
+    mocks.killProcessTree.mockReturnValue(new Promise<void>((resolve) => { settleCleanup = resolve; }));
+    const chunks: string[] = [];
+    let completed = false;
+    const controller = new AbortController();
+    const command = runScmCommand({
+      bin: 'git', cwd: process.cwd(), args: ['log'], maxOutputBytes: 4,
+      signal: controller.signal,
+      stdoutConsumer: chunk => { chunks.push(Buffer.from(chunk).toString()); return 'stop'; },
+    }).then(result => { completed = true; return result; });
+    // Settlement in the admitted prefix takes precedence over older bytes in
+    // the same OS chunk; no larger output boundary is needed.
+    child.stdout.emit('data', Buffer.from('factold-history'));
+    child.emit('close', null);
+    if (cancelAfterClose) controller.abort();
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(chunks).toEqual(['fact']);
+    settleCleanup();
+    expect(await command).toMatchObject({ success: !cancelAfterClose, stdout: '', outputLimitExceeded: false, stoppedEarly: true, exitCode: -1 });
+  });
+
+  it('keeps streaming cancellation distinct from a successful consumer stop', async () => {
+    const child = createFakeChild(41007);
+    mocks.spawn.mockReset();
+    mocks.spawn.mockReturnValue(child);
+    mocks.killProcessTree.mockReset();
+    mocks.killProcessTree.mockImplementation(async () => { queueMicrotask(() => child.emit('close', null)); });
+    const controller = new AbortController();
+    const command = runScmCommand({
+      bin: 'git', cwd: process.cwd(), args: ['log'], signal: controller.signal,
+      stdoutConsumer: () => { controller.abort(); return 'stop'; },
+    });
+    child.stdout.emit('data', Buffer.from('fact'));
+    expect(await command).toMatchObject({ success: false });
+  });
+
   it('captures checkpoints when Git phases finish within the canonical command budget', async () => {
     // Git processes and clocks are system boundaries; checkpoint capture,
     // private-index setup and the SCM process-budget owner remain real.

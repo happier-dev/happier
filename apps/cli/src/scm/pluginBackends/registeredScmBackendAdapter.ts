@@ -9,6 +9,8 @@ import type {
 import type {
     BackendRuntimeRegistration as ScmBackendRuntimeRegistration,
     BackendRuntimeServices as ScmBackendRuntimeServices,
+    BackendCommandRunInput,
+    BackendCommandStreamInput,
     PortableWorkspacePathClassification as PluginPortableWorkspacePathClassification,
 } from '@happier-dev/plugin-sdk/scm/backend';
 import type {
@@ -99,27 +101,27 @@ function createScmBackendRuntimeServices(
     definition: ScmBackendExecutableDefinition,
 ): ScmBackendRuntimeServices {
     const commandAuthorization = createScmInstallableCommandAuthorization(definition.commands);
-    return {
-        async runCommand(input) {
-            const unauthorizedCommand = rejectUnauthorizedScmInstallableCommand({
-                ...input,
-                authorization: commandAuthorization,
-            });
-            if (unauthorizedCommand) return unauthorizedCommand;
-            return await runHostScmCommand({
-                bin: input.command,
-                installableKey: input.installableKey,
-                cwd: input.cwd,
-                args: [...input.args],
-                timeoutMs: input.timeoutMs,
-                stdin: input.stdin,
-                stdinInteraction: input.stdinInteraction,
-                maxOutputBytes: input.maxOutputBytes,
-                env: input.env,
-                signal: input.signal,
-            });
-        },
+    const runCommand = async (input: BackendCommandRunInput | BackendCommandStreamInput) => {
+        const unauthorizedCommand = rejectUnauthorizedScmInstallableCommand({
+            ...input,
+            authorization: commandAuthorization,
+        });
+        if (unauthorizedCommand) return unauthorizedCommand;
+        return await runHostScmCommand({
+            bin: input.command,
+            installableKey: input.installableKey,
+            cwd: input.cwd,
+            args: [...input.args],
+            timeoutMs: input.timeoutMs,
+            stdin: input.stdin,
+            stdinInteraction: input.stdinInteraction,
+            maxOutputBytes: input.maxOutputBytes,
+            env: input.env,
+            signal: input.signal,
+            ...('stdoutConsumer' in input ? { stdoutConsumer: input.stdoutConsumer } : {}),
+        });
     };
+    return { runCommand, runCommandStreaming: runCommand };
 }
 
 export type ScmBackendExecutableDefinition = Readonly<{

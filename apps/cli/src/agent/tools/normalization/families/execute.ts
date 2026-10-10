@@ -132,7 +132,7 @@ export function normalizeBashResult(rawOutput: unknown): UnknownRecord {
 
     if (typeof out.stdout !== 'string') {
         const outputBlocks = extractTextFromContentBlocks(out.output);
-        const contentBlocks = extractTextFromContentBlocks(out.content);
+        const contentBlocks = typeof out.content === 'string' ? out.content : extractTextFromContentBlocks(out.content);
         const metadata = asRecord(out.metadata);
         const candidate =
             typeof out.output === 'string'

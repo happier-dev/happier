@@ -26,6 +26,27 @@ describe('executeScmDiffSummaryAction', () => {
         return fixture;
     }
 
+    it('generates a workspace-native saved result through the existing detached Run without a Session', async () => {
+        const fixture = await changedRepository();
+        const executeCanonicalAction = vi.fn(async () => ({ ok: true as const,
+            result: { runId: 'detached-summary', callId: 'call', sidechainId: 'sidechain' } }));
+        const captured = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree' } });
+        const generated = await executeScmDiffSummaryAction({ request: { cwd: fixture.rootPath,
+            source: { kind: 'workingTree' }, comparisonId: captured.comparison.id, outputs: ['walkthrough'] },
+            machineId: 'machine', backendTarget: BACKEND_TARGET, executeCanonicalAction });
+        expect(generated).toMatchObject({ success: true, runId: 'detached-summary', inputId: expect.any(String),
+            comparison: captured.comparison, outputs: { walkthrough: { state: 'pending' } } });
+        expect(executeCanonicalAction).toHaveBeenCalledWith('execution.run.start', expect.objectContaining({
+            sessionId: null, machineId: 'machine', cwd: fixture.rootPath,
+            localInputId: generated.success ? generated.inputId : undefined,
+            intentInput: expect.objectContaining({ resultId: generated.resultId, comparisonId: captured.comparison.id }),
+        }));
+        expect(await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, resultId: generated.resultId! }))
+            .toEqual({ cwd: fixture.rootPath });
+        expect(await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath, resultId: generated.resultId! }))
+            .toMatchObject({ success: true, result: { output: { inputId: generated.success ? generated.inputId : undefined } } });
+    });
+
     it.each(['branch', 'commit', 'pullRequest'] as const)('generates the first walkthrough from retained %s endpoints after the source moves', async (kind) => {
         const fixture = await changedRepository();
         const git = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, encoding: 'utf8' }).trim();

@@ -1,4 +1,5 @@
 import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { randomUUID } from 'node:crypto';
 import { ScmDiffSummaryGenerateOutputSchema, buildScmDiffSummaryCacheKey, SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION } from '@happier-dev/protocol/scm/diffSummary';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ActionExecuteResult, BackendTargetRefV2, ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs } from '@happier-dev/protocol';
@@ -17,6 +18,7 @@ type ExecuteCanonicalAction = (
 export async function executeScmDiffSummaryAction(params: Readonly<{
     request: ScmDiffSummaryGenerateInput;
     sessionId?: string;
+    machineId?: string;
     readTranscriptPage?: ReadRepositoryCheckpointTranscriptPage;
     readPullRequestComparisonPage?: ReadPullRequestComparisonPage;
     backendTarget: BackendTargetRefV2 | null;
@@ -67,10 +69,11 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
                 ...(selector?.modelId ? { modelId: selector.modelId } : {}) } } : {}),
         });
         const scope = { cwd: params.request.cwd, resultId: saved.resultId, ...(sessionId ? { sessionId } : {}) };
-        const latestOutput = async (runId?: string): Promise<ScmDiffSummaryGenerateOutput> => {
+        const latestOutput = async (runId?: string, inputId?: string): Promise<ScmDiffSummaryGenerateOutput> => {
             const latest = await scmDiffSummaryResultStore.read(scope);
             const output = latest.success ? latest.result.output : saved.output;
-            return ScmDiffSummaryGenerateOutputSchema.parse({ ...output, ...(runId ? { runId } : {}) });
+            return ScmDiffSummaryGenerateOutputSchema.parse({ ...output, ...(runId ? { runId } : {}),
+                ...(output.success && inputId ? { inputId } : {}) });
         };
         const failed = async (reason: string): Promise<ScmDiffSummaryGenerateOutput> => {
             // A concurrent manual edit or started/terminal publication owns the newer revision.
@@ -78,10 +81,14 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
             return latestOutput();
         };
         if (!params.backendTarget) return failed('Diff-summary model target is unavailable');
-        if (!sessionId) return failed('Diff-summary generation requires a selected session');
+        if (!sessionId && !params.machineId) return failed('Diff-summary generation requires an admitted execution target');
+        const inputId = randomUUID();
         const startResult = await params.executeCanonicalAction('execution.run.start', {
+            sessionId: sessionId ?? null,
+            ...(!sessionId ? { machineId: params.machineId, cwd: params.request.cwd } : {}),
             kind: 'scm_diff_summary.v1',
             intent: 'scm_diff_summary',
+            localInputId: inputId,
             backendTarget: params.backendTarget,
             permissionMode: 'read_only',
             retentionPolicy: 'resumable',
@@ -90,7 +97,7 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
             ...(selector?.profileId ? { profileId: selector.profileId } : {}),
             ...(selector?.modelId ? { modelId: selector.modelId } : {}),
             // Only a host-owned saved evidence id crosses admission, never client diff bytes.
-            intentInput: { ...params.request, sessionId, comparisonId: captured.comparison.id,
+            intentInput: { ...params.request, ...(sessionId ? { sessionId } : {}), comparisonId: captured.comparison.id,
                 resultId: saved.resultId, expectedRevision: saved.revision },
             waitForCompletion: false,
         }).catch(() => null);
@@ -102,7 +109,7 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
         }
         const started = ExecutionRunStartResponseSchema.safeParse(startResult.result);
         return started.success
-            ? latestOutput(started.data.runId)
+            ? latestOutput(started.data.runId, inputId)
             : failed('Diff-summary execution run did not return a run id');
     });
 }

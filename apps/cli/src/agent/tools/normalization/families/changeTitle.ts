@@ -25,7 +25,7 @@ function extractQuotedTitle(text: string): string | null {
     return null;
 }
 
-function parseJsonTitle(text: string): string | null {
+function parseJsonResult(text: string): UnknownRecord | null {
     const trimmed = text.trim();
     if (!trimmed) return null;
     if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
@@ -37,53 +37,52 @@ function parseJsonTitle(text: string): string | null {
         return null;
     }
 
-    const asRecord = (value: unknown): UnknownRecord | null => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-        return value as UnknownRecord;
-    };
-
-    const readTitle = (value: unknown): string | null => {
-        const rec = asRecord(value);
-        if (rec && typeof rec.title === 'string' && rec.title.trim()) return rec.title.trim();
-        return null;
-    };
-
     const rec = asRecord(parsed);
-    if (rec) {
-        return (
-            readTitle(rec) ??
-            readTitle(rec.output) ??
-            readTitle((asRecord(rec.data) ?? null)?.output) ??
-            readTitle((asRecord(rec.data) ?? null)?.result) ??
-            readTitle((asRecord(rec.result) ?? null)?.output)
-        );
+    if (!rec) return null;
+    const candidates = [rec, asRecord(rec.output), asRecord(asRecord(rec.data)?.output),
+        asRecord(asRecord(rec.data)?.result), asRecord(asRecord(rec.result)?.output)];
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        if (typeof candidate.error === 'string' && candidate.error.trim()) {
+            return {
+                success: false,
+                error: candidate.error,
+                errorMessage: candidate.error,
+                ...(typeof candidate.errorCode === 'string' ? { errorCode: candidate.errorCode } : {}),
+            };
+        }
+        if (typeof candidate.title === 'string' && candidate.title.trim()) {
+            return { title: candidate.title.trim() };
+        }
     }
-
-    return null;
+    // A JSON property name is not a quoted success title.
+    return { message: text };
 }
 
 export function normalizeChangeTitleResult(rawOutput: unknown): UnknownRecord {
     if (typeof rawOutput === 'string') {
-        const title = parseJsonTitle(rawOutput) ?? extractQuotedTitle(rawOutput);
+        const parsed = parseJsonResult(rawOutput);
+        if (parsed) return parsed;
+        const title = extractQuotedTitle(rawOutput);
         return title ? { title } : { message: rawOutput };
     }
 
     const record = asRecord(rawOutput);
     if (!record) return { value: rawOutput };
 
-    const contentText =
-        coerceTextFromContentBlocks((record as any).content) ??
-        (Array.isArray((record as any).content) ? coerceTextFromContentBlocks((record as any).content) : null);
+    const contentText = coerceTextFromContentBlocks(record.content);
     const message =
         typeof contentText === 'string'
             ? contentText
-            : typeof (record as any).message === 'string'
-                ? (record as any).message
-                : typeof (record as any).stdout === 'string'
-                    ? (record as any).stdout
+            : typeof record.message === 'string'
+                ? record.message
+                : typeof record.stdout === 'string'
+                    ? record.stdout
                     : null;
 
-    const title = message ? (parseJsonTitle(message) ?? extractQuotedTitle(message)) : null;
+    const parsed = message ? parseJsonResult(message) : null;
+    if (parsed?.success === false) return parsed;
+    const title = typeof parsed?.title === 'string' ? parsed.title : message && !parsed ? extractQuotedTitle(message) : null;
     if (title) return { ...record, title };
     if (message) return { ...record, message };
     return { ...record };

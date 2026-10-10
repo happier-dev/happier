@@ -21,6 +21,16 @@ renames do not follow an old identity. Subjects and author names are native Git
 facts, not inferred hosting identities. Unborn history is `none`; a shallow
 boundary or failed/truncated read is `unavailable`, not proof of no commits.
 
+The Git traversal consumes NUL-framed stdout incrementally through the existing
+host command owner and stops once all demanded facts are established. It keeps
+the command's existing byte and timeout budgets. Reaching the output boundary
+retains already proven facts and marks unsettled demands unavailable; only a
+complete traversal can establish `none`. Cancellation discards the batch.
+The optional SDK streaming command operation must be present: a buffered-only
+host reports unavailable rather than pretending it consumed or settled output.
+An intentional stop returns `stoppedEarly` after owned process cleanup, retaining
+the actual exit code of the terminated Git process.
+
 `useWorkspaceEntryHistory` captures Home, Machine, root, folder, demanded paths
 and HEAD. Retired or mismatched responses cannot replace the current view.
 For a workspace below the repository root, it consumes that root from the same
@@ -37,6 +47,20 @@ following a different Git identity. POSIX case-sensitive names remain distinct.
 History is transient and independent of the directory read: failed refreshes
 retain known facts with a freshness notice, and valid files remain browsable.
 This is not a persisted history index or a replacement for paged `scm.log.list`.
+
+In this unreleased development flow, the full Code route opens folder and file
+pages in the main column; the Files companion keeps its file-to-Details behavior.
+Both consume the shared
+[`ProjectBrowseFilesSurface`](../apps/ui/sources/components/projects/detail/surfaces/ProjectBrowseFilesSurface.tsx)
+and existing file reader. In
+[`WorkspaceFileDetailsView`](../apps/ui/sources/components/workspaces/files/details/WorkspaceFileDetailsView.tsx),
+Raw downloads the actual file through the ordinary workspace byte transfer, not
+the rendered preview or diff. Copy copies only complete loaded non-binary text;
+it is disabled without that content, and a clipboard failure is reported. The
+[inline transfer owner](../apps/ui/sources/sync/domains/transfers/runtime/transferRuntime/families/workspaceFileTransfers.ts)
+rejects oversized or failed reads rather than publishing a truncated prefix.
+Unavailable file content or history therefore remains unavailable, not an empty
+file or a claim that no commit exists.
 
 Cross-machine commit counts require actual common Git objects at the comparison
 owner. A remote tip not present locally cannot supply a merge base; unrelated
@@ -66,6 +90,22 @@ model. Opening a Walkthrough destination does not start generation; Start does.
   owns editable output, revisions, immediate Undo, generator linkage and commit
   application progress. Device projections and the analysis cache are readers,
   not alternate editable authorities.
+- [`useScmCommitPlan.ts`](../apps/ui/sources/components/sessions/files/commits/useScmCommitPlan.ts)
+  projects saved commit plans and sends their revisioned edits, acceptance,
+  stop, cancel, hook inclusion and recovery through that result owner.
+  [`ScmCommitsView.tsx`](../apps/ui/sources/components/sessions/files/commits/ScmCommitsView.tsx)
+  is the shared presentation; Session adapters retain their authorized composer
+  affordance without becoming a separate commit-plan controller.
+- [`WorkspaceCommitsView.tsx`](../apps/ui/sources/components/projects/scm/WorkspaceCommitsView.tsx)
+  is the Project consumer of the same controller and presentation, rendered by
+  [`WorkspaceScmReviewDetailsView.tsx`](../apps/ui/sources/components/projects/panes/details/views/WorkspaceScmReviewDetailsView.tsx).
+  Its workspace binding uses the admitted Home/Machine/root with null Session
+  identity, not a
+  borrowed or synthetic Session. Only current working-tree selection exposes a
+  proposal and its application controls; committed evidence does not substitute
+  pending changes. Retiring the selected host stops foreground observation,
+  not the accepted machine application. Package and composed live validation of
+  this consumer remain open.
 - [`reviewedMarks.ts`](../packages/protocol/src/scm/reviewedMarks.ts) owns personal
   mark intent and per-key CAS; Account KV stores the marks separately from results.
 - [`SessionScmReviewDetailsView.tsx`](../apps/ui/sources/components/sessions/files/views/SessionScmReviewDetailsView.tsx)
@@ -149,6 +189,51 @@ context, without giving prose or proposals Git authority.
 | `branch` | Resolved merge-base of base/head to the resolved head. Pending work is not included. |
 | `commit` | Selected parent to the immutable commit; a root uses the empty tree and a merge requires an explicit parent. |
 | `pullRequest` | Source-attested repository/PR identity and merge-base-to-head diff endpoints, with a separate base-tip freshness witness and paged evidence from the hosting source. |
+
+### Usage Work correspondence (0.3 development)
+
+The existing PR list/get reads accept an optional `workEvidence: { sessionId }`
+selector. The host admits that Session and filesystem scope before reading and
+again before returning private evidence. Older readers can omit this optional
+projection; absence is unavailable evidence, never a complete empty ledger.
+
+In 0.3 development, the existing `scm.branch.list` read accepts the same
+selector and returns exact checkpoint/commit witnesses for local branch heads.
+The branch identity combines the device-local opaque repository identity,
+full ref and captured immutable head object id; a branch name alone is never
+an allocation join. The read does not fetch or write Git objects. Missing
+checkpoint receipts or objects remain unavailable, and a commit witnessed in
+several branches remains ambiguous rather than being charged to each branch.
+
+`scm/checkpoints/sessionEvidence.ts` verifies retained start/final checkpoint
+receipts against their scoped Git refs, exact selected turn and capture phases,
+and actual object trees. A single-parent commit
+links only when its parent tree and tree exactly match those endpoints. The
+hosting reader supplies PR identity and immutable base/head OIDs; membership in
+that Git graph completes the link. Repository identity uses the existing
+`scm/hostingRepositoryIdentity.ts` owner. Branch names, authors, timestamps and
+directories never establish correspondence. Missing objects, pruned or changed
+refs, rewritten content and unmatched partial commits remain unlinked. No Git
+fetch, checkout or publication is performed by this read.
+
+The Work allocation consumes U0's resolved accounting contributions unchanged.
+Each contribution goes to its unique witnessed PR, or stays unallocated when
+turn evidence is missing, outcomes conflict, or writers are uncertain. Sessions
+and PRs may relate many-to-many through distinct turns. Every token and cost
+kind remains in exactly one allocation row; there is no allocation record,
+equal split, cloned event or attribution editor. Exact content correspondence
+is not an authorship claim: even `no_happier_checkpoint_overlap_observed` is
+bounded process-local evidence. Branch-scoped PR discovery reports partial
+coverage independently of the exact linked rows. Native PR dates are optional;
+a last-update timestamp is not a merge timestamp.
+
+The branch ledger is a separate projection of these same resolved contribution
+rows, including standalone branches with no PR. It does not add its amounts to
+the PR-linked total or change PR allocation. Both strict projections are
+re-derived from admitted contribution and SCM witnesses by
+`allocateUsageOutcomes`; neither introduces stored allocation records.
+
+### PR comparison reads
 
 The GitHub source adapter invokes its configured safe changed-files Action with
 `comparison: true`, starts at page one, and follows only source-minted

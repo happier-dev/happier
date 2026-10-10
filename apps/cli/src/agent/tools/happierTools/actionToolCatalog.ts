@@ -223,6 +223,7 @@ export function resolveActionToolCatalogAvailability(params: Readonly<{
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
   actionsSettings?: ActionsSettingsV1 | null;
+  sessionMemoryEnabled?: boolean;
   requireToolBinding?: boolean | null;
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
@@ -236,6 +237,7 @@ export function resolveActionToolCatalogAvailability(params: Readonly<{
         actionId: builtInSpec.id as ActionId,
         surface,
         settings: params.actionsSettings ?? null,
+        sessionMemoryEnabled: params.sessionMemoryEnabled,
         isActionEnabled: params.isActionEnabled ?? null,
         requireToolBinding: params.requireToolBinding ?? null,
       }),
@@ -441,6 +443,7 @@ export function isActionAvailableOnToolSurface(params: Readonly<{
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
   actionsSettings?: ActionsSettingsV1 | null;
+  sessionMemoryEnabled?: boolean;
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
 }>): boolean {
@@ -452,6 +455,7 @@ export function isActionDirectToolAvailableOnToolSurface(params: Readonly<{
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
   actionsSettings?: ActionsSettingsV1 | null;
+  sessionMemoryEnabled?: boolean;
   requiredDirectActionIds?: readonly ActionId[];
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
@@ -461,6 +465,7 @@ export function isActionDirectToolAvailableOnToolSurface(params: Readonly<{
   if (builtInSpec) {
     const ordinarilyExposed = isActionDirectToolExposedOn(builtInSpec, surface, {
       settings: params.actionsSettings ?? null,
+      sessionMemoryEnabled: params.sessionMemoryEnabled,
       isActionEnabled: params.isActionEnabled ?? null,
     });
     if (ordinarilyExposed) return true;
@@ -474,6 +479,7 @@ export function isActionDirectToolAvailableOnToolSurface(params: Readonly<{
       surface,
       isActionEnabled: params.isActionEnabled,
       actionsSettings: params.actionsSettings ?? null,
+      sessionMemoryEnabled: params.sessionMemoryEnabled,
       registry: params.registry,
       pluginToolCatalog: params.pluginToolCatalog,
     }).available;
@@ -484,6 +490,7 @@ export function isActionDirectToolAvailableOnToolSurface(params: Readonly<{
     surface,
     isActionEnabled: params.isActionEnabled,
     actionsSettings: params.actionsSettings ?? null,
+    sessionMemoryEnabled: params.sessionMemoryEnabled,
     requireToolBinding: true,
     registry: params.registry,
     pluginToolCatalog: params.pluginToolCatalog,
@@ -495,6 +502,7 @@ export function createActionToolNameToIdMap(params?: Readonly<{
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
   actionsSettings?: ActionsSettingsV1 | null;
+  sessionMemoryEnabled?: boolean;
   requiredDirectActionIds?: readonly ActionId[];
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
@@ -513,6 +521,7 @@ export function createActionToolNameToIdMap(params?: Readonly<{
           surface,
           isActionEnabled: params?.isActionEnabled,
           actionsSettings: params?.actionsSettings ?? null,
+          sessionMemoryEnabled: params?.sessionMemoryEnabled,
           requiredDirectActionIds: params?.requiredDirectActionIds,
           registry: params?.registry,
           pluginToolCatalog: params?.pluginToolCatalog,
@@ -528,6 +537,7 @@ export function isDirectManualToolAvailable(params: Readonly<{
   surface?: HappierBuiltInToolSurface;
   isActionEnabled?: ActionEnabledPredicate;
   actionsSettings?: ActionsSettingsV1 | null;
+  sessionMemoryEnabled?: boolean;
   requiredDirectActionIds?: readonly ActionId[];
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
@@ -541,6 +551,7 @@ export function isDirectManualToolAvailable(params: Readonly<{
       surface,
       isActionEnabled: params.isActionEnabled,
       actionsSettings: params.actionsSettings ?? null,
+      sessionMemoryEnabled: params.sessionMemoryEnabled,
       registry: params.registry,
       pluginToolCatalog: params.pluginToolCatalog,
     });
@@ -551,6 +562,7 @@ export function isDirectManualToolAvailable(params: Readonly<{
     surface,
     isActionEnabled: params.isActionEnabled,
     actionsSettings: params.actionsSettings ?? null,
+    sessionMemoryEnabled: params.sessionMemoryEnabled,
     requiredDirectActionIds: params.requiredDirectActionIds,
     registry: params.registry,
     pluginToolCatalog: params.pluginToolCatalog,
@@ -563,6 +575,7 @@ export function filterBuiltInToolsForSurface(
     surface?: HappierBuiltInToolSurface;
     isActionEnabled?: ActionEnabledPredicate;
     actionsSettings?: ActionsSettingsV1 | null;
+    sessionMemoryEnabled?: boolean;
     requiredDirectActionIds?: readonly ActionId[];
     registry?: ResolvedContributionRegistry;
     pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
@@ -580,6 +593,7 @@ export function filterBuiltInToolsForSurface(
       surface: params?.surface,
       isActionEnabled: params?.isActionEnabled,
       actionsSettings: params?.actionsSettings ?? null,
+      sessionMemoryEnabled: params?.sessionMemoryEnabled,
       requiredDirectActionIds: params?.requiredDirectActionIds,
       registry: params?.registry,
       pluginToolCatalog: params?.pluginToolCatalog,
@@ -591,6 +605,7 @@ export function filterBuiltInToolsForSurface(
       surface: params?.surface,
       isActionEnabled: params?.isActionEnabled,
       actionsSettings: params?.actionsSettings ?? null,
+      sessionMemoryEnabled: params?.sessionMemoryEnabled,
       requiredDirectActionIds: params?.requiredDirectActionIds,
       registry: params?.registry,
       pluginToolCatalog: params?.pluginToolCatalog,

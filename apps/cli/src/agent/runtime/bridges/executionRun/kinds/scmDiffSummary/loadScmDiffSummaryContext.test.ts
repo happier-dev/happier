@@ -13,6 +13,7 @@ import * as scmRuntime from '@/scm/runtime';
 import { buildRepositoryCheckpointInitialRef } from '@/scm/checkpoints/sessionEvidence';
 import { encodeRepositoryCheckpointScope } from '@/scm/checkpoints/refs';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
+import { MACHINE_RPC_WORKING_DIRECTORY_ENV } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 const repositories: string[] = [];
 function git(cwd: string, args: string[]): string { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(); }
@@ -28,6 +29,18 @@ function input(cwd: string, source: ExecutionRunScmDiffSummaryInputV1['source'])
 }
 describe('loadScmDiffSummaryContext complete comparison evidence', () => {
   afterEach(async () => { vi.restoreAllMocks(); for (const cwd of repositories.splice(0)) await rm(cwd, { recursive: true, force: true }); });
+  it('does not widen the native Machine filesystem grant through an intent cwd while preserving the osUser grant', async () => {
+    const cwd = await repo();
+    const alien = await repo();
+    try {
+      vi.stubEnv(MACHINE_RPC_WORKING_DIRECTORY_ENV, cwd);
+      await expect(loadScmDiffSummaryContext({ workingDirectory: cwd, input: input(alien, { kind: 'workingTree' }) }))
+        .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+      expect((await loadScmDiffSummaryContext({ workingDirectory: cwd, input: input(cwd, { kind: 'workingTree' }) })).comparison.repository.rootPath).toBe(cwd);
+      vi.stubEnv(MACHINE_RPC_WORKING_DIRECTORY_ENV, '');
+      expect((await loadScmDiffSummaryContext({ workingDirectory: cwd, input: input(alien, { kind: 'workingTree' }) })).comparison.repository.rootPath).toBe(alien);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it('makes every pending file available beyond the former local 40-file ceiling', async () => {
     const cwd = await repo();
     for (let index = 0; index < 45; index++) await writeFile(join(cwd, `untracked-${index}.txt`), `${index}\n`);
@@ -147,6 +160,18 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     expect((await readCapturedScmComparison({ cwd, comparisonId: first.comparison.id, sessionId: 'session-a' })).files[0]?.unifiedDiff).toContain('+shared basis');
     expect((await readCapturedScmComparison({ cwd, comparisonId: second.comparison.id, sessionId: 'session-b' })).files[0]?.unifiedDiff).toContain('+shared basis');
     await expect(readCapturedScmComparison({ cwd, comparisonId: first.comparison.id, sessionId: 'session-c' })).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+  });
+  it('does not give a detached Run a private capture merely because its intent names the Session', async () => {
+    const cwd = await repo(); await writeFile(join(cwd, 'tracked.txt'), 'private captured source\n');
+    const sessionId = 'private-session';
+    const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' }, sessionId });
+    const request = { ...input(cwd, { kind: 'workingTree' }), sessionId, comparisonId: captured.comparison.id };
+    await expect(loadScmDiffSummaryContext({ workingDirectory: cwd, input: request }))
+      .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+    await expect(loadScmDiffSummaryContext({ workingDirectory: cwd, sessionId: 'another-session', input: request }))
+      .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+    const admitted = await loadScmDiffSummaryContext({ workingDirectory: cwd, sessionId, input: request });
+    expect(admitted.files[0]?.unifiedDiff).toContain('+private captured source');
   });
   it('deletes only the selected saved comparison and its owned pins, preserving other sessions and the initial baseline', async () => {
     const cwd = await repo(); const sessionId = 'deletion-session-a';
@@ -332,7 +357,7 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     await lifecycle.onTurnStarted?.({ messageId: 'first', turnId: 'turn-1', sequence: 1 });
     await writeFile(join(cwd, 'tracked.txt'), 'trusted\n');
     await lifecycle.onTurnFinal?.({ messageId: 'first', turnId: 'turn-1', status: 'completed', sequence: 2 });
-    const captured = await loadScmDiffSummaryContext({ workingDirectory: cwd, input: {
+    const captured = await loadScmDiffSummaryContext({ workingDirectory: cwd, sessionId: session.sessionId, input: {
       cwd, source: { kind: 'turnCheckpoint', sessionId: session.sessionId, turnId: 'turn-1' },
       turnChangeSet: { sessionId: session.sessionId, turnId: 'turn-1', status: 'completed', provider: 'codex', derivedAt: 1,
         seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 }, files: [{ filePath: 'forged.txt', changeKind: 'added',
@@ -371,7 +396,7 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     await lifecycle.onSessionEnd?.(); lifecycle = makeLifecycle();
     await lifecycle.onBeforePromptDispatch?.({ messageId: 'second', prompt: 'revert' });
     await writeFile(join(cwd, 'tracked.txt'), 'pre-existing dirt\n');
-    const captured = await loadScmDiffSummaryContext({ workingDirectory: cwd, input: input(cwd, { kind: 'session', sessionId: session.sessionId }) });
+    const captured = await loadScmDiffSummaryContext({ workingDirectory: cwd, sessionId: session.sessionId, input: input(cwd, { kind: 'session', sessionId: session.sessionId }) });
     expect(captured.files).toEqual([]);
     await lifecycle.onSessionEnd?.();
   });

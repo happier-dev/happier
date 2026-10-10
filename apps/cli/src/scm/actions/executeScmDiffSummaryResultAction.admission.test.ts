@@ -2,12 +2,12 @@ import axios, { AxiosHeaders } from 'axios';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ScmDiffSummaryGenerateOutputSchema, getActionSpec, type ActionId, type ScmActionId } from '@happier-dev/protocol';
+import { ScmDiffSummaryGenerateOutputSchema, createScmReviewedMarksRecordPort, getActionSpec, type ActionId, type ScmActionId } from '@happier-dev/protocol';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { executeScmActionOperation } from './executeScmActionOperation';
+import { executeScmActionOperation, type ExecuteScmActionOperationParams } from './executeScmActionOperation';
 import { configuration } from '@/configuration';
 import { createLocalScmRepositoryFixture } from '@/scm/contracts/scmBackendContractFixtures';
 import { captureScmComparison, deleteCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
@@ -16,6 +16,44 @@ import { removeTempDir } from '@/testkit/fs/tempDir';
 afterEach(() => vi.restoreAllMocks());
 
 describe('saved SCM producer admission', () => {
+  it('marks an exact retained comparison without a saved result and refuses private, foreign-Home and foreign-root captures', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-comparison-marks-' });
+    const cwd = fixture.rootPath;
+    await writeFile(join(cwd, fixture.trackedPath), 'Captured change without narration\n');
+    const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
+    const privateCapture = await captureScmComparison({ cwd, sessionId: 'private', source: { kind: 'workingTree' } });
+    let value: unknown = null;
+    let version = -1;
+    const transport = { read: async () => ({ value, version }), compareAndSet: async (next: unknown) => {
+      value = next; return { success: true as const, version: ++version };
+    } };
+    const refs = captured.comparison.inventory.files.flatMap(file => file.occurrences.map(change => change.id));
+    expect(refs.length).toBeGreaterThan(0);
+    const executeReviewedMarks = vi.fn<NonNullable<ExecuteScmActionOperationParams['executeReviewedMarks']>>((comparison, request, reviewed) =>
+      createScmReviewedMarksRecordPort({ comparison, transport }).setReviewed(request.changeRefs, reviewed));
+    const base = { workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots' as const, roots: [cwd] }, executeReviewedMarks };
+    const input = { v: 2, cwd, comparisonId: captured.comparison.id, source: captured.comparison.source, changeRefs: refs };
+    try {
+      expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.mark', input }))
+        .toMatchObject({ success: true, record: { comparisonId: captured.comparison.id, reviewedChangeRefs: refs } });
+      expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.unmark', input }))
+        .toMatchObject({ success: true, record: { reviewedChangeRefs: [] } });
+      executeReviewedMarks.mockClear();
+      for (const rejected of [
+        { input: { ...input, comparisonId: privateCapture.comparison.id, sessionId: 'private' } },
+        { input, actionContext: { serverId: `${configuration.activeServerId}-other` } },
+        { input: { ...input, cwd: join(cwd, '..') } },
+      ]) {
+        expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.mark', ...rejected }))
+          .toMatchObject({ success: false, errorCode: 'result_unavailable' });
+      }
+      expect(executeReviewedMarks).not.toHaveBeenCalled();
+    } finally {
+      await deleteCapturedScmComparison({ cwd, comparisonId: captured.comparison.id });
+      await deleteCapturedScmComparison({ cwd, sessionId: 'private', comparisonId: privateCapture.comparison.id });
+      await removeTempDir(cwd);
+    }
+  });
   it('omits private Session results and rejects every saved-result effect even when its Session selector is supplied', async () => {
     await withTempDir('happier-saved-admission-', async cwd => {
       const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',

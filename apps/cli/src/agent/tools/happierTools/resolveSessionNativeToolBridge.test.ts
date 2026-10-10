@@ -14,6 +14,24 @@ afterEach(() => {
 });
 
 describe('resolveSessionNativeToolDescriptors', () => {
+  it('omits memory writes when the host Session choice is off and restores only policy-admitted writes', () => {
+    const accountSettings = {
+      actionsSettingsV1: { v: 1, actions: {
+        'memory.remember': { toolExposureModes: { agent: 'direct' } },
+        'memory.update': { toolExposureModes: { agent: 'direct' } },
+        'memory.forget': { toolExposureModes: { agent: 'direct' }, enabled: false },
+      } },
+    };
+    const resolve = (sessionMemoryEnabled: boolean) => resolveSessionNativeToolDescriptors({
+      accountSettings, sessionId: 'session-1', memoryRecallGuidanceEnabled: false,
+      sessionMemoryEnabled,
+    }).map((tool) => tool.name);
+    for (const name of ['memory_remember', 'memory_update', 'memory_forget']) expect(resolve(false)).not.toContain(name);
+    expect(resolve(false)).toContain('action_execute');
+    expect(resolve(true)).toEqual(expect.arrayContaining(['memory_remember', 'memory_update']));
+    expect(resolve(true)).not.toContain('memory_forget');
+  });
+
   it('uses the canonical direct catalog and promotes memory only while recall guidance is active', () => {
     const base = resolveSessionNativeToolDescriptors({
       accountSettings: {},

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, ExecutionRunSendResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveExecutionRunInteractionAffordances } from '@happier-dev/protocol/execution/runs/interactionAffordances';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -56,10 +56,13 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
     error: 'The saved result changed. Reconcile the current revision before sending.', latestRevision: result.revision };
   const storedScope = await store.readStoredScope(scope);
   const sessionId = storedScope?.sessionId;
+  const machineId = params.actionContext?.externalActionTarget?.kind === 'machine'
+    ? params.actionContext.externalActionTarget.machineId : params.actionContext?.executionRunTargetMachineId;
+  const runTarget = { sessionId: sessionId ?? null };
   const execute = params.executeCanonicalAction;
-  if (!sessionId || !execute) return { success: false, errorCode: 'discussion_unavailable', error: 'The saved generator Session is unavailable.' };
+  if ((!sessionId && !machineId) || !execute) return { success: false, errorCode: 'discussion_unavailable', error: 'The saved generator target is unavailable.' };
   const previousRunId = result.output.runId;
-  const observed = previousRunId ? await execute('execution.run.get', { sessionId, runId: previousRunId, includeStructured: true }).catch(() => null) : null;
+  const observed = previousRunId ? await execute('execution.run.get', { ...runTarget, runId: previousRunId, includeStructured: true }).catch(() => null) : null;
   const parsedRun = observed?.ok ? ExecutionRunGetResponseSchema.safeParse(observed.result) : null;
   const run = parsedRun?.success ? parsedRun.data.run : null;
   const affordances = resolveExecutionRunInteractionAffordances(run);
@@ -110,7 +113,7 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
       // Ranges prove coordinates, not selected bytes. Exact saved file evidence remains in context.
       snapshot: { selectedLines: [], beforeContext: [], afterContext: [] }, body: String(presentReviewFindingCitations(`${stop.title}\n${stop.explanationMarkdown}`, citations)), createdAt: Date.now() }];
   }))) ?? [];
-  const reviewInput = selectedStops ? buildReviewCommentsOutboundMessage({ sessionId, drafts, additionalMessage: context }) : null;
+  const reviewInput = selectedStops && sessionId ? buildReviewCommentsOutboundMessage({ sessionId, drafts, additionalMessage: context }) : null;
   const message = params.actionId === 'scm.diffSummary.discuss' ? reviewInput?.text ?? context
     : buildDiffSummaryPrompt({ metadata: result.output.metadata ?? { source: comparison.source, sourceKey: comparison.id }, comparison: scopedComparison, outputs, instructions: context,
       ...(reviewExplanation ? { reviewExplanation: true } : {}),
@@ -122,16 +125,19 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
     const generator = result.generator ?? (run ? { backendTarget: readBackendTargetRefV2(run.backendTarget),
       ...(run.requestedConfiguration?.modelId ? { modelId: run.requestedConfiguration.modelId } : {}) } : undefined);
     if (!generator || !result.output.comparison) return { success: false, errorCode: 'discussion_unavailable', error: 'A proven generator selection is unavailable for a new conversation.' };
-    const explanationInputId = explanationRequest ? randomUUID() : undefined;
+    const initialInputId = randomUUID();
+    const explanationInputId = explanationRequest ? initialInputId : undefined;
     if (explanationInputId) {
       const begun = await store.beginInput({ ...scope, inputId: explanationInputId, expectedRevision: result.revision,
         outputs, ...(stopIds ? { stopIds } : {}), reviewExplanation: explanationRequest });
       if (!begun.success) return begun;
     }
     const started = await execute('execution.run.start', {
-      sessionId, kind: 'scm_diff_summary.v1', intent: 'scm_diff_summary', ...generator,
+      ...runTarget, ...(!sessionId ? { machineId, cwd: scope.cwd } : {}),
+      localInputId: initialInputId,
+      kind: 'scm_diff_summary.v1', intent: 'scm_diff_summary', ...generator,
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
-      intentInput: { cwd: scope.cwd, sessionId, source: result.output.comparison.source, comparisonId: result.output.comparison.id,
+      intentInput: { cwd: scope.cwd, ...(sessionId ? { sessionId } : {}), source: result.output.comparison.source, comparisonId: result.output.comparison.id,
         resultId: result.resultId, expectedRevision: result.revision, outputs, instructions: message,
         ...(previousRunId ? { seededFromRunId: previousRunId } : {}), ...(stopIds ? { stopIds } : {}),
         ...(explanationInputId ? { reviewExplanationInputId: explanationInputId } : {}) },
@@ -146,7 +152,8 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
     const created = ExecutionRunStartResponseSchema.safeParse(started.result);
     if (!created.success) return { success: false, errorCode: 'admission_unknown', error: 'The new generator admission returned no run identity.' };
     const latest = await store.read(scope);
-    return latest.success ? { ...latest, runId: created.data.runId, ...(previousRunId ? { seededFromRunId: previousRunId } : {}) } : latest;
+    return latest.success ? { ...latest, runId: created.data.runId, inputId: initialInputId,
+      ...(previousRunId ? { seededFromRunId: previousRunId } : {}) } : latest;
   }
   if (!previousRunId || (!affordances.canSend && !affordances.canResume)) return { success: false,
     errorCode: 'discussion_unavailable', error: 'The generator cannot continue. Start a new conversation explicitly.' };
@@ -154,9 +161,16 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
   const begun = await store.beginInput({ ...scope, inputId, expectedRevision: input.expectedRevision, outputs, ...(stopIds ? { stopIds } : {}),
     ...(explanationRequest ? { reviewExplanation: explanationRequest } : {}) });
   if (!begun.success) return begun;
-  const sent = await execute('session.message.send', { sessionId, recipient: { kind: 'execution_run', runId: previousRunId }, message, localId: inputId,
-    ...(reviewInput ? { metaOverrides: reviewInput.metaOverrides } : {}) }).catch(() => null);
+  const sent = await (sessionId
+    ? execute('session.message.send', { sessionId, recipient: { kind: 'execution_run', runId: previousRunId }, message, localId: inputId,
+      ...(reviewInput ? { metaOverrides: reviewInput.metaOverrides } : {}) })
+    : execute('execution.run.send', { ...runTarget, runId: previousRunId, message, localInputId: inputId,
+      ...(affordances.canResume ? { resume: true } : {}) })).catch(() => null);
   if (!sent || !sent.ok) return { success: false, errorCode: 'admission_unknown', error: 'The generator input admission is unconfirmed.' };
+  if (!sessionId) {
+    if (!ExecutionRunSendResponseSchema.safeParse(sent.result).success) return { success: false, errorCode: 'admission_unknown', error: 'The generator input admission is unconfirmed.' };
+    return { ...begun, runId: previousRunId, inputId };
+  }
   const admitted = SessionMessageSendResultV1Schema.safeParse(sent.result);
   if (!admitted.success || admitted.data.status === 'outcomeUnknown') return { success: false, errorCode: 'admission_unknown', error: 'The generator input admission is unconfirmed.' };
   if (admitted.data.status === 'rejected') {

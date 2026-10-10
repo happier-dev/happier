@@ -61,6 +61,8 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
   sessionId: string;
   sessionMachineId?: string | null;
   memoryRecallGuidanceEnabled: boolean;
+  /** Resolved from current host Session metadata, never Agent arguments. */
+  sessionMemoryEnabled?: boolean;
   /** Current decision for the Session runtime's exact Home. Missing is fail-closed. */
   isServerFeatureEnabled?: (featureId: FeatureId) => boolean;
 }>): readonly AgentSessionNativeToolDescriptor[] {
@@ -80,6 +82,7 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
     surface: 'agent',
     actionsSettings,
     isActionEnabled,
+    sessionMemoryEnabled: params.sessionMemoryEnabled === true,
     isServerFeatureEnabled: params.isServerFeatureEnabled ?? (() => false),
     requiredDirectActionIds: params.memoryRecallGuidanceEnabled
       ? MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS

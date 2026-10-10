@@ -185,6 +185,7 @@ function completeScmDiffSummaryTurn({ start, rawText, previousStructuredMeta }: 
 
 export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
   intent: 'scm_diff_summary',
+  supportsDetached: true,
   transcriptMaterialization: 'full',
   computeSidechainStreamText: ({ fullText }) => {
     const rawText = String(fullText ?? '');
@@ -210,7 +211,7 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
       ...input } = ExecutionRunScmDiffSummaryInputV1Schema.parse(request.intentInput ?? {});
     const context = await loadScmDiffSummaryContext({
       input,
-      workingDirectory: input.cwd || cwd,
+      workingDirectory: cwd,
       ...(sessionId ? { sessionId } : {}),
     });
     const desiredSelection = desiredCacheSelection(request);
@@ -224,6 +225,13 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
     });
     const savedId = typeof input.resultId === 'string' ? input.resultId : undefined;
     const scope = { cwd: input.cwd || cwd, ...(sessionId ? { sessionId } : {}) };
+    if (savedId) {
+      const retained = await scmDiffSummaryResultStore.readStoredScope({ ...scope, resultId: savedId }).catch(() => null);
+      if (!retained || (retained.sessionId && retained.sessionId !== sessionId)
+        || (retained.sourceSessionId && retained.sourceSessionId !== sessionId)) {
+        throw Object.assign(new Error('Saved comparison evidence is unavailable for this Run scope'), { code: 'DIFF_UNAVAILABLE' });
+      }
+    }
     const existing = savedId ? await scmDiffSummaryResultStore.read({ ...scope, resultId: savedId }) : undefined;
     if (savedId && (!existing?.success || existing.result.output.comparison?.id !== context.comparison.id
       || existing.result.revision !== input.expectedRevision)) throw new Error('Saved result revision or comparison is unavailable for this new generator');

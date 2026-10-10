@@ -10,6 +10,7 @@ export type GitCheckpointCommandOptions = Readonly<{
     stdin?: string;
     maxOutputBytes?: number;
     env?: Record<string, string | undefined>;
+    signal?: AbortSignal;
 }>;
 
 export type GitCheckpointTemporaryIndex = GitTemporaryIndex;
@@ -28,6 +29,7 @@ export function runGitCheckpointCommand(input: GitCheckpointCommandOptions): Pro
         stdin: input.stdin,
         maxOutputBytes: input.maxOutputBytes,
         env: input.env,
+        signal: input.signal,
     });
 }
 

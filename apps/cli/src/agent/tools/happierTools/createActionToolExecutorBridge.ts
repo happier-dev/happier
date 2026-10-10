@@ -299,6 +299,8 @@ export function createActionToolExecutorBridge(params: Readonly<{
   registry?: ResolvedContributionRegistry;
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
   requiredDirectActionIds?: readonly ActionId[];
+  /** Map from the same admitted inventory used by tool registration. */
+  actionToolNameToId?: ReadonlyMap<string, string>;
   defaultSessionMachineId?: string | null;
   /** Exact host-owned Session corpus available to non-Agent tool surfaces. */
   resolveSessionListAccess?: (defaultSessionId: string) => 'current_session' | 'led_subtree' | undefined;
@@ -315,7 +317,7 @@ export function createActionToolExecutorBridge(params: Readonly<{
   const isActionEnabled = params.isActionEnabled ?? (() => true);
   const surface = params.surface ?? 'agent';
   const readActionsSettings = () => params.getActionsSettings?.() ?? params.actionsSettings ?? null;
-  const actionToolNameToId = createActionToolNameToIdMap({
+  const actionToolNameToId = params.actionToolNameToId ?? createActionToolNameToIdMap({
     surface,
     isActionEnabled,
     actionsSettings: readActionsSettings(),

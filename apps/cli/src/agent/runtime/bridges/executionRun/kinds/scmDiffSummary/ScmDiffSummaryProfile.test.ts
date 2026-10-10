@@ -13,6 +13,7 @@ import { buildDiffSummaryPrompt } from './buildDiffSummaryPrompt';
 import { parseDiffSummaryModelOutput } from './parseDiffSummaryModelOutput';
 import { advanceDiffSummaryAnalysis } from './advanceDiffSummaryAnalysis';
 import { prepareSavedReviewWalkthroughInput } from '@/agent/executionRuns/profiles/review/reviewWalkthroughTurn';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 const comparison = ScmComparisonSchema.parse({
   id: 'comparison-1', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' }, endpoints: {},
@@ -43,6 +44,26 @@ async function admitInitial(params: ExecutionRunProfileStartParams) {
 
 describe('ScmDiffSummaryProfile', () => {
   beforeEach(() => { scmDiffSummaryCacheStore.clear(); });
+
+  it('rejects a private retained result from a detached preparation even when its comparison has a workspace copy', async () => {
+    await withTempDir('happier-scm-private-preparation-', async directory => {
+    execFileSync('git', ['init', '-q'], { cwd: directory });
+    const captured = await captureScmComparison({ cwd: directory, source: { kind: 'workingTree' } });
+    const saved = await scmDiffSummaryResultStore.create({ cwd: directory, sessionId: 'private-session',
+      output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: captured.comparison.id,
+        metadata: captured.metadata, comparison: captured.comparison, requestedOutputs: ['summary'],
+        outputs: { summary: { state: 'pending' } }, analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } }) });
+    const request = { backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' }, intent: 'scm_diff_summary' as const,
+      instructions: 'Explain', permissionMode: 'read_only', retentionPolicy: 'resumable' as const,
+      runClass: 'long_lived' as const, ioMode: 'streaming' as const,
+      intentInput: { cwd: directory, source: { kind: 'workingTree' as const }, comparisonId: captured.comparison.id,
+        resultId: saved.resultId, expectedRevision: 0, outputs: ['summary'] } };
+    await expect(ScmDiffSummaryProfile.prepareStartParams!({ cwd: directory, sessionId: null, request }))
+      .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+    await expect(scmDiffSummaryResultStore.read({ cwd: directory, resultId: saved.resultId }))
+      .resolves.toMatchObject({ success: true, result: { revision: 0 } });
+    });
+  });
 
   it.each([false, true])('plans a known-capacity single hunk before admission with exact fragments and same-run part progress (single line: %s)', async (singleLine) => {
     const directory = mkdtempSync(join(tmpdir(), 'happier-scm-capacity-'));
