@@ -624,6 +624,27 @@ describe('ServiceRowView', () => {
         expect(onRestart).toHaveBeenCalledExactlyOnceWith(target);
     });
 
+    // CA2-02: a native occurrence whose state is unknown, or stopped while its starter tree is still
+    // owned, is not Running. The row says so and keeps Stop for cleanup; nothing offers a fresh Start.
+    it.each(['managed_service_native_state_unknown', 'managed_service_native_cleanup_unconfirmed'] as const)(
+        'never reads unsettled native custody (%s) as Running and keeps Stop without Start or Restart', async (reason) => {
+            const target = projectTarget({ state: 'available', serviceState: 'unhealthy', actions: ['manage'],
+                unavailableReason: reason, endpointUrl: 'http://localhost:5173/' });
+            const row = projectRow(target);
+            const onStop = vi.fn(async () => ({ status: 'succeeded' }));
+            const screen = await renderScreen(<ServiceRowView row={row} machineName="devbox" onStopManagedService={onStop}
+                onRestartManagedService={vi.fn()} onStartLauncherTarget={vi.fn()} onForgetDetectedService={vi.fn()}
+                expanded onExpandedChange={vi.fn()} testID="row" />);
+            const text = screen.getTextContent();
+            expect(text).not.toContain('Running');
+            expect(text).toContain('Unknown');
+            expect(screen.findByTestId('row-reason')).toBeTruthy();
+            expect(screen.findByTestId('row-start')).toBeNull();
+            expect(rowOverflowActions(screen).map((action) => action.id)).toEqual(['stop', 'forget']);
+            await act(async () => { (rowOverflowActions(screen).find((a) => a.id === 'stop')?.onPress as () => void)(); });
+            expect(onStop).toHaveBeenCalledExactlyOnceWith(target);
+        });
+
     it('offers no Stop for a settled lifetime and names a failed start as Failed', async () => {
         const row = projectRow(projectTarget({ state: 'available', serviceState: 'failed', actions: ['manage'] }));
         const screen = await renderScreen(<ServiceRowView row={row} onStopManagedService={vi.fn()} onRestartManagedService={vi.fn()}

@@ -166,6 +166,9 @@ const LOCAL_SERVICE_LAUNCHER_KEYS = {
     starting: 'localServices.launcher.unavailableReason.starting',
     stale: 'localServices.launcher.unavailableReason.stale',
     unavailable: 'localServices.launcher.unavailableReason.unavailable',
+    // Unsettled native custody (CA2-02): not Running, and Stop is the cleanup.
+    managed_service_native_state_unknown: 'localServices.launcher.unavailableReason.nativeStateUnknown',
+    managed_service_native_cleanup_unconfirmed: 'localServices.launcher.unavailableReason.nativeCleanupUnconfirmed',
 } as const satisfies Record<string, LocalServiceLauncherMessageKey>;
 
 /**

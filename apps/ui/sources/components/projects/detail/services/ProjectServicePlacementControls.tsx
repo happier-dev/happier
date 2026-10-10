@@ -312,10 +312,11 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
   const phase = operation?.snapshot.progress?.kind === 'phase' ? operation.snapshot.progress.phase : null;
   const outcomeUncertain = operation?.snapshot.observation?.kind === 'outcome_uncertain'
     || operation?.snapshot.error?.errorCode === 'outcome_uncertain';
-  // The canonical relocation producer reports copying only after native Stop confirms;
-  // the Action operation owner retains its final phase on failure/cancellation.
-  // Absence is separately observed, so neither generic terminal state nor a lost feed proves Stop.
-  const stoppedBeforeStart = terminal && phase === 'copying' && !outcomeUncertain
+  // The canonical relocation producer publishes `stopped` right after a literally confirmed native
+  // Stop and `copying` only once copying begins (FX12); the Action operation owner retains the final
+  // phase on failure/cancellation. Absence is separately observed, so neither generic terminal
+  // state nor a lost feed proves Stop.
+  const stoppedBeforeStart = terminal && (phase === 'stopped' || phase === 'copying') && !outcomeUncertain
     && operation?.observation === 'available' && observed?.status === 'absent';
 
   const custodyKnown = observed?.status === 'present' || observed?.status === 'absent';

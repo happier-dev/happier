@@ -246,7 +246,8 @@ async function setup(options: Readonly<{
 }
 
 describe('Service Runs on through the placement and relocation Actions', () => {
-  it.each(['failed', 'cancelled'] as const)('retains the accepted Move through list/detail remounts, copying settlement (%s) and Source retirement', async terminalState => {
+  // FX12: a literally confirmed Stop publishes `stopped` before cancellable revalidation; `copying` follows only when copying begins.
+  it.each([['failed', 'copying'], ['cancelled', 'copying'], ['cancelled', 'stopped']] as const)('retains the accepted Move through list/detail remounts, confirmed-Stop settlement (%s after %s) and Source retirement', async (terminalState, settledPhase) => {
     // Count live subscriptions, not calls: remounting two presentation bodies must
     // retain one accepted-operation observer and one Cancel continuation owner.
     const subscribe = actionOperationStore.subscribe;
@@ -287,6 +288,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     await act(async () => {
       publishActionOperationObservation({ serverId, machineId: 'devbox', observation: 'available', snapshots: [{
         ...operation, revision: 2, state: terminalState, settledAt: 3,
+        progress: { kind: 'phase', phase: settledPhase, label: settledPhase === 'stopped' ? 'Stopped on devbox' : 'Copying current files' },
         ...(terminalState === 'failed' ? { error: { errorCode: 'service_preparation_failed', error: 'Preparation failed' } } : {}),
       }] });
       setDetail(true);

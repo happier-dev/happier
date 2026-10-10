@@ -71,6 +71,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         color: theme.colors.text.secondary,
     },
+    statusLabelAttention: {
+        color: theme.colors.state.attention.foreground,
+    },
     facts: {
         gap: 2,
         alignItems: 'flex-start',
@@ -144,9 +147,20 @@ function isNotStarted(row: ServiceRow): boolean {
         && row.target.serviceState === undefined;
 }
 
+/**
+ * A managed native occurrence whose state is unknown, or stopped while its starter tree is still
+ * owned (CA2-02). It is not Running, but it is not settled either: it keeps Stop for cleanup.
+ */
+function hasUnsettledCustody(row: ServiceRow): boolean {
+    return row.target.source === 'managed_service'
+        && row.target.actions.includes('manage')
+        && (row.reasonCode === 'managed_service_native_state_unknown'
+            || row.reasonCode === 'managed_service_native_cleanup_unconfirmed');
+}
+
 /** Nothing to do with it here: no Start, no Open, not live. Its title steps back. */
 function isInert(row: ServiceRow): boolean {
-    return row.primaryAction === null
+    return row.primaryAction === null && !hasUnsettledCustody(row)
         && (row.status === 'stopped' || row.status === 'unavailable' || row.status === 'failed');
 }
 
@@ -178,7 +192,10 @@ function ServiceRowTitle(props: Readonly<{
     testID: string;
 }>): React.ReactElement {
     const styles = stylesheet;
-    const statusLabel = props.offline ? t('localServices.rowStatus.lastKnown') : t(STATUS_LABEL_KEYS[props.row.status]);
+    const unsettled = !props.offline && hasUnsettledCustody(props.row);
+    const statusLabel = props.offline
+        ? t('localServices.rowStatus.lastKnown')
+        : unsettled ? t('localServices.rowStatus.unknown') : t(STATUS_LABEL_KEYS[props.row.status]);
     const ready = (props.row.scope === 'suggestion' && props.row.status === 'stopped') || isNotStarted(props.row);
     return (
         <View style={styles.titleRow}>
@@ -189,7 +206,7 @@ function ServiceRowTitle(props: Readonly<{
                 animationEnabled={props.animationEnabled}
                 testID={`${props.testID}-dot`}
             /> : null}
-            {!ready ? <Text testID={`${props.testID}-status-${props.row.status}`} style={styles.statusLabel} numberOfLines={1}>
+            {!ready ? <Text testID={`${props.testID}-status-${props.row.status}`} style={[styles.statusLabel, unsettled ? styles.statusLabelAttention : null]} numberOfLines={1}>
                 {statusLabel}
             </Text> : null}
         </View>
@@ -226,7 +243,7 @@ function resolveRowFacts(row: ServiceRow, machineName: string | null, startedByN
     if (row.addressNote === 'waiting') {
         return { lead: [t('localServices.row.waitingAddress')], tail: [], tailReason: null, reason };
     }
-    if (isNotStarted(row) || isInert(row)) {
+    if (isNotStarted(row) || isInert(row) || hasUnsettledCustody(row)) {
         const lead = [row.processLabel].filter((part): part is string => Boolean(part));
         if (row.status === 'failed') return { lead, tail: [t('localServices.row.failed')], tailReason: null, reason };
         if (reason) return { lead, tail: [reason.body], tailReason: reason, reason: null };
@@ -409,7 +426,7 @@ export function ServiceRowView(props: Readonly<{
     // only while it is live: a settled or never-started declaration has nothing to stop.
     const managedLive = row.target.source === 'managed_service'
         && row.target.actions.includes('manage')
-        && (row.status === 'running' || row.status === 'starting' || row.status === 'stopping');
+        && (row.status === 'running' || row.status === 'starting' || row.status === 'stopping' || hasUnsettledCustody(row));
     const canStop = managedLive && Boolean(props.onStopManagedService);
     const canRestart = managedLive && row.status === 'running' && Boolean(props.onRestartManagedService);
     const addressValue = formatRowAddress(row);
