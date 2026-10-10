@@ -19,6 +19,8 @@ export type ClaudeUsageObservation = {
     scope: 'turn_delta' | 'session_final';
     key: 'claude-session';
     nativeRecordId?: string;
+    inferenceId?: string;
+    nativeSessionId?: string;
     observedAtMs?: number;
     modelId: string | null;
     tokens: UsageObservationTokens;

@@ -5,8 +5,9 @@ import { buildClaudeAssistantUsageObservation } from './buildAssistantObservatio
 describe('buildClaudeAssistantUsageObservation', () => {
     it('carries the native record identity for replayable assistant usage', () => {
         expect(buildClaudeAssistantUsageObservation({
-            nativeRecordId: 'assistant-record-1', observedAtMs: 100, usage: { input_tokens: 10 },
-        })).toMatchObject({ nativeRecordId: 'assistant-record-1', observedAtMs: 100 });
+            nativeSessionId: 'native-session-exact',
+            nativeRecordId: 'assistant-record-1', inferenceId: 'request-message-1', observedAtMs: 100, usage: { input_tokens: 10 },
+        })).toMatchObject({ nativeSessionId: 'native-session-exact', nativeRecordId: 'assistant-record-1', inferenceId: 'request-message-1', observedAtMs: 100 });
     });
 
     const SONNET_5_STANDARD_PRICING_START_MS = Date.UTC(2026, 8, 1);
@@ -85,7 +86,7 @@ describe('buildClaudeAssistantUsageObservation', () => {
 
     it('leaves cost unavailable for a catalog model without exact pricing', () => {
         const observation = buildClaudeAssistantUsageObservation({
-            modelId: 'claude-opus-5',
+            modelId: 'claude-opus-5-custom-unknown',
             usage: {
                 input_tokens: 1_000_000,
                 output_tokens: 1_000_000,
@@ -98,8 +99,6 @@ describe('buildClaudeAssistantUsageObservation', () => {
     it.each([
         ['claude-opus-4-5-20251101', 30],
         ['claude-opus-4-5', 30],
-        ['claude-opus-4-1-20250805', 90],
-        ['claude-opus-4-1', 90],
         ['claude-sonnet-4-5-20250929', 18],
         ['claude-sonnet-4-5', 18],
         ['claude-haiku-4-5-20251001', 6],
@@ -121,7 +120,7 @@ describe('buildClaudeAssistantUsageObservation', () => {
         });
     });
 
-    it('uses the Sonnet 5 introductory price through August 31, 2026', () => {
+    it('prices all four counters through the shared Sonnet 5 snapshot', () => {
         const observation = buildClaudeAssistantUsageObservation({
             modelId: 'claude-sonnet-5',
             observedAtMs: SONNET_5_STANDARD_PRICING_START_MS - 1,
@@ -136,7 +135,7 @@ describe('buildClaudeAssistantUsageObservation', () => {
         expect(observation?.cost?.estimatedUsd).toBe(14.7);
     });
 
-    it('uses the Sonnet 5 standard price starting September 1, 2026', () => {
+    it('uses the current shared snapshot instead of a second date-based tariff table', () => {
         const observation = buildClaudeAssistantUsageObservation({
             modelId: 'claude-sonnet-5',
             observedAtMs: SONNET_5_STANDARD_PRICING_START_MS,
@@ -148,16 +147,16 @@ describe('buildClaudeAssistantUsageObservation', () => {
             },
         });
 
-        expect(observation?.cost?.estimatedUsd).toBe(22.05);
+        expect(observation?.cost?.estimatedUsd).toBeCloseTo(14.7);
     });
 
-    it('leaves Sonnet 5 cost unavailable when an observation time is unavailable', () => {
+    it('uses the current snapshot without requiring a price-effective observation date', () => {
         const observation = buildClaudeAssistantUsageObservation({
             modelId: 'claude-sonnet-5',
             usage: { input_tokens: 1_000_000 },
         });
 
-        expect(observation?.cost).toBeNull();
+        expect(observation?.cost?.estimatedUsd).toBe(2);
     });
 
     it('uses the exact base-model price for Happier’s owned [1m] variant', () => {

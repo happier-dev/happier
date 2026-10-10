@@ -2,9 +2,10 @@ import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/ru
 import type {
     SessionContextUsageSnapshotV1,
     UsageObservationScope,
+    UsageObservationTokens,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { estimateCodexUsageCost, type CodexUsageNumberMap } from './pricing.js';
+import { estimateUsageModelCost, resolveUsageTokenCategories } from '@happier-dev/protocol';
 
 export type CodexAppServerUsageObservationInput = Omit<
     Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>,
@@ -28,7 +29,12 @@ function asFiniteNonNegativeNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function readUsageNumberMap(record: Record<string, unknown>): CodexUsageNumberMap | null {
+/** Codex input includes cached input; output includes reasoning output. Keep
+ * those original overlapping counters while deriving total only once. Native
+ * rollout adapters and live app-server notifications share this boundary. */
+export function normalizeCodexTokenUsage(value: unknown): UsageObservationTokens | null {
+    const record = asRecord(value);
+    if (!record) return null;
     const input =
         asFiniteNonNegativeNumber(record.input_tokens) ??
         asFiniteNonNegativeNumber(record.input) ??
@@ -51,6 +57,8 @@ function readUsageNumberMap(record: Record<string, unknown>): CodexUsageNumberMa
         asFiniteNonNegativeNumber(record.cache_read) ??
         asFiniteNonNegativeNumber(record.cacheReadTokens);
     const cacheCreation =
+        asFiniteNonNegativeNumber(record.cache_write_input_tokens) ??
+        asFiniteNonNegativeNumber(record.cacheWriteInputTokens) ??
         asFiniteNonNegativeNumber(record.cache_creation_input_tokens) ??
         asFiniteNonNegativeNumber(record.cache_creation_tokens) ??
         asFiniteNonNegativeNumber(record.cached_write_tokens) ??
@@ -68,23 +76,16 @@ function readUsageNumberMap(record: Record<string, unknown>): CodexUsageNumberMa
         asFiniteNonNegativeNumber(record.totalTokens) ??
         asFiniteNonNegativeNumber(record.total);
 
-    const computedTotal =
-        total ??
-        (input ?? 0) +
-        (output ?? 0) +
-        (cacheRead ?? 0) +
-        (cacheCreation ?? 0) +
-        (thought ?? 0);
-
-    if (computedTotal <= 0) return null;
+    if (total == null && input == null && output == null && cacheRead == null
+        && cacheCreation == null && thought == null) return null;
 
     return {
-        total: computedTotal,
-        ...(input != null ? { input } : {}),
-        ...(output != null ? { output } : {}),
-        ...(cacheRead != null ? { cache_read: cacheRead } : {}),
-        ...(cacheCreation != null ? { cache_creation: cacheCreation } : {}),
-        ...(thought != null ? { thought } : {}),
+        total: total ?? (input ?? 0) + (output ?? 0),
+        input: input ?? 0,
+        output: output ?? 0,
+        cacheRead: cacheRead ?? 0,
+        cacheWrite: cacheCreation ?? 0,
+        reasoning: thought ?? 0,
     };
 }
 
@@ -105,20 +106,18 @@ export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
     if (!usageRecord) return null;
 
     const defaultScope: UsageObservationScope = totalUsage ? 'session_cumulative' : 'turn_delta';
-    const tokens = readUsageNumberMap(usageRecord);
+    const tokens = normalizeCodexTokenUsage(usageRecord);
     const modelId = typeof params.modelId === 'string' && params.modelId.trim().length > 0
         ? params.modelId.trim()
         : null;
     const contextWindowTokens = asFiniteNonNegativeNumber(
         tokenUsage.modelContextWindow ?? tokenUsage.model_context_window,
     );
-    const lastUsageTokens = deltaUsage ? readUsageNumberMap(deltaUsage) : null;
+    const lastUsageTokens = deltaUsage ? normalizeCodexTokenUsage(deltaUsage) : null;
     const cost = params.modelSource === 'provider'
         ? null
-        : estimateCodexUsageCost({
-            modelId,
-            tokens,
-        });
+        : estimateUsageModelCost(modelId, tokens
+            ? resolveUsageTokenCategories(tokens, { inputIncludesCache: true, outputIncludesReasoning: true }) : null);
     const contextSnapshot = lastUsageTokens ? {
         v: 1,
         modelId,
@@ -131,14 +130,7 @@ export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
         observedAtMs: params.observedAtMs ?? Date.now(),
         source: 'provider_turn',
     } satisfies SessionContextUsageSnapshotV1 : null;
-    const runtimeTokens = tokens ? {
-        input: tokens.input ?? 0,
-        output: tokens.output ?? 0,
-        reasoning: tokens.thought ?? 0,
-        cacheRead: tokens.cache_read ?? 0,
-        cacheWrite: tokens.cache_creation ?? 0,
-        total: tokens.total,
-    } : null;
+    const runtimeTokens = tokens;
     const runtimeCost = cost ? {
         reportedUsd: 0,
         estimatedUsd: cost.estimatedUsd,
@@ -153,6 +145,7 @@ export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
                 kind: 'usage-observed',
                 source: 'codex-app-server-token-usage',
                 scope: defaultScope,
+                accounting: { inputIncludesCache: true, outputIncludesReasoning: true },
                 ...(modelId ? { modelId } : {}),
                 ...(runtimeTokens ? { tokens: runtimeTokens } : {}),
                 ...(runtimeCost ? { cost: runtimeCost } : {}),
@@ -166,6 +159,7 @@ export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
         defaultScope,
         body: {
             ...usageRecord,
+            ...(tokens ? { tokens } : {}),
             ...(modelId ? { modelId } : {}),
             source: 'codex-app-server-token-usage',
             scope: defaultScope,

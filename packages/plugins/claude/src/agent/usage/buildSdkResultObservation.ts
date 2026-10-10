@@ -1,4 +1,4 @@
-import { estimateClaudeUsageCost } from './cost.js';
+import { estimateUsageModelCost } from '@happier-dev/protocol';
 import type { ClaudeUsageModelSource, ClaudeUsageObservation } from './types.js';
 
 function asFiniteNonNegativeNumber(value: unknown): number | null {
@@ -7,6 +7,16 @@ function asFiniteNonNegativeNumber(value: unknown): number | null {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+export function isClaudeSdkUsageResult(value: unknown): boolean {
+    const result = asRecord(value);
+    if (result?.type !== 'result') return false;
+    return result.subtype === 'success'
+        || result.subtype === 'error_max_turns'
+        || result.subtype === 'error_during_execution'
+        || result.subtype === 'error_max_budget_usd'
+        || result.subtype === 'error_max_structured_output_retries';
 }
 
 function readContextWindowFromModelUsageEntry(entry: unknown): number | null {
@@ -48,26 +58,33 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
     observedAtMs?: number;
 }>): ClaudeUsageObservation | null {
     const result = asRecord(params.result);
-    if (!result || result.type !== 'result' || result.subtype !== 'success') return null;
+    if (!result || !isClaudeSdkUsageResult(result)) return null;
+    // Streaming result.usage describes the latest main-loop turn. Only modelUsage
+    // witnesses whole-call counters, including subagents and resumed usage.
+    const modelUsage = asRecord(result.modelUsage);
+    const modelIds = modelUsage ? Object.keys(modelUsage) : [];
+    if (!modelUsage || modelIds.length === 0) return null;
+    const tokens: ClaudeUsageObservation['tokens'] = {
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0,
+    };
+    for (const modelId of modelIds) {
+        const entry = asRecord(modelUsage[modelId]);
+        if (!entry || modelId.trim().length === 0) return null;
+        const input = asFiniteNonNegativeNumber(entry.inputTokens);
+        const output = asFiniteNonNegativeNumber(entry.outputTokens);
+        const cacheRead = asFiniteNonNegativeNumber(entry.cacheReadInputTokens);
+        const cacheWrite = asFiniteNonNegativeNumber(entry.cacheCreationInputTokens);
+        if (input === null || output === null || cacheRead === null || cacheWrite === null) return null;
+        tokens.input += input;
+        tokens.output += output;
+        tokens.cacheRead += cacheRead;
+        tokens.cacheWrite += cacheWrite;
+    }
+    tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
+    if (!Object.values(tokens).every(Number.isFinite)) return null;
+    const modelId = modelIds.length === 1 ? modelIds[0]! : null;
+    const total = tokens.total;
     const usage = asRecord(result.usage);
-    if (!usage) return null;
-
-    const inputTokens = asFiniteNonNegativeNumber(usage.input_tokens);
-    const outputTokens = asFiniteNonNegativeNumber(usage.output_tokens);
-    const cacheReadTokens = asFiniteNonNegativeNumber(usage.cache_read_input_tokens);
-    const cacheCreationTokens = asFiniteNonNegativeNumber(usage.cache_creation_input_tokens);
-    const anyPresent =
-        inputTokens != null ||
-        outputTokens != null ||
-        cacheReadTokens != null ||
-        cacheCreationTokens != null;
-    if (!anyPresent) return null;
-
-    const total =
-        (inputTokens ?? 0) +
-        (outputTokens ?? 0) +
-        (cacheReadTokens ?? 0) +
-        (cacheCreationTokens ?? 0);
     // The Claude SDK result does not establish what a provider-bound gateway charged.
     // Do not project its cost field as the selected Provider's reported billing amount.
     const reportedCost = params.modelSource === 'provider'
@@ -77,29 +94,17 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
         modelUsage: result.modelUsage,
         modelId: params.modelId,
     });
-    const contextUsedTokens = readLastMessageIterationContextTokens(usage);
-    const tokens: ClaudeUsageObservation['tokens'] = {
-        total,
-        input: inputTokens ?? 0,
-        output: outputTokens ?? 0,
-        reasoning: 0,
-        cacheRead: cacheReadTokens ?? 0,
-        cacheWrite: cacheCreationTokens ?? 0,
-    };
-    const estimatedCost = params.modelSource === 'provider'
+    const contextUsedTokens = usage ? readLastMessageIterationContextTokens(usage) : null;
+    const estimatedCost = params.modelSource === 'provider' || !modelId
         ? null
-        : estimateClaudeUsageCost({
-            input_tokens: inputTokens ?? undefined,
-            output_tokens: outputTokens ?? undefined,
-            cache_read_input_tokens: cacheReadTokens ?? undefined,
-            cache_creation_input_tokens: cacheCreationTokens ?? undefined,
-        }, params.modelId, params.observedAtMs);
+        : estimateUsageModelCost(modelId, tokens);
     const cost = reportedCost != null
         ? {
             reportedUsd: reportedCost,
             estimatedUsd: 0,
             billingContext: 'unknown' as const,
-            costSource: 'provider_reported' as const,
+            // Claude computes this amount from its local API price table, not an invoice.
+            costSource: 'provider_reported_api_equivalent' as const,
             currency: 'USD',
         }
         : estimatedCost
@@ -112,21 +117,16 @@ export function buildClaudeSdkResultUsageObservation(params: Readonly<{
                 currency: 'USD',
             }
             : null;
-    if (
-        total <= 0
-        && (cost?.reportedUsd ?? 0) <= 0
-        && (cost?.estimatedUsd ?? 0) <= 0
-        && contextUsedTokens == null
-    ) return null;
-
     return {
         provider: 'claude',
         source: 'claude-sdk-result',
         scope: 'session_final',
         key: 'claude-session',
         ...(typeof result.uuid === 'string' && result.uuid.length > 0 ? { nativeRecordId: result.uuid } : {}),
+        ...(typeof result.session_id === 'string' && result.session_id.length > 0 ? { nativeSessionId: result.session_id }
+            : typeof result.sessionId === 'string' && result.sessionId.length > 0 ? { nativeSessionId: result.sessionId } : {}),
         ...(params.observedAtMs === undefined ? {} : { observedAtMs: params.observedAtMs }),
-        modelId: params.modelId,
+        modelId,
         tokens,
         cost,
         contextUsedTokens,

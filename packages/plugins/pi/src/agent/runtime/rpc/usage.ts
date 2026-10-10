@@ -1,4 +1,5 @@
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { normalizePiPaidUsage } from '../../usage/paidUsage.js';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -20,12 +21,16 @@ export function projectPiSessionStatsUsage(params: Readonly<{
   observedAtMs: number;
 }>): Omit<Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>, 'sequence'> | null {
   const stats = readRecord(params.stats);
-  if (!stats || !Object.prototype.hasOwnProperty.call(stats, 'contextUsage')) return null;
+  if (!stats) return null;
+  const paidTokens = readRecord(stats.tokens);
+  const paid = paidTokens ? normalizePiPaidUsage({ ...paidTokens, totalTokens: paidTokens.total, cost: { total: stats.cost } }) : null;
   const usage = readRecord(stats.contextUsage);
-  if (!usage) return null;
-  const usedTokens = readNonNegativeInteger(usage.tokens);
-  const windowTokens = readNonNegativeInteger(usage.contextWindow);
-  if (usedTokens === null) return null;
+  const usedTokens = readNonNegativeInteger(usage?.tokens);
+  const windowTokens = readNonNegativeInteger(usage?.contextWindow);
+  const nativeSessionId = typeof stats.sessionId === 'string' && stats.sessionId.trim()
+    ? stats.sessionId.trim()
+    : null;
+  if (usedTokens === null && !paid) return null;
   return {
     kind: 'usage-observed',
     sessionId: params.sessionId,
@@ -34,7 +39,18 @@ export function projectPiSessionStatsUsage(params: Readonly<{
     ...(params.turnId ? { turnId: params.turnId } : {}),
     source: 'pi-session-stats',
     scope: 'session_cumulative',
-    context: {
+    ...(paid ? {
+      tokens: paid.tokens,
+      ...(paid.cost ? { cost: paid.cost } : {}),
+      accounting: {
+        ...(nativeSessionId ? { nativeSessionId } : {}),
+        inputIncludesCache: false,
+        outputIncludesReasoning: false,
+        // Native stats include copied fork history but expose no parent/entry IDs.
+        historyComplete: false,
+      },
+    } : {}),
+    ...(usedTokens === null ? {} : { context: {
       v: 1,
       modelId: null,
       usedTokens,
@@ -45,6 +61,6 @@ export function projectPiSessionStatsUsage(params: Readonly<{
       categories: null,
       observedAtMs: params.observedAtMs,
       source: 'provider_live',
-    },
+    } }),
   };
 }

@@ -3,10 +3,57 @@ import { describe, expect, it } from 'vitest';
 import { buildClaudeSdkResultUsageObservation } from './buildSdkResultObservation.js';
 
 describe('buildClaudeSdkResultUsageObservation', () => {
+    // Claude 2.1.295's kQ terminal producer shares whole-call modelUsage across these variants.
+    it.each(['error_max_turns', 'error_during_execution', 'error_max_budget_usd', 'error_max_structured_output_retries'])(
+        'preserves validated whole-call accounting from %s without claiming provider billing', (subtype) => {
+            const result = { type: 'result', subtype, is_error: true, uuid: 'error-summary', session_id: 'error-session',
+                usage: { input_tokens: 1 }, total_cost_usd: 0.2,
+                modelUsage: { 'claude-sonnet-4-6': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 3, cacheCreationInputTokens: 2 } } };
+            expect(buildClaudeSdkResultUsageObservation({ modelId: 'claude-sonnet-4-6', result })).toMatchObject({
+                scope: 'session_final', nativeRecordId: 'error-summary', nativeSessionId: 'error-session',
+                tokens: { input: 100, output: 20, cacheRead: 3, cacheWrite: 2, total: 125 },
+                cost: { reportedUsd: 0.2, costSource: 'provider_reported_api_equivalent', billingContext: 'unknown' },
+            });
+            expect(buildClaudeSdkResultUsageObservation({ modelId: 'claude-sonnet-4-6', result: { ...result, modelUsage: {} } })).toBeNull();
+            expect(buildClaudeSdkResultUsageObservation({ modelId: 'claude-sonnet-4-6', result: { ...result, subtype: 'unknown_result' } })).toBeNull();
+        });
+    it('preserves an explicitly witnessed zero whole-call baseline but rejects an incomplete model entry', () => {
+        const result = { type: 'result', subtype: 'success', usage: { input_tokens: 10 }, total_cost_usd: 0,
+            modelUsage: { 'claude-sonnet-4-6': { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } };
+        expect(buildClaudeSdkResultUsageObservation({ modelId: 'claude-sonnet-4-6', result })?.tokens.total).toBe(0);
+        expect(buildClaudeSdkResultUsageObservation({ modelId: 'claude-sonnet-4-6', result: {
+            ...result, modelUsage: { 'claude-sonnet-4-6': { inputTokens: 100 } },
+        } })).toBeNull();
+    });
+    it('uses whole-call model usage rather than the latest main-loop turn for resumed multi-model results', () => {
+        const observation = buildClaudeSdkResultUsageObservation({
+            modelId: 'claude-sonnet-4-6',
+            result: {
+                type: 'result', subtype: 'success', uuid: 'summary-record', session_id: 'resumed-session',
+                usage: { input_tokens: 10, output_tokens: 2 }, total_cost_usd: 0.3,
+                modelUsage: {
+                    'claude-sonnet-4-6': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 3, cacheCreationInputTokens: 4 },
+                    'claude-haiku-4-5': { inputTokens: 80, outputTokens: 5, cacheReadInputTokens: 2, cacheCreationInputTokens: 1 },
+                },
+            },
+        });
+        expect(observation).toMatchObject({ scope: 'session_final', modelId: null, nativeRecordId: 'summary-record',
+            tokens: { input: 180, output: 25, cacheRead: 5, cacheWrite: 5, reasoning: 0, total: 215 },
+            cost: { reportedUsd: 0.3, costSource: 'provider_reported_api_equivalent' } });
+        expect(observation).not.toHaveProperty('inferenceId');
+    });
+
+    it('rejects a summary missing whole-call counters instead of publishing a false zero or per-turn final total', () => {
+        const observation = buildClaudeSdkResultUsageObservation({ modelId: 'claude-sonnet-4-6', result: {
+            type: 'result', subtype: 'success', usage: { input_tokens: 10, output_tokens: 2 }, total_cost_usd: 0.3,
+        } });
+        expect(observation).toBeNull();
+    });
     it('carries the native result UUID for replayable result usage', () => {
         expect(buildClaudeSdkResultUsageObservation({
             modelId: 'claude-sonnet-4-6',
-            result: { type: 'result', subtype: 'success', uuid: 'result-record-1', usage: { input_tokens: 10 } },
+            result: { type: 'result', subtype: 'success', uuid: 'result-record-1', usage: { input_tokens: 10 },
+                modelUsage: { 'claude-sonnet-4-6': { inputTokens: 10, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } } },
         })).toMatchObject({ nativeRecordId: 'result-record-1' });
     });
 
@@ -46,6 +93,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
             source: 'claude-sdk-result',
             scope: 'session_final',
             key: 'claude-session',
+            nativeSessionId: 'ses_1',
             modelId: 'claude-sonnet-4-6',
             tokens: {
                 total: 40,
@@ -59,7 +107,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
                 reportedUsd: 0.123,
                 estimatedUsd: 0,
                 billingContext: 'unknown',
-                costSource: 'provider_reported',
+                costSource: 'provider_reported_api_equivalent',
                 currency: 'USD',
             },
             contextUsedTokens: null,
@@ -107,9 +155,11 @@ describe('buildClaudeSdkResultUsageObservation', () => {
                 },
                 modelUsage: {
                     'claude-opus-4-7': {
+                        inputTokens: 4_000_000, outputTokens: 25_000, cacheReadInputTokens: 39_231_000, cacheCreationInputTokens: 769_000,
                         contextWindow: 1_000_000,
                     },
                     'claude-sonnet-4-6': {
+                        inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0,
                         contextWindow: 2_000_000,
                     },
                 },
@@ -127,7 +177,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
         expect(observation?.cost).toMatchObject({
             reportedUsd: 100,
             estimatedUsd: 0,
-            costSource: 'provider_reported',
+            costSource: 'provider_reported_api_equivalent',
         });
         expect(observation?.contextSnapshot).toEqual({
             v: 1,
@@ -161,7 +211,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
                         cache_read_input_tokens: 2,
                     }],
                 },
-                modelUsage: {},
+                modelUsage: { 'claude-sonnet-4-6': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } },
             },
         });
 
@@ -183,7 +233,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
                 output_tokens: 100_000,
             },
             modelUsage: {
-                'claude-sonnet-4-6': { contextWindow: 1_000_000 },
+                'claude-sonnet-4-6': { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindow: 1_000_000 },
             },
             total_cost_usd: 0,
             duration_ms: 1,
@@ -218,7 +268,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
                     input_tokens: 1_000_000,
                     output_tokens: 100_000,
                 },
-                modelUsage: {},
+                modelUsage: { 'deepseek-ai/DeepSeek-V3.1': { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } },
             },
         });
 
@@ -239,7 +289,7 @@ describe('buildClaudeSdkResultUsageObservation', () => {
                     input_tokens: 10,
                     output_tokens: 5,
                 },
-                modelUsage: {},
+                modelUsage: { 'claude-sonnet-4-6': { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } },
                 total_cost_usd: 0.25,
             },
         });

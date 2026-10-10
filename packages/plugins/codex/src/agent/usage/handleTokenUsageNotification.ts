@@ -88,6 +88,7 @@ export function handleTokenUsageNotification(params: Readonly<{
     ...input.body,
   }, input.runtimeObservation ? {
     ...input.runtimeObservation,
+    accounting: { ...input.runtimeObservation.accounting, nativeSessionId: threadId },
     observationId: deriveUsageObservationId({
       sessionId: params.sessionId,
       threadId,

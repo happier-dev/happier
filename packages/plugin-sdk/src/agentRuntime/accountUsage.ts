@@ -1,4 +1,5 @@
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
+import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 
 export type AgentAccountUsageRecordKey = Readonly<{
   providerId: string;
@@ -79,6 +80,7 @@ export type AgentAccountUsageSubscription = Readonly<{
   staleAfterMs: number;
   currentPeriodStartAtMs?: number;
   currentPeriodEndAtMs?: number;
+  monetaryFacts?: ProviderAccountSubscriptionV1['monetaryFacts'];
   lastRefreshError?: Readonly<{
     observedAtMs: number;
     code: 'network' | 'malformed' | 'provider_backoff' | 'auth_failure' | 'missing_auth';

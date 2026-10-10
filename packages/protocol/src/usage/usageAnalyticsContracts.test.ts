@@ -112,6 +112,7 @@ describe('usageAnalyticsContracts', () => {
       filters: {
         sessionIds: ['session-1'],
         agentIds: ['claude'],
+        machineIds: [' machine-1 '],
       },
       includeSeries: true,
       includeInsights: true,
@@ -127,6 +128,9 @@ describe('usageAnalyticsContracts', () => {
       UsageAnalyticsBreakdownDimensionSchema.enum.agent,
       UsageAnalyticsBreakdownDimensionSchema.enum.model,
     ]);
+    expect(request.filters?.machineIds).toEqual(['machine-1']);
+    expect(UsageAnalyticsQueryRequestSchema.safeParse({ filters: { machineIds: [' '] } }).success).toBe(false);
+    expect(UsageAnalyticsQueryRequestSchema.safeParse({ filters: { unknownFilter: ['machine-1'] } }).success).toBe(false);
 
     const response = UsageAnalyticsQueryResponseSchema.parse({
       v: 1,

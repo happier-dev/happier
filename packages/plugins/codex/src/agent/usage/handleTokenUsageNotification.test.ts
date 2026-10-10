@@ -81,6 +81,7 @@ describe('handleTokenUsageNotification', () => {
         cacheWrite: 0,
         total: 20_019,
       },
+      accounting: { nativeSessionId: 'thread-1', inputIncludesCache: true, outputIncludesReasoning: true },
       cost: expect.objectContaining({
         reportedUsd: 0,
         estimatedUsd: expect.any(Number),

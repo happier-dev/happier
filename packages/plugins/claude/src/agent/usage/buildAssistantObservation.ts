@@ -1,4 +1,4 @@
-import { estimateClaudeUsageCost } from './cost.js';
+import { estimateUsageModelCost } from '@happier-dev/protocol';
 import type {
     ClaudeTokenUsage,
     ClaudeUsageModelSource,
@@ -13,6 +13,8 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
     modelId?: string | null;
     modelSource?: ClaudeUsageModelSource;
     nativeRecordId?: string | null;
+    inferenceId?: string | null;
+    nativeSessionId?: string | null;
     observedAtMs?: number;
     usage: ClaudeTokenUsage;
 }>): ClaudeUsageObservation | null {
@@ -35,9 +37,6 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         (outputTokens ?? 0) +
         (cacheCreationTokens ?? 0) +
         (cacheReadTokens ?? 0);
-    const costs = params.modelSource === 'provider'
-        ? null
-        : estimateClaudeUsageCost(params.usage, params.modelId ?? undefined, params.observedAtMs);
     const tokens: ClaudeUsageObservation['tokens'] = {
         total,
         input: inputTokens ?? 0,
@@ -46,6 +45,7 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         cacheWrite: cacheCreationTokens ?? 0,
         cacheRead: cacheReadTokens ?? 0,
     };
+    const costs = params.modelSource === 'provider' ? null : estimateUsageModelCost(params.modelId, tokens);
 
     return {
         provider: 'claude',
@@ -53,6 +53,8 @@ export function buildClaudeAssistantUsageObservation(params: Readonly<{
         scope: 'turn_delta',
         key: 'claude-session',
         ...(params.nativeRecordId ? { nativeRecordId: params.nativeRecordId } : {}),
+        ...(params.inferenceId ? { inferenceId: params.inferenceId } : {}),
+        ...(params.nativeSessionId ? { nativeSessionId: params.nativeSessionId } : {}),
         ...(params.observedAtMs === undefined ? {} : { observedAtMs: params.observedAtMs }),
         modelId: typeof params.modelId === 'string' && params.modelId.trim().length > 0 ? params.modelId.trim() : null,
         tokens,

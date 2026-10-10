@@ -9,6 +9,7 @@ const uiDev = (path: string): string => resolve(uiSources, 'dev', path);
 
 export default defineConfig({
   plugins: [createWorkspacePackageSourcesPlugin([
+    { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: resolve(__dirname, '../../plugin-sdk/src') },
     { packageName: '@happier-dev/protocol', packageSourceRoot: resolve(__dirname, '../../protocol/src') },
   ])],
   define: {
