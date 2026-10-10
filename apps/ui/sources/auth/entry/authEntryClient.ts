@@ -67,6 +67,9 @@ export async function fetchAuthEntry(
             v: 1,
             scope: input.scope,
             ...(input.purpose && input.purpose !== 'home' ? { purpose: input.purpose } : {}),
+            ...(input.scope.kind === 'home' && 'email' in input && input.email !== undefined
+                ? { email: input.email }
+                : {}),
         }),
         ...(input.signal ? { signal: input.signal } : {}),
     };
