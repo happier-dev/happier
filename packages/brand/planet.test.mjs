@@ -292,3 +292,77 @@ test('scene art samples the same planet on a finer lattice, with a quieter halo 
   const sum = (dots) => dots.reduce((total, dot) => total + dot.rgb[0] - dot.rgb[2], 0);
   assert.ok(sum(planet.createPlanetDots({ size: 30, rows: 24, warmth: 0.25 })) > sum(fine));
 });
+
+function markFrame(geometry, { morph = 1, energy = 0, gather = 0, leave = 0 } = {}) {
+  const dots = [];
+  planet.drawPlanetMarkFrame(geometry, geometry, morph, 1, energy, 0, (x, y, radius, r, g, b, a) => dots.push({ x, y, radius, r, g, b, a }), gather, leave);
+  return dots;
+}
+
+test('an event gather brings dispersed dots home once: outward and faint at the start, the exact planet when settled', () => {
+  for (const size of [24, 96]) {
+    const geometry = planet.createPlanetMarkGeometry({ size, pose: 'ready' });
+    const centre = size / 2;
+    const settled = markFrame(geometry);
+    // Settled, and by default, the transform is the identity: the planet every other caller draws.
+    assert.deepEqual(markFrame(geometry, { gather: 0 }), settled);
+    const ink = (dots) => dots.reduce((total, dot) => total + dot.a, 0);
+    const spread = (dots) => dots.reduce((total, dot) => total + dot.a * Math.hypot(dot.x - centre, dot.y - centre), 0) / ink(dots);
+    const steps = [1, 0.6, 0.3, 0].map((gather) => markFrame(geometry, { gather }));
+    // Dots start thinned out and farther from the centre, and only ever come in.
+    assert.ok(ink(steps[0]) < ink(settled) * 0.6, `${size}pt start ink ${ink(steps[0])} of ${ink(settled)}`);
+    for (let i = 1; i < steps.length; i += 1) {
+      assert.ok(ink(steps[i]) > ink(steps[i - 1]));
+      assert.ok(spread(steps[i]) < spread(steps[i - 1]));
+    }
+    // A dispersed dot fades before it could reach the canvas edge, so the painter never clips one.
+    for (const dot of steps[0]) {
+      const inside = dot.x - dot.radius >= geometry.minX && dot.x + dot.radius <= geometry.maxX
+        && dot.y - dot.radius >= geometry.minY && dot.y + dot.radius <= geometry.maxY;
+      assert.ok(inside || dot.a < 0.05, `${size}pt clipped dot at ${dot.x},${dot.y} alpha ${dot.a}`);
+    }
+    // The rest microphone is never dispersed.
+    assert.deepEqual(markFrame(geometry, { morph: 0, gather: 1 }), markFrame(geometry, { morph: 0 }));
+  }
+});
+
+test('an event leave disperses the planet and lands on the exact rest microphone', () => {
+  const size = 24;
+  const geometry = planet.createPlanetMarkGeometry({ size, pose: 'ready' });
+  const rest = markFrame(geometry, { morph: 0 });
+  // Whatever the tap morph or the voice was doing, a finished leave is the microphone at rest.
+  for (const morph of [1, 0.4, 0]) {
+    assert.deepEqual(markFrame(geometry, { morph, energy: 0.8, leave: 1 }), rest);
+  }
+  assert.deepEqual(markFrame(geometry, { leave: 0 }), markFrame(geometry));
+  const micKeys = new Set(rest.map((dot) => `${dot.x},${dot.y},${dot.radius}`));
+  const split = (dots) => ({
+    mic: dots.filter((dot) => micKeys.has(`${dot.x},${dot.y},${dot.radius}`)),
+    planet: dots.filter((dot) => !micKeys.has(`${dot.x},${dot.y},${dot.radius}`)),
+  });
+  const ink = (dots) => dots.reduce((total, dot) => total + dot.a, 0);
+  const early = split(markFrame(geometry, { leave: 0.25 }));
+  const late = split(markFrame(geometry, { leave: 0.8 }));
+  // The planet goes first; the microphone only resolves once the dots have left.
+  assert.ok(ink(early.planet) > ink(late.planet));
+  assert.ok(ink(late.planet) < ink(markFrame(geometry)) * 0.2);
+  assert.ok(ink(early.mic) < ink(rest) * 0.05);
+  assert.ok(ink(late.mic) > ink(rest) * 0.5 && ink(late.mic) < ink(rest));
+});
+
+test('event choreography shares one lab duration', () => {
+  assert.equal(planet.PLANET_MARK_EVENT_SECONDS, 1.2);
+});
+
+test('the rest glyph hands over to the dots early in the tap and returns as a leave lands', () => {
+  const shown = planet.planetMarkRestGlyphOpacity;
+  assert.equal(shown(0, 0), 1);
+  assert.equal(shown(1, 0), 0);
+  assert.equal(shown(0.35, 0), 0);
+  assert.ok(shown(0.1, 0) > 0 && shown(0.1, 0) < 1);
+  assert.ok(shown(0.2, 0) < shown(0.1, 0));
+  // A leave keeps the glyph away while the planet disperses, then lands on it.
+  assert.equal(shown(1, 0.4), 0);
+  assert.ok(shown(1, 0.8) > 0.5);
+  assert.equal(shown(1, 1), 1);
+});

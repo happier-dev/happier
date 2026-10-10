@@ -66,6 +66,15 @@ export const PLANET_MARK_ENERGY_SAMPLES: readonly number[];
 export const PLANET_MARK_BLEED: number;
 export function createPlanetMarkGeometry(options?: PlanetMarkOptions & Readonly<{ pose?: PlanetDotPose; light?: readonly [number, number, number] }>): PlanetMarkGeometry;
 export function interpolatePlanetMarkGeometry(to: PlanetMarkGeometry, from: PlanetMarkGeometry, progress: number): PlanetMarkGeometry;
+/** Opacity of an app's rest glyph drawn over the mark: 1 at rest, 0 once the tap's dots have streamed out. */
+export function planetMarkRestGlyphOpacity(morph: number, leave: number): number;
+/** Seconds a one-shot mark event (gather, leave) runs; the caller eases its own progress. */
+export const PLANET_MARK_EVENT_SECONDS: number;
+/**
+ * `gather` (1 dispersed -> 0 home) and `leave` (0 -> 1 the exact rest microphone) are one-shot event
+ * transforms; omitted or 0 they leave the frame unchanged.
+ */
 export function drawPlanetMarkFrame(
   to: PlanetMarkGeometry, from: PlanetMarkGeometry, morph: number, pose: number, energy: number, flow: number, draw: PlanetMarkDrawDot,
+  gather?: number, leave?: number,
 ): void;

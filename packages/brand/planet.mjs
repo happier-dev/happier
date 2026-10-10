@@ -510,6 +510,35 @@ const MARK_STREAM_EMERGE = 0.125;
 const MARK_LIGHT_FROM = 0.8;
 /** The morph's disc dot (lab `voice-planet.js`: 0.33 of the pitch; the microphone's is 0.4). */
 const MARK_DISC_DOT = 0.33;
+/**
+ * One real-event transform (lab `screens-voice-moments.js` vmGather / vmLeave): dots gathering into
+ * the planet when a first conversation succeeds or a conversation arrives here, and dots leaving when
+ * this device lets a conversation go. The caller eases its progress over this many seconds, once.
+ */
+export const PLANET_MARK_EVENT_SECONDS = 1.2;
+/** Lab scatter at the start of a gather (0.9) and at the end of a leave (0.7), in sphere radii x (0.2 + hash). */
+const MARK_GATHER_SCATTER = 0.9;
+const MARK_LEAVE_SCATTER = 0.7;
+/** A leave's planet is gone by 70 % and the rest microphone resolves over its second half. */
+const MARK_LEAVE_FADE_FROM = 0.1;
+const MARK_LEAVE_FADE_TO = 0.7;
+const MARK_LEAVE_MIC_FROM = 0.5;
+/** The app's rest glyph has handed over to the streaming dots by 30 % of the tap morph. */
+const MARK_REST_HANDOFF = 0.3;
+
+/**
+ * How visible an app's rest glyph (the line waveform, VE-02 2026-10-10) is over the mark's dots: it
+ * fades out while the tap's dots stream out of its place, fades back as the End regather lands, and
+ * returns over a leave's second half, as the dispersed planet is gone.
+ */
+export function planetMarkRestGlyphOpacity(morph, leave) {
+  'worklet';
+  const m = morph <= 0 ? 0 : morph >= MARK_REST_HANDOFF ? 1 : morph / MARK_REST_HANDOFF;
+  const away = 1 - m * m * (3 - 2 * m);
+  const l = leave <= MARK_LEAVE_MIC_FROM ? 0 : leave >= 1 ? 1 : (leave - MARK_LEAVE_MIC_FROM) / (1 - MARK_LEAVE_MIC_FROM);
+  const back = l * l * (3 - 2 * l);
+  return away > back ? away : back;
+}
 
 const unitRgb = (hex) => {
   const value = Number.parseInt(hex.slice(1), 16);
@@ -582,8 +611,13 @@ export function interpolatePlanetMarkGeometry(to, from, progress) {
  * real level and `flow` its direction (< 0 the person, > 0 the assistant). Pure: no time, no
  * allocation per dot. The directive lets the app run it on its UI thread; elsewhere it is an
  * ordinary function.
+ *
+ * Two optional one-shot event transforms, each 0 when settled (the frame is then unchanged):
+ * `gather` (1 -> 0) is how far the planet's dots are still dispersed while they gather home;
+ * `leave` (0 -> 1) disperses the planet and resolves the rest microphone, exactly, at 1. Each dot
+ * keeps a stable hash, so an event is the same dispersal on every painter.
  */
-export function drawPlanetMarkFrame(to, from, morph, pose, energy, flow, draw) {
+export function drawPlanetMarkFrame(to, from, morph, pose, energy, flow, draw, gather, leave) {
   'worklet';
   const m = morph <= 0 ? 0 : morph >= 1 ? 1 : (morph < 0.5 ? 4 * morph * morph * morph : 1 - ((-2 * morph + 2) ** 3) / 2);
   const settleRaw = morph <= MARK_LIGHT_FROM ? 0 : morph >= 1 ? 1 : (morph - MARK_LIGHT_FROM) / (1 - MARK_LIGHT_FROM);
@@ -600,31 +634,63 @@ export function drawPlanetMarkFrame(to, from, morph, pose, energy, flow, draw) {
   const count = to.count;
   const lowerBase = lower * count;
   const upperBase = (lower + 1) * count;
+  // Event transforms: only the planet disperses; the rest microphone never does.
+  const gathering = (gather > 0 ? (gather >= 1 ? 1 : gather) : 0) * m;
+  const leaving = leave > 0 ? (leave >= 1 ? 1 : leave) : 0;
+  const fadeRaw = leaving <= MARK_LEAVE_FADE_FROM ? 0 : leaving >= MARK_LEAVE_FADE_TO ? 1
+    : (leaving - MARK_LEAVE_FADE_FROM) / (MARK_LEAVE_FADE_TO - MARK_LEAVE_FADE_FROM);
+  const planetKeep = 1 - fadeRaw * fadeRaw * (3 - 2 * fadeRaw);
+  const micRaw = leaving <= MARK_LEAVE_MIC_FROM ? 0 : (leaving - MARK_LEAVE_MIC_FROM) / (1 - MARK_LEAVE_MIC_FROM);
+  const micResolve = micRaw * micRaw * (3 - 2 * micRaw);
+  const scatter = (gathering * MARK_GATHER_SCATTER + leaving * MARK_LEAVE_SCATTER * m) * (to.size / 2) * 0.94;
+  const centre = to.size / 2;
+  const fadeBand = to.size * 0.12;
   for (let i = 0; i < count; i += 1) {
-    const toA = to.planetA[lowerBase + i] + (to.planetA[upperBase + i] - to.planetA[lowerBase + i]) * fraction;
-    const fromA = from.planetA[lowerBase + i] + (from.planetA[upperBase + i] - from.planetA[lowerBase + i]) * fraction;
-    const planetA = fromA + (toA - fromA) * k;
-    const targetA = to.discA[i] + (planetA - to.discA[i]) * settle;
-    // Microphone dots travel; the disc's extra dots stream out of the microphone with them.
-    const a = to.micA[i] > 0 ? to.micA[i] + (targetA - to.micA[i]) * m : targetA * emerge;
-    if (a <= 0.004) continue;
     const c = i * 3;
-    const channel = (offset) => {
-      const lo = (lowerBase + i) * 3 + offset;
-      const hi = (upperBase + i) * 3 + offset;
-      const toRgb = to.planetRgb[lo] + (to.planetRgb[hi] - to.planetRgb[lo]) * fraction;
-      const fromRgb = from.planetRgb[lo] + (from.planetRgb[hi] - from.planetRgb[lo]) * fraction;
-      const planet = fromRgb + (toRgb - fromRgb) * k;
-      const target = to.discRgb[c + offset] + (planet - to.discRgb[c + offset]) * settle;
-      const value = to.micRgb[c + offset] + (target - to.micRgb[c + offset]) * m;
-      return value + (tintRgb[offset] - value) * tint;
-    };
-    const targetR = to.discR + (to.planetR[i] - to.discR) * settle;
-    draw(
-      to.micX[i] + (to.planetX[i] - to.micX[i]) * m,
-      to.micY[i] + (to.planetY[i] - to.micY[i]) * m,
-      to.micR[i] + (targetR - to.micR[i]) * m,
-      channel(0), channel(1), channel(2), a,
-    );
+    let a = 0;
+    if (planetKeep > 0) {
+      const toA = to.planetA[lowerBase + i] + (to.planetA[upperBase + i] - to.planetA[lowerBase + i]) * fraction;
+      const fromA = from.planetA[lowerBase + i] + (from.planetA[upperBase + i] - from.planetA[lowerBase + i]) * fraction;
+      const planetA = fromA + (toA - fromA) * k;
+      const targetA = to.discA[i] + (planetA - to.discA[i]) * settle;
+      // Microphone dots travel; the disc's extra dots stream out of the microphone with them.
+      a = (to.micA[i] > 0 ? to.micA[i] + (targetA - to.micA[i]) * m : targetA * emerge) * planetKeep;
+    }
+    if (a > 0.004) {
+      let x = to.micX[i] + (to.planetX[i] - to.micX[i]) * m;
+      let y = to.micY[i] + (to.planetY[i] - to.micY[i]) * m;
+      const targetR = to.discR + (to.planetR[i] - to.discR) * settle;
+      const radius = to.micR[i] + (targetR - to.micR[i]) * m;
+      if (scatter > 0) {
+        // A stable per-dot hash (the lab shader's per-cell hash): some dots travel farther and fade more.
+        const h = (Math.imul(i + 1, 2654435761) >>> 0) / 4294967296;
+        const dx = x - centre;
+        const dy = y - centre;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const offset = scatter * (0.2 + h);
+        x += (d > 1e-6 ? dx / d : Math.cos(h * 6.283185307179586)) * offset;
+        y += (d > 1e-6 ? dy / d : Math.sin(h * 6.283185307179586)) * offset;
+        a *= 1 - gathering * (0.35 + 0.65 * h);
+        // A dispersed dot fades out before the canvas edge rather than being clipped by it.
+        const room = Math.min(x - radius - to.minX, to.maxX - x - radius, y - radius - to.minY, to.maxY - y - radius);
+        a *= room <= 0 ? 0 : room >= fadeBand ? 1 : room / fadeBand;
+      }
+      if (a > 0.004) {
+        const channel = (offset) => {
+          const lo = (lowerBase + i) * 3 + offset;
+          const hi = (upperBase + i) * 3 + offset;
+          const toRgb = to.planetRgb[lo] + (to.planetRgb[hi] - to.planetRgb[lo]) * fraction;
+          const fromRgb = from.planetRgb[lo] + (from.planetRgb[hi] - from.planetRgb[lo]) * fraction;
+          const planet = fromRgb + (toRgb - fromRgb) * k;
+          const target = to.discRgb[c + offset] + (planet - to.discRgb[c + offset]) * settle;
+          const value = to.micRgb[c + offset] + (target - to.micRgb[c + offset]) * m;
+          return value + (tintRgb[offset] - value) * tint;
+        };
+        draw(x, y, radius, channel(0), channel(1), channel(2), a);
+      }
+    }
+    // A leave lands on the exact rest microphone.
+    const micA = leaving > 0 ? to.micA[i] * micResolve : 0;
+    if (micA > 0.004) draw(to.micX[i], to.micY[i], to.micR[i], to.micRgb[c], to.micRgb[c + 1], to.micRgb[c + 2], micA);
   }
 }
