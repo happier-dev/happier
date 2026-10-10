@@ -14,7 +14,7 @@ import type {
   BrowserSidecarContextCaptureSurface,
 } from '../../sidecar/controlAdapter';
 import type { BrowserContextRoutes } from '../../context/routes';
-import { interactiveElementsExpression, parseInteractiveElements, SNAPSHOT_MAX_INTERACTIVE_ELEMENTS, SNAPSHOT_MAX_NAME_CHARS, SNAPSHOT_MAX_VISIBLE_TEXT_CHARS } from '../../context/cdp/snapshotEvaluators';
+import { interactiveElementsExpression, parseInteractiveElements, SNAPSHOT_MAX_INTERACTIVE_ELEMENTS, SNAPSHOT_MAX_VISIBLE_TEXT_CHARS } from '../../context/cdp/snapshotEvaluators';
 import type { BrowserDaemonControlAdapter } from '../../control/types';
 import { BrowserSidecarCdpTransportError, isBrowserSidecarCdpCommandNotDispatched } from '../../sidecar/cdpTransport';
 import type { BrowserAutomationAdapterExecuteResult, BrowserAutomationAdapterExecutionContext } from './types';
@@ -43,7 +43,6 @@ import type {
  */
 
 const MAX_SNAPSHOT_CHARS = SNAPSHOT_MAX_VISIBLE_TEXT_CHARS;
-const MAX_QUERY_ELEMENTS = SNAPSHOT_MAX_INTERACTIVE_ELEMENTS;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -79,34 +78,32 @@ function readCurrentHistoryEntry(history: unknown): Record<string, unknown> | nu
 const DOM_TEXT_EXPRESSION =
   "(() => { const b = document.body; return b && b.innerText ? b.innerText : ''; })()";
 
-function queryElementsExpression(selector: string, maxElements: number): string {
+function queryElementsExpression(selector: string): string {
   const safeSelector = JSON.stringify(selector);
   return `(() => {
     const out = [];
-    let truncated = false;
     let nodes;
     try { nodes = document.querySelectorAll(${safeSelector}); } catch { return { error: 'invalid_selector' }; }
-    for (let i = 0; i < nodes.length && out.length < ${maxElements}; i++) {
+    for (let i = 0; i < nodes.length; i++) {
       const el = nodes[i];
       const name = ${synthesizeLocatorNameExpression('el')};
-      if (name.length > ${SNAPSHOT_MAX_NAME_CHARS}) truncated = true;
-      out.push({ tag: el.tagName.toLowerCase(), name: name.slice(0, ${SNAPSHOT_MAX_NAME_CHARS}) });
+      out.push({ tag: el.tagName.toLowerCase(), name });
     }
-    return { count: nodes.length, elements: out, truncated };
+    return { count: nodes.length, elements: out, truncated: false };
   })()`;
 }
 
-function queryLocatorExpression(selector: string, maxElements: number): string {
+function queryLocatorExpression(selector: string): string {
   const locator = parseLocator(selector);
   if (locator.strategy === 'css') {
-    return queryElementsExpression(locator.selector, maxElements);
+    return queryElementsExpression(locator.selector);
   }
   const elementExpression = synthesizeLocatorElementExpression(locator);
   return `(() => {
     const el = ${elementExpression};
     if (!el) return { count: 0, elements: [] };
     const name = ${synthesizeLocatorNameExpression('el')};
-    return { count: 1, elements: [{ tag: el.tagName.toLowerCase(), name: name.slice(0, ${SNAPSHOT_MAX_NAME_CHARS}) }], truncated: name.length > ${SNAPSHOT_MAX_NAME_CHARS} };
+    return { count: 1, elements: [{ tag: el.tagName.toLowerCase(), name }], truncated: false };
   })()`;
 }
 
@@ -624,8 +621,8 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
             };
           }
 
-          const raw = evaluateValue(await evaluate(handle, interactiveElementsExpression(MAX_QUERY_ELEMENTS), query));
-          const parsed = parseInteractiveElements(raw, MAX_QUERY_ELEMENTS);
+          const raw = evaluateValue(await evaluate(handle, interactiveElementsExpression(SNAPSHOT_MAX_INTERACTIVE_ELEMENTS), query));
+          const parsed = parseInteractiveElements(raw, SNAPSHOT_MAX_INTERACTIVE_ELEMENTS);
           return { ok: true, data: { elements: parsed.elements, truncated: parsed.truncated } };
         }
         case 'queryElements': {
@@ -633,7 +630,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           if (!selector) {
             return { ok: false, errorCode: 'unsupported_action' };
           }
-          const result = evaluateValue(await evaluate(handle, queryLocatorExpression(selector, MAX_QUERY_ELEMENTS), query));
+          const result = evaluateValue(await evaluate(handle, queryLocatorExpression(selector), query));
           const r = record(result);
           if (r?.error === 'invalid_selector') {
             return { ok: false, errorCode: 'selector_not_found' };
