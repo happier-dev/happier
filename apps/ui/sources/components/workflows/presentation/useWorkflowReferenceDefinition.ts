@@ -2,9 +2,9 @@ import * as React from 'react';
 import { parseWorkflowDefinitionRefV1, resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useWorkflowPluginSource } from '../library/workflowLibraryReads';
 
 /** Accessible definition content, shared by child bindings and trigger inputs. Saved/shared
@@ -14,7 +14,8 @@ export function useWorkflowReferenceDefinition(ref: string | null, libraryEnable
     status: 'idle' | 'loading' | 'failed' | 'ready';
     retry: () => void;
 }> {
-    const scope = useActiveServerAccountScope();
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const scope = lifetime?.scope ?? null;
     const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
     const reference = parseWorkflowDefinitionRefV1(ref);
     const plugin = useWorkflowPluginSource(reference?.kind === 'plugin' ? ref : null, libraryEnabled);
@@ -25,9 +26,8 @@ export function useWorkflowReferenceDefinition(ref: string | null, libraryEnable
         lifetime: ActiveServerAccountScopeLifetime;
     }> | null>(null);
     React.useEffect(() => {
-        if (!libraryEnabled || artifactId === null || scopeKey === null) return;
+        if (!libraryEnabled || artifactId === null || scopeKey === null || lifetime === null) return;
         const controller = new AbortController();
-        const lifetime = captureActiveServerAccountScopeLifetime();
         setRead(null);
         void getWorkflowDefinition({ definitionId: artifactId, signal: controller.signal }).then((result) => {
             if (!controller.signal.aborted && lifetime?.isCurrent()) {
@@ -39,7 +39,7 @@ export function useWorkflowReferenceDefinition(ref: string | null, libraryEnable
             }
         });
         return () => controller.abort();
-    }, [artifactId, attempt, libraryEnabled, scopeKey]);
+    }, [artifactId, attempt, libraryEnabled, lifetime, scopeKey]);
     const retry = React.useCallback(() => setAttempt((current) => current + 1), []);
     if (ref === null) return { definition: null, status: 'idle', retry };
     if (reference?.kind === 'builtin') {

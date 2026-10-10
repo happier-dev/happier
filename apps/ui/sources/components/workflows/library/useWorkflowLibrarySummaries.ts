@@ -3,9 +3,8 @@ import * as React from 'react';
 import type { WorkflowRunSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
-import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { summarizeWorkflowRuns } from '@/sync/domains/workflows/workflowRunListActions';
 import { subscribeVisibleWorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
 
@@ -108,10 +107,9 @@ const owners = new WeakMap<ActiveServerAccountScopeLifetime, ReturnType<typeof c
 /** Concurrent mounts union their ids before transport; later mounts join in-flight ids. A single
  * Account wake refreshes current demand and equal replies retain row/map identities. */
 export function useWorkflowLibrarySummaries(sourceArtifactIds: readonly string[]): SummaryMap | null {
-    const scope = useActiveServerAccountScope();
-    const scopeKey = scope === null ? null : serverAccountScopeKeySuffix(scope);
+    const activeLifetime = useActiveServerAccountScopeLifetime();
     const key = [...new Set(sourceArtifactIds)].sort().join('\u0000');
-    const lifetime = key.length > 0 && scopeKey !== null ? captureActiveServerAccountScopeLifetime() : null;
+    const lifetime = key.length > 0 ? activeLifetime : null;
     const selection = React.useMemo(() => {
         const ids = key.length > 0 ? key.split('\u0000') : [];
         let owner = lifetime ? owners.get(lifetime) : undefined;

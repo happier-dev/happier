@@ -6,14 +6,15 @@ import { resolveWorkflowProblemPresentation, type WorkflowProblemPresentation } 
 import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { readWorkflowFlowChildren } from './readWorkflowFlowChildren';
 
 const EMPTY_CHILDREN: Readonly<Record<string, WorkflowDefinitionV1>> = Object.freeze({});
 
 /** Demand-only editor preview. It neither changes the draft nor supplies Run snapshot authority. */
 export function useWorkflowFlowChildren(definition: WorkflowDefinitionV1 | null, enabled: boolean) {
-    const scope = useActiveServerAccountScope();
+    const lifetime = useActiveServerAccountScopeLifetime();
+    const scope = lifetime?.scope ?? null;
     const scopeKey = scope === null ? null : serverAccountScopeKeySuffix(scope);
     // Prompt edits do not re-read unchanged references. The actual definitions remain with their owners.
     const referenceKey = JSON.stringify(definition === null ? [] : [...new Set(walkWorkflowBlocks(definition.blocks)
@@ -49,7 +50,7 @@ export function useWorkflowFlowChildren(definition: WorkflowDefinitionV1 | null,
                 pluginWorkflows: library.pluginWorkflows, isCurrent: currentness.isCurrent });
         });
         return () => { controller.abort(); retirement.dispose(); };
-    }, [enabled, hasReferences, library.pluginWorkflows, library.status, referenceDefinition, referenceKey, retryVersion, scopeKey]);
+    }, [enabled, hasReferences, library.pluginWorkflows, library.status, lifetime, referenceDefinition, referenceKey, retryVersion, scopeKey]);
     const visible = enabled && read?.referenceKey === referenceKey && read.scopeKey === scopeKey && read.isCurrent() ? read : null;
     // A newly loaded page must be resolved before a previous page's missing-child result can page again.
     const awaitingPluginProjection = visible?.usedPluginLibrary === true && visible.pluginWorkflows !== library.pluginWorkflows;
