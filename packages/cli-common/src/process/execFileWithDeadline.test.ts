@@ -64,6 +64,31 @@ const survivorShellArgs = (foreground: string): readonly string[] => ([
 ]);
 
 describe('execFileWithDeadline', () => {
+  it.each([0, 7])('retains caller-budgeted Unicode-safe output suffixes without stopping a noisy command (exit %s)', async exitCode => {
+    const outputTailMaxBytes = 128;
+    const pending = execFileWithDeadline(process.execPath, ['-e', `
+      process.stdout.write('old-out:' + '😀'.repeat(1024) + ':stdout-end😀');
+      process.stderr.write('old-error:' + 'é'.repeat(1024) + ':stderr-end😀');
+      process.exitCode = ${exitCode};
+    `], { outputTailMaxBytes, maxBuffer: Infinity });
+    const output = exitCode === 0 ? await pending : await pending.catch((error: unknown) => {
+      expect(error).toMatchObject({ code: exitCode });
+      return error as { stdout: string; stderr: string; stdoutTruncated?: true; stderrTruncated?: true };
+    });
+    const stdout = String(output.stdout);
+    const stderr = String(output.stderr);
+    expect(stdout.endsWith(':stdout-end😀')).toBe(true);
+    expect(stderr.endsWith(':stderr-end😀')).toBe(true);
+    expect(Buffer.byteLength(stdout)).toBeLessThanOrEqual(outputTailMaxBytes);
+    expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(outputTailMaxBytes);
+    expect(stdout.charCodeAt(0) >= 0xdc00 && stdout.charCodeAt(0) <= 0xdfff).toBe(false);
+    expect(output).toMatchObject({ stdoutTruncated: true, stderrTruncated: true });
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps the existing deadline owner for caller-budgeted suffix capture when a trap exits zero', async () => {
+    await expect(execFileWithDeadline('/bin/sh', ['-c', 'trap "exit 0" TERM; echo started; while :; do sleep 0.1; done'],
+      { timeout: 250, outputTailMaxBytes: 128 })).rejects.toMatchObject({ killed: true, code: 0, stdout: expect.stringContaining('started') });
+  });
   it.skipIf(process.platform === 'win32').each([false, true])('reports an owned deadline even when the terminated command handles SIGTERM and exits zero (supplied terminator: %s)', async (suppliedTerminator) => {
     let terminatorCalled = false;
     const pending = execFileWithDeadline('/bin/sh', ['-c', 'trap "exit 0" TERM; echo started; while :; do sleep 0.1; done'], {
@@ -178,13 +203,14 @@ describe('execFileWithDeadline', () => {
     }
   });
 
-  it('supports caller cancellation without imposing a command deadline', async () => {
+  it.each([undefined, 128])('supports caller cancellation without imposing a command deadline (suffix budget %s)', async outputTailMaxBytes => {
     const result = await execFileWithDeadline(process.execPath, [
       '-e', 'setTimeout(() => process.stdout.write("finished"), 50)',
-    ], {});
+    ], { ...(outputTailMaxBytes === undefined ? {} : { outputTailMaxBytes }) });
     expect(String(result.stdout)).toBe('finished');
     const controller = new AbortController();
-    const pending = execFileWithDeadline(process.execPath, sleeperArgs(''), { signal: controller.signal });
+    const pending = execFileWithDeadline(process.execPath, sleeperArgs(''), { signal: controller.signal,
+      ...(outputTailMaxBytes === undefined ? {} : { outputTailMaxBytes }) });
     const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     controller.abort();
     await rejected;
