@@ -124,7 +124,7 @@ export function useProjectWidgetAreaBinding(props: ProjectWidgetAreaBindingInput
         if (!lifetime?.isCurrent() || !selectActiveServerAccountScopeForServer(viewer, props.serverId) || !read.projectIdentity) return null;
         if (attached) return sharedDashboard?.surface ?? null;
         const parsed = WidgetSurfaceRefV1Schema.safeParse({
-            serverId: lifetime.scope.serverId, accountId: props.ownerAccountId ?? lifetime.scope.accountId,
+            serverId: lifetime.scope.serverId, accountId: locallySelected ? lifetime.scope.accountId : props.ownerAccountId ?? lifetime.scope.accountId,
             ...(locallySelected || props.artifactId === undefined ? {} : { artifactId: props.artifactId }),
             owner: { kind: 'project', projectId: read.projectIdentity.projectKey,
                 ...(layoutId === undefined ? {} : { layoutId }) },
@@ -195,7 +195,7 @@ export function useProjectWidgetAreaBinding(props: ProjectWidgetAreaBindingInput
         };
     }, [attached?.sourceId, attached?.artifactId, lifetime, read.providedContext, surface]);
     React.useEffect(() => {
-        if (!port || !surface || !lifetime || !read.projectIdentity) return;
+        if (!lifetime?.isCurrent() || !selectActiveServerAccountScopeForServer(viewer, props.serverId) || !read.projectIdentity) return;
         // The mounted Project is the viewer's destination even while displaying an attached document.
         const destination: WidgetSurfaceRefV1 = { ...lifetime.scope, owner: { kind: 'project', projectId: read.projectIdentity.projectKey } };
         const isCurrent = () => mounted.current && lifetime.isCurrent() && currentBinding.current.surface === surface
@@ -215,7 +215,7 @@ export function useProjectWidgetAreaBinding(props: ProjectWidgetAreaBindingInput
                 else setSelection({ key: selectionKey, initial: props.layoutId, layoutId: target.owner.layoutId });
             },
         });
-    }, [lifetime, port, props.layoutId, props.onSelectLayout, read.projectIdentity, read.providedContext, selectionKey, surface]);
+    }, [lifetime, props.layoutId, props.onSelectLayout, props.serverId, read.projectIdentity, read.providedContext, selectionKey, surface, viewer]);
     const unavailableReasonCode = port ? undefined
         : !lifetime?.isCurrent() || !selectActiveServerAccountScopeForServer(viewer, props.serverId) ? 'widget_area_scope_unavailable'
         : attached ? !attachmentEligible ? 'widget_project_source_unavailable' : attachedReadCurrent ? attachedRead.reasonCode ?? 'widget_area_loading' : 'widget_area_loading'

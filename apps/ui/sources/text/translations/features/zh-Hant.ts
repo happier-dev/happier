@@ -11407,6 +11407,7 @@ const widgetDefinitionTranslations = { 'zh-Hant': {
         duplicate: "複製",
         duplicated: ({ name }) => `已將副本「${name}」儲存到你的小工具`,
         duplicateFailed: "無法建立副本，請再試一次。",
+        deleteSavedGroupNote: "只會刪除儲存的群組。已新增的副本會保留在原處。",
         saveMenu: "另存為你的小工具…",
         saveMenuSubtitle: "用於首頁和你的看板的副本",
         saveTitle: "另存為你的小工具",

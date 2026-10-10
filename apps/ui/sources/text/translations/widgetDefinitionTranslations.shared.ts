@@ -45,6 +45,7 @@ export type WidgetDefinitionTranslation = Readonly<{
     duplicate: string;
     duplicated: (params: Readonly<{ name: string }>) => string;
     duplicateFailed: string;
+    deleteSavedGroupNote: string;
     saveMenu: string;
     saveMenuSubtitle: string;
     saveTitle: string;
@@ -119,6 +120,7 @@ export const widgetDefinitionTranslationsEnglish = { en: {
         duplicate: "Duplicate",
         duplicated: ({ name }) => `Saved a copy, “${name}”, to Your widgets`,
         duplicateFailed: "Couldn’t make a copy. Try again.",
+        deleteSavedGroupNote: "Only the saved group is deleted. Copies you’ve added stay where they are.",
         saveMenu: "Save as your widget…",
         saveMenuSubtitle: "A copy for Home and your boards",
         saveTitle: "Save as your widget",

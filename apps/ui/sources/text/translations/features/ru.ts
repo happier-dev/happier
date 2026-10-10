@@ -11449,6 +11449,7 @@ const widgetDefinitionTranslations = { ru: {
         duplicate: "Дублировать",
         duplicated: ({ name }) => `Копия «${name}» сохранена в «Ваши виджеты»`,
         duplicateFailed: "Не удалось создать копию. Попробуйте ещё раз.",
+        deleteSavedGroupNote: "Удаляется только сохранённая группа. Уже добавленные копии остаются на своих местах.",
         saveMenu: "Сохранить как свой виджет…",
         saveMenuSubtitle: "Копия для главной и ваших досок",
         saveTitle: "Сохранить как свой виджет",

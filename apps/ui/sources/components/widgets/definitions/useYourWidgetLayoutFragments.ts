@@ -22,28 +22,26 @@ export function useYourWidgetLayoutFragments(account: WidgetCommandTarget | null
     const accountId = account?.accountId;
     const scope = React.useMemo(() => serverId && accountId ? { serverId, accountId } : null, [accountId, serverId]);
     const [reload, refresh] = React.useReducer((value: number) => value + 1, 0);
-    const request = React.useRef<Readonly<{ account: WidgetCommandTarget; controller: AbortController }> | null>(null);
+    const mountedAccount = React.useRef<WidgetCommandTarget | null>(null);
     React.useEffect(() => {
         if (!scope) { setInventory(null); return; }
         const controller = new AbortController();
-        const active = { account: scope, controller };
-        request.current = active;
+        mountedAccount.current = scope;
         void (async () => {
             const listed = await runWidgetDefinitionCommand('widgets.fragment.list', { account: scope }, scope, controller.signal);
             if (listed.kind === 'applied' && !controller.signal.aborted) setInventory({ ...scope, fragments: listed.result.fragments });
         })();
-        return () => { controller.abort(); if (request.current === active) request.current = null; };
+        return () => { controller.abort(); if (mountedAccount.current === scope) mountedAccount.current = null; };
     }, [reload, scope]);
     const manage = React.useCallback(async (artifactId: string, intent: 'rename' | 'duplicate' | 'delete') => {
-        const active = request.current;
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (!scope || active?.account !== scope || !lifetime?.isCurrent()
+        if (!scope || mountedAccount.current !== scope || !lifetime?.isCurrent()
             || !areServerAccountScopesEqual(lifetime.scope, scope)) return;
         // Refreshing the list must not cancel another acknowledged management intent.
         const controller = new AbortController();
         const { signal } = controller;
         const cancellation = lifetime.onRetire(() => controller.abort());
-        const current = () => !signal.aborted && lifetime.isCurrent() && request.current?.account === scope;
+        const current = () => !signal.aborted && lifetime.isCurrent() && mountedAccount.current === scope;
         const notify = (kind: 'approvalPending' | 'refused') => {
             if (!current()) return;
             Modal.alert(t(kind === 'approvalPending' ? 'common.info' : 'common.error'),

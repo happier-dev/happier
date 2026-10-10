@@ -11411,6 +11411,7 @@ const widgetDefinitionTranslations = { ja: {
         duplicate: "複製",
         duplicated: ({ name }) => `コピー「${name}」をあなたのウィジェットに保存しました`,
         duplicateFailed: "コピーを作成できませんでした。もう一度お試しください。",
+        deleteSavedGroupNote: "保存したグループだけが削除されます。追加済みのコピーはそのまま残ります。",
         saveMenu: "自分のウィジェットとして保存…",
         saveMenuSubtitle: "ホームやボード用のコピー",
         saveTitle: "自分のウィジェットとして保存",

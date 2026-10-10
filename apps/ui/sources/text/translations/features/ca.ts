@@ -11446,6 +11446,7 @@ const widgetDefinitionTranslations = { ca: {
         duplicate: "Duplica",
         duplicated: ({ name }) => `S’ha desat una còpia, «${name}», a Els teus ginys`,
         duplicateFailed: "No s’ha pogut fer una còpia. Torna-ho a provar.",
+        deleteSavedGroupNote: "Només s’elimina el grup desat. Les còpies que has afegit es queden on són.",
         saveMenu: "Desa com a giny teu…",
         saveMenuSubtitle: "Una còpia per a l’inici i els teus taulers",
         saveTitle: "Desa com a giny teu",

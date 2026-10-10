@@ -11407,6 +11407,7 @@ const widgetDefinitionTranslations = { 'zh-Hans': {
         duplicate: "复制",
         duplicated: ({ name }) => `已将副本“${name}”保存到你的小组件`,
         duplicateFailed: "无法创建副本，请重试。",
+        deleteSavedGroupNote: "只会删除保存的组。已添加的副本会保留在原处。",
         saveMenu: "另存为你的小组件…",
         saveMenuSubtitle: "用于主页和你的看板的副本",
         saveTitle: "另存为你的小组件",

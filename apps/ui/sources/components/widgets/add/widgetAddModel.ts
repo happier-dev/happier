@@ -1,6 +1,7 @@
 import type * as React from 'react';
 
 import type { IconName } from '@/components/ui/icons/Icon';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 
 import type { WidgetSetup, WidgetSetupSubmitResult } from './widgetSetupModel';
 
@@ -32,6 +33,8 @@ type WidgetAddEntryBase = Readonly<{
      * binding names (lab `dashboards` dbind G). Replaces Added for configurable widgets.
      */
     count?: string;
+    /** Management of this saved entry; separate from selecting or adding a placed copy. */
+    actions?: ItemAction[];
 }>;
 
 /** Something else to add (a note, a pane link, a Board item): its pane shows it, and its Add runs `onPick`. */

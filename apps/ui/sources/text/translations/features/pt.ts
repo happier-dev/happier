@@ -11423,6 +11423,7 @@ const widgetDefinitionTranslations = { pt: {
         duplicate: "Duplicar",
         duplicated: ({ name }) => `Cópia “${name}” salva em Seus widgets`,
         duplicateFailed: "Não foi possível fazer uma cópia. Tente de novo.",
+        deleteSavedGroupNote: "Só o grupo guardado é eliminado. As cópias que já adicionou ficam onde estão.",
         saveMenu: "Salvar como seu widget…",
         saveMenuSubtitle: "Uma cópia para o Início e seus quadros",
         saveTitle: "Salvar como seu widget",

@@ -10922,6 +10922,7 @@ const widgetDefinitionTranslations = { de: {
         duplicate: "Duplizieren",
         duplicated: ({ name }) => `Kopie „${name}“ unter Deine Widgets gespeichert`,
         duplicateFailed: "Kopie konnte nicht erstellt werden. Versuch es erneut.",
+        deleteSavedGroupNote: "Nur die gespeicherte Gruppe wird gelöscht. Bereits hinzugefügte Kopien bleiben, wo sie sind.",
         saveMenu: "Als dein Widget speichern …",
         saveMenuSubtitle: "Eine Kopie für Home und deine Boards",
         saveTitle: "Als dein Widget speichern",

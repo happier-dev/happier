@@ -11437,6 +11437,7 @@ const widgetDefinitionTranslations = { pl: {
         duplicate: "Duplikuj",
         duplicated: ({ name }) => `Zapisano kopię „${name}” w Twoich widżetach`,
         duplicateFailed: "Nie udało się utworzyć kopii. Spróbuj ponownie.",
+        deleteSavedGroupNote: "Usunięta zostanie tylko zapisana grupa. Dodane kopie pozostaną na swoich miejscach.",
         saveMenu: "Zapisz jako twój widżet…",
         saveMenuSubtitle: "Kopia na Start i twoje tablice",
         saveTitle: "Zapisz jako twój widżet",

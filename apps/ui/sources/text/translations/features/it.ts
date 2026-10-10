@@ -11423,6 +11423,7 @@ const widgetDefinitionTranslations = { it: {
         duplicate: "Duplica",
         duplicated: ({ name }) => `Copia «${name}» salvata in I tuoi widget`,
         duplicateFailed: "Impossibile creare una copia. Riprova.",
+        deleteSavedGroupNote: "Viene eliminato solo il gruppo salvato. Le copie già aggiunte restano dove sono.",
         saveMenu: "Salva come tuo widget…",
         saveMenuSubtitle: "Una copia per Home e le tue bacheche",
         saveTitle: "Salva come tuo widget",
