@@ -10,6 +10,8 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import { useSettings } from '@/sync/domains/state/storage';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
+import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import {
   readLocalConversationVoiceSettings,
   voiceSettingsParse,
@@ -37,12 +39,26 @@ export function VoiceAgentMemorySection(props: Readonly<{
 }>) {
   const voiceAgentEnabled = useFeatureEnabled('voice.agent');
   const accountSettings = useSettings();
+  const { snapshot: acpCatalog } = useAcpCatalog();
   const voice = voiceSettingsParse(props.voice);
   const cfg = readLocalConversationVoiceSettings(voice);
   const agent = cfg.agent;
   const remembers = agent.transcript.persistenceMode === 'persistent';
   const restoreChoice = resolveVoiceMemoryRestoreChoice(voice);
-  const agentCanResume = agent.agentSource !== 'agent' || canAgentResume(agent.agentId, { accountSettings });
+  let backendTarget: PersistedBackendTargetRefV2 | null | undefined;
+  if (agent.agentTargetKey) {
+    const key = BackendTargetKeyV2Schema.safeParse(agent.agentTargetKey);
+    try {
+      backendTarget = key.success ? parseBackendTargetKeyV2(key.data) : null;
+    } catch {
+      backendTarget = null;
+    }
+  }
+  const agentCanResume = agent.agentSource !== 'agent' || backendTarget !== null && canAgentResume(agent.agentId, {
+    accountSettings,
+    backendTarget,
+    acpCatalogSnapshot: acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined,
+  });
   const resumeUnavailableReason = !voiceAgentEnabled
     ? t('settingsVoice.pages.privacy.restoreResumeFeatureOff')
     : !agentCanResume

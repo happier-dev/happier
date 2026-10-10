@@ -1,4 +1,5 @@
 import type { SettingDeclaration } from '@/components/settings/catalog/settingDeclarations';
+import { readBuiltInSettingsOperationPolicyV1 } from '@happier-dev/protocol/actions';
 
 export type VoiceSettingsOperation =
     | 'stt_prepare' | 'stt_remove' | 'stt_update'
@@ -10,10 +11,11 @@ export type VoiceSettingsOperation =
 
 /** Declaration-backed dispatch, not another Action catalog or mutation owner. */
 export function voiceSettingsOperation(operation: VoiceSettingsOperation, purpose: 'conversation' | 'dictation' = 'conversation'): NonNullable<SettingDeclaration['operation']> {
+    const policy = readBuiltInSettingsOperationPolicyV1('voiceSettingsOperation', [operation, purpose]);
+    if (policy?.kind !== 'invoke') throw new Error(`Undeclared Voice settings operation: ${operation}`);
     return {
+        ...policy,
         kind: 'invoke',
-        requiresHumanInteraction: !['models_inspect', 'readiness_inspect', 'diagnostics_inspect', 'diagnostics_cleanup', 'diagnostics_retry_shutdown'].includes(operation),
-        requiresApproval: !['models_inspect', 'readiness_inspect', 'diagnostics_inspect', 'diagnostics_cleanup', 'diagnostics_session_opt_out', 'diagnostics_retry_shutdown'].includes(operation),
         invoke: async (context) => {
             const { invokeVoiceSettingsOperation } = await import('./voiceSettingsOperationInvoker');
             return invokeVoiceSettingsOperation(operation, purpose, context);

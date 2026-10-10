@@ -3,8 +3,8 @@ export type TurnEndpointPolicy = Readonly<{
     minSpeechMs: number;
 }>;
 
-/** setTimeout uses a signed 32-bit millisecond delay on supported JS hosts. */
-export const MAX_VOICE_TIMER_DELAY_MS = 2_147_483_647;
+import { MAX_VOICE_TIMER_DELAY_MS } from '@happier-dev/protocol/voice/settings/timing';
+export { MAX_VOICE_TIMER_DELAY_MS } from '@happier-dev/protocol/voice/settings/timing';
 
 function clampBoundedMs(value: unknown): number {
     const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : 0;

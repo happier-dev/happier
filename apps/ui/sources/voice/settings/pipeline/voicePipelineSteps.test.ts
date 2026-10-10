@@ -18,6 +18,21 @@ const blocked: VoiceRoleReadiness = {
 };
 
 describe('local Voice pipeline', () => {
+    it('puts the supplied Think prerequisite and recovery on its step while retaining speech facts', () => {
+        const voice = { ...voiceSettingsDefaults, providerId: 'local_conversation' };
+        const think: VoiceRoleReadiness = {
+            ...blocked, role: 'conversation_stt', code: 'server_feature_disabled',
+            status: 'unavailable', reasonKey: 'voice.readiness.server_feature_disabled', recoveryAction: 'switch_provider',
+        };
+        const hear: VoiceRoleReadiness = { ...blocked, providerId: 'device', status: 'ready', code: 'ready', reasonKey: 'voice.readiness.ready', recoveryAction: 'none' };
+        const result = buildVoiceConversationsPipeline({
+            voice, machine, serviceTitle: 'Local', readiness: think,
+            localSpeechReadiness: { hear, speak: null }, localThinkReadiness: think,
+        });
+        expect(result?.pipeline.steps.map(step => step.readiness)).toEqual([hear, think, null]);
+        expect(result?.cardReadiness).toEqual(think);
+    });
+
     it('does not fill explicitly withheld speech facts from aggregate readiness', () => {
         const voice = { ...voiceSettingsDefaults, providerId: 'local_conversation' };
         const ready: VoiceRoleReadiness = { ...blocked, status: 'ready', code: 'ready', reasonKey: 'voice.readiness.ready', recoveryAction: 'none' };

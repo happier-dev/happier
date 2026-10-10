@@ -32,6 +32,7 @@ import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutabl
 import { resolveVoiceSettingsRecoveryFocus } from '@/voice/settings/voiceSettingsRouteFocus';
 
 import { useVoiceSetupItem, VOICE_SETUP_STEP_ID } from './useVoiceSetupItem';
+import { useVoiceSetupFirstSuccessEvent } from './useVoiceSetupFirstSuccessEvent';
 import { VoiceSetupPanel, type VoiceSetupPanelActions, type VoiceSetupPanelModel } from './VoiceSetupPanel';
 import type { VoiceSetupFacts } from './voiceSetupFacts';
 import { isVoiceSetupFailed, readVoiceSetupLight, readVoiceSetupNextStep } from './voiceSetupPresentation';
@@ -74,6 +75,7 @@ export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row'; spa
         microphonePermission: microphone.permission,
         conversationSessionAddress,
     });
+    const firstSuccess = useVoiceSetupFirstSuccessEvent(setup.facts.firstTurnComplete, voice.live);
     const serviceTitle = readinessModel.serviceTiles.find((tile) => tile.selected)?.title ?? null;
     const readinessText = React.useMemo(() => {
         if (!readiness) return null;
@@ -108,9 +110,10 @@ export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row'; spa
         serviceTiles: readinessModel.serviceTiles,
         readiness: readinessText,
         tryLive: voice.live,
+        firstSuccess,
         // The chord is shown where there is a keyboard to press it.
         shortcutLabel: phone ? null : shortcutLabel,
-    }), [phone, readinessModel.serviceTiles, readinessText, serviceTitle, setup.facts, shortcutLabel, voice.live]);
+    }), [firstSuccess, phone, readinessModel.serviceTiles, readinessText, serviceTitle, setup.facts, shortcutLabel, voice.live]);
 
     if (!voiceEnabled || setup.hidden || (setup.facts.complete && !panelOpen)) return null;
     return {

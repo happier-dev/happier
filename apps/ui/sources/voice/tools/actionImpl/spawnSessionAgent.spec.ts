@@ -2,9 +2,32 @@ import { describe, expect, it } from 'vitest';
 
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 
-import { resolveVoiceToolSpawnBackendTarget } from './spawnSessionAgent';
+import { resolveSpawnBackendTargetFromState, resolveVoiceToolSpawnBackendTarget } from './spawnSessionAgent';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { applyAcpCatalogSnapshot, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
 
 describe('resolveVoiceToolSpawnBackendTarget (RU-02 customAcp ingress-only)', () => {
+  it('uses destination row facts for the automatic configured spawn target', () => {
+    resetAcpCatalogSnapshotsForTests();
+    const scope = { serverId: 'voice-tool-home', accountId: 'voice-tool-account' };
+    const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
+      command: 'review', createdAt: 1, updatedAt: 1 });
+    applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } }, true);
+    expect(resolveSpawnBackendTargetFromState({ settingsScope: scope, settings: {
+      lastUsedAgent: 'codex', lastUsedBackendTarget: { kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review' },
+    } })).toEqual({ kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review', sourceKind: 'configured' });
+    resetAcpCatalogSnapshotsForTests();
+  });
+
+  it('keeps a built-in automatic spawn independent of configured ACP row availability', () => {
+    resetAcpCatalogSnapshotsForTests();
+    expect(resolveVoiceToolSpawnBackendTarget({ state: { settingsScope: {
+      serverId: 'voice-tool-home', accountId: 'voice-tool-account',
+    }, settings: { lastUsedAgent: 'codex' } } })).toEqual({
+      ok: true, backendTarget: { kind: 'backend', backendId: 'codex' },
+    });
+  });
+
   it('rejects legacy customAcp agentId when backendTargetKey is omitted', () => {
     expect(resolveVoiceToolSpawnBackendTarget({
       state: {},
@@ -36,7 +59,7 @@ describe('resolveVoiceToolSpawnBackendTarget (RU-02 customAcp ingress-only)', ()
 
     expect(res.backendTarget).toEqual({
       kind: 'backend',
-      backendId: 'customAcpRuntimeCarrier',
+      backendId: 'kiro',
       configuredBackendId: 'kiro',
       sourceKind: 'configured',
     });

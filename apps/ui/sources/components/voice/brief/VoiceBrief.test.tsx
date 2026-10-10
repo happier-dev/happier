@@ -21,6 +21,9 @@ import { VoiceBriefBlock } from './VoiceBrief';
 import { executeVoiceBriefOperation } from './voiceBriefActionRuntime';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, resetVoiceSessionStoreForTests } from '@/voice/session/voiceSessionStore';
 import { useVoiceBriefHomeRequest } from './useVoiceBriefRequest';
+import { VoiceTopBarPresence } from '@/components/voice/presence/VoiceTopBarPresence';
+import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL } from '@/components/voice/attempt/useVoiceAttemptControl';
+import { setVoiceGlanceOpen } from '@/components/voice/presence/voiceCompanionSectionReveal';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
@@ -114,6 +117,10 @@ function BriefHome(props: Readonly<{ available: boolean }>) {
 const renderHome = (available = true) => <React.StrictMode><AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
     <BriefHome available={available} />
 </AuthProvider></React.StrictMode>;
+function Presentation() {
+    const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
+    return <VoiceTopBarPresence voice={voice} />;
+}
 async function selectService() {
     const selected = voiceSettingsParse({ providerId: 'local_conversation' });
     const voice = writeLocalConversationVoiceSettings(selected, readLocalConversationVoiceSettings(selected));
@@ -122,6 +129,24 @@ async function selectService() {
 }
 
 describe('mounted Voice Brief request', () => {
+    it('opens and closes the mounted glance explicitly without changing its live conversation', async () => {
+        const speech = installTransport();
+        await selectService();
+        await lifecycle?.toggle(null);
+        speech.connect();
+        expect(setVoiceGlanceOpen(true)).toBe(false);
+        screen = await renderScreen(<AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}><Presentation /></AuthProvider>);
+        await act(async () => { expect(setVoiceGlanceOpen(true)).toBe(true); });
+        expect(screen.findByTestId('voice-top-bar-label')?.props['aria-expanded']).toBe(true);
+        await act(async () => { expect(setVoiceGlanceOpen(true)).toBe(true); });
+        expect(screen.findByTestId('voice-top-bar-label')?.props['aria-expanded']).toBe(true);
+        await act(async () => { expect(setVoiceGlanceOpen(false)).toBe(true); });
+        expect(screen.findByTestId('voice-top-bar-label')?.props['aria-expanded']).toBe(false);
+        expect(lifecycle?.getSnapshot().status).toBe('connected');
+        expect(speech.starts).toHaveLength(1);
+        await screen.unmount(); screen = null;
+        expect(setVoiceGlanceOpen(true)).toBe(false);
+    });
     it('opens the demand-mounted Inbox from the Home Action and reports unavailable without a current Home', async () => {
         const speech = installTransport();
         await selectService();
@@ -139,7 +164,11 @@ describe('mounted Voice Brief request', () => {
         await act(async () => speech.connect());
         expect(speech.spoken).toHaveLength(1);
         expect(speech.contexts[0]).toContain('"approval":"tap_only"');
-        await screen.pressByTestIdAsync('voice-brief.close');
+        await act(async () => { outcome = executeVoiceBriefOperation('close'); });
+        expect(outcome).toEqual({ ok: true, result: { status: 'closed', attemptId: getVoiceSessionPresentedAttemptId() } });
+        expect(screen.findByTestId('voice-brief')).toBeNull();
+        expect(lifecycle?.getSnapshot().status).toBe('connected');
+        expect(executeVoiceBriefOperation('close')).toEqual({ ok: false, errorCode: 'voice_brief_unavailable' });
         await act(async () => lifecycle?.stop(VOICE_AGENT_GLOBAL_SESSION_ID));
         await act(async () => { outcome = executeVoiceBriefOperation('request'); });
         expect(speech.starts).toHaveLength(2);

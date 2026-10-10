@@ -3,7 +3,7 @@ import { Platform, View } from 'react-native';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
-import { VoiceMarkArt, type VoiceMarkPose } from '@/components/voice/presence/VoiceMark';
+import { VoiceMarkArt, type VoiceMarkEvent, type VoiceMarkPose } from '@/components/voice/presence/VoiceMark';
 import type { VoiceHeldInput } from '@/voice/runtime/controller/VoiceConversationController';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -21,8 +21,8 @@ const VOICE_COMPOSER_ROW_GAP = 8;
 /**
  * Voice, in the composer's trailing action slot — immediately before Send (VE-02).
  *
- * At rest it is the coloured dot microphone; tapping starts Voice and the dots flow into the planet;
- * tapping again ends it and they regather. Dictation is a different control (the monochrome line
+ * At rest it is the line waveform glyph in the composer's icon tint; tapping starts Voice and it
+ * flows into the live dot planet; tapping again ends it and the dots regather into the glyph. Dictation is a different control (the monochrome line
  * mic inside the field), so the two never share a glyph.
  *
  * **A pure leaf.** Every fact it draws arrives as a primitive prop and every press leaves through
@@ -35,6 +35,8 @@ export const VoiceComposerPlanet = React.memo(function VoiceComposerPlanet(props
     pose: VoiceMarkPose;
     /** The microphone is muted for the running conversation. */
     muted: boolean;
+    /** The attempt's one-shot mark event (a stable reference from the projection). */
+    markEvent?: VoiceMarkEvent | null;
     /** Localized by the caller: the composer leaf owns no copy. */
     accessibilityLabel: string;
     accessibilityHint: string;
@@ -95,7 +97,7 @@ export const VoiceComposerPlanet = React.memo(function VoiceComposerPlanet(props
                 heldInput.current = held;
                 if (!held) props.onHoldUnavailable?.();
             } : undefined}
-            icon={<VoiceMarkArt pose={props.pose} muted={props.muted} size={VOICE_COMPOSER_MARK_SIZE} />}
+            icon={<VoiceMarkArt pose={props.pose} event={props.markEvent} muted={props.muted} size={VOICE_COMPOSER_MARK_SIZE} />}
         />
     );
     // Successful release is distinct from press-out (which also fires for cancellation).

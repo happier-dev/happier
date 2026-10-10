@@ -49,6 +49,11 @@ function areVoiceConversationRuntimeSnapshotsEqual(
         && a.reconnecting === b.reconnecting
         && a.reconnectRetryAvailable === b.reconnectRetryAvailable
         && a.micMuted === b.micMuted
+        && (a.inUseVoice === b.inUseVoice || (a.inUseVoice !== undefined && b.inUseVoice !== undefined
+            && a.inUseVoice.providerContributionId === b.inUseVoice.providerContributionId
+            && a.inUseVoice.settingFieldPath === b.inUseVoice.settingFieldPath
+            && a.inUseVoice.displayName === b.inUseVoice.displayName
+            && JSON.stringify(a.inUseVoice.value) === JSON.stringify(b.inUseVoice.value)))
         && areVoiceMachineErrorsEqual(a.error, b.error)
     );
 }

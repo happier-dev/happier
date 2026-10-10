@@ -187,8 +187,11 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             const { resolveVoiceDictationNativeLocalNeuralModelSelection } = await import('@/voice/dictation/voiceDictationReadiness');
             const platform = VoiceRuntimePlatformSchema.safeParse(Platform.OS);
             const selection = resolveVoiceDictationNativeLocalNeuralModelSelection({ registry, settings, platform: platform.success ? platform.data : 'unknown' });
+            const connectedPurposes = await context.services?.readConnectedAccountPurposes?.(context.signal) ?? null;
+            const rawTargets = projectVoiceRawSpeechReadinessTargets(settings, registry, machineId, 'dictation', connectedPurposes);
+            if (rawTargets === null) return unavailable('connected_purpose_catalog_unavailable');
             const inspection = await inspectVoiceDictationSettingsReadiness({ packId: selection.packId,
-                rawTarget: projectVoiceRawSpeechReadinessTargets(settings, registry, machineId, 'dictation')[0] ?? null, signal: context.signal });
+                rawTarget: rawTargets[0] ?? null, signal: context.signal });
             return await operationCurrent() ? completed({ providerId: selection.providerId, machineId, nativeModelPackId: selection.packId, ...inspection }) : { status: 'cancelled' };
         }
         if (!machineId) return unavailable('execution_machine_unavailable');
@@ -206,8 +209,11 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
             const passiveSetup = entry.kind === 'voice.conversation-provider.v1' && entry.declaration?.kind === 'conversation'
                 ? projectVoiceProviderAgentRealtimePassiveSetup(entry.declaration.execution) : null;
             const connectedServices = readVoiceProviderConnectedServicesBinding({ providerSettings: entry.providerSettings ?? null, providerConfig: config });
+            const connectedPurposes = purpose === 'conversation' && voice.providerId === 'local_conversation'
+                ? await context.services?.readConnectedAccountPurposes?.(context.signal) ?? null : null;
             const rawTargets = purpose === 'conversation' && voice.providerId === 'local_conversation'
-                ? projectVoiceRawSpeechReadinessTargets(settings, registry, machineId) : [];
+                ? projectVoiceRawSpeechReadinessTargets(settings, registry, machineId, 'conversation', connectedPurposes) : [];
+            if (rawTargets === null) return unavailable('connected_purpose_catalog_unavailable');
             if (!await operationCurrent()) return { status: 'cancelled' };
             const inspection = await inspectVoiceProviderReadiness({ machineId, passiveSetup, connectedServices, rawTargets, signal: context.signal, isCurrent: selectionCurrent });
             if (!await operationCurrent()) return { status: 'cancelled' };

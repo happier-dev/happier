@@ -3,7 +3,7 @@ import { AgentsBackendsListOutputSchema, type AgentsBackendsListOutput } from '@
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { composeProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import {
     getAgentStaticModels,
@@ -23,16 +23,21 @@ import type {
 } from '@/agents/backendCatalog/mergedProjectionTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { discoverMachineModels } from '@/sync/ops/modelDiscovery';
+import { discoverMachineModelsForActions } from '@/sync/ops/modelDiscovery';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
-import { describeProviderModels } from '@/providers/rpc/client';
+import { describeProviderModels } from '@/providers/actions/client';
+import { getProviderCatalogSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import {
   buildSessionModelPickerSections,
   hiddenModelVisibilityKeys,
 } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { isVoiceProvidersFeatureEnabledForSpawn } from './spawnSessionModelSelection';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -165,79 +170,95 @@ async function projectVoiceToolProviderModels(params: Readonly<{
     return params.base;
   }
 
-  let projection: Awaited<ReturnType<typeof describeProviderModels>>;
+  if (!params.serverId) {
+    throw Object.assign(new Error('provider_catalog_unavailable'), { code: 'provider_catalog_unavailable' });
+  }
+  const context = await captureLazyActionAccountContext(params.serverId);
   try {
-    projection = await describeProviderModels({
+    const scope = { serverId: context.serverId, accountId: context.accountId };
+    context.assertCurrent();
+    const catalog = getProviderCatalogSnapshot(scope);
+    if (catalog?.status !== 'ready' || catalog.stale || !catalog.data) {
+      throw Object.assign(new Error('provider_catalog_unavailable'), { code: 'provider_catalog_unavailable' });
+    }
+    const settings = composeProviderSettingsV1(catalog.data, {});
+    const projection = await describeProviderModels({
       machineId: params.machineId,
       serverId: params.serverId,
       agentTargetKey: params.agentTargetKey,
       mode: 'picker',
     });
-  } catch {
-    return params.base;
+    context.assertCurrent();
+    if (getProviderCatalogSnapshot(scope) !== catalog) {
+      throw Object.assign(new Error('provider_catalog_unavailable'), { code: 'provider_catalog_unavailable' });
+    }
+    if (projection.status !== 'success') {
+      throw Object.assign(new Error('provider_projection_unavailable'), { code: 'provider_projection_unavailable' });
+    }
+    const sections = buildSessionModelPickerSections({
+      agentTargetKey: params.agentTargetKey,
+      nativeModels: params.base.items.map((item) => ({
+        value: item.modelId,
+        label: item.label,
+        ...(item.description ? { description: item.description } : {}),
+      })),
+      providerGroups: projection.groups,
+      providerProjectionAuthoritative: true,
+      hiddenNativeModelKeys: hiddenModelVisibilityKeys(settings, { providersFeatureEnabled: true }),
+      canConfirmExperimental: false,
+    });
+    const connectionNameBySectionId = new Map(
+      sections
+        .filter((section) => section.id.startsWith('connection:'))
+        .map((section) => [section.id, section.title ?? ''] as const),
+    );
+    const items = sections.flatMap((section) => section.options.flatMap((option) => {
+      if (option.disabled === true) return [];
+      const ref = option.value;
+      const modelId = ref?.modelId ?? 'default';
+      const providerConnectionId = ref && 'providerConnectionId' in ref
+        ? ref.providerConnectionId
+        : null;
+      return [{
+        modelId,
+        label: option.label,
+        ...(option.description ? { description: option.description } : {}),
+        providerConnectionId,
+        ...(providerConnectionId
+          ? { providerName: connectionNameBySectionId.get(section.id) ?? '' }
+          : {}),
+      }];
+    }));
+    const limitedItems = params.limit ? items.slice(0, params.limit) : items;
+    const hasProviderModels = items.some((item) => item.providerConnectionId !== null);
+    const supportsProviderFreeform = projection.groups.some((group) => (
+      group.authorization.authorized
+      && providerCatalogPermitsUnlistedModelIdV1({
+        manualModelPolicy: group.manualModelPolicy,
+        agentSupportsFreeformModelIds: group.supportsFreeformModelIds,
+      })
+    ));
+
+    return {
+      ...(params.base.agentId ? { agentId: params.base.agentId } : {}),
+      machineId: params.machineId,
+      items: limitedItems,
+      supportsFreeform: params.base.supportsFreeform || supportsProviderFreeform,
+      source: params.base.source,
+      ...(params.base.refreshError ? { refreshError: true as const } : {}),
+      ...(!hasProviderModels && params.base.unavailable === true ? { unavailable: true as const } : {}),
+    };
+  } finally {
+    context.dispose();
   }
-  if (projection.status !== 'success') return params.base;
-
-  const settings = readProviderSettingsFromAccountSettingsV1(storage.getState().settings).settings;
-  const sections = buildSessionModelPickerSections({
-    agentTargetKey: params.agentTargetKey,
-    nativeModels: params.base.items.map((item) => ({
-      value: item.modelId,
-      label: item.label,
-      ...(item.description ? { description: item.description } : {}),
-    })),
-    providerGroups: projection.groups,
-    providerProjectionAuthoritative: true,
-    hiddenNativeModelKeys: hiddenModelVisibilityKeys(settings, { providersFeatureEnabled: true }),
-    canConfirmExperimental: false,
-  });
-  const connectionNameBySectionId = new Map(
-    sections
-      .filter((section) => section.id.startsWith('connection:'))
-      .map((section) => [section.id, section.title ?? ''] as const),
-  );
-  const items = sections.flatMap((section) => section.options.flatMap((option) => {
-    if (option.disabled === true) return [];
-    const ref = option.value;
-    const modelId = ref?.modelId ?? 'default';
-    const providerConnectionId = ref && 'providerConnectionId' in ref
-      ? ref.providerConnectionId
-      : null;
-    return [{
-      modelId,
-      label: option.label,
-      ...(option.description ? { description: option.description } : {}),
-      providerConnectionId,
-      ...(providerConnectionId
-        ? { providerName: connectionNameBySectionId.get(section.id) ?? '' }
-        : {}),
-    }];
-  }));
-  const limitedItems = params.limit ? items.slice(0, params.limit) : items;
-  const hasProviderModels = items.some((item) => item.providerConnectionId !== null);
-  const supportsProviderFreeform = projection.groups.some((group) => (
-    group.authorization.authorized
-    && providerCatalogPermitsUnlistedModelIdV1({
-      manualModelPolicy: group.manualModelPolicy,
-      agentSupportsFreeformModelIds: group.supportsFreeformModelIds,
-    })
-  ));
-
-  return {
-    ...(params.base.agentId ? { agentId: params.base.agentId } : {}),
-    machineId: params.machineId,
-    items: limitedItems,
-    supportsFreeform: params.base.supportsFreeform || supportsProviderFreeform,
-    source: params.base.source,
-    ...(params.base.refreshError ? { refreshError: true as const } : {}),
-    ...(!hasProviderModels && params.base.unavailable === true ? { unavailable: true as const } : {}),
-  };
 }
 
 type VoiceToolBackendCatalogItem = AgentsBackendsListOutput['items'][number];
 
 function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
   includeDisabled: boolean;
+  acpCatalogSnapshot: AcpCatalogSnapshotV1;
+  backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
   daemonMergedProjectionInputs: null | Readonly<{
     mergedProviderProjectionById: Readonly<Record<string, MergedProviderProjectionEntry>>;
     mergedBackendProjectionById: Readonly<Record<string, MergedBackendProjectionEntry>>;
@@ -245,8 +266,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
   }>;
 }>): VoiceToolBackendCatalogItem[] {
   const state = storage.getState();
-  const backendEnabledByTargetKey = state.settings?.backendEnabledByTargetKey ?? null;
-  const acpCatalogSettingsV1 = state.settings?.acpCatalogSettingsV1 ?? { v: 2, backends: [] };
+  const backendEnabledByTargetKey = params.backendEnabledByTargetKey === undefined ? state.settings?.backendEnabledByTargetKey ?? null : params.backendEnabledByTargetKey;
   const enabledBuiltInAgentIds = params.includeDisabled
     ? Array.from(AGENT_IDS)
     : Array.from(AGENT_IDS).filter((id) => backendEnabledByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: id })] !== false);
@@ -254,7 +274,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
   const items: VoiceToolBackendCatalogItem[] = [];
   for (const entry of getResolvedBackendCatalogEntries({
     enabledAgentIds: enabledBuiltInAgentIds,
-    acpCatalogSettingsV1,
+    acpCatalogSnapshot: params.acpCatalogSnapshot,
     backendEnabledByTargetKey: params.includeDisabled ? undefined : backendEnabledByTargetKey,
     mergedProviderProjectionById: params.daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
     mergedBackendProjectionById: params.daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
@@ -314,12 +334,19 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     .map(({ item }) => item);
 }
 
-export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>): Promise<AgentsBackendsListOutput> {
+export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string; serverId?: string; acpCatalogSnapshot?: AcpCatalogSnapshotV1; backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null }>): Promise<AgentsBackendsListOutput> {
   const includeDisabled = params.includeDisabled === true;
   const limitRaw = Number(params.limit);
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : null;
   const machineId = normalizeId(params.machineId);
-  const serverId = normalizeId(getActiveServerSnapshot()?.serverId) || null;
+  const serverId = normalizeId(params.serverId ?? getActiveServerSnapshot()?.serverId) || null;
+  const settingsScope = storage.getState().settingsScope;
+  const snapshot = settingsScope && serverId && areServerProfileIdentifiersEquivalent(settingsScope.serverId, serverId)
+    ? getAcpCatalogSnapshot(settingsScope)?.catalog : null;
+  const acpCatalogSnapshot = params.acpCatalogSnapshot ?? snapshot;
+  if (!acpCatalogSnapshot || acpCatalogSnapshot.status !== 'ready') {
+    throw Object.assign(new Error('acp_catalog_unavailable'), { code: 'acp_catalog_unavailable' });
+  }
   const daemonMergedProjectionInputs = machineId
     ? await (async () => {
       const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId });
@@ -331,7 +358,8 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
       };
     })()
     : null;
-  const items = resolveBackendCatalogItemsForVoiceTool({ includeDisabled, daemonMergedProjectionInputs });
+  const items = resolveBackendCatalogItemsForVoiceTool({ includeDisabled, daemonMergedProjectionInputs, acpCatalogSnapshot,
+    backendEnabledByTargetKey: params.backendEnabledByTargetKey });
 
   return AgentsBackendsListOutputSchema.parse({
     items: limit ? items.slice(0, limit) : items,
@@ -425,7 +453,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     });
 
     if (cacheKey && bundledCore?.model?.dynamicProbe !== 'static-only') {
-      const entry = await discoverMachineModels({
+      const entry = await discoverMachineModelsForActions({
         cacheKey,
         agentType: backendTarget?.kind === 'configuredAcpBackend' ? CONFIGURED_ACP_CLI_CAPABILITY_ID : agentId,
         machineId,

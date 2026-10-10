@@ -207,7 +207,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
                 ]
               },
               "archiveExtractionLimits": {
-                "maxExpandedBytes": 402653184,
+                "maxExpandedBytes": 536870912,
                 "maxFileBytes": 402653184
               },
               "assetNameByPlatform": {
@@ -507,6 +507,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
       }
     ],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [
       {
         "description": "Codex ACP dependency used by the Codex ACP backend",
@@ -557,6 +558,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -635,7 +637,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
               "kind": "theme",
               "token": "blue"
             },
-            "ionName": "terminal-outline"
+            "ionName": "terminal"
           },
           "sections": [
             {
@@ -987,6 +989,7 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "executionRunProfiles": [],
     "hooks": [],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -996,6 +999,7 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -2489,6 +2493,7 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "executionRunProfiles": [],
     "hooks": [],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -2498,6 +2503,7 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -2983,6 +2989,7 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "executionRunProfiles": [],
     "hooks": [],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -2992,6 +2999,7 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],

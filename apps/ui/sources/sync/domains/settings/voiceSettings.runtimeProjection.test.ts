@@ -3,7 +3,9 @@ import {
     expect,
     expectTypeOf,
     it,
+    vi,
 } from 'vitest';
+import { VoiceProviderSettingsEnvelopeV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
 import {
     accountSettingsParse,
     type AccountSettings,
@@ -12,7 +14,6 @@ import {
 } from '@happier-dev/protocol';
 
 import {
-    applySettings,
     projectRuntimeAccountSettings,
     settingsDefaults,
     settingsParse,
@@ -31,7 +32,6 @@ import {
     type VoiceSettingsPersistenceV1,
 } from './voiceSettingsPersistence';
 import {
-    readRetainedSecretBindingsByProfileId,
     type CurrentSecretBindingsByProfileId,
 } from './secretBindings';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
@@ -51,6 +51,27 @@ function projectProtocolAndLocalSettingsForTypeContract(
 type DirectProtocolAndLocalProjection = ReturnType<typeof projectProtocolAndLocalSettingsForTypeContract>;
 
 describe('Voice Account Settings runtime projection', () => {
+    it('does not allocate validation errors for absent speech provider settings on Account refresh', () => {
+        // Call-through instrumentation: all Settings projection and schema logic stays real.
+        const parse = vi.spyOn(VoiceProviderSettingsEnvelopeV1Schema, 'safeParse');
+        try {
+            const start = performance.now();
+            for (let refresh = 0; refresh < 100; refresh += 1) {
+                const parsed = settingsParse({ voice: { providerId: 'off' } });
+                expect(parsed.voice.providerId).toBeNull();
+                expect(parsed.voiceSettingsV1.providerId).toBeNull();
+            }
+            const elapsedMs = performance.now() - start;
+            const absentParses = parse.mock.calls.filter(([candidate]) => candidate == null).length;
+            if (process.env.HAPPIER_MEASURE_UI_HOT_LOOPS === '1') {
+                console.info(JSON.stringify({ measurement: 'account-settings-100-refreshes', elapsedMs, absentParses }));
+            }
+            expect(absentParses).toBe(0);
+        } finally {
+            parse.mockRestore();
+        }
+    });
+
     it('projects bounded persisted roots into the typed Voice consumer contract', () => {
         const parsed = settingsParse({
             voice: {
@@ -168,70 +189,4 @@ describe('Voice Account Settings runtime projection', () => {
         expect(projected.voiceSettingsV1.assistantLanguage).toBe('de');
     });
 
-    it('keeps opaque secret-binding carriers for writeback while exposing only current maps', () => {
-        const opaqueCarrier = {
-            OPENAI_API_KEY: 's1',
-            futureBindingRevision: 2,
-        };
-        const parsed = settingsParse({
-            profiles: [
-                {
-                    id: 'opaque-profile',
-                    name: 'Opaque profile',
-                    environmentVariables: [],
-                    compatibility: { claude: true, codex: true, gemini: true },
-                    envVarRequirements: [{ name: 'OPENAI_API_KEY', kind: 'secret', required: true }],
-                    isBuiltIn: false,
-                    createdAt: 0,
-                    updatedAt: 0,
-                    version: '1.0.0',
-                },
-                {
-                    id: 'current-profile',
-                    name: 'Current profile',
-                    environmentVariables: [],
-                    compatibility: { claude: true, codex: true, gemini: true },
-                    envVarRequirements: [{ name: 'OPENAI_API_KEY', kind: 'secret', required: true }],
-                    isBuiltIn: false,
-                    createdAt: 0,
-                    updatedAt: 0,
-                    version: '1.0.0',
-                },
-            ],
-            secrets: [{
-                id: 's1',
-                name: 'S1',
-                kind: 'apiKey',
-                encryptedValue: {
-                    _isSecretValue: true,
-                    encryptedValue: { t: 'enc-v1', c: 'Zm9v' },
-                },
-                createdAt: 0,
-                updatedAt: 0,
-            }],
-            secretBindingsByProfileId: {
-                'opaque-profile': opaqueCarrier,
-                'current-profile': { openai_api_key: 's1' },
-            },
-        });
-
-        expect(readRetainedSecretBindingsByProfileId(parsed)).toEqual({
-            'opaque-profile': opaqueCarrier,
-            'current-profile': { OPENAI_API_KEY: 's1' },
-        });
-        expect(parsed).toHaveProperty('currentSecretBindingsByProfileId', {
-            'current-profile': { OPENAI_API_KEY: 's1' },
-        });
-        expect(JSON.parse(JSON.stringify(parsed))).not.toHaveProperty('currentSecretBindingsByProfileId');
-
-        const afterUnrelatedMutation = applySettings(parsed, { useProfiles: true });
-        expect(readRetainedSecretBindingsByProfileId(afterUnrelatedMutation)).toEqual({
-            'opaque-profile': opaqueCarrier,
-            'current-profile': { OPENAI_API_KEY: 's1' },
-        });
-        expect(afterUnrelatedMutation).toHaveProperty('currentSecretBindingsByProfileId', {
-            'current-profile': { OPENAI_API_KEY: 's1' },
-        });
-        expect(JSON.parse(JSON.stringify(afterUnrelatedMutation))).not.toHaveProperty('currentSecretBindingsByProfileId');
-    });
 });

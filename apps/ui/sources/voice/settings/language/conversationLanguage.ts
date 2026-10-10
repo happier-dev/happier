@@ -1,3 +1,5 @@
+import { serviceLanguage, projectConversationLanguagePreference, updateConversationLanguagePreference } from '@happier-dev/protocol/voice/settings/conversationLanguage';
+export { projectConversationLanguagePreference, updateConversationLanguagePreference, type ConversationLanguagePreference } from '@happier-dev/protocol/voice/settings/conversationLanguage';
 import { type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import {
   parseLocalVoiceSttSettings,
@@ -10,43 +12,9 @@ import type { VoiceProviderSettingsPresentation } from '@happier-dev/protocol';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { getExternalVoiceProviderProjectionAuthority, getExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
-import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol/plugins/contributions/voice';
 
 const languageRegistry = createDefaultVoiceProviderRegistry();
 type ServiceLanguage = NonNullable<VoiceProviderSettingsPresentation['language']>;
-
-export type ConversationLanguagePreference =
-  | Readonly<{ kind: 'reply' }>
-  | Readonly<{ kind: 'single_language'; supportedLanguageCodes: readonly string[] }>
-  | Readonly<{ kind: 'unavailable' }>;
-
-function serviceLanguage(voice: VoiceSettings, registry: VoiceProviderRegistry): ServiceLanguage | undefined {
-  const entry = voice.providerId ? registry.get(voice.providerId) : null;
-  if (entry?.kind !== 'voice.conversation-provider.v1' || !entry.providerSettings) return undefined;
-  const envelope = voice.providers[entry.providerId];
-  if (envelope && envelope.schemaVersion !== entry.providerSettings.schemaVersion) return undefined;
-  if (!entry.providerSettings.parseConfig(envelope ? envelope.config : entry.providerSettings.defaultConfig)) return undefined;
-  return entry.providerSettings.presentation?.language;
-}
-
-/** The root language is editable only when the selected consumer declares its actual meaning. */
-export function projectConversationLanguagePreference(voice: VoiceSettings, registry: VoiceProviderRegistry): ConversationLanguagePreference {
-  const providerId = resolveStoredVoiceProviderId(voice.providerId);
-  if (providerId === 'local_direct' || providerId === 'local_conversation') return resolveVoiceProviderIdFromSettings(voice, registry) === providerId
-    ? { kind: 'reply' } : { kind: 'unavailable' };
-  const language = serviceLanguage(voice, registry);
-  return language?.kind === 'single_language' ? language
-    : language ? { kind: 'reply' } : { kind: 'unavailable' };
-}
-
-/** UI edits and declared Actions apply the same preference to its current consumer. */
-export function updateConversationLanguagePreference(voice: VoiceSettings, value: string | null, registry: VoiceProviderRegistry): VoiceSettings | null {
-  const preference = projectConversationLanguagePreference(voice, registry);
-  if (preference.kind === 'unavailable') return null;
-  const language = preference.kind === 'single_language'
-    ? resolveVoiceProviderLanguagePreference(value, preference.supportedLanguageCodes) : value;
-  return value !== null && language === null ? null : { ...voice, assistantLanguage: language };
-}
 
 /** Capture the selected contribution's existing activation/projection authority, not a generation. */
 export function captureConversationLanguagePreferenceOwner(providerId: string | null, registry: VoiceProviderRegistry): (current: VoiceSettings) => boolean {

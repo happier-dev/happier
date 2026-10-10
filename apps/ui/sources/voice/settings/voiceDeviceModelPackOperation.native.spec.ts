@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemFs } from '@/voice/modelPacks/installerTestFs';
 import { invokeVoiceDeviceModelPackOperation } from './voiceDeviceModelPackOperation.native';
 import * as React from 'react';
-import { renderHook, renderScreen } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { useLocalNeuralModelPackState } from './panels/localTts/useLocalNeuralModelPackState.native';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -56,6 +56,7 @@ describe('native device model operations through the real installer', () => {
                 })));
             }
             let finishManifest: ((response: Response) => void) | undefined;
+            const manifestRequested = createDeferred<void>();
             let delayed = false;
             const fetchImpl: typeof fetch = async (url) => {
                 if (String(url).endsWith('model.onnx')) {
@@ -63,7 +64,10 @@ describe('native device model operations through the real installer', () => {
                 }
                 if (!delayed) {
                     delayed = true;
-                    return await new Promise<Response>((resolve) => { finishManifest = resolve; });
+                    return await new Promise<Response>((resolve) => {
+                        finishManifest = resolve;
+                        manifestRequested.resolve();
+                    });
                 }
                 return Response.json(manifest);
             };
@@ -72,6 +76,9 @@ describe('native device model operations through the real installer', () => {
                 manifestUrl: 'https://example.test/manifest.json' });
             const outcome = result.then((value) => value.status,
                 (error: unknown) => error instanceof Error ? error.message : String(error));
+            // Cold filesystem admission precedes the HTTP boundary. Only
+            // advance time once there is a manifest request to keep pending.
+            await manifestRequested.promise;
             await vi.advanceTimersByTimeAsync(300_000);
             finishManifest?.(Response.json(manifest));
             expect(await outcome).toBe('completed');

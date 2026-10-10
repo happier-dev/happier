@@ -5,8 +5,30 @@ import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegi
 import { selectVoiceProviderOption } from '@/voice/registry/providerSelection';
 import { captureConversationLanguagePreferenceOwner } from './language/conversationLanguage';
 import { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
+import { completeLegacyVoiceOpenAiChatAgentSelection } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
 
 describe('Voice settings edit intent', () => {
+    it('does not apply admitted Chat models to a concurrently replaced import intent', () => {
+        const initial = voiceSettingsParse({ providerId: 'local_conversation' });
+        const cfg = readLocalConversationVoiceSettings(initial);
+        const pending = { status: 'needs_selection', providerConnectionId: 'voice-openai-compatible-chat',
+            chatModelId: 'legacy-chat', commitModelId: 'legacy-commit' } as const;
+        const configured = completeLegacyVoiceOpenAiChatAgentSelection(pending, 'opencode');
+        if (!configured) throw new Error('Missing supported legacy Chat Agent choice');
+        const before = writeLocalConversationVoiceSettings(initial, { ...cfg, agent: { ...cfg.agent, providerChat: pending } });
+        const next = writeLocalConversationVoiceSettings(before, { ...cfg, agent: { ...cfg.agent,
+            agentSource: 'agent', agentId: 'opencode', agentTargetKey: configured.chat.agentTargetKey, providerChat: configured,
+        } });
+        const current = writeLocalConversationVoiceSettings(before, { ...cfg, agent: { ...cfg.agent,
+            providerChat: { ...pending, commitModelId: 'different-current-commit' },
+        } });
+
+        expect(() => rebaseVoiceSettingsEdit(current, before, next)).toThrow('voice_settings_provider_changed');
+        const unrelated = { ...before, assistantLanguage: 'fr' };
+        const rebased = rebaseVoiceSettingsEdit(unrelated, before, next);
+        expect(rebased.assistantLanguage).toBe('fr');
+        expect(readLocalConversationVoiceSettings(rebased).agent.providerChat).toEqual(configured);
+    });
     it('retires a captured language editor even when bundled fallback metadata has the same entry identity', () => {
         const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
         const entry = voiceSettingsEditRegistry.get(providerId);

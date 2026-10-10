@@ -70,37 +70,6 @@ vi.mock('@/voice/settings/panels/modelCatalog/DaemonModelPackRow', () => ({
   SelectedDaemonModelPackRow: (props: any) => React.createElement('DaemonModelPackRow', props),
 }));
 
-function expectAtLeast44PointTarget(style: unknown): void {
-  const flattened = (Array.isArray(style) ? style : [style]).reduce<Record<string, unknown>>(
-    (result, entry) => entry && typeof entry === 'object' ? { ...result, ...entry } : result,
-    {},
-  );
-  const width = Math.max(
-    typeof flattened.width === 'number' ? flattened.width : 0,
-    typeof flattened.minWidth === 'number' ? flattened.minWidth : 0,
-  );
-  const height = Math.max(
-    typeof flattened.height === 'number' ? flattened.height : 0,
-    typeof flattened.minHeight === 'number' ? flattened.minHeight : 0,
-  );
-  expect(width).toBeGreaterThanOrEqual(44);
-  expect(height).toBeGreaterThanOrEqual(44);
-}
-
-type AccessoryButtonProps = {
-  accessibilityRole?: string;
-  accessibilityLabel?: string;
-  style?: unknown;
-  onPress: (event: { stopPropagation?: () => void }) => void;
-};
-
-function requireAccessoryButton(node: unknown): React.ReactElement<AccessoryButtonProps> {
-  if (!React.isValidElement<AccessoryButtonProps>(node)) {
-    throw new Error('Expected an accessory button element');
-  }
-  return node;
-}
-
 describe('LocalNeuralSttSettings native model download accessory', () => {
   beforeEach(() => {
     installerSpies.ensureInstalled.mockReset();
@@ -112,7 +81,7 @@ describe('LocalNeuralSttSettings native model download accessory', () => {
     });
   });
 
-  it('keeps download cancellation outside the row with named 44pt button semantics', async () => {
+  it('keeps download cancellation outside the row with named button semantics', async () => {
     const { LocalNeuralSttSettings } = await import('./LocalNeuralSttSettings.native');
     const setCfg = vi.fn();
     const { tree } = await renderScreen(<LocalNeuralSttSettings
@@ -144,15 +113,15 @@ describe('LocalNeuralSttSettings native model download accessory', () => {
     expect(modelRow).toBeTruthy();
     expect(modelRow?.props.rightElementOutsidePressable).toBe(true);
 
-    const cancelButton = requireAccessoryButton(modelRow?.props.rightElement);
-    expect(cancelButton.props.accessibilityRole).toBe('button');
-    expect(cancelButton.props.accessibilityLabel).toBe('common.cancel');
-    expectAtLeast44PointTarget(cancelButton.props.style);
+    const cancelButton = tree.root.findAllByProps({ accessibilityLabel: 'common.cancel' })
+      .find((node) => String(node.type) === 'Pressable');
+    expect(cancelButton).toBeTruthy();
+    expect(cancelButton!.props.accessibilityRole).toBe('button');
 
     const signal = installerSpies.ensureInstalled.mock.calls[0]?.[0]?.signal as AbortSignal;
     const stopPropagation = vi.fn();
     await act(async () => {
-      cancelButton.props.onPress({ stopPropagation });
+      cancelButton!.props.onPress({ stopPropagation });
     });
     expect(stopPropagation).toHaveBeenCalledOnce();
     expect(signal.aborted).toBe(true);

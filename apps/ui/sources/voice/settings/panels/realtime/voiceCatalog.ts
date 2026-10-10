@@ -1,12 +1,13 @@
 import type { BundledConversationProviderClient } from '@/voice/credentials/bundledConversationClient';
 
 export type VoiceCatalogRow = Readonly<{ id: string; name: string; subtitle?: string; previewUrl?: string | null }>;
+export type VoiceCatalogClient = Pick<BundledConversationProviderClient, 'fetchVoiceCatalog'>;
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
 }
 
 /** Settings UI and Actions resolve preview IDs from the same provider catalog, never caller URLs. */
-export async function fetchVoiceSettingsCatalog(client: BundledConversationProviderClient, signal?: AbortSignal | null): Promise<readonly VoiceCatalogRow[]> {
+export async function fetchVoiceSettingsCatalog(client: VoiceCatalogClient, signal?: AbortSignal | null): Promise<readonly VoiceCatalogRow[]> {
     return (await client.fetchVoiceCatalog(signal)).flatMap(raw => {
         const value = record(raw);
         if (!value) return [];

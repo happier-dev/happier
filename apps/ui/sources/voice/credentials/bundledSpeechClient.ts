@@ -2,6 +2,7 @@ import { DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES, DaemonVoiceSpeechDownloadAbortResp
 import { VoiceProviderCatalogResponseSchema } from '@happier-dev/protocol/voice/providerOperations';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { PluginSettingsActionResult } from '@happier-dev/plugin-sdk/settings';
+import type { SessionVoicePreferenceV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';
 import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSourceReader';
 import { createTransferRecipientKeyPair, downloadInChunks, uploadInChunks } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/chunkTransferClient';
@@ -37,9 +38,9 @@ export class BundledSpeechDaemonClient {
     this.machine = createSelectedVoiceMachineClient(deps);
   }
 
-  async fetchCatalog(entry: VoiceProviderRegistryEntry, catalog: 'models' | 'voices', signal?: AbortSignal | null) {
+  async fetchCatalog(entry: VoiceProviderRegistryEntry, catalog: 'models' | 'voices', signal?: AbortSignal | null, originMachineId?: string | null) {
     const target = getSpeechTarget(entry);
-    const response = parseCredentialResponse(VoiceProviderCatalogResponseSchema, await this.machine.invoke(
+    const response = parseCredentialResponse(VoiceProviderCatalogResponseSchema, await this.machine.bindOperation(originMachineId).invoke(
       RPC_METHODS.DAEMON_VOICE_SPEECH_CATALOG,
       { target: target.ref, catalog },
       signal,
@@ -133,10 +134,11 @@ export class BundledSpeechDaemonClient {
   async synthesize(params: Readonly<{
     entry: VoiceProviderRegistryEntry;
     input: string;
+    voicePreference?: SessionVoicePreferenceV1;
     /** Target captured when the originating attempt started, if it had one. */
     originMachineId?: string | null;
     signal?: AbortSignal | null;
-  }>): Promise<Readonly<{ bytes: Uint8Array; mimeType: 'audio/mpeg' | 'audio/wav' }>> {
+  }>): Promise<Readonly<{ bytes: Uint8Array; mimeType: 'audio/mpeg' | 'audio/wav'; appliedVoice?: SessionVoicePreferenceV1 | null }>> {
     const target = getSpeechTarget(params.entry);
     // Synthesis publishes a `downloadId` that only the synthesizing daemon can
     // serve, so chunk, finalize and abort stay bound to that same machine.
@@ -148,6 +150,7 @@ export class BundledSpeechDaemonClient {
       {
         target: target.ref,
         input,
+        ...(params.voicePreference ? { voicePreference: params.voicePreference } : {}),
         requestId: randomUUID(),
         recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
       },
@@ -175,7 +178,8 @@ export class BundledSpeechDaemonClient {
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    return { bytes, mimeType: started.mimeType };
+    return { bytes, mimeType: started.mimeType,
+      ...(started.appliedVoice !== undefined ? { appliedVoice: started.appliedVoice } : {}) };
   }
 }
 

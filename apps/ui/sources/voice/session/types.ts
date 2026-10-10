@@ -1,5 +1,6 @@
 import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import type {
   VoiceOutputFocusApplication,
   VoiceOutputFocusState,
@@ -73,6 +74,8 @@ export type VoiceSessionSnapshot = Readonly<{
   presentationState?: VoiceSessionPresentationState;
   /** The owned realtime reconnect scheduler has a pending backoff slot. */
   reconnectRetryAvailable?: boolean;
+  /** The current connected adapter's accepted application snapshot. Unknown is omitted. */
+  inUseVoice?: VoiceConversationInUseVoice;
 }>;
 
 export type VoiceAdapterController = Readonly<{

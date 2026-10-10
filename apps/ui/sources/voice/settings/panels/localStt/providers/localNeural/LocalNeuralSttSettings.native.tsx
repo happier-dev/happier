@@ -2,11 +2,12 @@ import * as React from 'react';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useVoiceSttSettingRefs } from '@/voice/settings/useVoiceSttSettingRefs';
 
-import { Platform, Pressable } from 'react-native';
+import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { t } from '@/text';
@@ -23,12 +24,6 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { LocalNeuralSttLanguageItem } from './LocalNeuralSttLanguageItem';
 
 const ACCESSORY_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
-const ACCESSORY_BUTTON_STYLE = {
-  width: ACCESSORY_TARGET_SIZE,
-  height: ACCESSORY_TARGET_SIZE,
-  alignItems: 'center',
-  justifyContent: 'center',
-} as const;
 
 export function LocalNeuralSttSettings(props: {
   cfg: VoiceLocalSttSettings;
@@ -136,17 +131,16 @@ export function LocalNeuralSttSettings(props: {
             onPress={() => void prepareModel()}
             rightElement={
               modelStatus === 'downloading' ? (
-                <Pressable
-                  accessibilityRole="button"
+                <IconButton
                   accessibilityLabel={t('common.cancel')}
-                  style={ACCESSORY_BUTTON_STYLE}
+                  variant="plain"
+                  size={ACCESSORY_TARGET_SIZE}
                   onPress={(event) => {
-                    event.stopPropagation?.();
+                    event?.stopPropagation?.();
                     cancelPrepare();
                   }}
-                >
-                  <Icon name="x" size={20} color={theme.colors.text.secondary} />
-                </Pressable>
+                  icon={<Icon name="x" size={20} color={theme.colors.text.secondary} />}
+                />
               ) : (
                 <Icon name="download" size={20} color={theme.colors.text.secondary} />
               )

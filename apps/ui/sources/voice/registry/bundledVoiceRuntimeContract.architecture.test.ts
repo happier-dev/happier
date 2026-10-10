@@ -246,9 +246,17 @@ describe('bundled voice runtime contract ownership', () => {
       "from '@/voice/registry/generatedBundledVoiceRuntimeEntries'",
     );
     for (const [packageId, packageJson] of nativeMetadataLeaves) {
-      expect(packageJson).toContain(
-        '"react-native": "./dist/ui/voice/index.native.js"',
-      );
+      const manifest: unknown = JSON.parse(packageJson);
+      expect(manifest).toMatchObject({
+        exports: {
+          './ui/voice': {
+            'react-native': {
+              'happier-source': './src/ui/voice/index.native.ts',
+              default: './dist/ui/voice/index.native.js',
+            },
+          },
+        },
+      });
       const nativeLeaf = source(
         `packages/plugins/${packageId}/src/ui/voice/index.native.ts`,
       );

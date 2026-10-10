@@ -4,8 +4,10 @@ import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { frameRectsOverlap, type FrameRect } from '@happier-dev/plugin-ui/presentation';
 
-import { createSessionFixture, renderScreen } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { getStorage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -16,11 +18,11 @@ import {
     useSessionCockpitBottomChromeHeightSetter,
     useSessionCockpitComposerBottomChromeHeight,
     useReportSessionCockpitComposerChromeHeight,
+    useReportSessionCockpitViewerRect,
+    useSessionCockpitVoicePresenceRect,
 } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { VoicePresenceAppShellMount } from './VoicePresenceAppShellMount';
 import { VoiceTopBarPresenceMount } from './VoiceTopBarPresence';
-import { SessionCompanionContent } from '@/components/sessions/companion/SessionCompanionContent';
-import { useSessionCompanionController } from '@/components/sessions/companion/state/useSessionCompanionController';
 
 const keyboard = vi.hoisted(() => ({ height: 0 }));
 // Settled OS keyboard geometry is the environment boundary.
@@ -58,6 +60,16 @@ function MeasuredComposer() {
     return null;
 }
 
+function ViewerObstacle(props: Readonly<{ rect: FrameRect | null }>) {
+    const report = useReportSessionCockpitViewerRect({ sessionId: 'viewer-session', serverId: 'home-a' }, props.rect !== null);
+    React.useEffect(() => { report(props.rect); }, [props.rect, report]);
+    return null;
+}
+
+function PresenceRectProbe() {
+    return <View testID="presence-rect-probe" accessibilityValue={{ text: JSON.stringify(useSessionCockpitVoicePresenceRect()) }} />;
+}
+
 describe('phone Island shell clearance', () => {
     beforeEach(() => {
         keyboard.height = 0;
@@ -85,6 +97,47 @@ describe('phone Island shell clearance', () => {
             resolveSurfaceCapabilities: () => ({ allowsGlobalStart: true, controlSessionScope: 'global', requiresVoiceAgentFeature: false, bargeInEnabled: false }),
         }]);
         setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'voice-shell', status: 'connected', mode: 'listening', canStop: true });
+    });
+    it('publishes the measured Island clear of a mounted viewer and removes the obstacle on close', async () => {
+        const viewer = { x: 16, y: 650, width: 358, height: 100 };
+        const scene = (rect: FrameRect | null, visible = true) => <SessionCockpitChromeRegistryProvider>
+            <ComposerClearance /><ViewerObstacle rect={rect} /><PresenceRectProbe />
+            {visible ? <VoicePresenceAppShellMount /> : null}
+        </SessionCockpitChromeRegistryProvider>;
+        const screen = await renderScreen(scene(viewer));
+        try {
+            await layOutPhonePresence(screen);
+            const readRect = (): FrameRect | null => JSON.parse(screen.findByTestId('presence-rect-probe')!.props.accessibilityValue.text);
+            expect(readRect()).not.toBeNull();
+            expect(frameRectsOverlap(readRect()!, viewer)).toBe(false);
+            expect(readRect()!.y + readRect()!.height).toBeLessThanOrEqual(viewer.y);
+            await screen.update(scene(null));
+            expect(readRect()!.y).toBeGreaterThan(viewer.y);
+            await screen.update(scene(null, false));
+            expect(readRect()).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+    it('retires the Orb measurement callback when the actual shell switches to Island', async () => {
+        getStorage().setState((state) => ({ localSettings: { ...state.localSettings, voicePresenceContainer: 'orb' } }));
+        const screen = await renderScreen(<SessionCockpitChromeRegistryProvider>
+            <VoicePresenceAppShellMount /><PresenceRectProbe />
+        </SessionCockpitChromeRegistryProvider>);
+        try {
+            await layOutPhonePresence(screen);
+            const readRect = (): FrameRect | null => JSON.parse(screen.findByTestId('presence-rect-probe')!.props.accessibilityValue.text);
+            const previous = readRect()!;
+            const retiredReport: (rect: FrameRect | null) => void = screen.root.find((node) =>
+                node.props.testID === 'voice-presence-float-host' && typeof node.props.onRectChange === 'function').props.onRectChange;
+            await act(async () => {
+                getStorage().setState((state) => ({ localSettings: { ...state.localSettings, voicePresenceContainer: 'island' } }));
+            });
+            await layOutPhonePresence(screen);
+            const fresh = readRect()!;
+            expect(fresh.width).toBeGreaterThan(previous.width);
+            await act(async () => { retiredReport(previous); });
+            expect(readRect()).toEqual(fresh);
+            expect(screen.findByTestId('voice-island-transport-mute')).not.toBeNull();
+        } finally { await screen.unmount(); }
     });
     it('resolves a stored phone Top bar to one Island without rewriting the local choice', async () => {
         getStorage().setState((state) => ({ localSettings: { ...state.localSettings, voicePresenceContainer: 'top_bar' } }));
@@ -121,6 +174,8 @@ describe('phone Island shell clearance', () => {
     });
 
     it('reveals an offscreen Voice section through the Companion scroll owner without opening a second glance', async () => {
+        const { SessionCompanionContent } = await import('@/components/sessions/companion/SessionCompanionContent');
+        const { useSessionCompanionController } = await import('@/components/sessions/companion/state/useSessionCompanionController');
         // ScrollView is an OS/browser boundary; controller, section, presentation tracker and glance stay real.
         let scrollY = 600;
         let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;

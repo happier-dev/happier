@@ -5,7 +5,7 @@
 import type {
   VoiceRealtimeCanonicalEvent,
   VoiceRealtimePreflight,
-  VoiceRealtimePreparation,
+  VoiceRealtimePreparation as ProviderVoiceRealtimePreparation,
   VoiceTurnControlAction,
 } from '@happier-dev/plugin-sdk/voice/client';
 import type {
@@ -14,6 +14,14 @@ import type {
 } from '@happier-dev/protocol';
 import type { VoiceConnectionCloseReason } from '@/voice/runtime/connection/VoiceRealtimeConnection';
 import type { VoiceTurnControlCapabilities } from './VoiceTurnControlCapabilities';
+import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
+
+/** Host application facts stay local, separate from provider wire/session configuration. */
+export type VoiceRealtimePreparation = ProviderVoiceRealtimePreparation extends infer T
+  ? T extends Readonly<{ kind: 'prepared' }>
+    ? T & Readonly<{ inUseVoice?: VoiceConversationInUseVoice }>
+    : T
+  : never;
 
 export type VoiceRealtimePreparedSession = Extract<
   VoiceRealtimePreparation,
@@ -55,5 +63,4 @@ export type VoiceRealtimeProtocolAdapter = Readonly<{
 export type {
   VoiceRealtimeCanonicalEvent,
   VoiceRealtimePreflight,
-  VoiceRealtimePreparation,
 };

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { ConnectedServiceBindingsV1Schema, ConnectedServiceIdSchema, type ConnectedServiceBindingsV1, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -21,6 +21,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { t, tLoose } from '@/text';
 
 const PICKER_MAX_HEIGHT = 520;
@@ -94,9 +95,9 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
 }>) {
   const profile = useProfile();
   const settings = useSettingsSelector((settings) => ({
-      connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
       connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
   }));
+  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
   const router = useRouter();
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
   const bundledAgentId = isBundledAgentId(props.agentId)
@@ -123,11 +124,11 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
     () => buildConnectedServiceProfileOptionsByServiceId({
       accountProfileConnectedServicesV2: profile.connectedServicesV2 ?? [],
       supportedConnectedServiceIds: supportedServiceIds,
-      labelsByKey: settings.connectedServicesProfileLabelByKey ?? {},
+      labelsByKey,
     }),
     [
       profile.connectedServicesV2,
-      settings.connectedServicesProfileLabelByKey,
+      labelsByKey,
       supportedServiceIds,
     ],
   );

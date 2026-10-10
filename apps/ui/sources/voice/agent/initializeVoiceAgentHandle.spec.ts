@@ -1,9 +1,14 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getAgentCore } from '@/agents/catalog/catalog';
+import { getAgentModelConfig } from '@happier-dev/agents';
 import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 import { storage } from '@/sync/domains/state/storage';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { SessionExecutionRunGetResult, SessionExecutionRunListResult } from '@/sync/ops/sessionExecutionRuns';
+import { V2SessionRecordSchema, type V2SessionByIdResponse } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 
 const start = vi.fn(async (_params: any) => ({ voiceAgentId: 'voice-agent-1' }));
 const ensureVoiceAgentInstallablesBackground = vi.fn(async (_args: unknown) => {});
@@ -15,8 +20,8 @@ const resolveVoiceAgentInitialContexts = vi.fn((_sessionId: string, _options?: R
     bootstrapInitialContext: 'bootstrap-context',
     deferredTargetSessionContext: '',
 }));
-const sessionExecutionRunList = vi.fn(async (_sessionId: string, _params?: any) => ({ runs: [] }));
-const sessionExecutionRunGet = vi.fn(async (_sessionId: string, _params?: any) => ({
+const sessionExecutionRunList = vi.fn(async (_sessionId: string, _params?: any): Promise<SessionExecutionRunListResult> => ({ runs: [] }));
+const sessionExecutionRunGet = vi.fn(async (_sessionId: string, _params?: any): Promise<SessionExecutionRunGetResult> => ({
     ok: false as const,
     error: 'Execution run not found',
     errorCode: 'execution_run_not_found',
@@ -138,18 +143,55 @@ vi.mock('@/voice/context/buildVoiceInitialContext', () => ({
 
 describe('initializeVoiceAgentHandle', () => {
     let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+    let serveRetainedSession = false;
     beforeAll(loadSyncSingletonForTests, 60_000);
     afterEach(async () => {
         await connection?.dispose();
         vi.restoreAllMocks();
     });
     beforeEach(async () => {
+        serveRetainedSession = false;
         const previousServerId = state.profileScope?.serverId ?? 'server-a';
+        let wireSession: V2SessionByIdResponse['session'] | undefined;
         connection = await restoreServerAccountForTest({
             serverUrl: 'https://voice-initialize.example.test',
-            request: async (url) => new URL(String(url)).pathname.endsWith('/messages')
-                ? new Response(JSON.stringify({ messages: [], hasMore: false }), { status: 200 })
-                : new Response('{}', { status: 404 }),
+            // Session HTTP is a genuine boundary. Retained-run adoption writes
+            // its pointer through the real metadata tuple owner, not a stub.
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                const respond = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+                if (path.endsWith('/messages')) return respond({ messages: [], hasMore: false });
+                if (path === '/v1/account/encryption/currentness') return respond({ mode: 'plain', version: 0,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 });
+                if (serveRetainedSession && path === '/v2/sessions/s1') {
+                    wireSession ??= V2SessionRecordSchema.parse({ id: 's1', seq: 0, createdAt: 1, updatedAt: 1,
+                        active: true, activeAt: Date.now(), encryptionMode: 'plain', dataEncryptionKey: null,
+                        metadataLayoutVersion: 0, metadataVersion: 0,
+                        metadata: JSON.stringify(readVoiceSessionOwnerMetadataFromState(storage.getState(),
+                            { serverId: connection.home.id, sessionId: 's1' })),
+                        agentState: null, agentStateVersion: 0 });
+                    if (init?.method === 'PATCH') {
+                        if (typeof init.body !== 'string') throw new Error('Expected Session tuple JSON');
+                        const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(init.body));
+                        if (patch.mode === 'owner_migration') {
+                            expect(patch.source.metadata.version).toBe(wireSession.metadataVersion);
+                            wireSession = { ...wireSession, metadataLayoutVersion: 1,
+                                metadata: patch.target.sharedMetadata.ciphertext, ownerMetadata: patch.target.ownerMetadata,
+                                agentState: patch.target.agentState.ciphertext,
+                                metadataVersion: wireSession.metadataVersion + 1, agentStateVersion: (wireSession.agentStateVersion ?? 0) + 1 };
+                        } else if (patch.mode === 'owner') {
+                            expect(patch.sharedMetadata.expectedVersion).toBe(wireSession.metadataVersion);
+                            wireSession = { ...wireSession, metadata: patch.sharedMetadata.ciphertext,
+                                ownerMetadata: patch.ownerMetadata, agentState: patch.agentState.ciphertext,
+                                metadataVersion: wireSession.metadataVersion + 1, agentStateVersion: (wireSession.agentStateVersion ?? 0) + 1 };
+                        } else throw new Error('Expected owner Session tuple mutation');
+                        return respond({ success: true, metadataLayoutVersion: 1,
+                            sharedMetadata: { version: wireSession.metadataVersion }, agentState: { version: wireSession.agentStateVersion } });
+                    }
+                    return respond({ session: wireSession });
+                }
+                return new Response('{}', { status: 404 });
+            },
         });
         const { home } = connection;
         storage.setState({
@@ -160,6 +202,8 @@ describe('initializeVoiceAgentHandle', () => {
             sessionListIndexByServerId: { [home.id]: [{ type: 'session', sessionId: 's1', serverId: home.id, serverName: 'Voice' }] },
         });
         state = storage.getState();
+        state.sessions.s1.active = true;
+        state.sessions.s1.presence = 'online';
         state.sessions.s1.encryptionMode = 'plain';
         start.mockClear();
         ensureVoiceAgentInstallablesBackground.mockClear();
@@ -178,6 +222,8 @@ describe('initializeVoiceAgentHandle', () => {
             },
         };
         state.sessionListRowsByServerId[home.id].s1.metadataLayoutVersion = 0;
+        state.sessionListRowsByServerId[home.id].s1.active = true;
+        state.sessionListRowsByServerId[home.id].s1.presence = 'online';
         delete state.sessionListRowsByServerId[home.id].s1.ownerMetadataView;
         state.sessionListRowsByServerId[home.id].s1.metadata = {
             flavor: 'codex',
@@ -214,10 +260,130 @@ describe('initializeVoiceAgentHandle', () => {
                 sessionId: 's1',
                 agentId: 'codex',
                 profileId: 'cached-profile',
-                chatModelId: getAgentCore('codex').model?.defaultMode,
-                commitModelId: getAgentCore('codex').model?.defaultMode,
+                chatModelId: getAgentModelConfig('codex')?.defaultMode,
+                commitModelId: getAgentModelConfig('codex')?.defaultMode,
             }),
         );
+    });
+
+    it('admits the exact Session default greeting into the run policy before the daemon starts', async () => {
+        const previousSettings = state.settings;
+        state.settings = {
+            ...previousSettings,
+            voice: { ...previousSettings.voice, assistantLanguage: 'en',
+                welcome: { enabled: true, mode: 'immediate', templateId: null } },
+        };
+        storage.setState({ settings: state.settings });
+        const { readSessionDisplayTitle } = await import('@/utils/sessions/sessionDisplayTitle');
+        const targetName = readSessionDisplayTitle({ serverId: connection.home.id, sessionId: 's1' });
+        expect(targetName).toBeTruthy();
+        try {
+            const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+            const handle = await initializeVoiceAgentHandle({
+                sessionId: 's1',
+                getDaemonVoiceAgentClient: () => ({
+                    start, sendTurn: vi.fn(), welcome: vi.fn(), startTurnStream: vi.fn(),
+                    readTurnStream: vi.fn(), cancelTurnStream: vi.fn(), commit: vi.fn(), stop: vi.fn(),
+                }),
+                setDeferredTargetSessionContext: vi.fn(),
+            });
+            expect(handle.voicePolicy?.welcome?.text).toContain(targetName);
+            expect(start.mock.calls[0]?.[0].voicePolicy?.welcome?.text).toContain(targetName);
+        } finally {
+            storage.setState({ settings: previousSettings });
+            state = storage.getState();
+        }
+    });
+
+    it('retires a started run when its admitted target binding changes during the daemon await', async () => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: 's1',
+            conversationSessionId: 's1', conversationSessionAddress: { serverId: connection.home.id, sessionId: 's1' },
+            lifetime: 'runtime_attempt', transcriptMode: 'synthetic',
+            targetSessionAddress: { serverId: connection.home.id, sessionId: 's1' }, updatedAt: 1 });
+        const stop = vi.fn(async () => {});
+        start.mockImplementationOnce(async () => {
+            voiceSessionBindingStore.getState().unbind('s1');
+            return { voiceAgentId: 'voice-agent-1' };
+        });
+        try {
+            const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+            await expect(initializeVoiceAgentHandle({ sessionId: 's1',
+                getDaemonVoiceAgentClient: () => ({ start, sendTurn: vi.fn(), welcome: vi.fn(), startTurnStream: vi.fn(),
+                    readTurnStream: vi.fn(), cancelTurnStream: vi.fn(), commit: vi.fn(), stop }),
+                setDeferredTargetSessionContext: vi.fn() })).rejects.toThrow('voice_agent_binding_changed');
+            expect(stop).toHaveBeenCalledWith({ sessionId: 's1', voiceAgentId: 'voice-agent-1' });
+        } finally {
+            voiceSessionBindingStore.getState().unbind('s1');
+            start.mockReset().mockResolvedValue({ voiceAgentId: 'voice-agent-1' });
+        }
+    });
+
+    it('reconnects with retained greeting bytes without re-reading an unavailable current selection', async () => {
+        serveRetainedSession = true;
+        const previousSettings = state.settings;
+        storage.setState({ settings: { ...previousSettings,
+            voice: { ...previousSettings.voice, assistantLanguage: 'en',
+                welcome: { enabled: true, mode: 'immediate', templateId: 'deleted-after-admission' } },
+        } });
+        const voicePolicy = { assistantLanguage: 'fr', welcome: { enabled: true, mode: 'on_first_turn', text: '  Retained.\n ' } };
+        const retainedAdmission = ExecutionRunPublicStateSchema.safeParse({ runId: 'voice-agent-1', callId: 'call', sidechainId: 'sidechain',
+            intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read-only',
+            retentionPolicy: 'ephemeral', runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 1,
+            voicePolicy });
+        // The daemon's canonical retained wire reader must admit the selected literal before a reconnect can consume it.
+        expect(retainedAdmission.success).toBe(true);
+        if (!retainedAdmission.success) throw retainedAdmission.error;
+        const run = retainedAdmission.data;
+        sessionExecutionRunList.mockResolvedValueOnce({ runs: [run] });
+        sessionExecutionRunGet.mockResolvedValueOnce({ run }).mockResolvedValueOnce({ run });
+        try {
+            const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+            const handle = await initializeVoiceAgentHandle({ sessionId: 's1',
+                getDaemonVoiceAgentClient: () => ({ start, sendTurn: vi.fn(), welcome: vi.fn(), startTurnStream: vi.fn(),
+                    readTurnStream: vi.fn(), cancelTurnStream: vi.fn(), commit: vi.fn(), stop: vi.fn() }),
+                setDeferredTargetSessionContext: vi.fn() });
+            expect(handle.voicePolicy).toEqual(voicePolicy);
+            expect(start.mock.calls[0]?.[0].voicePolicy).toEqual(voicePolicy);
+        } finally {
+            sessionExecutionRunList.mockReset().mockResolvedValue({ runs: [] });
+            sessionExecutionRunGet.mockReset().mockResolvedValue({ ok: false, error: 'Execution run not found', errorCode: 'execution_run_not_found' });
+            storage.setState({ settings: previousSettings });
+            state = storage.getState();
+        }
+    });
+
+    it.each([true, false])('keeps hidden history separate from the bound/global persona (bound=%s)', async bound => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+        const previousSettings = state.settings;
+        const history = 'hidden-welcome-history';
+        const targetAddress = { serverId: connection.home.id, sessionId: 's1' };
+        storage.setState({ sessions: { ...storage.getState().sessions,
+            [history]: { ...state.sessions.s1, id: history, serverId: connection.home.id,
+                metadata: { ...state.sessions.s1.metadata, profileId: 'history-is-not-a-persona' } },
+        }, settings: { ...previousSettings, voice: { ...previousSettings.voice, assistantLanguage: 'en',
+            welcome: { enabled: true, mode: 'immediate', templateId: null } } } });
+        voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            conversationSessionId: history, conversationSessionAddress: { serverId: connection.home.id, sessionId: history },
+            lifetime: 'runtime_attempt', transcriptMode: 'synthetic', targetSessionAddress: bound ? targetAddress : null, updatedAt: 1 });
+        try {
+            const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+            await initializeVoiceAgentHandle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                getDaemonVoiceAgentClient: () => ({ start, sendTurn: vi.fn(), welcome: vi.fn(), startTurnStream: vi.fn(),
+                    readTurnStream: vi.fn(), cancelTurnStream: vi.fn(), commit: vi.fn(), stop: vi.fn() }),
+                setDeferredTargetSessionContext: vi.fn() });
+            expect(start.mock.calls[0]?.[0].sessionId).toBe(history);
+            expect(start.mock.calls[0]?.[0].profileId).toBe(bound ? 'cached-profile' : null);
+            const { resolveVoiceWelcomeText } = await import('./voiceWelcomeText');
+            if (!bound) expect(start.mock.calls[0]?.[0].voicePolicy?.welcome?.text).toBe(resolveVoiceWelcomeText('en'));
+        } finally {
+            voiceSessionBindingStore.getState().unbind(history);
+            const sessions = { ...storage.getState().sessions };
+            delete sessions[history];
+            storage.setState({ sessions, settings: previousSettings });
+            state = storage.getState();
+        }
     });
 
     it('uses hydrated layout-1 owner facts with the current list-selected session model', async () => {
@@ -271,8 +437,9 @@ describe('initializeVoiceAgentHandle', () => {
             });
             expect(start).toHaveBeenCalledWith(expect.objectContaining({
                 agentId: 'claude', profileId: 'raw-profile',
-                chatModelId: 'current-session-model', commitModelId: 'current-session-model',
             }));
+            expect(start.mock.calls.at(-1)?.[0].chatModelId).toBeUndefined();
+            expect(start.mock.calls.at(-1)?.[0].commitModelId).toBeUndefined();
         } finally {
             state.settings = previousSettings;
             state.sessions.s1 = previousSession;
@@ -345,7 +512,6 @@ describe('initializeVoiceAgentHandle', () => {
                     providerConnectionId: 'voice-openai-compatible-chat',
                     modelId: 'commit-model',
                 },
-                configuration: { temperature: 0.73 },
             },
         };
 
@@ -373,12 +539,8 @@ describe('initializeVoiceAgentHandle', () => {
                 commitModelId: 'commit-model',
                 chatModelSelection: expect.objectContaining({ providerConnectionId: 'voice-openai-compatible-chat' }),
                 commitModelSelection: expect.objectContaining({ providerConnectionId: 'voice-openai-compatible-chat' }),
-                sessionConfigOptionOverrides: {
-                    v: 1,
-                    updatedAt: 0,
-                    overrides: { temperature: { updatedAt: 0, value: 0.73 } },
-                },
             }));
+            expect(start.mock.calls[0]?.[0]).not.toHaveProperty('sessionConfigOptionOverrides');
         } finally {
             state.settings.voice.providers.local_conversation.config.agent = originalAgent;
         }
@@ -476,7 +638,6 @@ describe('initializeVoiceAgentHandle', () => {
                     providerConnectionId: 'voice-openai-compatible-chat',
                     modelId: 'commit-model',
                 },
-                configuration: {},
             },
         };
 

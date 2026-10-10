@@ -12,6 +12,7 @@ import { projectBundledVoiceManifestContributions } from './bundledVoiceManifest
 import type { BundledVoiceManifestContribution } from './bundledVoiceManifestProjection';
 import type { VoiceProviderPresentation } from './voiceProviderPresentation';
 import { createBundledVoiceProviderPresentations } from './bundledVoiceManifestProjection';
+import { BUNDLED_FIRST_PARTY_VOICE_SELECTION_OPTIONS } from '@happier-dev/protocol/voice/settings/generatedBundledVoiceSelectionOptions';
 
 
 const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
@@ -207,7 +208,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
                 ]
               },
               "archiveExtractionLimits": {
-                "maxExpandedBytes": 402653184,
+                "maxExpandedBytes": 536870912,
                 "maxFileBytes": 402653184
               },
               "assetNameByPlatform": {
@@ -507,6 +508,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
       }
     ],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [
       {
         "description": "Codex ACP dependency used by the Codex ACP backend",
@@ -557,6 +559,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -635,7 +638,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
               "kind": "theme",
               "token": "blue"
             },
-            "ionName": "terminal-outline"
+            "ionName": "terminal"
           },
           "sections": [
             {
@@ -987,6 +990,7 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "executionRunProfiles": [],
     "hooks": [],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -996,6 +1000,7 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -2460,6 +2465,7 @@ const GOOGLE_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "executionRunProfiles": [],
     "hooks": [],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -2469,6 +2475,7 @@ const GOOGLE_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -2915,6 +2922,7 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "executionRunProfiles": [],
     "hooks": [],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -2924,6 +2932,7 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -3409,6 +3418,7 @@ const OPENAI_COMPAT_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "executionRunProfiles": [],
     "hooks": [],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -3418,6 +3428,7 @@ const OPENAI_COMPAT_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -3908,6 +3919,7 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "executionRunProfiles": [],
     "hooks": [],
     "inputTypes": [],
+    "machineProvisioners": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -3917,6 +3929,7 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "notifications": [],
     "openableContentViewers": [],
     "pluginContributionPoints": [],
+    "projectNativeAdapters": [],
     "promptAssets": [],
     "providers": [],
     "requestInterceptors": [],
@@ -4676,16 +4689,6 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
 [
   {
     "providerId": "happier.agent.codex/realtime-codex",
-    "selectionOptions": [
-      {
-        "badgeKey": "settingsProviders.models.experimental",
-        "id": "experimental",
-        "modeId": "experimental",
-        "order": 24,
-        "subtitleKey": "settingsVoice.mode.codexRealtimeSubtitle",
-        "titleKey": "settingsVoice.mode.codexRealtime"
-      }
-    ],
     "settingsSectionId": "voice.provider.realtime_codex"
   },
   {
@@ -4703,28 +4706,6 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
       "apiKeysTitleKey": "settingsVoice.realtimeProviders.elevenLabs.manageApiKeys",
       "titleKey": "settingsVoice.realtimeProviders.elevenLabs.resourcesTitle"
     },
-    "selectionOptions": [
-      {
-        "configPatch": {
-          "billingMode": "happier"
-        },
-        "id": "happier",
-        "modeId": "happier",
-        "order": 10,
-        "subtitleKey": "settingsVoice.mode.happierSubtitle",
-        "titleKey": "settingsVoice.mode.happier"
-      },
-      {
-        "configPatch": {
-          "billingMode": "byo"
-        },
-        "id": "byo",
-        "modeId": "byo",
-        "order": 20,
-        "subtitleKey": "settingsVoice.mode.byoSubtitle",
-        "titleKey": "settingsVoice.mode.byo"
-      }
-    ],
     "settingsSectionId": "voice.provider.realtime_elevenlabs"
   },
   {
@@ -4752,7 +4733,7 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
           "titleKey": "settingsVoice.local.googleGeminiStt.language.title"
         }
       ],
-      "iconName": "logo-google",
+      "iconName": "google-logo",
       "subtitleKey": "settingsVoice.local.googleGeminiStt.provider.subtitle",
       "test": null,
       "titleKey": "settingsVoice.local.googleGeminiStt.provider.title"
@@ -4802,7 +4783,7 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
           "titleKey": "settingsVoice.local.googleCloudTts.pitch.title"
         }
       ],
-      "iconName": "logo-google",
+      "iconName": "google-logo",
       "subtitleKey": "settingsVoice.local.googleCloudTts.provider.subtitle",
       "test": {
         "missingValueMessageKey": "settingsVoice.local.googleCloudTts.alerts.missingVoice"
@@ -4812,15 +4793,6 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
   },
   {
     "providerId": "happier.voice.openai/realtime-openai",
-    "selectionOptions": [
-      {
-        "id": "byo",
-        "modeId": "byo",
-        "order": 21,
-        "subtitleKey": "settingsVoice.mode.openaiRealtimeSubtitle",
-        "titleKey": "settingsVoice.mode.openaiRealtime"
-      }
-    ],
     "settingsSectionId": "voice.provider.realtime_openai"
   },
   {
@@ -4915,16 +4887,10 @@ export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS = createBundledVoiceProvide
   },
   {
     "providerId": "happier.voice.xai/realtime-grok",
-    "selectionOptions": [
-      {
-        "id": "byo",
-        "modeId": "byo",
-        "order": 22,
-        "subtitleKey": "settingsVoice.mode.grokRealtimeSubtitle",
-        "titleKey": "settingsVoice.mode.grokRealtime"
-      }
-    ],
     "settingsSectionId": "voice.provider.realtime_grok"
   }
 ] as const,
-) satisfies readonly VoiceProviderPresentation[];
+).map((presentation) => Object.freeze({ ...presentation,
+  ...(BUNDLED_FIRST_PARTY_VOICE_SELECTION_OPTIONS[presentation.providerId]
+    ? { selectionOptions: BUNDLED_FIRST_PARTY_VOICE_SELECTION_OPTIONS[presentation.providerId] } : {}),
+})) satisfies readonly VoiceProviderPresentation[];

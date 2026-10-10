@@ -67,6 +67,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       executionMachineId: 'machine-a',
     };
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       ...common,
       settings: settingsParse({}),
     })).toBe('ready');
@@ -85,10 +86,12 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       expectedSecretUpdatedAt: null,
     }).settings;
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       ...common,
       settings: selected,
     })).toBe('unknown');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       ...common,
       settings: selected,
       rawAuthorization: {
@@ -100,6 +103,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       },
     })).toBe('approval_required');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       ...common,
       settings: settingsParse({ ...selected, secrets: [] }),
       rawAuthorization: {
@@ -194,7 +198,8 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
         accountId: 'account-a',
       },
     };
-    const settings = applyAccountVoiceCredentialSourceSelection({
+    const selected = applyAccountVoiceCredentialSourceSelection({
+      connectedPurposes: { v: 1, bindings: [] },
       settings: settingsParse({}),
       mutation: {
         contribution,
@@ -203,9 +208,11 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
         expectedSettingsVersion: 0,
       },
       currentDeclaration: declaration,
-    }).settings;
+    });
+    const settings = selected.settings;
 
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: selected.connectedPurposes,
       registry,
       role: 'dictation_stt',
       providerId,
@@ -213,6 +220,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       executionMachineId: 'machine-a',
     })).toBe('unknown');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: selected.connectedPurposes,
       registry,
       role: 'dictation_stt',
       providerId,
@@ -227,6 +235,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       },
     })).toBe('approval_required');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: selected.connectedPurposes,
       registry,
       role: 'dictation_stt',
       providerId,
@@ -241,13 +250,11 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       },
     })).toBe('ready');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: null,
       registry,
       role: 'dictation_stt',
       providerId,
-      settings: settingsParse({
-        ...settings,
-        connectedAccountPurposeBindingsV1: [],
-      }),
+      settings,
       executionMachineId: 'machine-a',
       rawAuthorization: {
         contribution,
@@ -329,14 +336,17 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
     };
 
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       ...common,
       providerEnvelope: { schemaVersion: 1, config: { model: 'synthetic-stt-v1', billingMode: 'hosted' } },
     })).toBe('ready');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       ...common,
       providerEnvelope: { schemaVersion: 1, config: { model: 'synthetic-stt-v1', billingMode: 'byo' } },
     })).toBe('missing');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       ...common,
       providerEnvelope: { schemaVersion: 1, config: { model: 'synthetic-stt-v1', billingMode: 'invalid' } },
     })).toBe('unknown');
@@ -357,6 +367,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
     });
 
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       role: 'dictation_stt',
       providerId: 'future_builtin_speech',
@@ -372,6 +383,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
     expect(registry.get('openai_compat')).toBeNull();
     expect(registry.get(qualifiedProviderId)).not.toBeNull();
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       role: 'dictation_stt',
       providerId: 'openai_compat',
@@ -379,6 +391,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       executionMachineId: 'machine-a',
     })).toBe('unknown');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       role: 'dictation_stt',
       providerId: qualifiedProviderId,
@@ -401,6 +414,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
     expect(registry.get(predecessorProviderId)).toBeNull();
     expect(registry.get(qualifiedProviderId)).not.toBeNull();
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       role,
       providerId: predecessorProviderId,
@@ -408,6 +422,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       executionMachineId: 'machine-a',
     })).toBe('unknown');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       role,
       providerId: qualifiedProviderId,
@@ -446,6 +461,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       status: 'ready' as const,
     };
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       role,
       providerId: qualifiedProviderId,
@@ -454,6 +470,7 @@ describe('projectVoiceSpeechCredentialReadiness', () => {
       rawAuthorization,
     })).toBe('ready');
     expect(projectVoiceSpeechCredentialReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       role,
       providerId: qualifiedProviderId,

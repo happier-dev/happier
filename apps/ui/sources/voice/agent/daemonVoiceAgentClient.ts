@@ -11,6 +11,8 @@ import type { ExecutionRunUserTranscriptDirective, VoiceAssistantAction } from '
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
 import { streamVoiceAgentTurn } from './streamVoiceAgentTurn';
 import { requiresProviderSafeModelSelectionRpc } from '@/sync/ops/providerDaemonSessionCompatibility';
+import { requiresProviderSafeExecutionRunStartRpc } from '@happier-dev/protocol/execution/runs/startRequest';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 
 const VOICE_AGENT_LIFECYCLE_RPC_TIMEOUT_MS = null;
 
@@ -34,10 +36,10 @@ function throwIfRpcError(value: any): void {
   }
 }
 
-function normalizeVoiceAgentModelId(value: unknown): string | null {
+function normalizeVoiceAgentModelId(value: unknown, preserveDefault = false): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed === 'default') return null;
+  if (!trimmed || (!preserveDefault && trimmed === 'default')) return null;
   return trimmed;
 }
 
@@ -78,11 +80,14 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       });
     }
     const chatModelId = normalizeVoiceAgentModelId(params.chatModelId);
-    const commitModelId = normalizeVoiceAgentModelId(params.commitModelId);
+    const commitModelId = normalizeVoiceAgentModelId(params.commitModelId, true);
     const profileId = normalizeVoiceAgentProfileId(params.profileId);
-    const chatModelSelection = params.chatModelSelection;
+    const chatModelSelection = params.chatModelSelection ?? (chatModelId
+      ? { agentTargetKey: buildAgentUniverseBackendTargetKey(backendId), providerConnectionId: null, modelId: chatModelId }
+      : params.chatModelId?.trim() === 'default' ? null : undefined);
     const commitModelSelection = params.commitModelSelection;
-    const ensureOrStartMethod = requiresProviderSafeModelSelectionRpc(chatModelSelection, commitModelSelection)
+    const ensureOrStartMethod = requiresProviderSafeExecutionRunStartRpc({ modelSelection: chatModelSelection }, true)
+      || requiresProviderSafeModelSelectionRpc(chatModelSelection, commitModelSelection)
       ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1
       : SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START;
     const startPayload = {
@@ -95,9 +100,9 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       ...(params.resumeHandle ? { resumeHandle: params.resumeHandle } : {}),
       ...(chatModelId ? { chatModelId } : {}),
       ...(commitModelId ? { commitModelId } : {}),
-      ...(chatModelSelection
+      ...(chatModelSelection !== undefined
         ? {
-            modelId: chatModelSelection.modelId,
+            ...(chatModelSelection ? { modelId: chatModelSelection.modelId } : {}),
             modelSelection: chatModelSelection,
           }
         : {}),
@@ -197,7 +202,7 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       payload: {
         runId: params.voiceAgentId,
         actionId: 'voice_agent.welcome',
-        ...(typeof params.welcomeText === 'string' && params.welcomeText.trim().length > 0
+        ...(typeof params.welcomeText === 'string'
           ? { input: { welcomeText: params.welcomeText } }
           : {}),
       },

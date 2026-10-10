@@ -8,6 +8,14 @@ export const voiceSettingsEditRegistry = createDefaultVoiceProviderRegistry();
 
 /** Applies the UI editor's semantic change to the Account writer's current Voice value. */
 export function rebaseVoiceSettingsEdit(current: VoiceSettings, before: VoiceSettings, next: VoiceSettings): VoiceSettings {
+    const previousChat = readLocalConversationVoiceSettings(before).agent.providerChat;
+    const selectedChat = readLocalConversationVoiceSettings(next).agent.providerChat;
+    if (previousChat?.status === 'needs_selection' && selectedChat?.status === 'configured'
+        && (current.providerId !== before.providerId || !areAccountSettingsJsonValuesEqual(
+            readLocalConversationVoiceSettings(current).agent.providerChat, previousChat,
+        ))) {
+        throw new Error('voice_settings_provider_changed');
+    }
     if (before.assistantLanguage !== next.assistantLanguage && current.providerId !== before.providerId) {
         throw new Error('voice_settings_provider_changed');
     }

@@ -268,7 +268,6 @@ export function BundledConversationSettingsSection(props: Readonly<{
         descriptor={{ ...visibleDescriptor, fields }}
         owner={owner}
         config={config}
-        onConfigChange={persistConfig}
         credentialStatus={credentialUsable ? 'ready' : credentialAvailability?.status ?? 'missing'}
         catalog={catalog}
         onRequestCatalog={requestCatalog}

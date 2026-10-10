@@ -1,5 +1,6 @@
 import type { ConnectedServiceBindingsV1, PluginContributionIdentityV1, VoiceRawCredentialGrantDeclaration } from '@happier-dev/protocol';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import { resolveAccountVoiceCredentialSourceSelection, resolveSelectedVoiceCredentialRawGrants } from '@/voice/credentials/accountVoiceCredential';
 import { inspectRawCredentialAuthorizationReadiness } from '@/voice/credentials/rawCredentialAuthorizationClient';
@@ -16,24 +17,26 @@ export type VoiceRawSpeechReadinessTarget = Readonly<{
 }>;
 
 /** Canonical selected speech credential targets, shared by page checks and Actions. */
-export function projectVoiceRawSpeechReadinessTargets(settings: Pick<Settings, 'voice' | 'voiceSettingsV1' | 'secrets' | 'connectedAccountPurposeBindingsV1'>, registry: VoiceProviderRegistry, machineId: string | null, purpose: 'conversation' | 'dictation' = 'conversation'): readonly VoiceRawSpeechReadinessTarget[] {
+export function projectVoiceRawSpeechReadinessTargets(settings: Pick<Settings, 'voice' | 'voiceSettingsV1' | 'secrets'>, registry: VoiceProviderRegistry, machineId: string | null, purpose: 'conversation' | 'dictation', connectedPurposes: ConnectedPurposeCatalogV1 | null): readonly VoiceRawSpeechReadinessTarget[] | null {
     const runtime = purpose === 'dictation' ? createVoiceDictationRuntimeSettingsSnapshot(settings) : settings;
     const config = resolveLocalVoiceAdapterSettings(runtime).config;
     const providerIds = purpose === 'dictation' ? [parseLocalVoiceSttSettings(config.stt).provider]
         : [parseLocalVoiceSttSettings(config.stt).provider, parseLocalVoiceTtsSettings(config.tts).provider];
-    return [...new Set(providerIds)].flatMap(providerId => {
+    const targets: VoiceRawSpeechReadinessTarget[] = [];
+    for (const providerId of new Set(providerIds)) {
         const entry = registry.get(providerId);
-        if (entry?.kind !== 'voice.speech-engine.v1' || entry.declaration?.kind !== 'speech' || !entry.declaration.credentials) return [];
+        if (entry?.kind !== 'voice.speech-engine.v1' || entry.declaration?.kind !== 'speech' || !entry.declaration.credentials) continue;
         const contribution = { pluginId: entry.pluginId, localId: entry.declaration.id };
         try {
-            const source = resolveAccountVoiceCredentialSourceSelection({ settings, contribution,
+            const source = resolveAccountVoiceCredentialSourceSelection({ settings, connectedPurposes, contribution,
                 credentialSlotId: entry.declaration.credentials.slot.id,
                 purpose: { consumer: contribution, purpose: entry.declaration.credentials.slot.purpose }, machineId });
             const rawGrants = resolveSelectedVoiceCredentialRawGrants({ declaration: entry.declaration, contribution,
                 selection: source.selection, access: { realm: 'daemon', phase: 'speech' } });
-            return rawGrants.length ? [{ providerId, contribution, rawGrants }] : [];
-        } catch { return []; }
-    });
+            if (rawGrants.length) targets.push({ providerId, contribution, rawGrants });
+        } catch { return null; }
+    }
+    return targets;
 }
 
 export async function inspectVoiceDictationSettingsReadiness(input: Readonly<{
@@ -56,7 +59,7 @@ export async function inspectVoiceProviderReadiness(input: Readonly<{
     machineId: string;
     passiveSetup: VoiceProviderAgentRealtimePassiveSetup | null;
     connectedServices: ConnectedServiceBindingsV1 | null;
-    rawTargets: readonly VoiceRawSpeechReadinessTarget[];
+    rawTargets: readonly VoiceRawSpeechReadinessTarget[] | null;
     signal?: AbortSignal;
     isCurrent(): boolean;
 }>) {
@@ -65,7 +68,7 @@ export async function inspectVoiceProviderReadiness(input: Readonly<{
             params: { connectedServices: input.connectedServices } }, { timeoutMs: 30_000 }).then(outcome =>
                 outcome.supported && outcome.response.ok ? readVoiceProviderPassiveRealtimeSetupResult(outcome.response.result) : null, () => null)
         : Promise.resolve(null);
-    const rawResult = Promise.all(input.rawTargets.map(async target => {
+    const rawResult = input.rawTargets === null ? Promise.resolve(null) : Promise.all(input.rawTargets.map(async target => {
         const statuses = await Promise.all(target.rawGrants.map(grant => input.isCurrent()
             ? inspectRawCredentialAuthorizationReadiness(target.contribution, grant, input.signal)
             : Promise.resolve('unknown' as const)));

@@ -10,7 +10,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { useSetupBlockPanelWidth } from '@/components/ui/setupBlocks/SetupBlockGrid';
 import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
 import { Text } from '@/components/ui/text/Text';
-import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
+import { VoiceMarkArt, type VoiceMarkEvent } from '@/components/voice/presence/VoiceMark';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { VoiceServiceGallery, type VoiceServiceTile } from '@/voice/settings/panels/VoiceServiceGallery';
@@ -35,6 +35,8 @@ export type VoiceSetupPanelModel = Readonly<{
     readiness: Readonly<{ reason: string | null; action: string | null }> | null;
     /** True while the person's first try is running: the try step shows the live status and heard words. */
     tryLive: boolean;
+    /** The first genuine turn completed setup here: the planet's dots gather once (lab SD). */
+    firstSuccess?: VoiceMarkEvent | null;
     /** The resolved `voice.toggle` binding (rebindable), or null where there is no keyboard. */
     shortcutLabel: string | null;
 }>;
@@ -106,6 +108,7 @@ export const VoiceSetupPanel = React.memo(function VoiceSetupPanel(props: Readon
                     <VoiceMarkArt
                         pose={failed ? 'shade' : 'ready'}
                         light={light}
+                        event={model.firstSuccess}
                         // One planet moves at a time: while the first try runs, the live Voice presence
                         // carries the atmosphere, so the setup planet keeps its readiness light, still.
                         still

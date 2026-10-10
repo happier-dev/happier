@@ -53,11 +53,13 @@ import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
-import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { sessionAddressKey, normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { resolveSelectedVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
+import { readSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
@@ -166,10 +168,6 @@ export async function initializeVoiceAgentHandle({
     const idleTtlSeconds = Number(agentCfg?.idleTtlSeconds ?? 300);
     const verbosity = (agentCfg?.verbosity ?? 'short') as 'short' | 'balanced';
     const admittedVoice = voiceSettingsParse(settings.voice);
-    const voicePolicy = {
-        assistantLanguage: normalizeNonEmptyString(admittedVoice.assistantLanguage),
-        welcome: { enabled: admittedVoice.welcome.enabled, mode: admittedVoice.welcome.mode },
-    } satisfies NonNullable<VoiceAgentStartParams['voicePolicy']>;
     const agentSource = providerChat
         ? 'agent' as const
         : (agentCfg?.agentSource ?? 'session') as 'session' | 'agent';
@@ -272,7 +270,6 @@ export async function initializeVoiceAgentHandle({
         if (!session) return resolveConfiguredModelIds();
 
         return resolveDaemonVoiceAgentModelIds({
-            modelMode: typeof session.modelMode === 'string' ? session.modelMode : null,
             metadata: readVoiceSessionOwnerMetadataFromState(storage.getState(), targetAddress ?? daemonSessionId),
             agent: agentCfg ?? {},
         }) ?? resolveConfiguredModelIds();
@@ -281,8 +278,22 @@ export async function initializeVoiceAgentHandle({
     const boundTargetSessionAddress = resolveBoundTargetSessionAddress(sessionId);
     const boundTargetSessionId = boundTargetSessionAddress?.sessionId ?? null;
     const boundConversationSessionId = resolveBoundConversationSessionId(sessionId);
+    const globalConversationSessionId = resolvePersistedDaemonConversationSessionId();
+    const isGlobalVoiceAgent =
+        sessionId === VOICE_AGENT_GLOBAL_SESSION_ID
+        || sessionId === globalConversationSessionId;
+    const personaTarget = boundTargetSessionAddress
+        ?? (isGlobalVoiceAgent ? null : normalizeSessionAddress(accountLifetime.scope.serverId, sessionId));
+    const assertWelcomeInputsCurrent = () => {
+        assertAccountCurrent();
+        const currentTarget = resolveBoundTargetSessionAddress(sessionId);
+        if ((currentTarget ? sessionAddressKey(currentTarget) : null)
+            !== (boundTargetSessionAddress ? sessionAddressKey(boundTargetSessionAddress) : null)) {
+            throw new Error('voice_agent_binding_changed');
+        }
+    };
     const daemonTargetSessionId = normalizeNonEmptyString(
-        boundTargetSessionId ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : sessionId),
+        boundTargetSessionId ?? (isGlobalVoiceAgent ? null : sessionId),
     );
     if (daemonTargetSessionId) {
         await ensureSessionTranscriptReady(
@@ -322,10 +333,6 @@ export async function initializeVoiceAgentHandle({
     }
     await assertDaemonVoiceAgentRuntimeSupported();
 
-    const globalConversationSessionId = resolvePersistedDaemonConversationSessionId();
-    const isGlobalVoiceAgent =
-        sessionId === VOICE_AGENT_GLOBAL_SESSION_ID
-        || sessionId === globalConversationSessionId;
     let daemonConversationSessionId =
         backend === 'daemon' && isGlobalVoiceAgent
             ? normalizeNonEmptyString(globalConversationSessionId ?? boundConversationSessionId)
@@ -416,8 +423,8 @@ export async function initializeVoiceAgentHandle({
             readVoiceSessionOwnerMetadataFromState(storage.getState(), targetAddress ?? daemonSessionId),
         );
     };
-    let chatModelId = '';
-    let commitModelId = '';
+    let chatModelId: string | undefined;
+    let commitModelId: string | undefined;
     let resolvedAgentId: string | null = null;
     let resolvedBackendTarget: BackendTargetRefV1 | null = null;
     let runMetadataSessionId: string | null = null;
@@ -512,16 +519,42 @@ export async function initializeVoiceAgentHandle({
     assertAccountCurrent();
     const client: VoiceAgentClient = getDaemonVoiceAgentClient(accountLifetime.scope);
 
+    const resolveFreshVoicePolicy = async () => {
+        assertWelcomeInputsCurrent();
+        const options = {
+            assistantLanguage: admittedVoice.assistantLanguage,
+            welcome: admittedVoice.welcome,
+            targetDisplayName: personaTarget ? readSessionDisplayTitle(personaTarget) : null,
+            serverId: accountLifetime.scope.serverId,
+        };
+        let welcomeText: string | undefined;
+        if (admittedVoice.welcome.enabled && admittedVoice.welcome.templateId !== null) {
+            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+            assertWelcomeInputsCurrent();
+            const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId);
+            try {
+                assertWelcomeInputsCurrent();
+                welcomeText = await resolveSelectedVoiceWelcomeText({ ...options, accountContext: account });
+            } finally {
+                account.dispose();
+            }
+        } else {
+            welcomeText = await resolveSelectedVoiceWelcomeText(options);
+        }
+        assertWelcomeInputsCurrent();
+        return {
+            assistantLanguage: normalizeNonEmptyString(admittedVoice.assistantLanguage),
+            welcome: { enabled: admittedVoice.welcome.enabled, mode: admittedVoice.welcome.mode,
+                ...(typeof welcomeText === 'string' ? { text: welcomeText } : {}) },
+        } satisfies NonNullable<VoiceAgentStartParams['voicePolicy']>;
+    };
+    let voicePolicy: VoiceAgentStartParams['voicePolicy'];
+
     const startArgsBase = buildVoiceAgentStartArgsBase({
         agentSource,
-        profileId: normalizeNonEmptyString(
-            (() => {
-                const targetAddress = boundTargetSessionAddress?.sessionId === rpcSessionId
-                    ? boundTargetSessionAddress
-                    : null;
-                return readVoiceSessionOwnerMetadataFromState(storage.getState(), targetAddress ?? rpcSessionId)?.profileId;
-            })(),
-        ),
+        profileId: personaTarget ? normalizeNonEmptyString(
+            readVoiceSessionOwnerMetadataFromState(storage.getState(), personaTarget)?.profileId,
+        ) : null,
         verbosity,
         permissionIntent,
         idleTtlSeconds,
@@ -629,20 +662,6 @@ export async function initializeVoiceAgentHandle({
                         commitModelSelection: providerChat.commit,
                     }
                     : {}),
-                ...(providerChat && providerChat.configuration.temperature !== null
-                    ? {
-                        sessionConfigOptionOverrides: {
-                            v: 1 as const,
-                            updatedAt: 0,
-                            overrides: {
-                                temperature: {
-                                    updatedAt: 0,
-                                    value: providerChat.configuration.temperature,
-                                },
-                            },
-                        },
-                    }
-                    : {}),
                 ...(buildStartTranscript(backend) ? { transcript: buildStartTranscript(backend) } : {}),
                 ...(backend === 'daemon'
                     ? {
@@ -656,8 +675,13 @@ export async function initializeVoiceAgentHandle({
                 ...(overrides ?? {}),
             }) satisfies VoiceAgentStartParams;
 
-        const startOnce = (overrides?: Partial<Pick<VoiceAgentStartParams, 'existingRunId' | 'resumeWhenInactive' | 'resumeHandle'>>) => {
-            assertAccountCurrent();
+        const startOnce = async (overrides?: Partial<Pick<VoiceAgentStartParams, 'existingRunId' | 'resumeWhenInactive' | 'resumeHandle'>>) => {
+            const requestedRunId = overrides?.existingRunId === null ? null : overrides?.existingRunId ?? existingRunId;
+            const retainedPolicy = requestedRunId && retainedRunState?.runId === requestedRunId
+                ? retainedRunState.voicePolicy
+                : undefined;
+            voicePolicy = retainedPolicy ?? await resolveFreshVoicePolicy();
+            assertWelcomeInputsCurrent();
             return client.start(buildStartParams(overrides));
         };
 
@@ -737,9 +761,11 @@ export async function initializeVoiceAgentHandle({
         }
     }
 
-    if (!accountLifetime.isCurrent()) {
+    try {
+        assertWelcomeInputsCurrent();
+    } catch (error) {
         await client.stop({ sessionId: rpcSessionId, voiceAgentId: started.voiceAgentId }).catch(() => {});
-        assertAccountCurrent();
+        throw error;
     }
 
     if (started.voiceAgentId === existingRunId && retainedRunState?.runId !== started.voiceAgentId) {

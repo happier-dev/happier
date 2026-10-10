@@ -212,6 +212,19 @@ describe('createVoiceWelcomePolicy', () => {
         expect(welcome.mock.calls[0]?.[0]).toMatchObject({ welcomeText: expect.stringMatching(/Bonjour/) });
     });
 
+    it.each(['  Bonjour Atlas.\nKeep this spacing.  ', ' \n ', ''])('delivers the admitted custom greeting byte-for-byte instead of replacing it with the language default: %j', async text => {
+        const welcome = vi.fn(async (_params: Parameters<VoiceAgentClient['welcome']>[0]) => ({ assistantText: 'Custom welcome' }));
+        const client = createClient(welcome);
+        const handle: VoiceAgentHandle = {
+            ...createHandle(client),
+            voicePolicy: { assistantLanguage: 'fr-FR', welcome: { enabled: true, mode: 'immediate', text } },
+        };
+        const { createVoiceWelcomePolicy } = await import('./voiceWelcomePolicy');
+        await createVoiceWelcomePolicy({ getVoiceAgentHandle: async () => handle, resetCachedHandle: () => {} })
+            .ensureRunningAndMaybeWelcome('__voice_agent__');
+        expect(welcome.mock.calls[0]?.[0].welcomeText).toBe(text);
+    });
+
     it('leaves unsupported reply languages to the run model greeting policy', async () => {
         const welcome = vi.fn(async (_params: Parameters<VoiceAgentClient['welcome']>[0]) => ({ assistantText: 'مرحبا' }));
         const client = createClient(welcome);

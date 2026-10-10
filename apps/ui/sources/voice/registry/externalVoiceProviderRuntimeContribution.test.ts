@@ -28,7 +28,7 @@ import {
   type CurrentUiContextSnapshotV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import {
@@ -71,7 +71,23 @@ import { activate as activateOpenAiVoice } from '../../../../../packages/plugins
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { createVoiceClientRawCredentialAccess } from '@/voice/credentials/rawCredentialClient';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { createBundledConversationRuntimeHostLease } from './bundledConversationRuntimeHost';
+import { BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS } from './generatedBundledVoiceEntries';
+
+let preparationHome: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
+beforeEach(async () => {
+  const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+  preparationHome = await createPlainArtifactHomeFixture('https://voice-preparation.example', { handleRequest: async path =>
+    path === '/v2/account/settings' ? response({ version: 1, content: { t: 'plain', v: {} } })
+      : path === PROMPT_LIBRARY_ROWS_ROUTE_V1 ? response({ status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({
+        key, revision: 1, content: key === 'voice' ? { t: 'plain', v: { key, value: { v: 1, scope: { kind: 'voice' }, entries: [] } } } : null,
+      })) }) : null });
+});
+afterEach(() => preparationHome.dispose());
 
 import {
   bindVoiceProviderSettingsActions,
@@ -81,7 +97,7 @@ import {
   createExternalVoiceProviderRuntimeContribution,
 } from './externalVoiceProviderActivation';
 import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
-import { getExternalVoiceProviderRegistration } from './externalVoiceProviderRegistrations';
+import { commitExternalVoiceProviderRegistration, getExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } from './externalVoiceProviderRegistrations';
 import {
   createExternalVoiceProviderSettingsDescriptor,
   projectExternalVoiceProviderSettings,
@@ -291,6 +307,8 @@ function createHostFixture(input: Readonly<{
   getRealtimeClientToolDefinitions?: BundledRealtimeProviderRuntimeHost['getRealtimeClientToolDefinitions'];
   currentUiContext?: NonNullable<Parameters<typeof createVoiceToolHandlers>[0]['currentUiContext']>;
   selectedProviderId?: string;
+  assistantLanguage?: string;
+  welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; templateId: string | null }>;
   voiceHooks?: BundledRealtimeProviderRuntimeHost['voiceHooks'];
   readProviderConfig?: () => unknown;
   readProviderConversationState?: BundledRealtimeProviderRuntimeHost['readProviderConversationState'];
@@ -319,6 +337,8 @@ function createHostFixture(input: Readonly<{
     getRealtimeClientToolDefinitions: input.getRealtimeClientToolDefinitions ?? (() => []),
     getSettings: () => ({ voice: {
       providerId: selectedProviderId,
+      ...(input.assistantLanguage ? { assistantLanguage: input.assistantLanguage } : {}),
+      ...(input.welcome ? { welcome: input.welcome } : {}),
       providers: { [selectedProviderId]: {
         schemaVersion: 1,
         config: input.readProviderConfig?.() ?? { mode: 'default' },
@@ -465,7 +485,7 @@ function startAdapterAtKnownSession(
     ...current,
     sessions: {
       ...current.sessions,
-      [sessionId]: createSessionFixture({ id: sessionId, serverId: 'server-a' }),
+      [sessionId]: createSessionFixture({ id: sessionId, serverId: preparationHome.home.id }),
     } as never,
   }));
   onTestFinished(() => {
@@ -478,7 +498,7 @@ function startAdapterAtKnownSession(
   });
   return adapter.start({
     sessionId,
-    requestedTargetSessionAddress: { serverId: 'server-a', sessionId },
+    requestedTargetSessionAddress: { serverId: preparationHome.home.id, sessionId },
   });
 }
 
@@ -716,23 +736,26 @@ describe('external Voice provider host composition', () => {
 
   it('composes the admitted standalone attempt policy through the real OpenAI mint boundary', async () => {
     const previous = storage.getState();
-    onTestFinished(() => storage.setState({ settings: previous.settings, artifacts: previous.artifacts }));
+    const home = await createPlainArtifactHomeFixture('https://voice-policy-home.example', { handleRequest: async path => {
+      const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+      if (path === '/v2/account/settings') return response({ version: 1, content: { t: 'plain', v: {} } });
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return response({ status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
+        content: key === 'voice' ? { t: 'plain', v: { key, value: { v: 1, scope: { kind: 'voice' }, entries: [] } } } : null })) });
+      return null;
+    } });
+    onTestFinished(() => home.dispose());
+    const account = await captureLazyActionAccountContext(home.home.id);
+    onTestFinished(() => account.dispose());
+    await account.createArtifactDocument({ artifactId: 'voice-policy-doc', header: { v: 1, kind: 'prompt_doc.v2', title: 'Voice policy' },
+      body: JSON.stringify({ v: 1, markdown: 'Use the project terminology.', createdAtMs: 1, updatedAtMs: 1 }) });
     storage.setState({
       settings: {
         ...previous.settings,
-        promptStacksV1: { v: 1, surfaces: { coding: [], profilesById: {}, voice: [{
-          id: 'voice-policy', ref: { kind: 'doc', artifactId: 'voice-policy-doc' },
-          enabled: true, placement: 'system_append', editPolicy: 'user_only',
-        }] } },
         voice: voiceSettingsParse({ providerId, assistantLanguage: 'fr-FR', welcome: { enabled: true, mode: 'on_first_turn' } }),
       },
-      artifacts: {
-        ...previous.artifacts,
-        'voice-policy-doc': {
-          id: 'voice-policy-doc', title: 'Voice policy', isDecrypted: true,
-          headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
-          body: JSON.stringify({ v: 1, markdown: 'Use the project terminology.', createdAtMs: 1, updatedAtMs: 1 }),
-        },
+      sessions: { ...previous.sessions, 'bound-policy': createSessionFixture({ id: 'bound-policy', serverId: home.home.id,
+        metadata: { work: { memoryEnabled: false, promptStack: [{ id: 'voice-policy', ref: { kind: 'doc', artifactId: 'voice-policy-doc' },
+          enabled: true, placement: 'system_append' }], sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Stay conversational.' } } } }),
       },
     });
     const register = vi.fn();
@@ -756,7 +779,7 @@ describe('external Voice provider host composition', () => {
     const protocol = createExternalProtocol({ ...fixture, getSettings: () => storage.getState().settings },
       providerId, 'web', declaration, leaf.protocol, () => ({ request }));
     await expect(protocol.prepare({ controlSessionId: 'voice-policy', attemptId: 1, reason: 'initial',
-      request: null, signal: new AbortController().signal })).resolves.toMatchObject({ kind: 'prepared' });
+      request: { requestedTargetSessionAddress: { serverId: home.home.id, sessionId: 'bound-policy' } }, signal: new AbortController().signal })).resolves.toMatchObject({ kind: 'prepared' });
     const parameters = request.mock.calls[0]![0].parameters as { body: { session: { instructions: string } } };
     const instructions = parameters.body.session.instructions;
     expect(instructions).toContain('readCurrentUiContext');
@@ -765,7 +788,151 @@ describe('external Voice provider host composition', () => {
     expect(instructions).toContain('fr-FR');
     expect(instructions).toContain('On your first reply');
     expect(instructions).toContain('Use the project terminology.');
+    expect(instructions).toContain('Stay conversational.');
+    expect(instructions).not.toContain('role_id=');
+    expect(instructions.match(/Use the project terminology\./g)).toHaveLength(1);
     expect(instructions).toContain('Keep responses practical.');
+    expect(instructions).not.toContain('If the user asks what you remember from earlier conversations or decisions');
+    await account.updateArtifactDocument({ artifactId: 'voice-policy-doc', expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      header: { v: 1, kind: 'prompt_doc.v2', title: 'Voice policy' },
+      body: JSON.stringify({ v: 1, markdown: 'Use the edited terminology.', createdAtMs: 1, updatedAtMs: 2 }) });
+    await expect(protocol.prepare({ controlSessionId: 'voice-policy', attemptId: 1, reason: 'reconnect',
+      request: { requestedTargetSessionAddress: { serverId: home.home.id, sessionId: 'bound-policy' } }, signal: new AbortController().signal })).resolves.toMatchObject({ kind: 'prepared' });
+    // This provider reconnects with the accepted short-lived credential; a new
+    // Start is its next supported instruction-mint boundary.
+    expect(request.mock.calls).toHaveLength(1);
+    await expect(protocol.prepare({ controlSessionId: 'voice-policy', attemptId: 2, reason: 'initial',
+      request: { requestedTargetSessionAddress: { serverId: home.home.id, sessionId: 'bound-policy' } }, signal: new AbortController().signal })).resolves.toMatchObject({ kind: 'prepared' });
+    const restarted = request.mock.calls[1]![0].parameters as { body: { session: { instructions: string } } };
+    expect(restarted.body.session.instructions).toContain('Use the edited terminology.');
+    expect(restarted.body.session.instructions).not.toContain('Use the project terminology.');
+    storage.setState({ sessions: { ...storage.getState().sessions,
+      'bound-policy': createSessionFixture({ id: 'bound-policy', serverId: home.home.id, metadata: { work: {
+        promptStack: [{ id: 'required', ref: { kind: 'doc', artifactId: 'missing' }, enabled: true, required: true, placement: 'system_append' }],
+      } } }),
+    } });
+    await expect(protocol.prepare({ controlSessionId: 'voice-policy', attemptId: 3, reason: 'initial',
+      request: { requestedTargetSessionAddress: { serverId: home.home.id, sessionId: 'bound-policy' } }, signal: new AbortController().signal })).rejects.toMatchObject({ status: 'attachment_unavailable', reason: 'not_found' });
+    expect(request.mock.calls).toHaveLength(2);
+    storage.setState({ sessions: { ...storage.getState().sessions,
+      'bound-policy': createSessionFixture({ id: 'bound-policy', serverId: home.home.id, metadata: { work: {
+        promptStack: [{ id: 'required', ref: { kind: 'doc', artifactId: 'voice-policy-doc' }, enabled: true, placement: 'system_append' }],
+      } } }),
+    } });
+    await expect(protocol.prepare({ controlSessionId: 'voice-policy', attemptId: 3, reason: 'initial',
+      request: { requestedTargetSessionAddress: { serverId: home.home.id, sessionId: 'bound-policy' } }, signal: new AbortController().signal })).resolves.toMatchObject({ kind: 'prepared' });
+    expect(request.mock.calls).toHaveLength(3);
+  });
+
+  it('applies the exact bound owner voice once to the real preflight and preparation snapshot', async () => {
+    const entry = BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS.find(entry => entry.pluginId === 'happier.voice.openai' && entry.declaration.kind === 'conversation');
+    if (!entry || entry.declaration.kind !== 'conversation') throw new Error('Missing OpenAI declaration');
+    const settings = createExternalVoiceProviderSettingsDescriptor(entry.declaration.settings);
+    const preference = { providerContributionId: entry.providerId, settingFieldPath: 'voice', value: 'my-custom-voice' };
+    const previousSessions = storage.getState().sessions;
+    onTestFinished(() => storage.setState({ sessions: previousSessions }));
+    storage.setState({ sessions: { ...previousSessions,
+      bound: createSessionFixture({ id: 'bound', serverId: preparationHome.home.id, metadata: { summary: { text: 'Bound Session', updatedAt: 1 }, work: { voicePreference: preference } } }),
+      visible: createSessionFixture({ id: 'visible', serverId: preparationHome.home.id, metadata: { summary: { text: 'Wrong visible Session', updatedAt: 1 }, work: { voicePreference: { ...preference, value: 'wrong-visible-voice' } } } }),
+    } });
+    const configs: unknown[] = [];
+    let attemptPolicy: unknown;
+    const protocol = createExternalProtocol(createHostFixture({ transcriptEvents: [], lifecycleEvents: [],
+      selectedProviderId: entry.providerId, readProviderConfig: () => settings.defaultConfig,
+      assistantLanguage: 'en', welcome: { enabled: true, mode: 'immediate', templateId: null },
+    }), entry.providerId, 'web', entry.declaration, {
+      preflight: async input => { configs.push(input.providerConfig); return { kind: 'ready' }; },
+      prepare: async input => { configs.push(input.providerConfig); attemptPolicy = input.attemptPolicy; return { kind: 'prepared', session: { config: {}, safeMetadata: null } }; },
+      decodeControl: () => [], encodeTurnControl: () => null,
+    });
+    const input = { controlSessionId: 'control', attemptId: 81, signal: new AbortController().signal,
+      request: { requestedTargetSessionAddress: { serverId: preparationHome.home.id, sessionId: 'bound' } } } as const;
+    expect(await protocol.preflight?.(input)).toMatchObject({ kind: 'ready' });
+    const prepared = await protocol.prepare({ ...input, reason: 'initial' });
+    expect(configs[0]).toEqual({ ...settings.defaultConfig, voice: 'my-custom-voice' });
+    expect(configs[1]).toBe(configs[0]);
+    expect(prepared).toMatchObject({ kind: 'prepared', inUseVoice: { ...preference, displayName: expect.any(String) } });
+    expect(attemptPolicy).toMatchObject({ welcome: { text: expect.stringContaining('Bound Session') } });
+  });
+
+  it.each(['owner', 'Account'] as const)('does not disclose a captured private preference after the exact %s is revoked during catalog admission', async revoked => {
+    const entry = BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS.find(entry => entry.pluginId === 'happier.voice.openai' && entry.declaration.kind === 'conversation');
+    if (!entry || entry.declaration.kind !== 'conversation') throw new Error('Missing OpenAI declaration');
+    const settings = createExternalVoiceProviderSettingsDescriptor(entry.declaration.settings);
+    const previousSessions = storage.getState().sessions;
+    const previousScope = storage.getState().profileScope;
+    const previousApplied = getAppliedActiveServerSnapshot();
+    const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+    const previousRegistration = getExternalVoiceProviderRegistration(entry.providerId);
+    const token = {};
+    onTestFinished(() => { storage.setState({ sessions: previousSessions, profileScope: previousScope }); removeExternalVoiceProviderRegistration(token);
+      if (previousRegistration) commitExternalVoiceProviderRegistration(previousRegistration);
+      publishAppliedActiveServerSnapshot(previousApplied, previousAvailable); });
+    if (revoked === 'Account') {
+      storage.setState({ profileScope: { serverId: 'home', accountId: 'voice-owner' } });
+      publishAppliedActiveServerSnapshot({ serverId: 'home', serverUrl: 'https://home.test', generation: previousApplied.generation + 1 }, true);
+    }
+    storage.setState({ sessions: { ...previousSessions, revoked: createSessionFixture({ id: 'revoked', serverId: 'home',
+      metadata: { work: { voicePreference: { providerContributionId: entry.providerId, settingFieldPath: 'voice', value: 'private-owner-voice' } } },
+    }) } });
+    let resolveCatalog!: (rows: readonly VoiceRealtimeJsonValue[]) => void;
+    let reachedCatalog!: () => void;
+    const reached = new Promise<void>(resolve => { reachedCatalog = resolve; });
+    // The contributed catalog and protocol leaves are genuine plugin boundaries;
+    // the host catalog client, preference admission and owner reader stay real.
+    commitExternalVoiceProviderRegistration({ token, pluginId: entry.pluginId, localId: entry.declaration.id,
+      providerId: entry.providerId, descriptor: null, adapter: null, settingsOperations: {
+        listCatalog: async () => { reachedCatalog(); return await new Promise(resolve => { resolveCatalog = resolve; }); },
+      } });
+    let disclosed = false;
+    const protocol = createExternalProtocol(createHostFixture({ transcriptEvents: [], lifecycleEvents: [],
+      selectedProviderId: entry.providerId, readProviderConfig: () => settings.defaultConfig,
+    }), entry.providerId, 'web', entry.declaration, {
+      preflight: async () => { disclosed = true; return { kind: 'ready' }; },
+      prepare: async () => ({ kind: 'prepared', session: { config: {}, safeMetadata: null } }),
+      decodeControl: () => [], encodeTurnControl: () => null,
+    });
+    const pending = protocol.preflight!({ controlSessionId: 'control', attemptId: 82, signal: new AbortController().signal,
+      request: { requestedTargetSessionAddress: { serverId: 'home', sessionId: 'revoked' } } });
+    await reached;
+    if (revoked === 'Account') publishAppliedActiveServerRuntimeAvailability(false);
+    else storage.setState({ sessions: previousSessions });
+    resolveCatalog([{ id: 'marin', name: 'Marin' }]);
+    expect(await pending).toMatchObject({ kind: 'declined', code: revoked === 'Account' ? 'voice_account_operation_cancelled' : 'session_metadata_unavailable' });
+    expect(disclosed).toBe(false);
+  });
+
+  it('does not publish a raw plugin in-use voice claim when no host selection was admitted', async () => {
+    const rawPrepared = { kind: 'prepared' as const, session: { config: {}, safeMetadata: null },
+      inUseVoice: { providerContributionId: providerId, settingFieldPath: 'voice', value: 'plugin-invented', displayName: 'Plugin claim' },
+    };
+    const protocol = createExternalProtocol(createHostFixture({ transcriptEvents: [], lifecycleEvents: [] }), providerId, 'web', declaration, {
+      prepare: async () => rawPrepared, decodeControl: () => [], encodeTurnControl: () => null,
+    });
+    const prepared = await protocol.prepare({ controlSessionId: 'control', attemptId: 83, reason: 'initial', request: null, signal: new AbortController().signal });
+    expect(prepared).toMatchObject({ kind: 'prepared' });
+    expect(prepared).not.toHaveProperty('inUseVoice');
+  });
+
+  it('refuses a prepared carrier when the exact target is revoked during the provider preparation boundary', async () => {
+    storage.setState({ sessions: { ...storage.getState().sessions,
+      'pending-target': createSessionFixture({ id: 'pending-target', serverId: preparationHome.home.id, metadata: { work: {} } }),
+    } });
+    let reachedPrepare!: () => void;
+    const reached = new Promise<void>(resolve => { reachedPrepare = resolve; });
+    let finishPrepare!: () => void;
+    const held = new Promise<void>(resolve => { finishPrepare = resolve; });
+    const protocol = createExternalProtocol(createHostFixture({ transcriptEvents: [], lifecycleEvents: [] }), providerId, 'web', declaration, {
+      prepare: async () => { reachedPrepare(); await held; return { kind: 'prepared', session: { config: {}, safeMetadata: null } }; },
+      decodeControl: () => [], encodeTurnControl: () => null,
+    });
+    const pending = protocol.prepare({ controlSessionId: 'history', attemptId: 84, reason: 'initial',
+      request: { requestedTargetSessionAddress: { serverId: preparationHome.home.id, sessionId: 'pending-target' } }, signal: new AbortController().signal });
+    await reached;
+    const { 'pending-target': _removed, ...sessions } = storage.getState().sessions;
+    storage.setState({ sessions });
+    finishPrepare();
+    expect(await pending).toMatchObject({ kind: 'declined', code: 'voice_account_operation_cancelled' });
   });
 
   it('hands initial prepare one immutable preflight snapshot and consumes it before every settlement', async () => {
@@ -1774,7 +1941,7 @@ describe('external Voice provider host composition', () => {
     await startAdapterAtKnownSession(runtime.adapter, 'stable-tool-attempt');
 
     expect(createConnection).toHaveBeenCalledTimes(1);
-    expect(getAttemptTools).toHaveBeenCalledWith({ effectCalls: 'stable_ids', exposure: 'voice_assistant' });
+    expect(getAttemptTools).toHaveBeenCalledWith(expect.objectContaining({ effectCalls: 'stable_ids', exposure: 'voice_assistant' }));
     await runtime.dispose();
   });
 
@@ -1831,7 +1998,7 @@ describe('external Voice provider host composition', () => {
     await expect(invocationUi.watchEntityDragDrop({ mountId: 'voice-row' }, onDragState))
       .rejects.toMatchObject({ code: 'plugin_ui_action_host_unavailable' });
     expect(onDragState).not.toHaveBeenCalled();
-    await expect(invocationUi.widgetArea({ area: 'voice', operation: { actionId: 'widgets.instance.list' } }))
+    await expect(invocationUi.widgetArea({ area: 'voice', operation: { actionId: 'widgets.item.list' } }))
       .rejects.toMatchObject({ code: 'plugin_ui_action_host_unavailable' });
   });
 

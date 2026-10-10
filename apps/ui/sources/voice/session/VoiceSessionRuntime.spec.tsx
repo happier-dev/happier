@@ -7,6 +7,10 @@ import { createStableStorageReader } from '@/dev/testkit/mocks/storage';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
+import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { SavedSecretResourceMaterialsResponseV1Schema, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { applyConnectedAccountCatalogSnapshot, resetConnectedAccountCatalogSnapshotsForTests } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
+import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { profileDefaults, tryParseProfile } from '@/sync/domains/profiles/profile';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
@@ -124,8 +128,6 @@ const readFixtureSettings = createStableStorageReader(() => settingsParse({
   voice: readFixtureVoiceSettings('voice'),
   voiceSettingsV1: readFixtureVoiceSettings('voiceSettingsV1'),
   secrets: useSetting('secrets') ?? settingsDefaults.secrets,
-  connectedAccountPurposeBindingsV1: useSetting('connectedAccountPurposeBindingsV1')
-    ?? settingsDefaults.connectedAccountPurposeBindingsV1,
 }));
 const readFixtureProfile = createStableStorageReader(() => {
   const profile = tryParseProfile({ ...profileDefaults, ...useProfile() });
@@ -136,11 +138,19 @@ let writeFixtureSnapshot: (() => void) | null = null;
 
 async function renderScreen(element: React.ReactElement) {
   const { storage } = await import('@/sync/domains/state/storage');
-  writeFixtureSnapshot = () => storage.setState({
-    settings: readFixtureSettings(),
-    profile: readFixtureProfile(),
-    profileScope: useActiveServerAccountScope(),
-  });
+  writeFixtureSnapshot = () => {
+    const scope = useActiveServerAccountScope();
+    if (scope) applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+      status: 'ready', revision: 1,
+      record: { key: 'purposes', value: ConnectedPurposeCatalogV1Schema.parse(useSetting('connectedPurposes') ?? { v: 1, bindings: [] }) },
+    }, true);
+    storage.setState({
+      settings: readFixtureSettings(),
+      profile: readFixtureProfile(),
+      profileScope: scope,
+      settingsScope: scope,
+    });
+  };
   writeFixtureSnapshot();
   const screen = await renderRuntimeScreen(element);
   const update = screen.tree.update.bind(screen.tree);
@@ -152,6 +162,7 @@ async function renderScreen(element: React.ReactElement) {
 }
 
 let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let resourceMaterials: readonly SavedSecretResourceMaterialV1[] = [];
 const serverUrlsById = new Map<string, string>();
 
 type AccountScope = Readonly<{ serverId: string; accountId: string }>;
@@ -167,9 +178,18 @@ async function applyAccountScope(scope: AccountScope | null) {
     return null;
   }
   const serverUrl = serverUrlsById.get(scope.serverId) ?? `https://${scope.serverId}.voice-runtime.example.test`;
-  accountConnection = await restoreServerAccountForTest({ serverUrl, accountId: scope.accountId });
+  accountConnection = await restoreServerAccountForTest({ serverUrl, accountId: scope.accountId,
+    request: async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+      if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+      if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: resourceMaterials });
+      return Response.json({}, { status: 404 });
+    },
+  });
   serverUrlsById.set(accountConnection.home.id, serverUrl);
   const appliedScope = { serverId: accountConnection.home.id, accountId: scope.accountId };
+  await refreshSavedSecretCatalog(appliedScope);
   storage.setState({ profileScope: appliedScope });
   return appliedScope;
 }
@@ -369,6 +389,8 @@ const { createVoiceSessionManager } = await import('./voiceSessionManager');
 
 describe('VoiceSessionRuntime', () => {
   beforeEach(async () => {
+    resetConnectedAccountCatalogSnapshotsForTests();
+    resourceMaterials = [];
     platformOsMock.value = 'ios';
     currentUiContextToolSetMode.value = 'on_demand';
     for (const path of Object.keys(runtimeModuleFixtures) as Array<keyof RuntimeFixtureModules>) {
@@ -420,14 +442,17 @@ describe('VoiceSessionRuntime', () => {
     vi.clearAllMocks();
   });
 
-  it('does not reparse unchanged Voice provider settings for an endpoint connectivity update', async () => {
+  it('does not renormalize materialized Voice settings for connectivity or Profile presentation updates', async () => {
     platformOsMock.value = 'web';
     useSetting.mockImplementation((key) => key === 'voice' || key === 'voiceSettingsV1'
       ? { providerId: 'off' }
       : null);
     const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
     const { storage } = await import('@/sync/domains/state/storage');
-    await renderScreen(React.createElement(VoiceSessionRuntime));
+    let commits = 0;
+    await renderScreen(React.createElement(React.Profiler, {
+      id: 'voice-runtime', onRender: () => { commits += 1; },
+    }, React.createElement(VoiceSessionRuntime)));
 
     const voice = storage.getState().settings.voice;
     const providers = voice.providers;
@@ -455,6 +480,30 @@ describe('VoiceSessionRuntime', () => {
       expect(providerReads).toBe(0);
     } finally {
       Object.defineProperty(voice, 'providers', providersDescriptor);
+    }
+
+    const canonicalVoice = storage.getState().settings.voiceSettingsV1;
+    const dictationDescriptor = Object.getOwnPropertyDescriptor(canonicalVoice, 'dictation');
+    if (!dictationDescriptor) throw new Error('Materialized Voice fixture is missing dictation');
+    const dictation = canonicalVoice.dictation;
+    let dictationReads = 0;
+    const commitsBeforeProfile = commits;
+    try {
+      // Count normalization work on the real projection, without mocking its parser.
+      // A Session runtime does not need to rebuild unrelated dictation defaults.
+      Object.defineProperty(canonicalVoice, 'dictation', {
+        configurable: true,
+        get() { dictationReads += 1; return dictation; },
+      });
+      await act(async () => {
+        storage.setState({ profile: { ...profileDefaults, ...storage.getState().profile, firstName: 'Updated' } });
+      });
+
+      expect(commits).toBeGreaterThan(commitsBeforeProfile);
+      expect(storage.getState().settings.voiceSettingsV1).toBe(canonicalVoice);
+      expect(dictationReads).toBe(0);
+    } finally {
+      Object.defineProperty(canonicalVoice, 'dictation', dictationDescriptor);
     }
   });
 
@@ -603,6 +652,8 @@ describe('VoiceSessionRuntime', () => {
   });
 
   it('rearms a failed provider-auth preparation after credential authority changes and waits for explicit start', async () => {
+    const accountScope = await applyAccountScope({ serverId: 'server-a', accountId: 'account-a' });
+    useActiveServerAccountScope.mockReturnValue(accountScope);
     let voiceSetting = {
       providerId: OPENAI_PROVIDER_ID,
       providers: {
@@ -656,7 +707,7 @@ describe('VoiceSessionRuntime', () => {
       if (key === 'voice') return voiceSetting;
       if (key === 'voiceSettingsV1') return canonicalVoiceSetting;
       if (key === 'secrets') return [];
-      if (key === 'connectedAccountPurposeBindingsV1') return {
+      if (key === 'connectedPurposes') return {
         v: 1,
         bindings: [{
           purpose: {
@@ -854,7 +905,7 @@ describe('VoiceSessionRuntime', () => {
       if (key === 'voice') return readVoiceSetting();
       if (key === 'voiceSettingsV1') return readCanonicalVoiceSetting();
       if (key === 'secrets') return secrets;
-      if (key === 'connectedAccountPurposeBindingsV1') return { v: 1, bindings: [] };
+      if (key === 'connectedPurposes') return { v: 1, bindings: [] };
       return null;
     });
     useProfile.mockImplementation(() => profile);
@@ -913,7 +964,9 @@ describe('VoiceSessionRuntime', () => {
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(() => storage.getState());
     const screen = await renderScreen(React.createElement(VoiceSessionRuntime));
-    expect(rearmAfterCredentialAuthorityChange).not.toHaveBeenCalled();
+    // Cold catalog/registry admission has no live attempt to classify. Start
+    // this transition test from the mounted, admitted Account baseline.
+    rearmAfterCredentialAuthorityChange.mockClear();
 
     accountScope = { serverId: 'server-b', accountId: 'account-b' };
     accountScope = await applyAccountScope(accountScope);
@@ -928,7 +981,7 @@ describe('VoiceSessionRuntime', () => {
       },
       credentialSlotId: 'api_key',
       credentialSource: { kind: 'savedSecret' },
-      credentialBindings: { account: { api_key: 'secret-b' } },
+      credentialBindings: { account: { api_key: 'happier:shared-secret:v1:secret-b' } },
     };
     credentialBindings = [selectedCredentialBinding];
     await act(async () => {
@@ -967,14 +1020,13 @@ describe('VoiceSessionRuntime', () => {
     });
     expect(rearmAfterCredentialAuthorityChange).toHaveBeenCalledTimes(3);
 
-    secrets = [{
-      id: 'secret-b',
-      name: 'OpenAI',
-      kind: 'apiKey',
-      encryptedValue: { _isSecretValue: true, value: 'selected-secret' },
-      createdAt: 1,
-      updatedAt: 2,
-    }];
+    resourceMaterials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
+      resourceId: 'secret-b', encryptionMode: 'plain', recipientEnvelope: null,
+      storedContent: { t: 'plain', v: { v: 1, name: 'OpenAI', kind: 'apiKey', value: 'selected-secret' } },
+      entry: { ref: 'happier:shared-secret:v1:secret-b', source: 'shared_resource', relationship: 'owner',
+        ownerAccountId: accountScope.accountId, name: 'OpenAI', kind: 'apiKey', revision: 2,
+        materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+    }] }).resources;
     profile = {
       connectedServicesV2: [{
         serviceId: 'openai',
@@ -988,6 +1040,7 @@ describe('VoiceSessionRuntime', () => {
       }],
     };
     await act(async () => {
+      await refreshSavedSecretCatalog(accountScope);
       screen.tree.update(React.createElement(VoiceSessionRuntime));
     });
 
@@ -1098,7 +1151,7 @@ describe('VoiceSessionRuntime', () => {
       if (key === 'voice') return voiceSetting;
       if (key === 'voiceSettingsV1') return canonicalVoiceSetting;
       if (key === 'secrets') return secrets;
-      if (key === 'connectedAccountPurposeBindingsV1') return { v: 1, bindings: [] };
+      if (key === 'connectedPurposes') return { v: 1, bindings: [] };
       return null;
     });
     useProfile.mockImplementation(() => profile);

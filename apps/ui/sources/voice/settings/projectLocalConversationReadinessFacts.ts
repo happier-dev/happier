@@ -1,4 +1,5 @@
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import {
   parseLocalVoiceSttSettings,
@@ -63,7 +64,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   voice: VoiceSettings;
   voiceSettingsV1: Settings['voiceSettingsV1'];
   secrets: Settings['secrets'];
-  connectedAccountPurposeBindingsV1: Settings['connectedAccountPurposeBindingsV1'];
+  connectedPurposes: ConnectedPurposeCatalogV1 | null;
   platform: VoiceReadinessPlatform;
   local: VoiceLocalProviderModeAvailability;
   localInput: ResolveVoiceProviderAvailabilityInput['local'];
@@ -123,8 +124,8 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       settings: {
         voiceSettingsV1: input.voiceSettingsV1,
         secrets: input.secrets,
-        connectedAccountPurposeBindingsV1: input.connectedAccountPurposeBindingsV1,
       },
+      connectedPurposes: input.connectedPurposes,
       executionMachineId: input.executionMachineId,
       providerEnvelope: input.voice.providers[stt.provider] ?? null,
       rawAuthorization: input.rawCredentialAuthorizationByContribution?.[stt.provider] ?? null,
@@ -137,8 +138,8 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       settings: {
         voiceSettingsV1: input.voiceSettingsV1,
         secrets: input.secrets,
-        connectedAccountPurposeBindingsV1: input.connectedAccountPurposeBindingsV1,
       },
+      connectedPurposes: input.connectedPurposes,
       executionMachineId: input.executionMachineId,
       providerEnvelope: input.voice.providers[tts.provider] ?? null,
       rawAuthorization: input.rawCredentialAuthorizationByContribution?.[tts.provider] ?? null,

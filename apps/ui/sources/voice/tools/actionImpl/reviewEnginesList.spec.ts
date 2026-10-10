@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildBackendTargetKey, PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { applyAcpCatalogSnapshot, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -95,6 +99,9 @@ const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/back
 
 describe('review engine voice tool', () => {
   beforeEach(() => {
+    resetAcpCatalogSnapshotsForTests();
+    state.settingsScope = { serverId: 'server-a', accountId: 'account-a' };
+    applyAcpCatalogSnapshot(state.settingsScope, { status: 'ready', record: { v: 1, definitions: [] }, revision: 1 }, true);
     clearDaemonMergedProjectionCacheForTests();
     state.settings.backendEnabledByTargetKey = {
       [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: false,
@@ -135,6 +142,24 @@ describe('review engine voice tool', () => {
     });
   });
 
+  it('reads configured review engine labels from the row and refuses unavailable facts without a settings root', async () => {
+    const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review', command: 'review', createdAt: 1, updatedAt: 1 });
+    const targetKey = resolveBackendTargetKeyV2({
+      kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: definition.id,
+    });
+    delete state.settings.acpCatalogSettingsV1;
+    applyAcpCatalogSnapshot(state.settingsScope, { status: 'ready', revision: 4, record: { v: 1, definitions: [definition] } }, true);
+    getMachineCapabilitiesSnapshot.mockReturnValue({ response: { results: {
+      'tool.executionRuns': { ok: true, data: { backends: { [targetKey]: { available: true, intents: ['review'] } } } },
+    } } });
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    expect(await listReviewEnginesForVoiceTool({ sessionId: 's1' })).toMatchObject({ items: expect.arrayContaining([
+      expect.objectContaining({ engineId: targetKey, label: 'Row review' }),
+    ]) });
+    applyAcpCatalogSnapshot(state.settingsScope, { status: 'unavailable', reason: 'account-mode-mismatch' }, true);
+    expect(await listReviewEnginesForVoiceTool({ sessionId: 's1' })).toMatchObject({ ok: false, errorCode: 'acp_catalog_unavailable' });
+  });
+
   it('filters disabled review engines by default', async () => {
     const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
     const res: any = await listReviewEnginesForVoiceTool({ sessionId: 's1' });
@@ -171,10 +196,10 @@ describe('review engine voice tool', () => {
 
   it('offers a configured ACP review engine by its exact target key', async () => {
     const targetKey = 'backend:review-bot:configured:review-bot';
-    state.settings.acpCatalogSettingsV1 = { v: 2, backends: [{
+    applyAcpCatalogSnapshot(state.settingsScope, { status: 'ready', revision: 4, record: { v: 1, definitions: [AcpBackendDefinitionV1Schema.parse({
       id: 'review-bot', name: 'review-bot', title: 'Review Bot', command: 'review-bot',
       createdAt: 1, updatedAt: 1,
-    }] };
+    })] } }, true);
     getMachineCapabilitiesSnapshot.mockReturnValue({ response: { results: {
       'tool.executionRuns': { ok: true, data: { backends: {
         [targetKey]: { available: true, intents: ['review'], title: 'Review Bot' },
@@ -402,11 +427,36 @@ describe('review engine voice tool', () => {
     };
 
     const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
-    await listReviewEnginesForVoiceTool({ sessionId: 's_owned' });
+    await listReviewEnginesForVoiceTool({ sessionId: 's_owned', serverId: 'server-owned',
+      acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+      backendEnabledByTargetKey: state.settings.backendEnabledByTargetKey });
 
     expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('lookup-machine', 'server-owned');
     expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('lookup-machine', expect.objectContaining({
       serverId: 'server-owned',
     }));
+  });
+
+  it('uses the captured Machine and Home for detached review discovery', async () => {
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    const result = await listReviewEnginesForVoiceTool({ sessionId: null, machineId: 'machine-detached',
+      serverId: 'home-detached',
+      acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+      backendEnabledByTargetKey: state.settings.backendEnabledByTargetKey });
+
+    expect(result).toMatchObject({ sessionId: null, items: expect.any(Array) });
+    expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('machine-detached', 'home-detached');
+    expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-detached',
+      expect.objectContaining({ serverId: 'home-detached' }));
+  });
+
+  it('refuses detached review discovery without its Machine or Home instead of using active context', async () => {
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    expect(await listReviewEnginesForVoiceTool({ sessionId: null, serverId: 'home-detached' }))
+      .toMatchObject({ ok: false, errorCode: 'machine_not_selected' });
+    expect(await listReviewEnginesForVoiceTool({ sessionId: null, machineId: 'machine-detached' }))
+      .toMatchObject({ ok: false, errorCode: 'server_not_selected' });
+    expect(getMachineCapabilitiesSnapshot).not.toHaveBeenCalled();
+    expect(machineContributionRegistryProjectionDescribeMock).not.toHaveBeenCalled();
   });
 });

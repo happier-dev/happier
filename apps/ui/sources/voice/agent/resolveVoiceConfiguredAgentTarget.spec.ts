@@ -1,8 +1,26 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { storage } from '@/sync/domains/state/storage';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { refreshAcpCatalog, resetAcpCatalogEngineForTests } from '@/sync/engine/settings/acpCatalogEngine';
+import { resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { createDeferred } from '@/dev/testkit';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { readLocalConversationVoiceSettings, voiceSettingsDefaults, writeLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { ensureVoiceConversationSessionForVoiceHome } from '@/voice/persistence/voiceConversationSession';
+
+installDisconnectedServerSocketBoundary();
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let rowDefinitions: readonly unknown[];
 
 type MachineContributionRegistryProjectionDescribeFn =
   typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
@@ -76,13 +94,127 @@ function expectProjectionDescribeCallsForMachine(machineId: string): void {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  account = undefined;
+  rowDefinitions = [];
   clearDaemonMergedProjectionCacheForTests();
   machineContributionRegistryProjectionDescribe.mockReset();
   machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+  account = await restoreServerAccountForTest({ serverUrl: 'https://voice-resolver.example.test', accountId: 'voice-resolver-account',
+    request: async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+      if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+      if (path === '/v2/account/settings') return Response.json({ version: 4, content: { t: 'plain', v: {} } });
+      if (path === '/v1/artifacts') return Response.json([]);
+      if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
+      if (path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
+      if (path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json({ status: 'present', revision: 3,
+        content: { t: 'plain', v: { v: 1, definitions: rowDefinitions } } });
+      return new Response(null, { status: 404 });
+    },
+  });
+  const scope = { serverId: account.home.id, accountId: 'voice-resolver-account' };
+  storage.setState({ profileScope: scope, settingsScope: scope, settings: settingsParse({}), machines: {}, sessions: {} });
+  await refreshAcpCatalog(scope);
+});
+
+afterEach(async () => {
+  resetAcpCatalogEngineForTests();
+  resetAcpCatalogSnapshotsForTests();
+  await account?.dispose();
 });
 
 describe('resolveVoiceConfiguredAgentTarget', () => {
+  it('loads the exact configured Voice target from destination rows without the raw Settings root', async () => {
+    const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
+      command: 'review', createdAt: 1, updatedAt: 1 });
+    rowDefinitions = [definition];
+    resetAcpCatalogSnapshotsForTests();
+    await expect(resolveVoiceConfiguredAgentTarget({ machineId: null, selection: {
+      agentId: 'row-review', agentTargetKey: 'backend:row-review:configured:row-review', agentIdentity: null,
+    } })).resolves.toMatchObject({ ok: true, kind: 'catalog',
+      backendTarget: { kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review' } });
+  });
+
+  it('resolves a legacy configured ACP carrier through the ready destination catalog', async () => {
+    rowDefinitions = [AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
+      command: 'review', createdAt: 1, updatedAt: 1 })];
+    resetAcpCatalogSnapshotsForTests();
+    await expect(resolveVoiceConfiguredAgentTarget({ machineId: null, selection: {
+      agentId: 'acp:row-review', agentTargetKey: null, agentIdentity: null,
+    } })).resolves.toMatchObject({ ok: true, kind: 'catalog',
+      backendTarget: { kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review' } });
+  });
+
+  it.each(['exact', 'legacy'] as const)('refuses a %s configured target when destination rows have an incomplete inventory', async kind => {
+    rowDefinitions = [AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
+      command: 'review', createdAt: 1, updatedAt: 1 }), { id: 'malformed-neighbor' }];
+    resetAcpCatalogSnapshotsForTests();
+    await expect(resolveVoiceConfiguredAgentTarget({ machineId: null, selection: {
+      agentId: kind === 'legacy' ? 'acp:row-review' : 'row-review',
+      agentTargetKey: kind === 'legacy' ? null : 'backend:row-review:configured:row-review', agentIdentity: null,
+    } })).resolves.toMatchObject({ ok: false, errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE });
+  });
+
+  it.each(['ready', 'incomplete'] as const)('uses %s destination facts through the real Voice persistence entrypoint', async status => {
+    const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
+      command: 'review', createdAt: 1, updatedAt: 1 });
+    rowDefinitions = status === 'ready' ? [definition] : [definition, { id: 'malformed-neighbor' }];
+    resetAcpCatalogSnapshotsForTests();
+    const cfg = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+    const voice = writeLocalConversationVoiceSettings({ ...voiceSettingsDefaults,
+      executionMachine: { mode: 'fixed', machineId: 'machine-1' } }, { ...cfg, conversationMode: 'agent', agent: {
+      ...cfg.agent, agentSource: 'agent', agentId: 'row-review', agentTargetKey: 'backend:row-review:configured:row-review', agentIdentity: null,
+    } });
+    storage.setState({ settings: settingsParse({ voice }), machines: {
+      'machine-1': createMachineFixture({ activeAt: Date.now() }),
+    } });
+    // The ready row reaches installed-Agent admission. This fixture's genuine
+    // daemon boundary has no installed owner; it cannot fabricate that identity.
+    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({
+      code: status === 'ready' ? 'VOICE_AGENT_BACKEND_TARGET_UNAVAILABLE' : 'VOICE_AGENT_SELECTION_UNAVAILABLE',
+    });
+  });
+
+  it('refuses an external selection when its Account lifetime retires during daemon resolution', async () => {
+    const entered = createDeferred<void>();
+    const response = createDeferred<Awaited<ReturnType<MachineContributionRegistryProjectionDescribeFn>>>();
+    machineContributionRegistryProjectionDescribe.mockImplementation(() => { entered.resolve(); return response.promise; });
+    const pending = resolveVoiceConfiguredAgentTarget({ machineId: 'machine-1', selection: {
+      agentId: EXTERNAL_AGENT_ID, agentTargetKey: EXTERNAL_TARGET_KEY, agentIdentity: EXTERNAL_IDENTITY,
+    } });
+    await entered.promise;
+    retireActiveServerAccountScopeLifetime();
+    response.resolve({ supported: true, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 7,
+      agentsById: { [EXTERNAL_AGENT_ID]: { id: EXTERNAL_AGENT_ID, identity: EXTERNAL_IDENTITY } }, familiesById: {},
+    }) });
+    await expect(pending).resolves.toMatchObject({ ok: false, errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE });
+  });
+
+  it('refuses Voice persistence launch when its captured Account retires during final daemon admission', async () => {
+    rowDefinitions = [AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
+      command: 'review', createdAt: 1, updatedAt: 1 })];
+    await refreshAcpCatalog({ serverId: account!.home.id, accountId: 'voice-resolver-account' });
+    const cfg = readLocalConversationVoiceSettings(voiceSettingsDefaults);
+    const voice = writeLocalConversationVoiceSettings({ ...voiceSettingsDefaults,
+      executionMachine: { mode: 'fixed', machineId: 'machine-1' } }, { ...cfg, conversationMode: 'agent', agent: {
+      ...cfg.agent, agentSource: 'agent', agentId: 'row-review', agentTargetKey: 'backend:row-review:configured:row-review', agentIdentity: null,
+    } });
+    storage.setState({ settings: settingsParse({ voice }), machines: {
+      'machine-1': createMachineFixture({ activeAt: Date.now() }),
+    } });
+    const entered = createDeferred<void>();
+    const response = createDeferred<Awaited<ReturnType<MachineContributionRegistryProjectionDescribeFn>>>();
+    machineContributionRegistryProjectionDescribe.mockImplementation(() => { entered.resolve(); return response.promise; });
+    const pending = ensureVoiceConversationSessionForVoiceHome();
+    await entered.promise;
+    retireActiveServerAccountScopeLifetime();
+    response.resolve({ supported: false, reason: 'not-supported' });
+    await expect(pending).rejects.toMatchObject({ code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+  });
+
   it('resolves a novel external qualified Agent to its exact projected backend target on the target machine', async () => {
     enableExternalAgentProjection(7);
 

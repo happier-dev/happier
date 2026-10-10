@@ -30,6 +30,13 @@ describe('voiceConversationRuntimeStore', () => {
 
             setVoiceConversationRuntimeSnapshot((current) => ({ ...current }));
             expect(listener).toHaveBeenCalledTimes(1);
+
+            const inUseVoice = { providerContributionId: 'acme.voice/tts', settingFieldPath: 'voiceName', value: 'a', displayName: 'A' };
+            setVoiceConversationRuntimeSnapshot(current => ({ ...current, inUseVoice }));
+            expect(useVoiceConversationRuntimeStore.getState().snapshot.inUseVoice).toEqual(inUseVoice);
+            expect(listener).toHaveBeenCalledTimes(2);
+            setVoiceConversationRuntimeSnapshot(current => ({ ...current, inUseVoice: { ...inUseVoice } }));
+            expect(listener).toHaveBeenCalledTimes(2);
         } finally {
             unsubscribe();
         }

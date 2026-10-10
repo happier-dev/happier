@@ -98,6 +98,7 @@ describe('resolveVoiceDictationReadiness', () => {
 
   it('projects device Dictation as ready only when native speech recognition is known available', () => {
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'ios',
       executionMachineId: null,
@@ -130,6 +131,7 @@ describe('resolveVoiceDictationReadiness', () => {
     'fails native device Dictation closed when speech recognition is %s',
     (nativeDeviceSpeechRecognition, code) => {
       expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
         registry,
         platform: 'ios',
         executionMachineId: null,
@@ -177,6 +179,7 @@ describe('resolveVoiceDictationReadiness', () => {
     'projects web device Dictation from passive browser support %s',
     (browserSpeechCapability, expected) => {
       expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
         registry,
         platform: 'web',
         executionMachineId: null,
@@ -204,6 +207,7 @@ describe('resolveVoiceDictationReadiness', () => {
 
   it('fails an explicit OpenAI-compatible selection closed when its machine is missing', () => {
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'web',
       executionMachineId: null,
@@ -305,6 +309,7 @@ describe('resolveVoiceDictationReadiness', () => {
     });
 
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'web',
       executionMachineId: 'machine-a',
@@ -343,6 +348,7 @@ describe('resolveVoiceDictationReadiness', () => {
     const settingsModeRegistry = createSettingsModeDictationRegistry();
 
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry: settingsModeRegistry,
       platform: 'web',
       executionMachineId: 'machine-a',
@@ -375,6 +381,7 @@ describe('resolveVoiceDictationReadiness', () => {
     const settingsModeRegistry = createSettingsModeDictationRegistry();
 
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry: settingsModeRegistry,
       platform: 'web',
       executionMachineId: 'machine-a',
@@ -420,6 +427,7 @@ describe('resolveVoiceDictationReadiness', () => {
       });
 
       expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
         registry,
         platform: 'ios',
         executionMachineId: null,
@@ -463,6 +471,7 @@ describe('resolveVoiceDictationReadiness', () => {
     });
 
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'ios',
       executionMachineId: null,
@@ -556,6 +565,7 @@ describe('resolveVoiceDictationReadiness', () => {
       };
       const missing = settingsParse({ voice });
       const project = (settings: Settings, credentialReady = false) => resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
         registry,
         platform: 'web',
         executionMachineId: 'machine-a',
@@ -609,6 +619,7 @@ describe('resolveVoiceDictationReadiness', () => {
     );
     const missing = settingsParse({ voice });
     const project = (settings: Settings, credentialReady = false) => resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'web',
       executionMachineId: 'machine-a',
@@ -648,6 +659,7 @@ describe('resolveVoiceDictationReadiness', () => {
     });
 
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'web',
       executionMachineId: 'machine-online',
@@ -677,6 +689,7 @@ describe('resolveVoiceDictationReadiness', () => {
 
   it('distinguishes a selected unreachable execution machine from no selection', () => {
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'web',
       executionMachineId: null,
@@ -708,6 +721,7 @@ describe('resolveVoiceDictationReadiness', () => {
     'keeps daemon-backed Dictation ready when the selected machine heavy-audio route is %s',
     (route) => {
       expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
         registry,
         platform: 'web',
         executionMachineId: 'machine-online',
@@ -751,6 +765,7 @@ describe('resolveVoiceDictationReadiness', () => {
     });
 
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'web',
       executionMachineId: null,
@@ -787,6 +802,7 @@ describe('resolveVoiceDictationReadiness', () => {
     });
 
     expect(resolveVoiceDictationReadiness({
+      connectedPurposes: { v: 1, bindings: [] },
       registry,
       platform: 'web',
       executionMachineId: 'machine-online',

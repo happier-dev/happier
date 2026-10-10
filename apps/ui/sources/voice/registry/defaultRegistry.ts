@@ -15,15 +15,22 @@ import {
   subscribeExternalVoiceProviderRegistrations,
 } from './externalVoiceProviderRegistrations';
 
-export function createDefaultVoiceProviderRegistry(input: Readonly<{
-  enabledPluginIds?: ReadonlySet<string> | null;
-}> = {}): VoiceProviderRegistry {
-  const base = createVoiceProviderRegistry({
+let bundledBaseRegistry: VoiceProviderRegistry | undefined;
+
+function getBundledBaseRegistry(): VoiceProviderRegistry {
+  // Generated inputs are module-owned and normalized descriptors are deeply
+  // frozen. Live enablement and occurrence authority stay in each projection.
+  return bundledBaseRegistry ??= createVoiceProviderRegistry({
     builtIn: BUILT_IN_VOICE_UI_ENTRIES,
     bundledContributions: BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
     bundledPresentations: BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
-    enabledPluginIds: input.enabledPluginIds ?? null,
   });
+}
+
+export function createDefaultVoiceProviderRegistry(input: Readonly<{
+  enabledPluginIds?: ReadonlySet<string> | null;
+}> = {}): VoiceProviderRegistry {
+  const base = getBundledBaseRegistry();
   const enabledPluginIds = input.enabledPluginIds ?? null;
   let cachedRevision = -1;
   let cachedEntries: readonly VoiceProviderRegistryEntry[] = Object.freeze([]);
@@ -34,6 +41,7 @@ export function createDefaultVoiceProviderRegistry(input: Readonly<{
     const projectionAuthority = getExternalVoiceProviderProjectionAuthority();
     const byProviderId = new Map<string, VoiceProviderRegistryEntry>();
     for (const entry of base.list()) {
+      if (entry.source.kind === 'bundled' && enabledPluginIds !== null && !enabledPluginIds.has(entry.pluginId)) continue;
       if (entry.source.kind === 'bundled' && projectionAuthority !== null) continue;
       byProviderId.set(entry.providerId, entry);
     }

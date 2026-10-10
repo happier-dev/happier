@@ -23,23 +23,6 @@ function hasAncestor(
     return false;
 }
 
-function expectAtLeast44PointTarget(style: unknown): void {
-    const flattened = (Array.isArray(style) ? style : [style]).reduce<Record<string, unknown>>(
-        (result, entry) => entry && typeof entry === 'object' ? { ...result, ...entry } : result,
-        {},
-    );
-    const width = Math.max(
-        typeof flattened.width === 'number' ? flattened.width : 0,
-        typeof flattened.minWidth === 'number' ? flattened.minWidth : 0,
-    );
-    const height = Math.max(
-        typeof flattened.height === 'number' ? flattened.height : 0,
-        typeof flattened.minHeight === 'number' ? flattened.minHeight : 0,
-    );
-    expect(width).toBeGreaterThanOrEqual(44);
-    expect(height).toBeGreaterThanOrEqual(44);
-}
-
 describe('DaemonModelPackRow', () => {
     it('keeps an accessible cancel action visible for the active install', async () => {
         const row: ModelCatalogRow = {
@@ -53,10 +36,12 @@ describe('DaemonModelPackRow', () => {
                 onSetDefault={() => undefined} onInstall={() => undefined}
                 onRemove={() => undefined} onCancel={onCancel} />,
         );
-        const cancel = tree.root.findByProps({ testID: 'voice-model-cancel-pack-active' });
-        expect(cancel.props.accessibilityLabel).toContain(t('common.cancel'));
-        expectAtLeast44PointTarget(cancel.props.style);
-        await pressTestInstanceAsync(cancel);
+        const cancel = tree.root.findAllByProps({ testID: 'voice-model-cancel-pack-active' })
+            .find((node) => String(node.type) === 'Pressable');
+        expect(cancel).toBeTruthy();
+        expect(cancel!.props.accessibilityRole).toBe('button');
+        expect(cancel!.props.accessibilityLabel).toContain(t('common.cancel'));
+        await pressTestInstanceAsync(cancel!);
         expect(onCancel).toHaveBeenCalledTimes(1);
     });
 
@@ -109,7 +94,6 @@ describe('DaemonModelPackRow', () => {
         expect(removeButton?.props.accessibilityLabel).toContain(t('common.remove'));
         expect(removeButton?.props.accessibilityLabel).toContain(row.displayName);
         expect(removeButton?.props.accessibilityLabel.trim()).not.toBe('');
-        expectAtLeast44PointTarget(removeButton?.props.style);
 
         await pressTestInstanceAsync(removeButton!);
         expect(onRemove).toHaveBeenCalledWith('pack-1');

@@ -24,6 +24,9 @@ import {
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useSettingsSelector } from '@/sync/domains/state/storage';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { useMachineCliDetectionTarget, useProfile } from '@/sync/store/hooks';
 import {
@@ -108,8 +111,6 @@ const registry = createDefaultVoiceProviderRegistry();
 const selectReadinessAccountSettings = (settings: Settings) => ({
   voiceSettingsV1: settings.voiceSettingsV1,
   secrets: settings.secrets,
-  connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-  connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
 });
 
 type CheckedVoiceProviderReadinessResult =
@@ -306,6 +307,10 @@ export function useVoiceConversationsReadinessModel(props: {
   );
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const accountSettings = useSettingsSelector(selectReadinessAccountSettings);
+  const settingsScope = useAccountSettingsScope();
+  const purposes = useConnectedAccountCatalog('purposes', settingsScope);
+  const connectedPurposes = purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
+  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
   const savedSecretCatalog = useSavedSecretCatalog();
   const accountProfile = useProfile();
   const activeAccountScopeLifetime = captureActiveServerAccountScopeLifetime();
@@ -339,13 +344,13 @@ export function useVoiceConversationsReadinessModel(props: {
     parseLocalVoiceSttSettings(localAdapterSettings.config.stt).provider,
     parseLocalVoiceTtsSettings(localAdapterSettings.config.tts).provider,
   ];
-  const selectedRawSpeechTargets = projectVoiceRawSpeechReadinessTargets({ ...accountSettings, voice }, registry, props.executionMachineId ?? null);
+  const selectedRawSpeechTargets = projectVoiceRawSpeechReadinessTargets({ ...accountSettings, voice }, registry, props.executionMachineId ?? null, 'conversation', connectedPurposes);
   const localConversationReadinessFacts = projectLocalConversationReadinessFacts({
     registry,
     voice,
     voiceSettingsV1: accountSettings.voiceSettingsV1,
     secrets: accountSettings.secrets,
-    connectedAccountPurposeBindingsV1: accountSettings.connectedAccountPurposeBindingsV1,
+    connectedPurposes,
     platform,
     local: availability.local,
     localInput: props.localAvailability,
@@ -396,6 +401,7 @@ export function useVoiceConversationsReadinessModel(props: {
       try {
         const resolvedSource = resolveAccountVoiceCredentialSourceSelection({
           settings: accountSettings,
+          connectedPurposes,
           contribution,
           credentialSlotId: credentialDeclaration.slot.id,
           purpose: {
@@ -626,7 +632,7 @@ export function useVoiceConversationsReadinessModel(props: {
     accountScope: activeAccountScopeLifetime?.scope ?? null,
     credentialAuthority: {
       voiceCredentialBindings: accountSettings.voiceSettingsV1.credentialBindings,
-      connectedAccountPurposeBindingsV1: accountSettings.connectedAccountPurposeBindingsV1,
+      purposes,
       savedSecretCatalog: {
         status: savedSecretCatalog.status,
         stale: savedSecretCatalog.stale,
@@ -686,7 +692,7 @@ export function useVoiceConversationsReadinessModel(props: {
         providerSettings: selectedProviderRow.entry.providerSettings ?? null,
         providerConfig: selectedProviderConfig,
         accountProfileConnectedServicesV2: accountProfile.connectedServicesV2 ?? [],
-        labelsByKey: accountSettings.connectedServicesProfileLabelByKey ?? {},
+        labelsByKey,
         accountGroupsEnabled,
       })
     : undefined;
@@ -875,6 +881,7 @@ export function useVoiceConversationsReadinessModel(props: {
     const canInspectRawSpeech = voice.providerId === 'local_conversation'
       && machineId !== null
       && executionMachineTarget.isOnline
+      && selectedRawSpeechTargets !== null
       && selectedRawSpeechTargets.length > 0;
     setCheckedReadiness({
       providerId: voice.providerId,
@@ -894,7 +901,7 @@ export function useVoiceConversationsReadinessModel(props: {
     if (!canInspectPassiveSetup && !canInspectRawSpeech) return;
     const settle = (result: Readonly<{
       passive: unknown | null;
-      raw: readonly Readonly<{ providerId: string; contribution: Readonly<{ pluginId: string; localId: string }>; status: 'ready' | 'approval_required' | 'unknown' }>[];
+      raw: readonly Readonly<{ providerId: string; contribution: Readonly<{ pluginId: string; localId: string }>; status: 'ready' | 'approval_required' | 'unknown' }>[] | null;
     }>): void => {
       if (
         checkedReadinessRevision.current !== revision
@@ -909,7 +916,7 @@ export function useVoiceConversationsReadinessModel(props: {
               ...current,
               status: 'terminal',
               passiveRealtimeSetupResult: result.passive,
-              rawCredentialAuthorizationByContribution: Object.fromEntries(result.raw.map((row) => [
+              rawCredentialAuthorizationByContribution: Object.fromEntries((result.raw ?? []).map((row) => [
                 row.providerId,
                 {
                   contribution: row.contribution,

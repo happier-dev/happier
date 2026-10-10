@@ -8,6 +8,9 @@ import {
     useSessionCockpitBottomChromeHeight,
     useSessionCockpitComposerChromeHeight,
     useReportSessionCockpitFloatingBottomChromeHeight,
+    useSessionCockpitViewerRect,
+    useSessionCockpitPetRect,
+    useReportSessionCockpitVoicePresenceRect,
 } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import {
     useVoiceAttemptControl,
@@ -17,6 +20,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { VoiceGlancePopover } from './VoiceGlancePopover';
 import { VoiceIsland, VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './VoiceIsland';
@@ -48,7 +52,8 @@ export function VoicePresenceAppShellMount(): React.ReactElement | null {
     const voiceEnabled = useFeatureEnabled('voice');
     const container = useVoicePresenceContainer();
     if (voiceEnabled !== true || container === 'top_bar') return null;
-    return <VoiceFloatingPresenceRuntime container={container} />;
+    // Measurement custody follows the container; admitted Voice state outlives its presentation.
+    return <VoiceFloatingPresenceRuntime key={container} container={container} />;
 }
 
 function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'orb' }>): React.ReactElement | null {
@@ -60,6 +65,9 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     const composerChromeHeight = useSessionCockpitComposerChromeHeight();
     const keyboardHeight = useKeyboardHeight();
     const viewport = useWindowDimensions();
+    const viewerRect = useSessionCockpitViewerRect();
+    const petRect = useSessionCockpitPetRect();
+    const avoidRects = React.useMemo(() => petRect ? [petRect] : undefined, [petRect]);
     const petsCompanionSizeScale = useLocalSetting('petsCompanionSizeScale');
     const selectedPetPackage = useSelectedPetPackage();
     const anchorRef = React.useRef<View | null>(null);
@@ -84,10 +92,12 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     // measured composer instead of reporting the keyboard height back as composer reservation.
     const reservesComposerSpace = visible && phone && !orb && keyboardHeight === 0;
     const reportBottomReservation = useReportSessionCockpitFloatingBottomChromeHeight(reservesComposerSpace);
+    const reportPresenceRect = useReportSessionCockpitVoicePresenceRect(visible);
     if (!visible) return null;
 
-    // The orb shares its corner with a pet companion; the island spans the window instead.
-    const petOffset = orb && selectedPetPackage.enabled
+    // Desktop mascot windows retain their incumbent band. In-app pets publish their actual
+    // moved rectangle instead of reserving a second, assumed corner alongside that measurement.
+    const petOffset = orb && isDesktopHost() && selectedPetPackage.enabled
         ? resolvePetCompanionOverlayMetrics(petsCompanionSizeScale).spriteHeight + VOICE_ORB_PET_GAP
         : 0;
     const restingBottomInset = resolveVoiceOrbRestingBottomInset({
@@ -108,7 +118,6 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
             testID="voice-presence-app-shell-root"
         >
             <VoicePresenceFloat
-                key={props.container}
                 testID="voice-presence-float-host"
                 width={width}
                 height={height}
@@ -120,6 +129,9 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
                 anchors={orb ? 'orb' : 'island'}
                 bottomChromeInset={insets.bottom + bottomChromeHeight}
                 onBottomReservationChange={reservesComposerSpace ? reportBottomReservation : undefined}
+                viewerRect={viewerRect}
+                avoidRects={avoidRects}
+                onRectChange={reportPresenceRect}
             >
                 {(render) => orb ? (
                     <VoiceOrb

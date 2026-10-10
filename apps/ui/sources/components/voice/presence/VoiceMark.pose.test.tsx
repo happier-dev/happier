@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { drawPlanetMarkFrame } from '@happier-dev/brand/planet';
 import { act } from 'react-test-renderer';
+import { useUnistyles } from 'react-native-unistyles';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
@@ -10,13 +11,21 @@ import { VoiceMarkArt } from './VoiceMark';
 
 const motion = vi.hoisted(() => ({
     onPoseStart: null as (() => void) | null,
+    morphs: [] as number[],
 }));
 // The native animation boundary remains pending so the test can admit an interrupted frame.
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return {
         ...createReanimatedModuleMock(),
+        // A worklet style is re-evaluated on the UI thread whenever its shared values change.
+        useAnimatedStyle: <T extends object>(factory: () => T): T => {
+            const style = {} as T;
+            for (const key of Object.keys(factory())) Object.defineProperty(style, key, { enumerable: true, get: () => factory()[key as keyof T] });
+            return style;
+        },
         withTiming: (target: number, config?: { duration?: number }) => {
+            if (config?.duration === 550) motion.morphs.push(target);
             if (config?.duration !== 900) return target;
             motion.onPoseStart?.();
             return 0;
@@ -30,6 +39,7 @@ afterEach(async () => {
     screen = null;
     setReducedMotionPreferenceOverride(null);
     motion.onPoseStart = null;
+    motion.morphs = [];
 });
 
 function setReduced(reduced: boolean): void {
@@ -39,7 +49,7 @@ function setReduced(reduced: boolean): void {
 }
 
 function canvas(): VoiceMarkCanvasProps {
-    const props = screen!.find((node) => node.props.to?.planetA !== undefined && node.props.from?.planetA !== undefined).props;
+    const props = screen!.find((node) => node.props?.to?.planetA !== undefined && node.props?.from?.planetA !== undefined).props;
     return {
         to: props.to,
         from: props.from,
@@ -62,6 +72,41 @@ function expectSameFrame(actual: number[][], expected: number[][]): void {
 }
 
 describe('VoiceMark interrupted pose', () => {
+    it('rests as the line waveform glyph in the composer icon tint, drawing no dots', async () => {
+        let tint: string | null = null;
+        function ComposerTint() {
+            tint = useUnistyles().theme.colors.button.secondary.tint;
+            return null;
+        }
+        screen = await renderScreen(<><ComposerTint /><VoiceMarkArt pose="mic" size={26} testID="mark" /></>);
+        const glyph = screen.find((node) => node.props?.name === 'waveform');
+        expect(glyph.props.color).toBe(tint);
+        expect(glyph.props.size).toBe(16);
+        expect(screen.findByTestId('mark-rest')?.props.style).toMatchObject({ opacity: 1 });
+        expect(frame().filter((dot) => dot[6]! > 0)).toEqual([]);
+    });
+
+    it('morphs the glyph into the planet on start and back on End, and switches instantly under reduced motion', async () => {
+        screen = await renderScreen(<VoiceMarkArt pose="mic" size={26} testID="mark" />);
+        await screen.update(<VoiceMarkArt pose="ready" size={26} testID="mark" />);
+        expect(motion.morphs).toEqual([1]);
+        expect(screen.findByTestId('mark-rest')?.props.style).toMatchObject({ opacity: 0 });
+        expect(frame().length).toBeGreaterThan(0);
+        // Mid-way the glyph has handed over: the dots stream out of where it stood.
+        act(() => { canvas().morph.value = 0.5; });
+        expect(frame().length).toBeGreaterThan(0);
+        await screen.update(<VoiceMarkArt pose="mic" size={26} testID="mark" />);
+        expect(motion.morphs).toEqual([1, 0]);
+        expect(screen.findByTestId('mark-rest')?.props.style).toMatchObject({ opacity: 1 });
+        expect(frame().filter((dot) => dot[6]! > 0)).toEqual([]);
+
+        setReduced(true);
+        await screen.update(<VoiceMarkArt pose="ready" size={26} testID="mark" />);
+        expect(motion.morphs).toEqual([1, 0]);
+        expect(canvas().morph.value).toBe(1);
+        expect(screen.findByTestId('mark-rest')?.props.style).toMatchObject({ opacity: 0 });
+    });
+
     it('retargets consecutive planet poses from the displayed Brand frame', async () => {
         screen = await renderScreen(<VoiceMarkArt pose="shadow" size={24} still />);
         const shadow = frame();

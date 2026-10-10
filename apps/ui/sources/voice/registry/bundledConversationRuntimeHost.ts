@@ -635,11 +635,12 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         providerConfig: readVoiceProviderSettingsConfig(voice, providerId),
       });
     },
-    getRealtimeClientToolDefinitions({ effectCalls, exposure }) {
+    getRealtimeClientToolDefinitions({ effectCalls, exposure, sessionMetadata }) {
       const canRunEffects = effectCalls === 'stable_ids';
+      const scope = sessionMetadata === undefined ? undefined : { sessionMetadata };
       const enabledSpecs = canRunEffects
-        ? resolveEnabledVoiceToolActionSpecsFromState(storage.getState())
-        : resolveEnabledVoiceSdkSafeToolActionSpecsFromState(storage.getState());
+        ? resolveEnabledVoiceToolActionSpecsFromState(storage.getState(), scope)
+        : resolveEnabledVoiceSdkSafeToolActionSpecsFromState(storage.getState(), scope);
       // An attached Agent session already owns cross-session, machine, server,
       // activity, and transcript discovery through its canonical tools. Its
       // realtime surface receives only the current-UI tools the Voice
@@ -664,7 +665,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
           parameters: createRealtimeClientToolParameters(spec.inputSchema),
           async execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue> {
             if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
-            if (!isVoiceActionAvailableInState(storage.getState(), spec.id as ActionId)) {
+            if (!isVoiceActionAvailableInState(storage.getState(), spec.id as ActionId, scope)) {
               throw new Error('voice_action_unavailable');
             }
             if (!isReadOnly) throw directVoiceEffectExecutionUnavailable();

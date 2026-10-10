@@ -17,6 +17,8 @@ import 'fake-indexeddb/auto';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import type { VoiceAttemptIdleTarget } from './useVoiceAttemptControl';
+import { DestinationInstanceHost, type DestinationNavigation } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { Text } from '@/components/ui/text/Text';
 
 installDisconnectedServerSocketBoundary();
 // Only native crypto adapters are replaced; the isolated dismissal case below
@@ -195,6 +197,24 @@ describe('useVoiceAttemptControl start admission', () => {
         getStorage().setState(initialStorageState, true);
     });
 
+
+    it('projects the actual attempt voice without relabeling it from a changed Account selection', async () => {
+        const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        const applied = {
+            providerContributionId: 'happier.voice.openai/realtime',
+            settingFieldPath: 'voice', value: 'coral', displayName: 'Coral',
+        };
+        setVoiceSessionSnapshot({ adapterId: applied.providerContributionId, sessionId: 'target-session',
+            status: 'connected', mode: 'listening', canStop: true, inUseVoice: applied });
+        const hook = await renderBothOwners();
+        expect(hook.getCurrent().control).toHaveProperty('inUseVoice', applied);
+        await act(async () => seedVoiceSettings({ providerId: 'off' }));
+        expect(hook.getCurrent().control).toHaveProperty('inUseVoice', applied);
+        await act(async () => setVoiceSessionSnapshot({ adapterId: null, sessionId: null,
+            status: 'disconnected', mode: 'idle', canStop: false }));
+        expect(hook.getCurrent().control).toHaveProperty('inUseVoice', null);
+        await hook.unmount();
+    });
 
     it('refuses a start the surface model refuses when the connected-services reference is missing', async () => {
         const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
@@ -1092,9 +1112,23 @@ describe('useVoiceAttemptControl idle targeting', () => {
         getStorage().setState(initialStorageState, true);
     });
 
-    async function renderControl(idleTarget: VoiceAttemptIdleTarget) {
+    async function renderControl(idleTarget: VoiceAttemptIdleTarget, wrapper?: React.ComponentType<React.PropsWithChildren>) {
         const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
-        return await renderHook(() => useVoiceAttemptControl(idleTarget));
+        return await renderHook(() => useVoiceAttemptControl(idleTarget), { wrapper });
+    }
+
+    function HostedConversation({ children }: React.PropsWithChildren) {
+        const [destination, setDestination] = React.useState('/settings/voice');
+        const navigation = React.useMemo<DestinationNavigation>(() => ({
+            push: (href) => setDestination(String(href)),
+            replace: (href) => setDestination(String(href)),
+            back: () => setDestination('/settings/voice'),
+        }), []);
+        return <DestinationInstanceHost tabId="voice-conversation-tab" ref={{ kind: 'voice', params: {} }}
+            pathname={destination} focused visible navigation={navigation}>
+            {children}
+            <Text testID="voice-open-destination">{destination}</Text>
+        </DestinationInstanceHost>;
     }
 
     async function spyOnLifecycleRouting() {
@@ -1201,14 +1235,14 @@ describe('useVoiceAttemptControl idle targeting', () => {
         const hook = await renderControl({
             kind: 'session',
             sessionAddress: { serverId: recoveryRuntime.serverId, sessionId: 'idle-target-session' },
-        });
+        }, HostedConversation);
 
         expect(hook.getCurrent().openConversationSessionId).toBe('active-conversation-session');
         expect(hook.getCurrent().openConversationSessionAddress).toEqual({ serverId: recoveryRuntime.serverId, sessionId: 'active-conversation-session' });
         expect(hook.getCurrent().elapsedStartedAt).toEqual(expect.any(Number));
-        hook.getCurrent().onOpenConversation();
-        expect(routerMock.instance?.spies.push.mock.calls.map((call) => call[0]))
-            .toContain('/session/active-conversation-session?serverId=server-work');
+        await act(async () => hook.getCurrent().onOpenConversation());
+        expect(hook.tree.root.findByProps({ testID: 'voice-open-destination' }).props.children)
+            .toBe('/session/active-conversation-session?serverId=server-work');
 
         await hook.unmount();
         voiceSessionBindingStore.getState().unbind('active-conversation-session');
@@ -1227,11 +1261,11 @@ describe('useVoiceAttemptControl idle targeting', () => {
         voiceSessionBindingStore.getState().bind(binding);
         setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'global-control',
             status: 'connected', mode: 'listening', canStop: true });
-        const hook = await renderControl(GLOBAL_TARGET);
+        const hook = await renderControl(GLOBAL_TARGET, HostedConversation);
         expect(hook.getCurrent().canOpenConversation).toBe(true);
         expect(hook.getCurrent().openConversationSessionAddress).toBeNull();
-        hook.getCurrent().onOpenConversation();
-        expect(routerMock.instance?.spies.push.mock.calls.at(-1)?.[0]).toBe(SETTINGS_ROUTES.voiceHistory);
+        await act(async () => hook.getCurrent().onOpenConversation());
+        expect(hook.tree.root.findByProps({ testID: 'voice-open-destination' }).props.children).toBe(SETTINGS_ROUTES.voiceHistory);
         expect(voiceSessionBindingStore.getState().getByControlSessionId('global-control')).toEqual(binding);
         await hook.unmount();
         voiceSessionBindingStore.getState().unbind('hidden-history');
@@ -1586,8 +1620,12 @@ describe('Voice setup dismissal through the current Home Artifact owner', () => 
         vi.resetModules();
         let connection: Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness')['restoreServerAccountForTest']>> | undefined;
         let restoreActionLoader: (() => void) | undefined;
+        let restoreWebLocks: (() => void) | undefined;
         let unmount: (() => Promise<void>) | undefined;
         try {
+            // jsdom omits the browser LockManager used by the real Home mutation owner.
+            const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+            restoreWebLocks = installWebLockManagerMock().restore;
             const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
             await loadSyncSingletonForTests();
             const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
@@ -1655,6 +1693,7 @@ describe('Voice setup dismissal through the current Home Artifact owner', () => 
             await unmount?.();
             await connection?.dispose();
             restoreActionLoader?.();
+            restoreWebLocks?.();
             internalModules.forEach((id, index) => vi.doMock(id, () => incumbentModules[index]));
             vi.resetModules();
         }

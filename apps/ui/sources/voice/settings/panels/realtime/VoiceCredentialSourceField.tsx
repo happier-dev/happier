@@ -14,8 +14,8 @@ import {
   DropdownMenu,
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { sync } from '@/sync/sync';
 import { useProfile, useSettingsSelector, useSettingsVersion } from '@/sync/store/hooks';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { tLoose } from '@/text';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -27,12 +27,13 @@ import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/component
 import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import {
-  mutateAccountVoiceCredentialSource,
+  mutateScopedAccountVoiceCredentialSource,
   resolveAccountVoiceCredentialSourceSelection,
 } from '@/voice/credentials/accountVoiceCredential';
 import { resolveVoiceConnectedAccountTargetEligibility } from '@/voice/credentials/sourceEligibility';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 
 type SourceRow = Readonly<{
@@ -43,7 +44,6 @@ type SourceRow = Readonly<{
 
 const NONE_SELECTION = Object.freeze({ kind: 'none' as const });
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
-const EMPTY_CONNECTED_ACCOUNT_LABELS: Readonly<Record<string, string | undefined>> = Object.freeze({});
 
 export type VoiceCredentialSourceFieldStatus = Readonly<{
   selection: VoiceCredentialSourceSelection;
@@ -80,11 +80,12 @@ export function VoiceCredentialSourceField(props: Readonly<{
   const settings = useSettingsSelector((settings) => ({
       voiceSettingsV1: settings.voiceSettingsV1,
       secrets: settings.secrets,
-      connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-      connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
   }));
+  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
   const settingsVersion = useSettingsVersion();
   const expectedSettingsScope = useAccountSettingsScope();
+  const purposes = useConnectedAccountCatalog('purposes', expectedSettingsScope);
+  const connectedPurposes = purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
   const savedSecretCatalog = useSavedSecretCatalog();
   const profile = useProfile();
   const { present } = useConnectedAccountIdentityPrivacy();
@@ -109,6 +110,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
     try {
       return resolveAccountVoiceCredentialSourceSelection({
         settings,
+        connectedPurposes,
         contribution: props.contribution,
         credentialSlotId: props.credentials.slot.id,
         purpose,
@@ -117,7 +119,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
     } catch {
       return null;
     }
-  }, [props.contribution, props.credentials.slot.id, purpose, settings]);
+  }, [props.contribution, props.credentials.slot.id, purpose, settings, connectedPurposes]);
   const connectedSources = React.useMemo(
     () => props.credentials.sources.flatMap((source) => (
       source.kind === 'connectedAccount'
@@ -178,7 +180,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
         presentIdentity: present,
         accounts: profile.connectedAccountsV4 ?? [],
         groups: profile.connectedAccountGroupsV4 ?? [],
-        labelsByKey: settings.connectedServicesProfileLabelByKey ?? EMPTY_CONNECTED_ACCOUNT_LABELS,
+        labelsByKey,
         serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(
           projectedConnectedServicesRegistry,
           account.ref.service,
@@ -218,7 +220,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
         presentIdentity: present,
         accounts: profile.connectedAccountsV4 ?? [],
         groups: profile.connectedAccountGroupsV4 ?? [],
-        labelsByKey: settings.connectedServicesProfileLabelByKey ?? EMPTY_CONNECTED_ACCOUNT_LABELS,
+        labelsByKey,
         serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(
           projectedConnectedServicesRegistry,
           group.ref.service,
@@ -262,7 +264,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
     props.credentials.sources,
     resolution,
     savedSecretCatalog.resolveReference,
-    settings.connectedServicesProfileLabelByKey,
+    labelsByKey,
   ]);
   const selected = resolution?.selection ?? NONE_SELECTION;
   // A null resolution means the stored selection could not be read, not that
@@ -318,7 +320,8 @@ export function VoiceCredentialSourceField(props: Readonly<{
       const operation = mutationOperationRef.current + 1;
       mutationOperationRef.current = operation;
       setMutationOutcomeUnknown(false);
-      const mutation = mutateAccountVoiceCredentialSource({
+      const mutation = mutateScopedAccountVoiceCredentialSource({
+        scope: expectedSettingsScope,
         mutation: {
           contribution: props.contribution,
           credentialSlotId: props.credentials.slot.id,
@@ -335,10 +338,6 @@ export function VoiceCredentialSourceField(props: Readonly<{
             ? current.declaration ?? null
             : null;
         },
-        mutateAccountSettingsOnce: (input) => sync.mutateAccountSettingsOnce({
-          ...input,
-          expectedSettingsScope,
-        }),
       });
       fireAndForget(mutation.then((result) => {
         if (

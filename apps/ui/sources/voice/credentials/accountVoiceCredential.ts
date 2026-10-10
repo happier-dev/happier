@@ -3,21 +3,47 @@ import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 
 import { deriveVoiceCredentialBindingIdentityV1, type VoiceProviderContribution, type VoiceRawCredentialGrantDeclaration, VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { normalizeRecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
-import type { SecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { applySavedSecretCatalogVoiceCredentialSourceMutationV1, resolveSavedSecretCatalogVoiceCredentialSourceV1, listSavedSecretVoiceCredentialMutationReferencesV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import type { SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { withConnectedAccountCatalogAccount, readConnectedAccountCatalogInContext, writeConnectedAccountCatalogRecordAndPublishInContext, ConnectedAccountCatalogOperationError } from '@/sync/api/account/apiConnectedAccountCatalog';
+import type { OneShotAccountSettingsMutationResult } from '@/sync/engine/settings/syncSettings';
+import type { SavedSecretFullReferenceResourceCreationParams, SavedSecretFullReferenceResourceCreationResult, SavedSecretFullReferenceResourceMutationCapture } from '@/sync/ops/settings/savedSecretResourceOperations';
+
+export type RecoverableVoiceCredentialMutationResult<TResult extends object> = TResult & Readonly<{
+  verifyOutcome?: () => Promise<RecoverableVoiceCredentialMutationResult<TResult>>;
+}>;
+
+function voiceCredentialResourceReceipt<TResult extends object>(
+  result: SavedSecretFullReferenceResourceCreationResult,
+  applied: (settingsVersion: number) => TResult,
+  changed: () => TResult,
+  unknown: () => TResult,
+): RecoverableVoiceCredentialMutationResult<TResult> {
+  if (result.ok) return applied(result.settingsVersion);
+  if (result.reason === 'changed') return changed();
+  if (result.reason === 'outcome_unknown') return {
+    ...unknown(),
+    ...(result.verifyOutcome ? { verifyOutcome: async () => voiceCredentialResourceReceipt(
+      await result.verifyOutcome!(), applied, changed, unknown,
+    ) } : {}),
+  };
+  throw Object.assign(new Error('voice_credential_resource_unavailable'), { code: 'voice_credential_resource_unavailable' });
+}
 
 export type AccountVoiceCredentialSource = 'account' | 'machine_override';
 /**
- * `unknown` is not a fourth flavour of absence. The account-settings readers
- * are all-or-nothing over whole collections (`voiceSettingsV1.credentialBindings`,
- * `secrets`, `connectedAccountPurposeBindingsV1`): a single unreadable entry
- * makes the resolver throw for every credential at once. Reporting that as
+ * `unknown` is not a fourth flavour of absence. Unreadable Account Voice or
+ * SavedSecret data and an unavailable qualified-purpose catalog cannot prove
+ * that a credential is absent. Reporting those states as
  * `missing` tells the user to add a credential that may already be stored, so
  * the unresolvable case carries its own value.
  */
@@ -34,7 +60,7 @@ export type AccountVoiceCredentialStatus = Readonly<{
 
 export function resolveAccountVoiceCredentialApprovalDigest(params: Readonly<{
   requiredRecipientContractDigest: string | null | undefined;
-  savedSecret: SavedSecretReferenceResolution | null | undefined;
+  savedSecret: Pick<SavedSecretReferenceResolution, 'kind' | 'fingerprint'> | null | undefined;
 }>): string | null {
   const required = params.requiredRecipientContractDigest;
   if (!required) return null;
@@ -83,18 +109,20 @@ function hasPersistedAccountVoiceCredentialSource(
 }
 
 export function resolveAccountVoiceCredentialSourceSelection(params: Readonly<{
-  settings: Pick<Settings, 'voiceSettingsV1' | 'secrets' | 'connectedAccountPurposeBindingsV1'>;
+  settings: Pick<Settings, 'voiceSettingsV1' | 'secrets'>;
+  connectedPurposes: ConnectedPurposeCatalogV1 | null;
   contribution: PluginContributionIdentityV1;
   credentialSlotId: string;
   purpose: QualifiedConnectedAccountPurposeV1;
   machineId?: string | null;
 }>): AccountVoiceCredentialSourceSelectionResolution {
-  const resolution = resolveAccountSettingsVoiceCredentialSource(params.settings, {
+  if (!params.connectedPurposes) throw new Error('connected_purpose_catalog_unavailable');
+  const resolution = resolveSavedSecretCatalogVoiceCredentialSourceV1(params.settings, {
     contribution: params.contribution,
     credentialSlotId: params.credentialSlotId,
     purpose: params.purpose,
     machineId: params.machineId ?? null,
-  });
+  }, { connectedPurposes: params.connectedPurposes });
   return Object.freeze({
     ...resolution,
     persisted: hasPersistedAccountVoiceCredentialSource(
@@ -107,22 +135,29 @@ export function resolveAccountVoiceCredentialSourceSelection(params: Readonly<{
 
 export function applyAccountVoiceCredentialSourceSelection(params: Readonly<{
   settings: Settings;
+  connectedPurposes: ConnectedPurposeCatalogV1 | null;
   mutation: AccountSettingsVoiceCredentialSourceMutation;
+  catalogs?: SavedSecretReferenceCatalogsV1;
   currentDeclaration: VoiceProviderContribution;
 }>): Readonly<{
   settings: Settings;
   accountSettings: Record<string, unknown>;
+  connectedPurposes: ConnectedPurposeCatalogV1;
   selection: VoiceCredentialSourceSelection;
   binding: ReturnType<typeof applyAccountSettingsVoiceCredentialSourceMutation>['binding'];
 }> {
   const { voice: _runtimeVoiceProjection, ...accountSettings } = params.settings;
-  const result = applyAccountSettingsVoiceCredentialSourceMutation(
+  if (!params.connectedPurposes) throw new Error('connected_purpose_catalog_unavailable');
+  const result = applySavedSecretCatalogVoiceCredentialSourceMutationV1(
     accountSettings,
     params.mutation,
     params.currentDeclaration,
+    { ...params.catalogs, connectedPurposes: params.connectedPurposes },
   );
+  if (!result.connectedPurposes) throw new Error('connected_purpose_catalog_unavailable');
   return Object.freeze({
     accountSettings: { ...result.settings },
+    connectedPurposes: result.connectedPurposes,
     settings: settingsParse(result.settings),
     selection: result.selection,
     binding: result.binding,
@@ -323,6 +358,8 @@ function staleVoiceCredentialSourceMutation(
 }
 
 export async function mutateAccountVoiceCredentialSource(params: Readonly<{
+  connectedPurposes: ConnectedPurposeCatalogV1 | null;
+  catalogs?: SavedSecretReferenceCatalogsV1;
   mutation: AccountSettingsVoiceCredentialSourceMutation;
   expectedDeclaration: VoiceProviderContribution;
   resolveCurrentDeclaration: (
@@ -332,7 +369,7 @@ export async function mutateAccountVoiceCredentialSource(params: Readonly<{
     expectedSettingsVersion: number;
     mutate: (
       raw: Readonly<Record<string, unknown>>,
-    ) => Readonly<{ settings: Record<string, unknown>; value: T }>;
+    ) => Readonly<{ settings: Record<string, unknown>; connectedPurposes: ConnectedPurposeCatalogV1; value: T }>;
   }>) => Promise<
     | Readonly<{ status: 'applied'; settingsVersion: number; value: T }>
     | Readonly<{ status: 'conflict'; currentSettingsVersion: number }>
@@ -381,11 +418,14 @@ export async function mutateAccountVoiceCredentialSource(params: Readonly<{
         }
         const applied = applyAccountVoiceCredentialSourceSelection({
           settings: settingsParse(raw),
+          connectedPurposes: params.connectedPurposes,
+          ...(params.catalogs ? { catalogs: params.catalogs } : {}),
           mutation: params.mutation,
           currentDeclaration,
         });
         return Object.freeze({
           settings: applied.accountSettings,
+          connectedPurposes: applied.connectedPurposes,
           value: Object.freeze({
             selection: applied.selection,
             binding: applied.binding,
@@ -420,6 +460,183 @@ export async function mutateAccountVoiceCredentialSource(params: Readonly<{
     settingsVersion: result.settingsVersion,
     selection: result.value.selection,
     binding: result.value.binding,
+  });
+}
+
+type VoiceCredentialReplacement = Extract<AccountSettingsSavedSecretMutation, { kind: 'replaceVoiceCredentialSecret' }>;
+
+/** Both new-key gestures share the canonical full reference transaction. */
+async function saveScopedAccountVoiceCredentialResource(params: Readonly<{
+  scope: AccountSettingsScope;
+  replacement: VoiceCredentialReplacement;
+  expectedSettingsVersion: number;
+  requiredRecipientContractDigest?: string | null;
+  mutate: (capture: SavedSecretFullReferenceResourceMutationCapture, replacement: VoiceCredentialReplacement)
+    => ReturnType<SavedSecretFullReferenceResourceCreationParams['mutateCatalogs']>;
+  onApprovalSucceeded?: SavedSecretFullReferenceResourceCreationParams['onApprovalSucceeded'];
+  onApprovalFailed?: SavedSecretFullReferenceResourceCreationParams['onApprovalFailed'];
+}>) {
+  const { createSavedSecretResourcesWithCatalogMutation } = await import('@/sync/ops/settings/savedSecretResourceOperations');
+  return createSavedSecretResourcesWithCatalogMutation({
+    scope: params.scope,
+    referenceScope: 'full',
+    resources: [params.replacement.secret],
+    mutateCatalogs: capture => {
+      if (capture.settingsVersion !== params.expectedSettingsVersion) return { ok: false, reason: 'changed' };
+      const approvalDigest = params.requiredRecipientContractDigest === undefined
+        ? params.replacement.approvedRecipientContractDigest
+        : resolveAccountVoiceCredentialApprovalDigest({
+            requiredRecipientContractDigest: params.requiredRecipientContractDigest,
+            savedSecret: { kind: 'shared_resource', fingerprint: capture.resourceFingerprints.get(params.replacement.secret.id) ?? null },
+          });
+      if (params.requiredRecipientContractDigest && !approvalDigest) return { ok: false, reason: 'unavailable' };
+      return params.mutate(capture, { ...params.replacement,
+        ...(approvalDigest ? { approvedRecipientContractDigest: approvalDigest } : {}),
+      });
+    },
+    ...(params.onApprovalSucceeded ? { onApprovalSucceeded: params.onApprovalSucceeded } : {}),
+    ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
+  });
+}
+
+/** Replaces only the dormant SavedSecret slot, preserving source and purpose selection. */
+export async function replaceScopedAccountVoiceCredential(params: Readonly<{
+  scope: AccountSettingsScope | null;
+  replacement: VoiceCredentialReplacement;
+  expectedSettingsVersion: number;
+  requiredRecipientContractDigest?: string | null;
+  onApprovalSucceeded?: (result: Extract<OneShotAccountSettingsMutationResult<undefined>, { status: 'applied' }>) => void | Promise<void>;
+  onApprovalFailed?: (code: string) => void;
+}>): Promise<RecoverableVoiceCredentialMutationResult<OneShotAccountSettingsMutationResult<undefined>>> {
+  if (!params.scope) throw new Error('account_settings_scope_unavailable');
+  const applied = (settingsVersion: number) => ({ status: 'applied' as const, settingsVersion, value: undefined });
+  const result = await saveScopedAccountVoiceCredentialResource({
+    scope: params.scope,
+    replacement: params.replacement,
+    expectedSettingsVersion: params.expectedSettingsVersion,
+    requiredRecipientContractDigest: params.requiredRecipientContractDigest,
+    mutate: ({ rawSettings, catalogs }, replacement) => ({
+      settings: applyAccountSettingsSavedSecretMutation(rawSettings, replacement, catalogs).settings,
+      catalogs,
+    }),
+    ...(params.onApprovalSucceeded ? { onApprovalSucceeded: receipt => params.onApprovalSucceeded!(applied(receipt.settingsVersion)) } : {}),
+    ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
+  });
+  return voiceCredentialResourceReceipt<OneShotAccountSettingsMutationResult<undefined>>(result, applied,
+    () => ({ status: 'conflict', currentSettingsVersion: params.expectedSettingsVersion }),
+    () => ({ status: 'outcomeUnknown', lastKnownSettingsVersion: params.expectedSettingsVersion }));
+}
+
+/** One captured Account pairs the source selection with its qualified-purpose row. */
+export async function mutateScopedAccountVoiceCredentialSource(params: Readonly<{
+  scope: AccountSettingsScope | null;
+  mutation: AccountSettingsVoiceCredentialSourceMutation;
+  expectedDeclaration: VoiceProviderContribution;
+  resolveCurrentDeclaration: (contribution: PluginContributionIdentityV1) => VoiceProviderContribution | null;
+  observeProducedSettings?: (settings: Settings) => void;
+  requiredRecipientContractDigest?: string | null;
+  onApprovalSucceeded?: (result: Extract<AccountSettingsVoiceCredentialSourceMutationResult, { status: 'applied' }>) => void | Promise<void>;
+  onApprovalFailed?: (code: string) => void;
+}>): Promise<RecoverableVoiceCredentialMutationResult<AccountSettingsVoiceCredentialSourceMutationResult>> {
+  if (!params.scope) throw new Error('connected_purpose_catalog_unavailable');
+  const replacement = params.mutation.savedSecretMutation;
+  if (replacement?.kind === 'replaceVoiceCredentialSecret') {
+    const expectedContractKey = voiceCredentialSourceMutationContractKey(params.expectedDeclaration, params.mutation);
+    if (!expectedContractKey) return staleVoiceCredentialSourceMutation(params.mutation);
+    let produced: AccountVoiceCredentialSourceMutationValue | null = null;
+    const appliedResult = (settingsVersion: number): Extract<AccountSettingsVoiceCredentialSourceMutationResult, { status: 'applied' }> => {
+      if (!produced) throw new Error('voice_credential_source_unavailable');
+      return { status: 'applied', settingsVersion, ...produced };
+    };
+    const result = await saveScopedAccountVoiceCredentialResource({
+      scope: params.scope,
+      replacement,
+      expectedSettingsVersion: params.mutation.expectedSettingsVersion,
+      requiredRecipientContractDigest: params.requiredRecipientContractDigest,
+      mutate: ({ rawSettings, catalogs }, preparedReplacement) => {
+        const declaration = params.resolveCurrentDeclaration(params.mutation.contribution);
+        if (!declaration
+          || voiceCredentialSourceMutationContractKey(declaration, params.mutation) !== expectedContractKey) {
+          return { ok: false, reason: 'changed' };
+        }
+        if (catalogs.connectedPurposes === undefined) return { ok: false, reason: 'unavailable' };
+        const candidate = applySavedSecretCatalogVoiceCredentialSourceMutationV1(rawSettings, {
+          ...params.mutation,
+          savedSecretMutation: preparedReplacement,
+        }, declaration, catalogs);
+        produced = { selection: candidate.selection, binding: candidate.binding };
+        return { settings: candidate.settings, catalogs: { ...catalogs, connectedPurposes: candidate.connectedPurposes } };
+      },
+      ...(params.onApprovalSucceeded ? { onApprovalSucceeded: value => params.onApprovalSucceeded!(appliedResult(value.settingsVersion)) } : {}),
+      ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
+    });
+    return voiceCredentialResourceReceipt<AccountSettingsVoiceCredentialSourceMutationResult>(result, appliedResult,
+      () => staleVoiceCredentialSourceMutation(params.mutation),
+      () => ({ status: 'outcomeUnknown', lastKnownSettingsVersion: params.mutation.expectedSettingsVersion }));
+  }
+  const { sync } = await import('@/sync/sync');
+  return withConnectedAccountCatalogAccount(params.scope, undefined, async (context) => {
+    const snapshot = await readConnectedAccountCatalogInContext(context, 'purposes');
+    if (snapshot.status !== 'ready' || snapshot.record.key !== 'purposes') {
+      throw new Error('connected_purpose_catalog_unavailable');
+    }
+    let purposes: ConnectedPurposeCatalogV1 | null = null;
+    let voiceCredentialMutation: Readonly<{
+      currentSettings: Readonly<Record<string, unknown>>;
+      nextSettings: Readonly<Record<string, unknown>>;
+    }> | null = null;
+    let referencedSavedSecretIds: string[] = [];
+    return mutateAccountVoiceCredentialSource({
+      ...params,
+      connectedPurposes: snapshot.record.value,
+      mutateAccountSettingsOnce: (input) => sync.mutateAccountSettingsOnce({
+        expectedSettingsScope: params.scope,
+        expectedSettingsVersion: input.expectedSettingsVersion,
+        mutate: (raw) => {
+          context.assertCurrent();
+          const produced = input.mutate(raw);
+          purposes = produced.connectedPurposes;
+          voiceCredentialMutation = { currentSettings: raw, nextSettings: produced.settings };
+          const gesture = params.mutation.savedSecretMutation;
+          referencedSavedSecretIds = [...listSavedSecretVoiceCredentialMutationReferencesV1(raw, produced.settings, {
+            ...(gesture?.kind === 'bindVoiceCredentialSavedSecret' ? { requestedReferences: [gesture.secretId] } : {}),
+          })];
+          params.observeProducedSettings?.(settingsParse(produced.settings));
+          return produced;
+        },
+        commitPrepared: async (prepared) => {
+          if (!purposes || !voiceCredentialMutation) throw new Error('connected_purpose_catalog_unavailable');
+          try {
+            const result = await writeConnectedAccountCatalogRecordAndPublishInContext(context, {
+              record: { key: 'purposes', value: purposes },
+              expectedRevision: snapshot.revision,
+              voiceCredentialMutation,
+              referencedSavedSecretIds,
+              settingsMutation: {
+                content: prepared.content,
+                expectedSettingsVersion: prepared.expectedSettingsVersion,
+                ...(prepared.remoteAlertPolicy === undefined ? {} : { remoteAlertPolicy: prepared.remoteAlertPolicy }),
+              },
+            });
+            if (result.status === 'updated') return result.settingsVersion === undefined
+              ? { status: 'outcomeUnknown', lastKnownSettingsVersion: prepared.expectedSettingsVersion }
+              : { status: 'applied', settingsVersion: result.settingsVersion };
+            if (result.status === 'settings-conflict') return {
+              status: 'conflict', currentSettingsVersion: result.revision,
+            };
+            if (result.status === 'conflict') return {
+              status: 'conflict', currentSettingsVersion: prepared.expectedSettingsVersion,
+            };
+            throw new ConnectedAccountCatalogOperationError(result.status, result);
+          } catch (error) {
+            if (error instanceof ConnectedAccountCatalogOperationError && error.code === 'outcome_unknown') {
+              return { status: 'outcomeUnknown', lastKnownSettingsVersion: prepared.expectedSettingsVersion };
+            }
+            return { status: 'rejected', error: error instanceof Error ? error : new Error('connected_purpose_mutation_failed') };
+          }
+        },
+      }),
+    });
   });
 }
 
@@ -503,26 +720,6 @@ export function resolveAccountVoiceCredentialStatus(params: Readonly<{
     reference,
     ...(savedSecret?.kind === 'shared_resource' ? { savedSecret } : {}),
   });
-}
-
-export function materializeAccountVoiceCredential(params: Readonly<{
-  settings: Pick<Settings, 'voiceSettingsV1' | 'secrets'>;
-  contribution: PluginContributionIdentityV1;
-  credentialSlotId: string;
-  machineId?: string | null;
-  requiredRecipientContractDigest?: string | null;
-  decrypt: (value: SecretStringV1) => string | null;
-}>): string | null {
-  const reference = resolveAccountVoiceCredential(
-    params.settings,
-    params.contribution,
-    params.credentialSlotId,
-    params.machineId,
-    params.requiredRecipientContractDigest,
-  );
-  if (!reference) return null;
-  const record = params.settings.secrets.find((secret) => secret.id === reference.secretId);
-  return record ? params.decrypt(record.encryptedValue) : null;
 }
 
 export function resolveExactAccountVoiceCredentialSecretId(params: Readonly<{
@@ -654,7 +851,7 @@ export function createAccountVoiceCredentialBindingMutation(
  * contribution declares a credential-source purpose.
  */
 export function bindAccountVoiceCredentialSavedSecret(
-  params: AccountVoiceCredentialBindingTarget & Readonly<{ settings: Settings }>,
+  params: AccountVoiceCredentialBindingTarget & Readonly<{ settings: Settings; catalogs?: SavedSecretReferenceCatalogsV1 }>,
 ): Readonly<{
   settings: Settings;
   accountSettings: Record<string, unknown>;
@@ -663,6 +860,7 @@ export function bindAccountVoiceCredentialSavedSecret(
   const result = applyAccountSettingsSavedSecretMutation(
     accountSettings,
     createAccountVoiceCredentialBindingMutation(params),
+    params.catalogs,
   );
   return Object.freeze({
     accountSettings: { ...result.settings },

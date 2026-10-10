@@ -3,12 +3,19 @@ import { acquireVoicePlaybackAudioMode, type VoiceAudioModeLease } from '@/voice
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { VoiceCatalogRow } from './voiceCatalog';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createVoicePlaybackController, type VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
+
+export type VoiceCatalogPreviewSynthesizer = (input: Readonly<{
+    row: VoiceCatalogRow;
+    signal: AbortSignal;
+    isCurrent(): boolean;
+    registerPlaybackStopper: VoicePlaybackStopperRegistrar;
+}>) => Promise<void>;
 
 type PreviewSnapshot = Readonly<{ providerId: string; voiceId: string }>;
 let snapshot: PreviewSnapshot | null = null;
 let preview: Readonly<{
-    player: ReturnType<typeof import('expo-audio')['createAudioPlayer']>;
-    subscription: Readonly<{ remove(): void }>;
+    stop(): void;
     releaseAudioMode: () => Promise<void>;
     detachAbort: () => void;
 }> | null = null;
@@ -24,8 +31,7 @@ export function stopRealtimeCatalogPreview(providerId: string): boolean {
     generation += 1;
     const previous = preview;
     preview = null;
-    try { previous?.subscription.remove(); } catch { /* player boundary */ }
-    try { previous?.player.remove(); } catch { /* player boundary */ }
+    try { previous?.stop(); } catch { /* playback boundary */ }
     previous?.detachAbort();
     if (previous) fireAndForget(previous.releaseAudioMode().catch(() => {}), { tag: 'RealtimeCatalogPreview.releaseAudioMode' });
     publish(null);
@@ -38,8 +44,9 @@ export async function playRealtimeCatalogPreview(input: Readonly<{
     signal?: AbortSignal;
     isCurrent(): boolean;
     subscribeCurrent?(listener: () => void): () => void;
+    synthesize?: VoiceCatalogPreviewSynthesizer;
 }>): Promise<SettingOperationResult> {
-    if (!input.row.previewUrl) return { status: 'unavailable', reason: 'voice_preview_unavailable' };
+    if (!input.row.previewUrl && !input.synthesize) return { status: 'unavailable', reason: 'voice_preview_unavailable' };
     if (input.signal?.aborted || !input.isCurrent()) return { status: 'cancelled' };
     if (snapshot) stopRealtimeCatalogPreview(snapshot.providerId);
     const attempt = ++generation;
@@ -57,6 +64,22 @@ export async function playRealtimeCatalogPreview(input: Readonly<{
     let lease: VoiceAudioModeLease | null = null;
     let transferred = false;
     try {
+        if (!current()) { stop(); return { status: 'cancelled' }; }
+        if (!input.row.previewUrl && input.synthesize) {
+            // Local speech already owns its playback audio-mode lease. Custody and Stop
+            // still belong to this one preview owner, including synthesis in flight.
+            const controller = new AbortController();
+            const playback = createVoicePlaybackController();
+            preview = { stop: () => { controller.abort(); playback.interrupt(); },
+                releaseAudioMode: async () => {}, detachAbort };
+            transferred = true;
+            await input.synthesize({ row: input.row, signal: controller.signal, isCurrent: current,
+                registerPlaybackStopper: playback.registerStopper.captureAttempt!() });
+            const completed = current();
+            stop();
+            return completed ? { status: 'completed', value: { voiceId: input.row.id, started: true } }
+                : { status: 'cancelled' };
+        }
         lease = await acquireVoicePlaybackAudioMode('realtime-catalog-preview');
         if (!current()) { stop(); return { status: 'cancelled' }; }
         const { createAudioPlayer } = await import('expo-audio');
@@ -64,14 +87,16 @@ export async function playRealtimeCatalogPreview(input: Readonly<{
         const player = createAudioPlayer(input.row.previewUrl, { keepAudioSessionActive: true });
         if (!current()) { player.remove(); stop(); return { status: 'cancelled' }; }
         const subscription = player.addListener('playbackStatusUpdate', status => { if (status.didJustFinish) stop(); });
-        preview = { player, subscription, releaseAudioMode: lease.release, detachAbort };
+        preview = { stop: () => { try { subscription.remove(); } finally { player.remove(); } },
+            releaseAudioMode: lease.release, detachAbort };
         lease = null;
         transferred = true;
         player.play();
         return { status: 'completed', value: { voiceId: input.row.id, started: true } };
     } catch {
+        const cancelled = !current();
         stop();
-        return input.signal?.aborted || !input.isCurrent() ? { status: 'cancelled' } : { status: 'unavailable', reason: 'voice_preview_playback_failed' };
+        return cancelled ? { status: 'cancelled' } : { status: 'unavailable', reason: 'voice_preview_playback_failed' };
     } finally {
         if (!transferred) detachAbort();
         if (lease) await lease.release().catch(() => {});

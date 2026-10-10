@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createVoiceContinuationProjection } from './voiceContinuationProjection';
+import { createVoiceContinuationProjection, readVoiceContinuationArrival } from './voiceContinuationProjection';
 import { buildVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import type { VoiceSessionSnapshot } from '@/voice/session/types';
@@ -33,5 +33,19 @@ describe('Voice continuation attempt projection', () => {
         projection.update({ snapshot: failed, binding, deviceId: 'a', sessionSeq: 10 });
         expect(projection.observe(conversation, [{ kind: 'agent-text', id: 'note', localId: null, seq: 11, createdAt: 1, text: 'Continued',
             meta: buildVoiceTranscriptNoteMeta({ continuation: { v: 1, deviceId: 'b', conversation } }) }])).toBeNull();
+    });
+});
+
+describe('Voice continuation arrival', () => {
+    const note = (seq: number, deviceId: string, address = conversation) => ({ kind: 'agent-text' as const, id: `note-${seq}`, localId: null,
+        seq, createdAt: seq, text: 'Voice continued.', meta: buildVoiceTranscriptNoteMeta({ continuation: { v: 1, deviceId, conversation: address } }) });
+    const turn = { kind: 'user-text' as const, id: 'turn', localId: null, seq: 9, createdAt: 9, text: 'hello' };
+
+    it('is an arrival only when the conversation was last voiced on another device', () => {
+        expect(readVoiceContinuationArrival([note(3, 'a'), note(7, 'b'), turn], conversation, 'a')).toBe(true);
+        expect(readVoiceContinuationArrival([note(7, 'b'), note(3, 'a'), turn], conversation, 'b')).toBe(false);
+        expect(readVoiceContinuationArrival([turn], conversation, 'a')).toBe(false);
+        expect(readVoiceContinuationArrival([note(7, 'b', { ...conversation, sessionId: 'elsewhere' })], conversation, 'a')).toBe(false);
+        expect(readVoiceContinuationArrival([note(7, 'b')], conversation, ' ')).toBe(false);
     });
 });

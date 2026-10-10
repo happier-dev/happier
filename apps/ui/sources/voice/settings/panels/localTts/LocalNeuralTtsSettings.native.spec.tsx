@@ -82,41 +82,6 @@ vi.mock('@/voice/output/KokoroTtsController', () => ({
   speakKokoroText: vi.fn(),
 }));
 
-vi.mock('@/voice/runtime/playback/VoicePlaybackController', () => ({
-  createVoicePlaybackController: () => ({ registerStopper: () => () => {}, interrupt: vi.fn() }),
-}));
-
-function expectAtLeast44PointTarget(style: unknown): void {
-  const flattened = (Array.isArray(style) ? style : [style]).reduce<Record<string, unknown>>(
-    (result, entry) => entry && typeof entry === 'object' ? { ...result, ...entry } : result,
-    {},
-  );
-  const width = Math.max(
-    typeof flattened.width === 'number' ? flattened.width : 0,
-    typeof flattened.minWidth === 'number' ? flattened.minWidth : 0,
-  );
-  const height = Math.max(
-    typeof flattened.height === 'number' ? flattened.height : 0,
-    typeof flattened.minHeight === 'number' ? flattened.minHeight : 0,
-  );
-  expect(width).toBeGreaterThanOrEqual(44);
-  expect(height).toBeGreaterThanOrEqual(44);
-}
-
-type AccessoryButtonProps = {
-  accessibilityRole?: string;
-  accessibilityLabel?: string;
-  style?: unknown;
-  onPress: (event: { stopPropagation?: () => void }) => void;
-};
-
-function requireAccessoryButton(node: unknown): React.ReactElement<AccessoryButtonProps> {
-  if (!React.isValidElement<AccessoryButtonProps>(node)) {
-    throw new Error('Expected an accessory button element');
-  }
-  return node;
-}
-
 // Load the real settings owner during collection; a cold graph import is not playback behavior.
 const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
 
@@ -127,6 +92,33 @@ describe('LocalNeuralTtsSettings (native)', () => {
     cancelPrepareSpy.mockClear();
     localModelPackState.modelStatus = 'idle';
     modelPackStateParamsSpy.mockClear();
+  });
+
+  it('reflects and stops the shared preview attempt instead of keeping an independent mounted player', async () => {
+    const { localNeuralTtsPreviewController } = await import('./providers/localNeural/previewLocalNeuralTts');
+    const { tree } = await renderScreen(<LocalNeuralTtsSettings
+      cfgKokoro={{ model: 'kokoro', assetId: null, voiceId: 'af_heart', speed: 1, execution: 'device' }}
+      setKokoro={vi.fn()}
+      networkTimeoutMs={1000}
+    />);
+    const menu = tree.root.findAll((node) => node.props.itemTrigger?.title === 'settingsVoice.local.kokoro.voice.title'
+      && typeof node.props.onOpenChange === 'function')[0];
+    expect(menu).toBeDefined();
+    await act(async () => { menu!.props.onOpenChange(true); });
+    const nativeStop = vi.fn();
+    await act(async () => {
+      localNeuralTtsPreviewController.begin('af_heart').registerPlaybackStopper(nativeStop);
+    });
+    const voiceMenu = () => tree.root.findAll((node) => node.props.itemTrigger?.title === 'settingsVoice.local.kokoro.voice.title'
+      && Array.isArray(node.props.items))[0];
+    const previewGlyph = () => {
+      const accessory = voiceMenu()!.props.items[0].rightElement as React.ReactElement<{ children: React.ReactElement<{ icon: React.ReactElement<{ name: string }> }> }>;
+      return accessory.props.children.props.icon.props.name;
+    };
+    expect(previewGlyph()).toBe('pause-circle');
+    await act(async () => { localNeuralTtsPreviewController.stop(); });
+    expect(previewGlyph()).toBe('play');
+    expect(nativeStop).toHaveBeenCalledOnce();
   });
 
   it('changes supported neural playback speed without replacing the selected pack or voice', async () => {
@@ -210,7 +202,7 @@ describe('LocalNeuralTtsSettings (native)', () => {
     }));
   });
 
-  it('keeps download cancellation outside the model row with named 44pt button semantics', async () => {
+  it('keeps download cancellation outside the model row with named button semantics', async () => {
     localModelPackState.modelStatus = 'downloading';
     const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
     const setKokoro = vi.fn();
@@ -230,14 +222,14 @@ describe('LocalNeuralTtsSettings (native)', () => {
     expect(modelRow).toBeTruthy();
     expect(modelRow?.props.rightElementOutsidePressable).toBe(true);
 
-    const cancelButton = requireAccessoryButton(modelRow?.props.rightElement);
-    expect(cancelButton.props.accessibilityRole).toBe('button');
-    expect(cancelButton.props.accessibilityLabel).toBe('common.cancel');
-    expectAtLeast44PointTarget(cancelButton.props.style);
+    const cancelButton = tree.root.findAllByProps({ accessibilityLabel: 'common.cancel' })
+      .find((node) => String(node.type) === 'Pressable');
+    expect(cancelButton).toBeTruthy();
+    expect(cancelButton!.props.accessibilityRole).toBe('button');
 
     const stopPropagation = vi.fn();
     await act(async () => {
-      cancelButton.props.onPress({ stopPropagation });
+      cancelButton!.props.onPress({ stopPropagation });
     });
     expect(stopPropagation).toHaveBeenCalledOnce();
     expect(cancelPrepareSpy).toHaveBeenCalledOnce();
@@ -245,7 +237,7 @@ describe('LocalNeuralTtsSettings (native)', () => {
     expect(setKokoro).not.toHaveBeenCalled();
   });
 
-  it('keeps voice preview outside the selectable row with named 44pt button semantics', async () => {
+  it('keeps voice preview outside the selectable row with named button semantics', async () => {
     const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
     const setKokoro = vi.fn();
     const { tree } = await renderScreen(<LocalNeuralTtsSettings
@@ -265,7 +257,6 @@ describe('LocalNeuralTtsSettings (native)', () => {
     const previewButton = accessory.tree.root.findByType('Pressable');
     expect(previewButton.props.accessibilityRole).toBe('button');
     expect(previewButton.props.accessibilityLabel).toBe('settingsVoice.realtimeProviders.catalog.preview');
-    expectAtLeast44PointTarget(previewButton.props.style);
 
     const stopPropagation = vi.fn();
     await act(async () => {

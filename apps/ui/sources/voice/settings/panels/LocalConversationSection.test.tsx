@@ -11,21 +11,32 @@ import {
   type VoiceLocalConversationSettings,
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
-import { createDeferred, renderSettingsView, type SettingsViewHarness } from '@/dev/testkit';
+import { createDeferred, renderSettingsView, standardCleanup, type SettingsViewHarness } from '@/dev/testkit';
+import { sync } from '@/sync/sync';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { t } from '@/text';
 import { PluginProjectionV2Schema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { storage } from '@/sync/domains/state/storage';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
-import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
-import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { refreshAuthenticatedServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { updateEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { refreshAcpCatalog, resetAcpCatalogEngineForTests } from '@/sync/engine/settings/acpCatalogEngine';
+import { getAcpCatalogSnapshot, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
+
+installDisconnectedServerSocketBoundary();
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let rowDefinitions: readonly unknown[];
 
 
 (
@@ -113,13 +124,6 @@ vi.mock('@/voice/settings/panels/localStt/LocalVoiceSttGroup', () => ({
 vi.mock('@/voice/settings/panels/localTts/LocalVoiceTtsGroup', () => ({
   LocalVoiceTtsGroup: () => null,
 }));
-vi.mock('@/agents/runtime/resumeCapabilities', () => ({
-  canAgentResume: () => true,
-}));
-vi.mock('@/voice/agent/resetGlobalVoiceAgentPersistence', () => ({
-  resetGlobalVoiceAgentPersistence: vi.fn(),
-}));
-
 type LocalConversationAgentOverrides = Partial<VoiceLocalConversationSettings['agent']> & {
   machineTargetMode?: 'auto' | 'fixed';
   machineTargetId?: string | null;
@@ -190,12 +194,10 @@ function openAdvancedAgent(screen: Pick<SettingsViewHarness, 'findAll'>) {
 }
 
 beforeEach(async () => {
+  account = undefined;
   routeParams.value = {};
-  await upsertAndActivateServer({ serverUrl: 'https://voice-selection.example.test', scope: 'tab' });
-  // Secure credential storage and registry RPC are boundaries; projection and catalog hooks stay real.
-  vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
-    token: 'header.eyJzdWIiOiJ2b2ljZS1hY2NvdW50In0.signature',
-  });
+  rowDefinitions = [];
+  useVoiceTargetStore.setState({ autoTargetMachineByScope: {} });
   clearDaemonMergedProjectionCacheForTests();
   registryDescribe.mockResolvedValue({
     supported: true,
@@ -216,16 +218,37 @@ beforeEach(async () => {
   });
   platformOsMock.value = 'ios';
   resetServerFeaturesClientForTests();
-  setRuntimeFetch(vi.fn(async () => new Response(JSON.stringify(buildServerFeaturesResponse({ voiceEnabled: true })), {
-    status: 200, headers: { 'content-type': 'application/json' },
-  })));
+  account = await restoreServerAccountForTest({ serverUrl: 'https://voice-selection.example.test', accountId: 'voice-account',
+    request: async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(buildServerFeaturesResponse({ voiceEnabled: true }));
+      if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+      if (path === '/v2/account/settings') return Response.json({ version: 4, content: { t: 'plain', v: {
+        experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true },
+      } } });
+      if (path === '/v1/artifacts') return Response.json([]);
+      if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
+      if (path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
+      if (path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json({ status: 'present', revision: 3,
+        content: { t: 'plain', v: { v: 1, definitions: rowDefinitions } } });
+      return new Response(null, { status: 404 });
+    },
+  });
+  const scope = { serverId: account.home.id, accountId: 'voice-account' };
+  await sync.refreshAccountSettingsFromServer(4, scope);
+  await updateEffectiveHomeViewState(() => ({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: account!.home.id }), { scope: 'device' });
   storage.setState({
+    settingsScope: scope,
+    profileScope: scope,
     settings: settingsParse({ experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true } }),
     machines: {
       'machine-1': createMachineFixture({ activeAt: Date.now() }),
       'machine-2': createMachineFixture({ id: 'machine-2', active: false, createdAt: 2, updatedAt: 2, activeAt: 2 }),
     },
   });
+  await refreshAcpCatalog(scope);
+  await refreshAuthenticatedServerFeaturesSnapshot({ serverId: account.home.id, credentials: account.credentials });
   storage.getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'machine-1', path: '/tmp/repo' }] });
   resetDynamicModelProbeCacheForTests();
   capabilitiesInvoke.mockReset();
@@ -234,7 +257,13 @@ beforeEach(async () => {
     supportsFreeform: true,
   } } });
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(async () => {
+  standardCleanup();
+  resetAcpCatalogEngineForTests();
+  resetAcpCatalogSnapshotsForTests();
+  await account?.dispose();
+  vi.restoreAllMocks();
+});
 
 // Collect the real renderer graph before timed interactions (cold transforms are not behavior).
 const localConversationModule = await import('@/voice/settings/panels/LocalConversationSection');
@@ -243,6 +272,43 @@ async function loadLocalConversationSection() {
 }
 
 describe('LocalConversationSection', () => {
+  it.each(['ready', 'incomplete'] as const)('uses %s exact destination facts for Voice memory resume availability', async (status) => {
+    const definition = AcpBackendDefinitionV1Schema.parse({ id: 'claude', name: 'configured-claude', title: 'Configured Claude',
+      command: 'review', capabilities: { supportsLoadSession: true }, createdAt: 1, updatedAt: 1 });
+    rowDefinitions = status === 'ready' ? [definition] : [definition, { id: 'malformed-neighbor' }];
+    const scope = { serverId: account!.home.id, accountId: 'voice-account' };
+    await refreshAcpCatalog(scope);
+    expect(getAcpCatalogSnapshot(scope)?.catalog.status).toBe(status === 'ready' ? 'ready' : 'partial');
+    const { VoiceAgentMemorySection } = await import('./VoiceAgentMemorySection');
+    const voice = createLocalConversationVoice({ agent: { agentSource: 'agent', agentId: 'claude',
+      agentTargetKey: 'backend:claude:configured:claude', transcript: { persistenceMode: 'persistent', epoch: 0 } } });
+    expect(readLocalConversationVoiceSettings(voice).agent).toMatchObject({
+      agentSource: 'agent', agentId: 'claude', agentTargetKey: 'backend:claude:configured:claude', resumabilityMode: 'replay',
+    });
+    const screen = await renderSettingsView(<VoiceAgentMemorySection voice={voice} setVoice={vi.fn()} />);
+    const restore = screen.findAll((node) => node.props?.testIDPrefix === 'settings.voice.memory.restore')[0];
+    const resume = restore?.props.options.find((option: { id: string }) => option.id === 'provider_resume');
+    expect(resume).toBeDefined();
+    if (status === 'ready') expect(resume?.unavailableReason).toBeUndefined();
+    else expect(typeof resume?.unavailableReason).toBe('string');
+  });
+
+  it('offers a configured Agent from destination rows without a Settings catalog root', async () => {
+    rowDefinitions = [AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
+      command: 'review', createdAt: 1, updatedAt: 1 })];
+    await refreshAcpCatalog({ serverId: account!.home.id, accountId: 'voice-account' });
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: { agentSource: 'agent', agentId: 'codex' } });
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'));
+    expect(picker?.props.items.find((item: { id: string }) => item.id === 'backend:row-review:configured:row-review')).toMatchObject({ title: 'Row review' });
+    act(() => picker?.props.onSelect('backend:row-review:configured:row-review'));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).agent).toMatchObject({
+      agentId: 'row-review', agentTargetKey: 'backend:row-review:configured:row-review',
+    });
+  });
+
   it('shows Hear timing in seconds but saves milliseconds through the existing owner', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
@@ -312,6 +378,7 @@ describe('LocalConversationSection', () => {
         : { autoTargetMachineId: 'a' }),
     } });
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings));
+    if (kind !== 'replacement') useVoiceTargetStore.getState().rememberAutoTargetMachine(storage.getState().settingsScope!, 'a');
     expect(storage.getState().settings.voice.executionMachine).toEqual(voice.executionMachine);
     storage.setState({ machines: {
       a: createMachineFixture({ id: 'a', active: kind !== 'unavailable', activeAt: kind === 'unavailable' ? 1 : Date.now() }),
@@ -603,7 +670,6 @@ describe('LocalConversationSection', () => {
           providerConnectionId: ProviderConnectionIdSchema.parse('voice-openai-compatible-chat'),
           chatModelId: 'qwen-chat',
           commitModelId: 'qwen-commit',
-          configuration: { temperature: 0.25 },
         },
       },
     });
@@ -674,7 +740,6 @@ describe('LocalConversationSection', () => {
             providerConnectionId: ProviderConnectionIdSchema.parse('voice-openai-compatible-chat'),
             modelId: 'provider-commit-model',
           },
-          configuration: { temperature: 0.73 },
         },
       },
     });

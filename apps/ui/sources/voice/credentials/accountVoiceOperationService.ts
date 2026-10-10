@@ -14,6 +14,7 @@ import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accou
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { sync } from '@/sync/sync';
+import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import {
   resolveSavedSecretReference,
@@ -173,8 +174,12 @@ function captureAccountCredentialAuthority(
   const providerEnvelope = (state.settings.voiceSettingsV1 as Readonly<{
     providers?: Readonly<Record<string, unknown>>;
   }> | undefined)?.providers?.[providerId] ?? null;
+  const purposes = state.settingsScope
+    ? getConnectedAccountCatalogValue(state.settingsScope, 'purposes')
+    : null;
   const source = resolveAccountVoiceCredentialSourceSelection({
     settings: state.settings,
+    connectedPurposes: purposes?.status === 'ready' && !purposes.stale ? purposes.value : null,
     contribution,
     credentialSlotId,
     purpose,

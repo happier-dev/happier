@@ -11,8 +11,10 @@ import { VoiceRealtimeJsonValueSchema, type VoiceRealtimeJsonValue } from '@happ
 import type { RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildVoiceRealtimeAttemptPolicy } from '@happier-dev/agents/voice';
-import { preloadVoiceWelcomeText, resolveVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
+import { resolveSelectedVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
 import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
@@ -64,7 +66,16 @@ import {
   createAccountVoiceOperationService,
 } from '@/voice/credentials/accountVoiceOperationService';
 import { subscribeBundledConversationRuntimeGeneration } from './bundledConversationRuntimeGeneration';
-import { createBundledRealtimeProviderRuntime } from './createBundledRealtimeProviderRuntime';
+import { createBundledRealtimeProviderRuntime, readRequestedTargetSessionAddress } from './createBundledRealtimeProviderRuntime';
+import { storage } from '@/sync/domains/state/storage';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readSessionVoicePreferenceV1, readSessionVoiceSettingFieldV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
+import { resolveSessionVoicePreference } from '@/voice/settings/resolveSessionVoicePreference';
+import { createVoiceSettingsCatalogClient } from '@/voice/credentials/bundledConversationClient';
+import { fetchVoiceSettingsCatalog, type VoiceCatalogRow } from '@/voice/settings/panels/realtime/voiceCatalog';
+import { readSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
+import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import {
   projectVoiceProviderAccountCredentialSlot,
   projectVoiceProviderDeclarationRegistryBase,
@@ -81,7 +92,8 @@ import {
   resolveVoiceExecutionMachineId,
 } from '@/voice/settings/executionMachine';
 import { createAppShellTransientInteractions } from '@/components/appShell/plugins/appShellQuestionInteractions';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { areSessionAddressesEqual, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 
 type ExternalVoiceProviderProtocolLeaf = RealtimeVoiceProviderProtocol;
 export type VoiceConversationProviderContribution = Extract<
@@ -546,15 +558,51 @@ export function createExternalProtocol(
   ) => VoiceCredentialAccess<'prepare' | 'connection'>['raw'],
   attemptPreparationByAttemptId = new Map<number, StandaloneAttemptPreparation>(),
 ): VoiceRealtimeProtocolAdapter {
-  const providerConfigByAttemptId = new Map<number, VoiceRealtimeJsonValue>();
+  const providerConfigByAttemptId = new Map<number, Readonly<{
+    providerConfig: VoiceRealtimeJsonValue;
+    inUseVoice: VoiceConversationInUseVoice | null;
+    targetDisplayName: string | null;
+    targetSessionAddress: SessionAddress | null;
+    sessionMetadata: ReturnType<typeof readVoiceSessionOwnerMetadataFromState>;
+    voiceHomeServerId: string | null;
+    isCurrent(): boolean;
+  }>>();
   const providerConversationFactory = declaration.capabilities.turn.resumption === 'resume'
     ? getProviderConversationServiceFactory(host, providerId)
     : null;
-  const readProviderConfig = (): VoiceRealtimeJsonValue | null => {
+  const readProviderConfig = async (request: VoiceRealtimeJsonValue, signal: AbortSignal) => {
+    const accountLifetime = captureActiveServerAccountScopeCurrentness();
+    const voiceHomeServerId = getActiveServerAccountScope()?.serverId ?? null;
     const projection = host.projectVoiceSettings(host.getSettings(), providerId);
-    if (!projection || projection.providerId !== providerId) return null;
+    if (!projection || projection.providerId !== providerId) return { kind: 'declined' as const, code: 'invalid_provider_settings' };
     const parsed = VoiceRealtimeJsonValueSchema.safeParse(projection.providerConfig);
-    return parsed.success ? deepFreeze(parsed.data) : null;
+    if (!parsed.success) return { kind: 'declined' as const, code: 'invalid_provider_settings' };
+    const target = readRequestedTargetSessionAddress(request);
+    const metadata = target ? readVoiceSessionOwnerMetadataFromState(storage.getState(), target) : null;
+    if (target && !metadata) return { kind: 'declined' as const, code: 'session_metadata_unavailable' };
+    const targetDisplayName = target ? readSessionDisplayTitle(target) : null;
+    const preference = readSessionVoicePreferenceV1(metadata?.work?.voicePreference);
+    const field = readSessionVoiceSettingFieldV1(declaration, preference?.settingFieldPath);
+    const config = deepFreeze(parsed.data);
+    const client = field && config && typeof config === 'object' && !Array.isArray(config)
+      ? createVoiceSettingsCatalogClient(providerId, () => config) : null;
+    let catalog: readonly VoiceCatalogRow[] | null = null;
+    if (client) {
+      try { catalog = await fetchVoiceSettingsCatalog(client, signal); }
+      catch (error) { if (signal.aborted) throw error; }
+    }
+    signal.throwIfAborted();
+    if (!accountLifetime.isCurrent()) return { kind: 'declined' as const, code: 'voice_account_operation_cancelled' };
+    if (target && !readVoiceSessionOwnerMetadataFromState(storage.getState(), target)) {
+      return { kind: 'declined' as const, code: 'session_metadata_unavailable' };
+    }
+    const resolved = resolveSessionVoicePreference({ providerContributionId: providerId, declaration,
+      providerConfig: config, preference, catalog });
+    if (resolved.kind === 'unavailable') return { kind: 'declined' as const, code: resolved.reason };
+    return { kind: 'ready' as const, snapshot: Object.freeze({ providerConfig: deepFreeze(resolved.providerConfig), inUseVoice: resolved.inUseVoice,
+      targetDisplayName, targetSessionAddress: target, sessionMetadata: metadata, voiceHomeServerId,
+      isCurrent: () => accountLifetime.isCurrent()
+        && (!target || readVoiceSessionOwnerMetadataFromState(storage.getState(), target) !== null) }) };
   };
   return Object.freeze({
     ...leaf,
@@ -570,9 +618,11 @@ export function createExternalProtocol(
       exactMessage: declaration.capabilities.turn.exactMessage ?? false,
     }),
     async preflight(preflightInput) {
-      const providerConfig = readProviderConfig();
-      if (providerConfig === null) return { kind: 'declined', code: 'invalid_provider_settings' };
-      providerConfigByAttemptId.set(preflightInput.attemptId, providerConfig);
+      const read = await readProviderConfig(preflightInput.request, preflightInput.signal);
+      if (read.kind === 'declined') return read;
+      const { snapshot } = read;
+      const { providerConfig } = snapshot;
+      providerConfigByAttemptId.set(preflightInput.attemptId, snapshot);
       try {
         const result = leaf.preflight
           ? await leaf.preflight(Object.freeze({
@@ -581,6 +631,11 @@ export function createExternalProtocol(
               providerConfig,
             }))
           : { kind: 'ready' as const };
+        preflightInput.signal.throwIfAborted();
+        if (!snapshot.isCurrent()) {
+          providerConfigByAttemptId.delete(preflightInput.attemptId);
+          return { kind: 'declined' as const, code: 'voice_account_operation_cancelled' };
+        }
         if (result.kind !== 'ready') {
           providerConfigByAttemptId.delete(preflightInput.attemptId);
           return result;
@@ -596,33 +651,56 @@ export function createExternalProtocol(
       }
     },
     async prepare(prepareInput) {
-      const providerConfig = prepareInput.reason === 'initial'
-        ? providerConfigByAttemptId.get(prepareInput.attemptId) ?? readProviderConfig()
-        : readProviderConfig();
+      const capturedSnapshot = providerConfigByAttemptId.get(prepareInput.attemptId);
       providerConfigByAttemptId.delete(prepareInput.attemptId);
-      if (providerConfig === null) return { kind: 'declined', code: 'invalid_provider_settings' };
+      const read = prepareInput.reason === 'initial' && capturedSnapshot
+        ? { kind: 'ready' as const, snapshot: capturedSnapshot }
+        : await readProviderConfig(prepareInput.request, prepareInput.signal);
+      if (read.kind === 'declined') return read;
+      const { snapshot } = read;
+      if (!snapshot.isCurrent()) return { kind: 'declined' as const, code: 'voice_account_operation_cancelled' };
+      const requestedTarget = readRequestedTargetSessionAddress(prepareInput.request);
+      if ((requestedTarget || snapshot.targetSessionAddress)
+        && !areSessionAddressesEqual(requestedTarget, snapshot.targetSessionAddress)) {
+        return { kind: 'declined' as const, code: 'session_metadata_unavailable' };
+      }
+      const { providerConfig } = snapshot;
       return await withVoiceProviderInvocationLifetime({
         callerSignal: prepareInput.signal,
         async run(signal) {
+          if (!snapshot.isCurrent()) return { kind: 'declined' as const, code: 'voice_account_operation_cancelled' };
           let attemptPolicy = attemptPreparationByAttemptId.get(prepareInput.attemptId)?.policy;
           if (declaration.execution?.kind !== 'experimental_agent_session_realtime' && !attemptPolicy) {
             const voice = voiceSettingsParse(readVoiceSettingsInput(host.getSettings()));
             const tools = Object.freeze([...host.getRealtimeClientToolDefinitions({
               effectCalls: declaration.capabilities.tools.effectCalls,
               exposure: 'voice_assistant',
+              ...(snapshot.sessionMetadata ? { sessionMetadata: snapshot.sessionMetadata } : {}),
             })]);
-            const extraSystemAppendBlocks = await resolveUiVoicePromptStackBlocks();
-            await preloadVoiceWelcomeText(voice.assistantLanguage);
-            signal.throwIfAborted();
-            attemptPolicy = buildVoiceRealtimeAttemptPolicy({
+            const serverId = snapshot.targetSessionAddress?.serverId ?? snapshot.voiceHomeServerId;
+            if (!serverId || !snapshot.voiceHomeServerId) return { kind: 'declined' as const, code: 'voice_account_operation_unavailable' };
+            const accountContext = await captureLazyActionAccountContext(serverId, signal);
+            try {
+              const extraSystemAppendBlocks = await resolveUiVoicePromptStackBlocks({
+                serverId, targetSessionAddress: snapshot.targetSessionAddress, accountContext, signal,
+              });
+              const welcomeText = await resolveSelectedVoiceWelcomeText({ assistantLanguage: voice.assistantLanguage,
+                welcome: voice.welcome, targetDisplayName: snapshot.targetDisplayName, serverId: snapshot.voiceHomeServerId,
+                ...(areServerProfileIdentifiersEquivalent(serverId, snapshot.voiceHomeServerId) ? { accountContext } : {}), signal });
+              signal.throwIfAborted();
+              accountContext.assertCurrent();
+              if (!snapshot.isCurrent()) return { kind: 'declined' as const, code: 'voice_account_operation_cancelled' };
+              attemptPolicy = buildVoiceRealtimeAttemptPolicy({
                 actionSpecs: listVoiceToolActionSpecs(),
                 availableToolNames: tools.map((tool) => tool.name),
                 assistantLanguage: voice.assistantLanguage,
                 welcome: voice.welcome,
-                welcomeText: resolveVoiceWelcomeText(voice.assistantLanguage),
+                welcomeText,
+                memoryRecallGuidanceEnabled: snapshot.sessionMetadata ? readSessionMemoryEnabledV1(snapshot.sessionMetadata) : false,
                 extraSystemAppendBlocks,
-            });
-            attemptPreparationByAttemptId.set(prepareInput.attemptId, Object.freeze({ policy: attemptPolicy, tools }));
+              });
+              attemptPreparationByAttemptId.set(prepareInput.attemptId, Object.freeze({ policy: attemptPolicy, tools }));
+            } finally { accountContext.dispose(); }
           }
           const conversationSessionId = host.resolveConversationSessionId(
             prepareInput.controlSessionId,
@@ -636,7 +714,8 @@ export function createExternalProtocol(
               conversationSessionId,
             }) === true,
           );
-          return await leaf.prepare(Object.freeze({
+          if (!snapshot.isCurrent()) return { kind: 'declined' as const, code: 'voice_account_operation_cancelled' };
+          const prepared = await leaf.prepare(Object.freeze({
             ...prepareInput,
             platform,
             providerConfig,
@@ -660,6 +739,12 @@ export function createExternalProtocol(
               : null,
             hostedConversation: createInvocationHostedConversation?.(signal) ?? null,
           }));
+          signal.throwIfAborted();
+          if (!snapshot.isCurrent()) return { kind: 'declined' as const, code: 'voice_account_operation_cancelled' };
+          return prepared.kind === 'prepared'
+            ? { kind: 'prepared' as const, session: prepared.session,
+              ...(snapshot.inUseVoice ? { inUseVoice: snapshot.inUseVoice } : {}) }
+            : prepared;
         },
       });
     },

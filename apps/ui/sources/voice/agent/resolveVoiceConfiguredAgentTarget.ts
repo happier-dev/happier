@@ -11,7 +11,15 @@ import {
     resolveOperationalBackendTargetForAgentSelection,
 } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import type { MergedProviderProjectionEntry } from '@/agents/backendCatalog/mergedProjectionTypes';
+import type { Settings } from '@/sync/domains/settings/settings';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
+import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
 import { storage } from '@/sync/domains/state/storage';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
@@ -78,6 +86,7 @@ function sameIdentity(
 export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
     machineId: string | null | undefined;
     selection: VoiceConfiguredAgentSelection;
+    accountScope?: ServerAccountScope | null;
 }>): Promise<ResolvedVoiceConfiguredAgentTarget> {
     const agentId = normalizeNonEmptyString(params.selection.agentId);
     if (!agentId) {
@@ -91,7 +100,20 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
     const targetKeySelection = normalizeNonEmptyString(params.selection.agentTargetKey);
     const identitySelection = params.selection.agentIdentity ?? null;
     const hasExactFacts = Boolean(targetKeySelection || identitySelection);
-    if (!hasExactFacts) {
+    const configuredCompatBackendId = readLegacyConfiguredAcpBackendId(agentId);
+    const unavailable = (): ResolvedVoiceConfiguredAgentTarget => ({
+        ok: false,
+        errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
+        agentId,
+        agentTargetKey: targetKeySelection,
+    });
+    const state = storage.getState();
+    const scope = params.accountScope === undefined ? state.settingsScope : params.accountScope;
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (params.accountScope !== undefined && (!scope || !lifetime
+        || !areAccountSettingsScopesEqual(scope, lifetime.scope))) return unavailable();
+    if (!hasExactFacts && !configuredCompatBackendId) {
+        if (isLegacyCompatAgentType(agentId)) return unavailable();
         return {
             ok: true,
             kind: 'legacy',
@@ -101,24 +123,62 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
         };
     }
 
-    const state = storage.getState();
+    if (!scope || !lifetime || !areAccountSettingsScopesEqual(scope, lifetime.scope)) return unavailable();
+    const snapshot = getAcpCatalogSnapshot(scope);
+    if (snapshot?.catalog.status !== 'ready' || snapshot.stale) await refreshAcpCatalog(scope);
+    if (!lifetime.isCurrent()) return unavailable();
     const backendEnabledByTargetKey = state.settings?.backendEnabledByTargetKey ?? null;
     const externalIdentitySelection = identitySelection;
     const projectionInputs = externalIdentitySelection
         ? await loadDaemonMergedProjectionInputs({
             machineId: normalizeNonEmptyString(params.machineId),
-            serverId: getActiveServerSnapshot().serverId,
+            serverId: scope.serverId,
         })
         : null;
+    const catalog = getAcpCatalogSnapshot(scope)?.catalog;
+    if (!lifetime.isCurrent() || catalog?.status !== 'ready') return unavailable();
     const entries = getResolvedBackendCatalogEntries({
         enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
-        acpCatalogSettingsV1: state.settings?.acpCatalogSettingsV1 ?? { v: 2, backends: [] },
+        acpCatalogSnapshot: catalog,
         backendEnabledByTargetKey,
         mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById ?? null,
         mergedBackendProjectionById: projectionInputs?.mergedBackendProjectionById ?? null,
         discoveredBackendIds: projectionInputs?.discoveredBackendIds ?? undefined,
     });
 
+    return projectVoiceConfiguredAgentTarget({
+        selection: params.selection,
+        entries,
+        backendEnabledByTargetKey,
+        mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById,
+    })!;
+}
+
+/** The runtime selection decision over incumbent catalog facts, without refresh or machine work.
+ * Null means the exact selection needs catalog facts that have not been established.
+ */
+export function projectVoiceConfiguredAgentTarget(params: Readonly<{
+    selection: VoiceConfiguredAgentSelection;
+    entries: ReturnType<typeof getResolvedBackendCatalogEntries> | null;
+    backendEnabledByTargetKey: Settings['backendEnabledByTargetKey'] | null;
+    mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
+}>): ResolvedVoiceConfiguredAgentTarget | null {
+    const agentId = normalizeNonEmptyString(params.selection.agentId);
+    const targetKeySelection = normalizeNonEmptyString(params.selection.agentTargetKey);
+    const externalIdentitySelection = params.selection.agentIdentity ?? null;
+    const configuredCompatBackendId = readLegacyConfiguredAcpBackendId(agentId);
+    const unavailable = (): ResolvedVoiceConfiguredAgentTarget => ({
+        ok: false, errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
+        agentId: agentId ?? '', agentTargetKey: targetKeySelection,
+    });
+    if (!agentId) return unavailable();
+    if (!targetKeySelection && !externalIdentitySelection && !configuredCompatBackendId) {
+        return isLegacyCompatAgentType(agentId) ? unavailable() : {
+            ok: true, kind: 'legacy', agentId,
+            backendTarget: { kind: 'backend', backendId: agentId }, targetKey: null,
+        };
+    }
+    const backendEnabledByTargetKey = params.backendEnabledByTargetKey;
     const selectionTargetKey = targetKeySelection
         ? (() => {
             try {
@@ -147,10 +207,17 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
         };
     }
 
+    if (!params.entries) return null;
+    const entries = params.entries;
+
     let matchByKey: (typeof entries)[number] | null = null;
     let matchByIdentity: (typeof entries)[number] | null = null;
     for (const entry of entries) {
         if (matchByKey && matchByIdentity) break;
+        if (!matchByKey && configuredCompatBackendId && !hasExactFacts && entry.kind === 'configuredBackend'
+            && entry.backendTarget.kind === 'backend' && entry.backendTarget.configuredBackendId === configuredCompatBackendId) {
+            matchByKey = entry;
+        }
         if (!matchByKey && selectionTargetKey) {
             // A catalog entry addresses targets in two canonical vocabularies:
             // its exact contribution key and its operational backend key. A
@@ -158,7 +225,7 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
             const operationalTarget = resolveOperationalBackendTargetForAgentSelection({
                 backendTarget: entry.backendTarget,
                 selectedEntry: entry,
-                mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById ?? null,
+                mergedProviderProjectionById: params.mergedProviderProjectionById ?? null,
             });
             const entryKeys = [
                 formatBackendTargetKeyV2(entry.backendTarget),
@@ -188,7 +255,7 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
     const operationalTarget = resolveOperationalBackendTargetForAgentSelection({
         backendTarget: match.backendTarget,
         selectedEntry: match,
-        mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById ?? null,
+        mergedProviderProjectionById: params.mergedProviderProjectionById ?? null,
     });
     if (!operationalTarget) {
         return {

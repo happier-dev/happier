@@ -7,7 +7,6 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
 import { resolveVoiceProviderIdForBindingScope } from '@/voice/settings/resolveVoiceProviderId';
-import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import {
   createConnectedAccountTargetAuthorityFingerprint,
   createConnectedServiceBindingAuthorityFingerprint,
@@ -23,7 +22,8 @@ import {
   registerVoiceAdapters,
   resolveVoiceAdapterSurfaceCapabilities,
 } from './voiceAdapterRegistry';
-import { setVoiceSessionSnapshot } from './voiceSessionStore';
+import { recordVoiceSessionArrival, setVoiceSessionSnapshot } from './voiceSessionStore';
+import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
 import { createNativeAudioSessionLifecycleBridge } from '@/voice/runtime/nativeAudioSessionLifecycleBridge';
 import { useVoiceDiagnosticsRuntimeSync } from '@/voice/diagnostics/useVoiceDiagnosticsRuntimeSync';
 import {
@@ -40,7 +40,10 @@ import { useForegroundVoiceTextTurnQaBridge } from '@/dev/testkit/harness/useFor
 import { resolveAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
-import { createVoiceContinuationProjection } from '@/voice/transcript/voiceContinuationProjection';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { createVoiceContinuationProjection, readVoiceContinuationArrival } from '@/voice/transcript/voiceContinuationProjection';
 import { appendVoiceConversationNoteText } from '@/voice/transcript/voiceConversationTranscript';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { getDeviceAnalyticsId } from '@/track/settingsAnalytics/deviceAnalyticsIdentity';
@@ -56,13 +59,16 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   const currentUiContext = useCurrentUiContextVoiceToolPort();
   useForegroundVoiceTextTurnQaBridge();
   const voice = useSetting('voice') as any;
-  const canonicalVoice = useSetting('voiceSettingsV1');
+  const canonicalVoiceSettings = useSetting('voiceSettingsV1');
   const savedSecretCatalog = useSavedSecretCatalog();
   const secrets = [...savedSecretCatalog.usableSecrets];
-  const connectedAccountPurposeBindingsV1 = useSetting('connectedAccountPurposeBindingsV1');
   const profile = useProfile();
   const executionMachine = useVoiceExecutionMachinePresentation();
   const accountScope = useActiveServerAccountScope();
+  const settingsScope = useAccountSettingsScope();
+  const purposes = useConnectedAccountCatalog('purposes', settingsScope);
+  const connectedPurposes = areAccountSettingsScopesEqual(settingsScope, accountScope)
+    && purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
   const connectedServices = profile?.connectedServicesV2 ?? null;
   const connectedServiceCredentialRevisions = profile?.connectedServiceCredentialRevisionsV1 ?? null;
   const currentUiContextToolSetEnabled = React.useMemo(
@@ -70,7 +76,6 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     [voice],
   );
   useVoiceDiagnosticsRuntimeSync(voice);
-  const canonicalVoiceSettings = voiceSettingsParse(canonicalVoice);
   /*
    * Plugin activation registers external providers after this runtime's first render, so a
    * persisted external selection resolves to `null` on a cold boot. Without observing the
@@ -89,7 +94,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   const exactSessionCredentialAuthority = providerId !== null
     && resolveVoiceAdapterSurfaceCapabilities(providerId, voice)?.agentRuntime !== undefined;
   const voiceCredentialAuthority = readVoiceCredentialAuthorityRefs(
-    canonicalVoice,
+    canonicalVoiceSettings,
     providerId,
     credentialSlotId,
   );
@@ -107,8 +112,8 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
         settings: {
           voiceSettingsV1: canonicalVoiceSettings,
           secrets,
-          connectedAccountPurposeBindingsV1,
         },
+        connectedPurposes,
         contribution,
         credentialSlotId: credentials.slot.id,
         purpose: {
@@ -186,8 +191,14 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       const note = continuation.update({ snapshot, binding, deviceId: snapshot.canStop && exactHome ? getDeviceAnalyticsId() : null,
         deviceDisplayName: resolveLocalDeviceLabel({ deviceName: Constants.deviceName, platform: Platform.OS }),
         sessionSeq: exactHome && typeof session?.seq === 'number' ? session.seq : null });
-      if (note) appendVoiceConversationNoteText({ conversationSessionId: note.conversation.sessionId,
-        text: 'Voice continued.', continuation: note });
+      if (note) {
+        // Read before this device's own note lands: the conversation was last voiced elsewhere.
+        if (snapshot.adapterId && snapshot.sessionId && readVoiceContinuationArrival(
+          readStoredSessionMessagesForAddress(storage.getState(), note.conversation), note.conversation, note.deviceId,
+        )) recordVoiceSessionArrival(snapshot.adapterId, snapshot.sessionId);
+        appendVoiceConversationNoteText({ conversationSessionId: note.conversation.sessionId,
+          text: 'Voice continued.', continuation: note });
+      }
     };
     const unsubscribe = controller.subscribe(syncPublishedSnapshot);
     const unsubscribeBinding = voiceSessionBindingStore.subscribe(syncPublishedSnapshot);

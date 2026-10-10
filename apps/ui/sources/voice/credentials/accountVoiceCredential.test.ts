@@ -6,7 +6,6 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import {
   approveAccountVoiceCredentialRecipientContract,
   applyAccountVoiceCredentialSourceSelection as applyAccountVoiceCredentialSourceSelectionAtOwner,
-  materializeAccountVoiceCredential,
   mutateAccountVoiceCredentialSource,
   removeAccountVoiceCredential,
   resolveAccountVoiceCredential,
@@ -71,6 +70,7 @@ function applyAccountVoiceCredentialSourceSelection(params: Parameters<
 }>) {
   return applyAccountVoiceCredentialSourceSelectionAtOwner({
     settings: params.settings,
+    connectedPurposes: { v: 1, bindings: [] },
     mutation: {
       contribution: params.contribution,
       credentialSlotId: params.credentialSlotId,
@@ -110,6 +110,34 @@ const PACKED_VOICE_CONTRIBUTION = Object.freeze({
 });
 
 describe('account Voice credential source mutation', () => {
+  it('resolves the exact qualified purpose from the connected catalog after its settings carrier is retired', () => {
+    const purpose = { consumer: OPENAI_VOICE_CONTRIBUTION, purpose: 'voice.client-auth' };
+    const target = {
+      kind: 'account' as const,
+      account: {
+        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        accountId: 'catalog-account',
+      },
+    };
+    const settings = settingsParse({ voiceSettingsV1: { credentialBindings: [{
+      contribution: OPENAI_VOICE_CONTRIBUTION,
+      credentialSlotId: 'api_key',
+      credentialSource: { kind: 'connectedAccount' },
+      credentialBindings: {},
+    }] } });
+    const input = {
+      settings,
+      connectedPurposes: { v: 1 as const, bindings: [{ purpose, target }] },
+      contribution: OPENAI_VOICE_CONTRIBUTION,
+      credentialSlotId: 'api_key',
+      purpose,
+    };
+    expect(resolveAccountVoiceCredentialSourceSelection(input).selection).toEqual({
+      kind: 'connectedAccount', target,
+    });
+    expect(() => resolveAccountVoiceCredentialSourceSelection({ ...input, connectedPurposes: null })).toThrow();
+  });
+
   it('projects only the selected source grants for the exact access scope and request', () => {
     const base = voiceDeclaration(OPENAI_VOICE_CONTRIBUTION, 'voice.client-auth');
     const webGrant = {
@@ -227,6 +255,7 @@ describe('account Voice credential source mutation', () => {
     let mutations = 0;
 
     await expect(mutateAccountVoiceCredentialSource({
+      connectedPurposes: { v: 1, bindings: [] },
       mutation: {
         contribution: OPENAI_VOICE_CONTRIBUTION,
         credentialSlotId: 'api_key',
@@ -282,6 +311,7 @@ describe('account Voice credential source mutation', () => {
     };
 
     const resultPromise = mutateAccountVoiceCredentialSource({
+      connectedPurposes: { v: 1, bindings: [] },
       mutation,
       expectedDeclaration,
       resolveCurrentDeclaration: () => currentDeclaration,
@@ -334,6 +364,7 @@ describe('account Voice credential ownership', () => {
 
     expect(resolveAccountVoiceCredentialSourceSelection({
       settings: withDormantSecret,
+      connectedPurposes: { v: 1, bindings: [] },
       contribution: OPENAI_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
       purpose,
@@ -353,6 +384,7 @@ describe('account Voice credential ownership', () => {
     }).settings;
     expect(resolveAccountVoiceCredentialSourceSelection({
       settings: savedSecret,
+      connectedPurposes: { v: 1, bindings: [] },
       contribution: OPENAI_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
       purpose,
@@ -370,15 +402,17 @@ describe('account Voice credential ownership', () => {
         accountId: 'codex-account',
       },
     };
-    const connected = applyAccountVoiceCredentialSourceSelection({
+    const connectedResult = applyAccountVoiceCredentialSourceSelection({
       settings: savedSecret,
       contribution: OPENAI_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
       purpose,
       selection: { kind: 'connectedAccount', target: connectedTarget },
-    }).settings;
+    });
+    const connected = connectedResult.settings;
     expect(resolveAccountVoiceCredentialSourceSelection({
       settings: connected,
+      connectedPurposes: connectedResult.connectedPurposes,
       contribution: OPENAI_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
       purpose,
@@ -394,14 +428,6 @@ describe('account Voice credential ownership', () => {
       'api_key',
       null,
     )).toEqual({ secretId: 'voice-openai-secret', source: 'account' });
-    const decrypt = vi.fn(() => 'sk-dormant');
-    expect(materializeAccountVoiceCredential({
-      settings: connected,
-      contribution: OPENAI_VOICE_CONTRIBUTION,
-      credentialSlotId: 'api_key',
-      decrypt,
-    })).toBe('sk-dormant');
-    expect(decrypt).toHaveBeenCalledOnce();
     expect(connected.secrets).toEqual([
       expect.objectContaining({ id: 'voice-openai-secret' }),
     ]);
@@ -426,6 +452,7 @@ describe('account Voice credential ownership', () => {
     expect(created.secretId).toBe('voice-openai-secret');
     expect(resolveAccountVoiceCredentialSourceSelection({
       settings: created.settings,
+      connectedPurposes: { v: 1, bindings: [] },
       contribution: OPENAI_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
       purpose,
@@ -791,27 +818,6 @@ describe('account Voice credential ownership', () => {
       'api_key',
       null,
     )?.source).toBe('account');
-  });
-
-  it('materializes only through the invocation-scoped decrypt callback', () => {
-    const settings = saveAndUseAccountVoiceCredential({
-      settings: settingsParse({}), contribution: XAI_VOICE_CONTRIBUTION,
-      credentialSlotId: 'api_key',
-      purpose: {
-        consumer: XAI_VOICE_CONTRIBUTION,
-        purpose: 'voice.client-auth',
-      },
-      value: 'xai-key', generateId: () => 'xai-secret', now: 1, expectedSecretId: null,
-      expectedSecretUpdatedAt: null,
-    }).settings;
-    const decrypt = vi.fn(() => 'xai-key');
-    expect(materializeAccountVoiceCredential({
-      settings,
-      contribution: XAI_VOICE_CONTRIBUTION,
-      credentialSlotId: 'api_key',
-      decrypt,
-    })).toBe('xai-key');
-    expect(decrypt).toHaveBeenCalledOnce();
   });
 
   it('unbinds and deletes only an otherwise unreferenced SavedSecret', () => {

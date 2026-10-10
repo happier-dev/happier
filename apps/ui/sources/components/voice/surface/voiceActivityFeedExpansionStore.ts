@@ -64,12 +64,16 @@ export function reconcileVoiceActivityFeedExpansion(input: Readonly<{
   if (!input.feedEnabled && snapshot.expanded) publish({ ...snapshot, expanded: false });
 }
 
-export function toggleVoiceActivityFeedExpansion(): void {
+export function setVoiceActivityFeedExpanded(expanded: boolean): void {
   publish({
     ...snapshot,
-    expanded: !snapshot.expanded,
-    manuallySuppressed: snapshot.expanded ? true : snapshot.manuallySuppressed,
+    expanded,
+    manuallySuppressed: !expanded ? true : snapshot.manuallySuppressed,
   });
+}
+
+export function toggleVoiceActivityFeedExpansion(): void {
+  setVoiceActivityFeedExpanded(!snapshot.expanded);
 }
 
 export function resetVoiceActivityFeedExpansionForTests(): void {

@@ -11,7 +11,7 @@ import type { VoiceMarkCanvasProps } from './voiceMarkCanvasTypes';
  * of those values changes, so a settled mark — at rest, in silence — schedules nothing.
  */
 export const VoiceMarkCanvas = React.memo(function VoiceMarkCanvas(props: VoiceMarkCanvasProps) {
-    const { to, from, morph, pose, energy, flow } = props;
+    const { to, from, morph, pose, energy, flow, gather, leave } = props;
     const width = to.maxX - to.minX;
     const height = to.maxY - to.minY;
     const offsetX = to.minX;
@@ -27,7 +27,7 @@ export const VoiceMarkCanvas = React.memo(function VoiceMarkCanvas(props: VoiceM
             colour[3] = a;
             paint.setColor(colour);
             canvas.drawCircle(x - offsetX, y - offsetY, radius, paint);
-        });
+        }, gather.value, leave.value);
     }, { width, height }));
     return (
         <Canvas

@@ -126,6 +126,35 @@ describe('openSessionForVoiceTool', () => {
     setCurrentAuth(previousAuth);
   });
 
+  it('opens the exact session through the mounted workspace owner for an imperative Voice tool', async () => {
+    const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+    const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
+    const { createWorkspaceActionAdapter } = await import('@/components/appShell/workspace/workspaceActions');
+    const { registerMountedWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');
+    const { openSessionForVoiceTool } = await import('./openSession');
+    let workspace = createWorkspaceState({ id: 'voice-tool-tab', target: { kind: 'voice', params: {} }, pinned: false, preview: false });
+    const navigation = createWorkspaceNavigationAdapter({
+      getState: () => workspace, getCatalog: () => [],
+      dispatch: (action) => { workspace = reduceWorkspaceState(workspace, action); },
+      transport: { commit: () => {} }, createId: () => 'voice-session-tab', onChange: () => {},
+    });
+    const execute = createWorkspaceActionAdapter({
+      getState: () => workspace, navigation, readCanvas: () => null, createId: () => 'voice-session-tab',
+    });
+    const unregister = registerMountedWorkspaceAction(async ({ actionId, input }) => execute(actionId, input));
+    try {
+      expect(await openSessionForVoiceTool({ sessionId: 's_setup', serverId: 'server-a', query: { jumpSeq: '42' } }))
+        .toMatchObject({ ok: true, address: { serverId: 'server-a', sessionId: 's_setup' } });
+      const group = workspace.groups[workspace.focusedGroupId];
+      expect(workspace.tabs[group.activeTabId].target).toMatchObject({
+        kind: 'session', params: { id: 's_setup', serverId: 'server-a', jumpSeq: '42' },
+      });
+      expect(routerNavigate).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+    }
+  });
+
   it('returns a human-readable session reference for cached cross-server sessions', async () => {
     const { openSessionForVoiceTool } = await import('./openSession');
 

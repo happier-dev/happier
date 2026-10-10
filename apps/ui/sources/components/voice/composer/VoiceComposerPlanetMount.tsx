@@ -82,6 +82,7 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
     return (
         <VoiceComposerPlanet
             pose={resolveVoiceMarkPose(control)}
+            markEvent={control.markEvent}
             muted={live && muted}
             tooltip={[primaryAction === 'start'
                 ? [t('voicePresence.talkWithVoice'), shortcutLabel].filter(Boolean).join(' ')

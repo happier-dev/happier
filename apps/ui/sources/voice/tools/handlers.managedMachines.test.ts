@@ -113,7 +113,7 @@ describe('Machines advertised UI and eligible Voice execution', () => {
     }
   });
 
-  it('reads presets and resolves a pool through the named UI Home instead of the focused Home', async () => {
+  it.each(['ui', 'voice'] as const)('reads presets through the named %s Home instead of the focused Home', async surface => {
     const homeId = 'srv_par_recipes';
     const features = createRootLayoutFeaturesResponse({ features: { machines: { pools: { enabled: true } } },
       capabilities: { serverIdentity: { serverIdentityId: homeId } } });
@@ -123,8 +123,9 @@ describe('Machines advertised UI and eligible Voice execution', () => {
     const presets = { kind: 'listed', presets: [preset] };
     const poolId = '06986bf6-681b-46f1-8d68-bb619ac0c7f0';
     const pool = { kind: 'resolved', poolId, machineId: 'machine', priorityTier: 1 };
+    const settings = { experiments: true, featureToggles: { voice: true } };
     const home = await serveActionHomes({ homes: [
-      { key: 'compute', serverUrl: 'https://par-recipes.test', accountId: 'owner' },
+      { key: 'compute', serverUrl: 'https://par-recipes.test', accountId: 'owner', settings },
       { key: 'focused', serverUrl: 'https://par-recipes-focused.test', accountId: 'other' },
     ], route: request => request.home === 'compute' && request.path === '/v1/features' ? Response.json(features)
       : request.home === 'compute' && request.path === '/v1/machines/presets/list' ? Response.json(presets)
@@ -132,17 +133,26 @@ describe('Machines advertised UI and eligible Voice execution', () => {
     try {
       // Discover the Home identity through the real metadata producer before capturing its Action lifetime.
       expect(await getServerFeaturesSnapshot({ serverId: home.homes.compute!.id })).toMatchObject({ status: 'ready', serverIdentityId: homeId });
-      const context = { surface: 'ui', serverId: homeId } as const;
-      expect(await createDefaultActionExecutor().execute('machines.presets.list', { homeId }, context))
-        .toEqual({ ok: true, result: presets });
+      const context = { surface, serverId: homeId };
+      if (surface === 'ui') {
+        expect(await createDefaultActionExecutor().execute('machines.presets.list', { homeId }, context))
+          .toEqual({ ok: true, result: presets });
+      } else {
+        const name = getActionSpec('machines.presets.list').bindings?.voiceClientToolName;
+        expect(name).toBeTruthy();
+        const handlers = createVoiceToolHandlers({ resolveSessionId: () => null });
+        expect(JSON.parse(await handlers[name!]!({ homeId }, { serverId: homeId })))
+          .toEqual({ ok: true, ...presets });
+      }
       const input = { poolId, requestKey: 'par-ui-pool', purpose: 'session' };
-      expect(await createDefaultActionExecutor().execute('machines.pools.resolve', input, context))
+      // Pools do not advertise Voice; exercise their existing UI owner only.
+      if (surface === 'ui') expect(await createDefaultActionExecutor().execute('machines.pools.resolve', input, context))
         .toEqual({ ok: true, result: pool });
       expect(home.requests.filter(request => request.path.startsWith('/v1/machines/')).map(request => ({
         home: request.home, accountId: request.accountId, path: request.path, body: request.body,
       }))).toEqual([
         { home: 'compute', accountId: 'owner', path: '/v1/machines/presets/list', body: { homeId } },
-        { home: 'compute', accountId: 'owner', path: '/v1/machines/pools/resolve', body: input },
+        ...(surface === 'ui' ? [{ home: 'compute', accountId: 'owner', path: '/v1/machines/pools/resolve', body: input }] : []),
       ]);
     } finally {
       home.dispose();

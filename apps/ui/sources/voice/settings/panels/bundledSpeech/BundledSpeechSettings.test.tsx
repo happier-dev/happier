@@ -1002,6 +1002,19 @@ describe('BundledSpeechSettings', () => {
         },
       },
     }));
+
+    setVoice.mockClear();
+    alert.mockClear();
+    act(() => metadata.props.onChangeText('{'));
+    await act(async () => metadataSave.props.onPress());
+    expect(setVoice).not.toHaveBeenCalled();
+    expect(alert).toHaveBeenCalledOnce();
+
+    alert.mockClear();
+    act(() => metadata.props.onChangeText('[]'));
+    await act(async () => metadataSave.props.onPress());
+    expect(setVoice).not.toHaveBeenCalled();
+    expect(alert).toHaveBeenCalledOnce();
   });
 
   it('validates descriptor-configured OpenAI-compatible TTS settings without carrying them over RPC', async () => {

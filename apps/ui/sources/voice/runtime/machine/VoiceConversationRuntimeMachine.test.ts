@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createVoiceConversationRuntimeMachine } from './VoiceConversationRuntimeMachine';
 import { createVoiceMachineError } from './voiceMachineError';
 import { ensureInterruptionWordSegmentationAvailable } from '../input/segmentInterruptionWords';
+import { deriveLocalVoiceSessionSnapshot } from './deriveLocalVoiceSessionSnapshot';
 
 function createDeferred<T>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -17,6 +18,20 @@ function createDeferred<T>() {
 describe('VoiceConversationRuntimeMachine', () => {
     beforeEach(() => {
         createVoiceConversationRuntimeMachine().reset();
+    });
+
+    it('projects actual applied local speech and retires it with its owning attempt', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+        machine.transitionToConnecting({ controlSessionId: 'a' });
+        machine.transitionToSpeaking({ controlSessionId: 'a' });
+        const voice = { providerContributionId: 'acme.voice/tts', settingFieldPath: 'voiceName', value: 'selected', displayName: 'Selected' };
+        machine.setInUseVoice({ controlSessionId: 'a', inUseVoice: voice });
+        expect(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot()).inUseVoice).toEqual(voice);
+        machine.transitionToEnding({ controlSessionId: 'a' });
+        expect(machine.getSnapshot().inUseVoice).toBeUndefined();
+        machine.transitionToConnecting({ controlSessionId: 'b' });
+        machine.setInUseVoice({ controlSessionId: 'a', inUseVoice: voice });
+        expect(machine.getSnapshot().inUseVoice).toBeUndefined();
     });
 
     it('keeps missing installed word segmentation visible through listening startup', async () => {

@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { useUnistyles } from 'react-native-unistyles';
 
-import { DEFAULT_AGENT_ID, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
+import { getResolvedAgentCatalogEntries, resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
@@ -39,14 +39,24 @@ import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvai
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useSettingsSelector } from '@/sync/domains/state/storage';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
 import { applyVoiceWelcomeSelection, resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
 import { VoiceGreetingItem } from '@/voice/settings/panels/VoiceGreetingItem';
 import { applyVoiceAgentSelection } from '@/voice/settings/voiceAgentSelection';
+import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
+import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { Modal } from '@/modal';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { resolveVoiceAgentCatalogSelectionV1, voiceAgentCatalogSelectionValueV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import {
   LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
+  importLegacyVoiceOpenAiChatProvider,
 } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
 
 
@@ -88,8 +98,8 @@ export function LocalConversationSection(props: {
         ? t('voice.readiness.server_feature_disabled')
         : t('voice.readiness.runtime_unknown');
   const enabledAgentIds = useEnabledAgentIds();
+  const { snapshot: acpCatalog } = useAcpCatalog();
   const settings = useSettingsSelector((settings) => ({
-      acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
       backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
   }));
   // "Custom…" in a model or agent menu opens an inline field under that menu, not a prompt.
@@ -124,11 +134,6 @@ export function LocalConversationSection(props: {
   }, [customChatModelRequested, customCommitModelRequested, enabled, cfg.conversationMode,
     hasConfiguredProviderChat, cfg.agent.chatModelSource, cfg.agent.commitModelSource]);
 
-  const selectedAgentIdForDropdown = React.useMemo(() => {
-    const raw = String(cfg.agent.agentId ?? '').trim();
-    return raw.length > 0 ? raw : null;
-  }, [cfg.agent.agentId]);
-
   // The configured voice Agent may be any installed Agent, bundled or plugin-contributed, so its
   // id goes to the model preflight as-is. Narrowing to the bundled ids here would preflight the
   // default Agent's catalog and offer models the selected Agent cannot run.
@@ -142,6 +147,31 @@ export function LocalConversationSection(props: {
   const preflightMachineId = executionMachine.machineId;
 
   const capabilityServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+  const voiceSettingsScope = useAccountSettingsScope();
+  const voiceSettingsScopeKey = voiceSettingsScope ? `${voiceSettingsScope.serverId}:${voiceSettingsScope.accountId}` : 'unavailable';
+  const legacyChatOrigin = React.useRef<AbortController | null>(null);
+  React.useEffect(() => {
+    const origin = new AbortController();
+    legacyChatOrigin.current = origin;
+    return () => {
+      origin.abort();
+      if (legacyChatOrigin.current === origin) legacyChatOrigin.current = null;
+    };
+  }, [voiceSettingsScopeKey]);
+  const legacyChatApproval = useActionApprovalContinuation({
+    scopeKey: voiceSettingsScopeKey,
+    serverId: voiceSettingsScope?.serverId ?? '',
+    onExecuted: () => {},
+  });
+  const importedChatModels = useProviderModelProjection({
+    enabled: Boolean(voiceSettingsScope) && cfg.agent.providerChat?.status === 'needs_selection',
+    machineId: preflightMachineId,
+    serverId: voiceSettingsScope?.serverId ?? null,
+    agentTargetKey: buildAgentUniverseBackendTargetKey(LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID),
+    mode: 'picker',
+  });
+  const currentVoiceRef = React.useRef(props.voice);
+  currentVoiceRef.current = props.voice;
   const daemonMergedProjection = useDaemonMergedProjectionInputs({
     machineId: preflightMachineId,
     serverId: capabilityServerId,
@@ -156,7 +186,7 @@ export function LocalConversationSection(props: {
   );
   const resolvedAgentEntries = React.useMemo(() => getResolvedAgentCatalogEntries({
     enabledAgentIds,
-    acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    acpCatalogSnapshot: acpCatalog?.catalog,
     backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
     mergedProviderProjectionById: currentDaemonProjectionInputs?.mergedProviderProjectionById ?? null,
     mergedBackendProjectionById: currentDaemonProjectionInputs?.mergedBackendProjectionById ?? null,
@@ -169,20 +199,26 @@ export function LocalConversationSection(props: {
     currentDaemonProjectionInputs?.mergedProviderProjectionById,
     enabledBuiltInAgentIds,
     enabledAgentIds,
-    settings.acpCatalogSettingsV1,
+    acpCatalog?.catalog,
     settings.backendEnabledByTargetKey,
   ]);
+  const selectedAgentEntry = React.useMemo(() => cfg.agent.agentTargetKey
+    ? resolvedAgentEntries.find((entry) => backendTargetKeysMatch(entry.backendTargetKey, cfg.agent.agentTargetKey!))
+    : resolveVoiceAgentCatalogSelectionV1(resolvedAgentEntries, cfg.agent.agentId),
+  [cfg.agent.agentId, cfg.agent.agentTargetKey, resolvedAgentEntries]);
+  const selectedAgentIdForDropdown = selectedAgentEntry
+    ? voiceAgentCatalogSelectionValueV1(selectedAgentEntry)
+    : String(cfg.agent.agentId ?? '').trim() || null;
   const selectedAgentIdLabel = React.useMemo(() => {
     const raw = String(cfg.agent.agentId ?? '').trim();
     if (!raw) return t('settingsVoice.local.notSet');
-    const projectedEntry = resolvedAgentEntries.find((entry) => entry.agentId === raw);
-    if (projectedEntry) return projectedEntry.title;
-    if (isBundledAgentId(raw as any)) return t(getAgentCore(raw as any).displayNameKey);
+    if (selectedAgentEntry) return selectedAgentEntry.title;
+    if (isBundledAgentId(raw)) return resolveAgentCatalogTitle(raw);
     return raw;
-  }, [cfg.agent.agentId, resolvedAgentEntries]);
+  }, [cfg.agent.agentId, selectedAgentEntry]);
   const agentIdMenuItems = React.useMemo(() => [
     ...resolvedAgentEntries.map((entry) => ({
-      id: entry.agentId,
+      id: voiceAgentCatalogSelectionValueV1(entry),
       title: entry.title,
       subtitle: entry.subtitle ?? entry.qualifiedId,
       icon: (
@@ -329,7 +365,9 @@ export function LocalConversationSection(props: {
         </SettingAnchor>
       {cfg.conversationMode === 'agent' ? (
         <>
-        {cfg.agent.providerChat?.status === 'needs_selection' ? (
+        {cfg.agent.providerChat?.status === 'needs_selection'
+          || (cfg.agent.providerChat?.status === 'migration_required'
+            && cfg.agent.providerChat.reason === 'provider_catalog_import_required') ? (
           <SettingAnchor setting={VOICE_CONVERSATIONS_SETTINGS.settings.agent}>
           <DropdownMenu
             open={openMenu === 'providerChatAgentSelection'}
@@ -348,15 +386,36 @@ export function LocalConversationSection(props: {
             }}
             items={[{
               id: LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
-              title: t(getAgentCore(LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID).displayNameKey),
+              title: resolveAgentCatalogTitle(LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID),
               subtitle: t('settingsVoice.local.conversation.agentSource.fixedAgentSubtitle'),
               icon: <Icon name="person" size={20} color={theme.colors.text.secondary} />,
             }]}
             onSelect={(id) => {
-              const nextVoice = applyVoiceAgentSelection(voice, { kind: 'legacy_provider_chat', agentId: String(id) });
-              if (nextVoice === voice) return;
-              props.setVoice(nextVoice);
-              setOpenMenu(null);
+              const capturedVoice = props.voice;
+              const origin = legacyChatOrigin.current;
+              fireAndForget((async () => {
+                if (cfg.agent.providerChat?.status === 'migration_required') {
+                  if (!voiceSettingsScope || String(id) !== LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID) return;
+                  if (!origin || origin.signal.aborted || legacyChatApproval.approvalPending) return;
+                  const imported = await importLegacyVoiceOpenAiChatProvider(voiceSettingsScope, {
+                    onApprovalPending: legacyChatApproval.requestApproval,
+                    signal: origin.signal,
+                  });
+                  if (origin.signal.aborted) return;
+                  if (imported.status !== 'applied' && imported.status !== 'unchanged') throw new Error('voice_chat_import_failed');
+                  setOpenMenu(null);
+                  return;
+                }
+                const projection = await importedChatModels.refreshWithResult(false);
+                if (currentVoiceRef.current !== capturedVoice || projection?.status !== 'success') return;
+                const nextVoice = applyVoiceAgentSelection(voice, {
+                  kind: 'legacy_provider_chat', agentId: String(id), modelProjection: projection,
+                });
+                if (nextVoice === voice) return;
+                props.setVoice(nextVoice);
+                setOpenMenu(null);
+              })(), { tag: 'Voice imported Chat Agent selection', logError: false,
+                onError: () => { if (!origin?.signal.aborted) Modal.alert(t('common.error'), t('common.saveError')); } });
             }}
           />
           </SettingAnchor>
@@ -405,7 +464,7 @@ export function LocalConversationSection(props: {
               }
 
               const next = String(id ?? '').trim();
-              const entry = resolvedAgentEntries.find((candidate) => candidate.agentId === next);
+              const entry = resolveVoiceAgentCatalogSelectionV1(resolvedAgentEntries, next);
               if (!entry) return;
               props.setVoice(applyVoiceAgentSelection(voice, { kind: 'catalog', entry }));
               setOpenMenu(null);
@@ -582,7 +641,7 @@ export function LocalConversationSection(props: {
                     subtitle={t('settingsVoice.local.conversation.rootSessionPolicy.maxWarmRootsSubtitle')}
                     fieldTestID="settings.voice.local.maxWarmRoots.field"
                     kind="integer"
-                    value={String(cfg.agent.maxWarmRoots ?? 3)}
+                    value={String(cfg.agent.maxWarmRoots)}
                     onCommit={(draft) => {
                       const next = Math.max(1, Math.floor(Number(draft)));
                       setAgent({ maxWarmRoots: next });

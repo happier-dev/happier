@@ -36,6 +36,8 @@ let lastAttemptSnapshot: VoiceSessionSnapshot = DEFAULT_SNAPSHOT;
 let activeAttemptBinding: VoiceSessionBinding | null = null;
 let activeAttemptConversationContext: VoiceSessionConversationContext | null = null;
 let requestedEndReason: VoiceSessionEndReason | null = null;
+/** The live attempt that connected to a conversation last voiced on another device (continuation arrival). */
+let arrivedAttemptId: string | null = null;
 
 export type VoiceSessionEndReason = Readonly<
   | { kind: 'disconnected' }
@@ -96,8 +98,10 @@ function reconcileAttemptId(snapshot: VoiceSessionSnapshot, binding?: VoiceSessi
     activeAttemptBinding = null;
     activeAttemptConversationContext = null;
     requestedEndReason = null;
+    arrivedAttemptId = null;
     setEndedAttempt(null);
   } else if (!active) {
+    arrivedAttemptId = null;
     if (previousActive) {
       setEndedAttempt(snapshot.status === 'disconnected' && !snapshot.errorCode && !snapshot.errorPresentation
         ? Object.freeze({
@@ -156,6 +160,7 @@ const SNAPSHOT_FIELDS = {
   errorPresentation: true,
   presentationState: true,
   reconnectRetryAvailable: true,
+  inUseVoice: true,
 } satisfies Record<keyof VoiceSessionSnapshot, true>;
 const SNAPSHOT_KEYS = Object.keys(SNAPSHOT_FIELDS) as Array<keyof VoiceSessionSnapshot>;
 
@@ -180,6 +185,7 @@ function normalizeVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): VoiceSes
     errorPresentation: snapshot.errorPresentation,
     presentationState: snapshot.presentationState,
     reconnectRetryAvailable: snapshot.reconnectRetryAvailable,
+    inUseVoice: snapshot.status === 'connected' ? snapshot.inUseVoice : undefined,
   };
 }
 
@@ -237,6 +243,18 @@ export function recordVoiceSessionEndReason(adapterId: string, controlSessionId:
   requestedEndReason = reason;
 }
 
+/** Marks the exact live attempt as a continuation arrival; a terminal or different attempt is ignored. */
+export function recordVoiceSessionArrival(adapterId: string, controlSessionId: string): void {
+  if (!activeAttemptId || !isAttemptActive(lastAttemptSnapshot) || lastAttemptSnapshot.adapterId !== adapterId
+    || lastAttemptSnapshot.sessionId !== controlSessionId || arrivedAttemptId === activeAttemptId) return;
+  arrivedAttemptId = activeAttemptId;
+  for (const listener of endedAttemptListeners) listener();
+}
+
+export function getVoiceSessionArrivedAttemptId(): string | null {
+  return arrivedAttemptId;
+}
+
 export function getVoiceSessionAttemptId(): string | null {
   return activeAttemptId;
 }
@@ -265,6 +283,7 @@ export function dismissVoiceSessionEndedAttempt(): void {
   if (!activeAttemptId && !canDismissVoiceSessionFailedAttempt(lastAttemptSnapshot)) presentedAttemptId = null;
 }
 
+/** The attempt's presentation facts: the ended attempt and a continuation arrival. */
 export function subscribeToVoiceSessionEndedAttempt(listener: () => void): () => void {
   endedAttemptListeners.add(listener);
   return () => {
@@ -286,6 +305,7 @@ export function resetVoiceSessionStoreForTests(): void {
   activeAttemptBinding = null;
   activeAttemptConversationContext = null;
   requestedEndReason = null;
+  arrivedAttemptId = null;
   endedAttempt = null;
   useVoiceSessionStore.setState({
     ...DEFAULT_SNAPSHOT,

@@ -13,13 +13,13 @@ import type { VoiceMarkCanvasProps } from './voiceMarkCanvasTypes';
  * those values changes, so a settled mark draws once and then idles.
  */
 export const VoiceMarkCanvas = React.memo(function VoiceMarkCanvas(props: VoiceMarkCanvasProps) {
-    const { to, from, morph, pose, energy, flow } = props;
+    const { to, from, morph, pose, energy, flow, gather, leave } = props;
     const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
     const width = to.maxX - to.minX;
     const height = to.maxY - to.minY;
     const ratio = typeof window === 'undefined' ? 2 : Math.min(3, Math.max(2, window.devicePixelRatio || 1));
 
-    const paint = React.useCallback((m: number, p: number, e: number, f: number) => {
+    const paint = React.useCallback((m: number, p: number, e: number, f: number, g: number, l: number) => {
         const canvas = canvasRef.current;
         const context = canvas?.getContext('2d');
         if (!canvas || !context) return;
@@ -30,19 +30,19 @@ export const VoiceMarkCanvas = React.memo(function VoiceMarkCanvas(props: VoiceM
             context.beginPath();
             context.arc(x, y, radius, 0, Math.PI * 2);
             context.fill();
-        });
+        }, g, l);
     }, [from, height, ratio, to, width]);
 
     // Geometry or theme changed: repaint the current values once.
     React.useLayoutEffect(() => {
-        paint(morph.value, pose.value, energy.value, flow.value);
-    }, [energy, flow, morph, paint, pose]);
+        paint(morph.value, pose.value, energy.value, flow.value, gather.value, leave.value);
+    }, [energy, flow, gather, leave, morph, paint, pose]);
 
     useAnimatedReaction(
-        () => [morph.value, pose.value, energy.value, flow.value] as const,
+        () => [morph.value, pose.value, energy.value, flow.value, gather.value, leave.value] as const,
         (next, previous) => {
-            if (previous && next[0] === previous[0] && next[1] === previous[1] && next[2] === previous[2] && next[3] === previous[3]) return;
-            paint(next[0], next[1], next[2], next[3]);
+            if (previous && next.every((value, index) => value === previous[index])) return;
+            paint(next[0], next[1], next[2], next[3], next[4], next[5]);
         },
         [paint],
     );

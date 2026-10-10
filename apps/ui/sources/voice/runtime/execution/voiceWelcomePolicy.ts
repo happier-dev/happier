@@ -50,11 +50,13 @@ export function createVoiceWelcomePolicy(args: Readonly<{
             try {
                 await preloadVoiceWelcomeText(policy.assistantLanguage);
                 if (!handle.accountLifetime.isCurrent()) return null;
-                const welcomeText = resolveVoiceWelcomeText(policy.assistantLanguage);
+                const welcomeText = welcomeCfg && 'text' in welcomeCfg && typeof welcomeCfg.text === 'string'
+                    ? welcomeCfg.text
+                    : resolveVoiceWelcomeText(policy.assistantLanguage);
                 const res = await handle.client.welcome({
                     sessionId: handle.rpcSessionId,
                     voiceAgentId: handle.voiceAgentId,
-                    ...(welcomeText ? { welcomeText } : {}),
+                    ...(typeof welcomeText === 'string' ? { welcomeText } : {}),
                 });
                 const assistantText = String(res?.assistantText ?? '').trim();
                 if (!assistantText) return null;

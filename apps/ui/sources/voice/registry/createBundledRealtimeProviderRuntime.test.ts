@@ -277,6 +277,10 @@ describe('createBundledRealtimeProviderRuntime', () => {
           return {
             kind: 'prepared' as const,
             session: { config: { preparationSequence }, safeMetadata: null },
+            inUseVoice: {
+              providerContributionId: 'happier.openai/realtime', settingFieldPath: 'voice',
+              value: `voice-${preparationSequence}`, displayName: `Voice ${preparationSequence}`,
+            },
           };
         }),
         releasePrepared,
@@ -303,6 +307,9 @@ describe('createBundledRealtimeProviderRuntime', () => {
       expect(host.beginTranscriptAttempt).not.toHaveBeenCalled();
       firstCarrierAcquisition.resolve();
       await firstStart;
+      expect(runtime.adapter.getSnapshot()).toHaveProperty('inUseVoice', {
+        providerContributionId: 'happier.openai/realtime', settingFieldPath: 'voice', value: 'voice-1', displayName: 'Voice 1',
+      });
       staleStop = runtime.adapter.stop({ sessionId: controlSessionId });
       await vi.waitFor(() => expect(connections.get(1)?.state()).toBe('open'));
 
@@ -311,6 +318,9 @@ describe('createBundledRealtimeProviderRuntime', () => {
       expect(createConnection).toHaveBeenCalledTimes(1);
       staleConnectionClose.resolve();
       await replacementStart;
+      expect(runtime.adapter.getSnapshot()).toHaveProperty('inUseVoice', {
+        providerContributionId: 'happier.openai/realtime', settingFieldPath: 'voice', value: 'voice-2', displayName: 'Voice 2',
+      });
       expect(runtimeMachine.getSnapshot()).toMatchObject({
         adapterId: providerId,
         controlSessionId,

@@ -11,6 +11,8 @@ import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicMod
 import type { MachineContributionRegistryProjectionDescribeResult } from '@/sync/ops/machineContributionRegistryProjection';
 import type { machineCapabilitiesInvoke as machineCapabilitiesInvokeFn } from '@/sync/ops/capabilities';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { applyAcpCatalogSnapshot, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
 
 type MachineContributionRegistryProjectionDescribeFn = typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
 
@@ -146,6 +148,12 @@ const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/back
 
 describe('agent catalog voice tools', () => {
   beforeEach(() => {
+    resetAcpCatalogSnapshotsForTests();
+    state.settingsScope = { serverId: 'server-a', accountId: 'account-a' };
+    applyAcpCatalogSnapshot(state.settingsScope, { status: 'ready', revision: 1, record: { v: 1, definitions: [AcpBackendDefinitionV1Schema.parse({
+      id: 'team-review', name: 'team-review', title: 'Team review', description: 'Custom team review backend', command: 'kiro-cli',
+      args: ['acp'], createdAt: 1, updatedAt: 1,
+    })] } }, true);
     clearDaemonMergedProjectionCacheForTests();
     primeProvidersFeatureSnapshot('enabled');
     machineCapabilitiesInvoke.mockReset();
@@ -184,6 +192,16 @@ describe('agent catalog voice tools', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('uses opened ACP destination rows for Agent Actions and refuses unavailable facts instead of listing an empty catalog', async () => {
+    const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
+    delete state.settings.acpCatalogSettingsV1;
+    expect(await listAgentBackendsForVoiceTool({ includeDisabled: true })).toMatchObject({ items: expect.arrayContaining([
+      expect.objectContaining({ backendId: 'team-review', label: 'Team review' }),
+    ]) });
+    applyAcpCatalogSnapshot(state.settingsScope, { status: 'unavailable', reason: 'invalid-stored-content' }, true);
+    await expect(listAgentBackendsForVoiceTool({ includeDisabled: true })).rejects.toMatchObject({ code: 'acp_catalog_unavailable' });
   });
 
   it('lists Provider models with exact connection identity through the neutral session projection', async () => {

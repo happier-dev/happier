@@ -6,6 +6,8 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { VoiceSessionEndedAttempt } from '@/voice/session/voiceSessionStore';
 
 import { VoiceEndedPendingApproval } from './VoiceEndedPendingApproval';
+import { DestinationInstanceHost, type DestinationNavigation } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { Text } from '@/components/ui/text/Text';
 
 /**
  * After End, a request the ended conversation left waiting is surfaced from the attempt's captured
@@ -87,6 +89,27 @@ async function render(value: VoiceSessionEndedAttempt) {
 }
 
 describe('VoiceEndedPendingApproval', () => {
+    it('opens post-End Review in the hosting workspace at the captured Home and Session', async () => {
+        function HostedReview() {
+            const [destination, setDestination] = React.useState('/settings/voice');
+            const navigation = React.useMemo<DestinationNavigation>(() => ({
+                push: (href) => setDestination(String(href)),
+                replace: (href) => setDestination(String(href)),
+                back: () => setDestination('/settings/voice'),
+            }), []);
+            return <DestinationInstanceHost tabId="voice-ended-tab" ref={{ kind: 'voice', params: {} }}
+                pathname={destination} focused visible navigation={navigation}>
+                {destination === '/settings/voice' ? <VoiceEndedPendingApproval ended={ended()} testID="pending" />
+                    : <Text testID="pending-open-destination">{destination}</Text>}
+            </DestinationInstanceHost>;
+        }
+        screen = await renderScreen(<HostedReview />);
+        await screen.pressByTestIdAsync('pending.review');
+        expect(screen.findByTestId('pending-open-destination')?.props.children)
+            .toBe('/session/coding-session?serverId=server-a');
+        expect(routerPush).not.toHaveBeenCalled();
+    });
+
     it('keeps a request the ended conversation left waiting reachable at its exact session', async () => {
         const view = await render(ended());
         view.pressByTestId('pending.review');

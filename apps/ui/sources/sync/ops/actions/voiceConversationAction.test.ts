@@ -1,9 +1,13 @@
+import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import { setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
@@ -19,8 +23,12 @@ import { createActionExecutor, FeaturesResponseSchema, VoiceConversationActionOu
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { executeVoiceConversationAction } from './voiceConversationAction';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createPlainAccountEncryptionCurrentnessFixture, createSessionListRenderableSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
+import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 
-afterEach(async () => { await resetVoiceSessionRuntimeStateForTests(); resetServerFeaturesClientForTests(); });
+afterEach(async () => { await standardCleanup(); await resetVoiceSessionRuntimeStateForTests(); resetServerFeaturesClientForTests(); });
 
 async function createHarness(providerId = 'local_conversation', start = true) {
     let snapshot: VoiceSessionSnapshot = { adapterId: providerId, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false };
@@ -51,6 +59,97 @@ async function createHarness(providerId = 'local_conversation', start = true) {
 }
 
 describe('local conversation Actions through the lifecycle owner', () => {
+    it.each([
+        { lifetime: 'runtime_attempt' as const, target: null, destination: '/settings/voice-history' },
+        { lifetime: 'runtime_attempt' as const, target: { serverId: 'ended-home', sessionId: 'coding-target' }, destination: '/session/coding-target?serverId=ended-home' },
+        { lifetime: undefined, target: null, destination: '/session/saved-conversation?serverId=ended-home' },
+    ])('opens the captured ended conversation destination $destination after focus changes', async ({ lifetime, target, destination }) => {
+        const previousScope = storage.getState().profileScope;
+        const accountScope = { serverId: 'ended-home', accountId: 'ended-account' };
+        storage.setState({ profileScope: accountScope });
+        const { lifecycle } = await createHarness();
+        try {
+            const binding = {
+                adapterId: 'local_conversation', controlSessionId: 'session-original', conversationSessionId: 'saved-conversation',
+                conversationSessionAddress: { serverId: 'ended-home', sessionId: 'saved-conversation' },
+                targetSessionAddress: target, lifetime, transcriptMode: 'synthetic' as const, updatedAt: 1,
+            };
+            setVoiceSessionSnapshot(lifecycle.getSnapshot(), binding, { accountScope, conversationScope: { kind: 'voice_home' } });
+            const expectedAttempt = getVoiceSessionAttemptId()!;
+            await lifecycle.stop('session-original');
+            useVoiceTargetStore.getState().setLastFocusedSessionAddress({ serverId: 'other-home', sessionId: 'visible-session' });
+            const destinations: unknown[] = [];
+            expect(await executeVoiceConversationAction('ui.voice_global.open_conversation', { expectedAttempt }, {
+                navigate: href => { destinations.push(href); },
+            })).toMatchObject({ status: 'completed' });
+            expect(destinations).toEqual([destination]);
+            expect(await executeVoiceConversationAction('ui.voice_global.open_conversation', { expectedAttempt: 'replaced-attempt' }, {
+                navigate: href => { destinations.push(href); },
+            })).toMatchObject({ status: 'unavailable', code: 'stale_voice_attempt' });
+            storage.setState({ profileScope: { ...accountScope, accountId: 'other-account' } });
+            expect(await executeVoiceConversationAction('ui.voice_global.open_conversation', { expectedAttempt }, {
+                navigate: href => { destinations.push(href); },
+            })).toMatchObject({ status: 'unavailable', code: 'voice_conversation_navigation_unavailable' });
+            expect(destinations).toHaveLength(1);
+        } finally { await lifecycle.dispose(); storage.setState({ profileScope: previousScope }); }
+    });
+    it.each(['action', 'native'] as const)('starts Talk from a Bot SessionAction at its captured Home and surfaces a running attempt refusal through %s', async surface => {
+        const features = FeaturesResponseSchema.parse({ features: { voice: { enabled: true } }, capabilities: {} });
+        const home = await serveActionHomes({ homes: [{ key: 'talk', serverUrl: 'https://bot-talk.example.test', accountId: 'talk-account',
+            settings: { voice: voiceSettingsParse({ providerId: 'local_conversation', providers: {
+                local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } },
+            } }) } }], route: request => {
+                if (request.path === '/v1/features') return Response.json(features);
+                if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                return undefined;
+            } });
+        const serverId = home.homes.talk!.id;
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        const { lifecycle, invoke } = await createHarness('local_conversation', false);
+        const target = createSessionActionTarget({ serverId, session: createSessionListRenderableSessionFixture({
+            id: 'bot-talk-session', metadata: { path: '/project', name: 'Ada', bot: { kind: 'bot' } },
+        }) });
+        try {
+            useVoiceTargetStore.getState().setLastFocusedSessionAddress({ serverId: 'other-home', sessionId: 'other-session' });
+            await executeSessionAction({ actionId: 'ui.session.talk', target });
+            expect((await invoke('ui.voice_global.get', {})).voice).toMatchObject({ status: 'connected',
+                target: { kind: 'session', sessionAddress: { serverId, sessionId: 'bot-talk-session' } } });
+            if (surface === 'action') {
+                await expect(executeSessionAction({ actionId: 'ui.session.talk', target })).rejects.toMatchObject({ code: 'voice_start_unavailable' });
+            } else {
+                const { Modal } = await import('@/modal');
+                vi.mocked(Modal.alert).mockClear();
+                const { useSessionRowActionMenu } = await import('@/components/sessions/shell/row/actionMenu/useSessionRowActionMenu');
+                const menu = await renderHook(() => useSessionRowActionMenu({ target, sessionName: 'Bot', hideInactiveSessions: false,
+                    iconColor: '#000', activeTags: [], knownTags: [], tagsEnabled: false, isNativeMobile: true,
+                    setContextMenuOpen() {}, openTagsMenuFromContext() {} }));
+                expect(menu.getCurrent().moreMenuItems.find(item => item.id === 'ui.session.talk')?.title).toContain('Ada');
+                menu.getCurrent().handleContextMenuSelect('ui.session.talk');
+                await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(expect.any(String), 'voice_start_unavailable'));
+            }
+            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', sessionId: 'bot-talk-session' });
+        } finally { await lifecycle.dispose(); home.dispose(); }
+    });
+    it('publishes only the applied voice of the captured attempt and retires it on End', async () => {
+        const { lifecycle, expectedAttempt, invoke, publish } = await createHarness();
+        const inUseVoice = {
+            providerContributionId: 'happier.openai/realtime', settingFieldPath: 'voice', value: 'coral', displayName: 'Coral',
+        };
+        try {
+            expect((await invoke('ui.voice_global.get', {})).voice).toHaveProperty('inUseVoice', null);
+            // This is the provider/media boundary's accepted selection, not a saved next-attempt preference.
+            publish({ ...lifecycle.getSnapshot(), inUseVoice });
+            const current = await invoke('ui.voice_global.get', {});
+            expect(current.voice).toHaveProperty('inUseVoice', inUseVoice);
+            expect(VoiceConversationActionOutputSchemas['ui.voice_global.get'].safeParse(current).success).toBe(true);
+            useVoiceTargetStore.getState().setLastFocusedSessionAddress({ serverId: 'other-home', sessionId: 'other-session' });
+            expect((await invoke('ui.voice_global.get', {})).voice).toHaveProperty('inUseVoice', inUseVoice);
+            await invoke('ui.voice_global.end', { expectedAttempt });
+            expect((await invoke('ui.voice_global.get', {})).voice).toHaveProperty('inUseVoice', null);
+            await lifecycle.toggle({ serverId: 'other-home', sessionId: 'other-session' });
+            expect((await invoke('ui.voice_global.get', {})).voice).toHaveProperty('inUseVoice', null);
+        } finally { await lifecycle.dispose(); }
+    });
     it('starts explicit global/session and default intents through the existing idle-target policy', async () => {
         const previousVoice = storage.getState().settings.voice;
         primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { voice: { enabled: true } }, capabilities: {} }) } });

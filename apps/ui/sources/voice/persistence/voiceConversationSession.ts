@@ -26,6 +26,10 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { storage } from '@/sync/domains/state/storage';
+import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
+import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
 import type { Metadata } from '@happier-dev/session-core/state';
 import {
     completePendingMachineSpawnAttemptCustodyForSession,
@@ -311,6 +315,7 @@ async function resolveVoiceConversationBackendTarget(state: any, machineId: stri
     if (agentSource === 'agent' && requestedAgentId) {
         const resolved = await resolveVoiceConfiguredAgentTarget({
             machineId,
+            accountScope: state?.settingsScope ?? null,
             selection: {
                 agentId: requestedAgentId,
                 agentTargetKey: agentCfg?.agentTargetKey ?? null,
@@ -326,15 +331,24 @@ async function resolveVoiceConversationBackendTarget(state: any, machineId: stri
         return resolved.backendTarget;
     }
 
+    const scope = state?.settingsScope;
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const unavailable = () => Object.assign(new Error('The Voice Agent catalog is unavailable.'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+    if (!scope || !lifetime || !areAccountSettingsScopesEqual(scope, lifetime.scope)) throw unavailable();
+    const snapshot = getAcpCatalogSnapshot(scope);
+    if (snapshot?.catalog.status !== 'ready' || snapshot.stale) await refreshAcpCatalog(scope);
+    if (!lifetime.isCurrent()) throw unavailable();
     const daemonMergedProjectionInputs = await loadDaemonMergedProjectionInputs({
         machineId,
-        serverId: getActiveServerSnapshot().serverId,
+        serverId: scope.serverId,
     });
+    const catalog = getAcpCatalogSnapshot(scope)?.catalog;
+    if (!lifetime.isCurrent() || catalog?.status !== 'ready') throw unavailable();
     const preferredTarget = resolvePreferredBackendTargetFromProjection({
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+        acpCatalogSnapshot: catalog,
         daemonMergedProjectionInputs,
     });
     return resolveOperationalBackendTargetForAgentSelection({
@@ -351,11 +365,14 @@ async function resolveVoiceConversationBackendTarget(state: any, machineId: stri
 async function resolveVoiceConversationAgentTarget(
     machineId: string,
     backendTarget: BackendTargetRefV2,
+    serverId: string,
+    accountLifetime?: ActiveServerAccountScopeLifetime,
 ) {
     const projectionInputs = await loadDaemonMergedProjectionInputs({
         machineId,
-        serverId: getActiveServerSnapshot().serverId,
+        serverId,
     });
+    if (accountLifetime) assertVoiceConversationAccountCurrent(accountLifetime);
     const agentTarget = resolveAgentExecutionTargetForBackendTarget({
         backendTarget,
         daemonMergedProjectionInputs: projectionInputs,
@@ -367,6 +384,11 @@ async function resolveVoiceConversationAgentTarget(
         );
     }
     return agentTarget;
+}
+
+function assertVoiceConversationAccountCurrent(lifetime: ActiveServerAccountScopeLifetime): void {
+    if (lifetime.isCurrent() && areAccountSettingsScopesEqual(lifetime.scope, storage.getState().settingsScope)) return;
+    throw Object.assign(new Error('The Voice Agent Account is no longer current.'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
 }
 
 function sameContributionIdentity(
@@ -509,10 +531,13 @@ async function spawnVoiceConversationSession(params: Readonly<{
     creationKey: ReturnType<typeof buildVoiceSpawnUserAttemptId>;
     connectedServices?: ConnectedServiceBindingsV2;
     startupInstructions?: AgentSessionStartupInstructionsV1;
+    accountLifetime?: ActiveServerAccountScopeLifetime;
 }>): Promise<string> {
     const agentTarget = await resolveVoiceConversationAgentTarget(
         params.machineId,
         params.backendTarget,
+        params.serverId,
+        params.accountLifetime,
     );
     const action = await executeSessionSpawnNewAction({
         creationKey: params.creationKey,
@@ -685,11 +710,13 @@ async function recoverPendingVoiceConversationCustody(params: Readonly<{
     sessionId: string;
     serverId: string | null;
     failureMessage: string;
+    accountLifetime?: ActiveServerAccountScopeLifetime;
 }>): Promise<void> {
     const completed = await completePendingMachineSpawnAttemptCustodyForSession({
         sessionId: params.sessionId,
         serverId: params.serverId,
     });
+    if (params.accountLifetime) assertVoiceConversationAccountCurrent(params.accountLifetime);
     if (completed === false) {
         await failVoiceConversationCustodyCompletion({
             sessionId: params.sessionId,
@@ -702,6 +729,7 @@ async function finalizeSpawnedVoiceConversationSession(params: Readonly<{
     sessionId: string;
     scope: VoiceConversationScopeMetadata;
     startupInstructionsMarker?: AgentSessionStartupInstructionsMarkerV1;
+    accountLifetime?: ActiveServerAccountScopeLifetime;
 }>): Promise<void> {
     try {
         try {
@@ -712,13 +740,16 @@ async function finalizeSpawnedVoiceConversationSession(params: Readonly<{
                 'session_refresh_failed',
             );
         }
+        if (params.accountLifetime) assertVoiceConversationAccountCurrent(params.accountLifetime);
         await waitForSessionMetadata(params.sessionId, 15_000);
+        if (params.accountLifetime) assertVoiceConversationAccountCurrent(params.accountLifetime);
         await touchVoiceConversationSessionWithScope(
             params.sessionId,
             params.scope,
             params.startupInstructionsMarker,
         );
     } catch (cause) {
+        if (params.accountLifetime) assertVoiceConversationAccountCurrent(params.accountLifetime);
         const primaryFailure =
             cause instanceof VoiceConversationSessionMetadataCommitError
                 ? cause
@@ -863,10 +894,11 @@ function projectionSupportsStartupInstructionsV1(params: Readonly<{
 async function buildGlobalVoiceAgentStartupInstructions(
     machineId: string,
     backendTarget: BackendTargetRefV2,
+    serverId: string,
 ): Promise<AgentSessionStartupInstructionsV1> {
     const projectionInputs = await loadDaemonMergedProjectionInputs({
         machineId,
-        serverId: getActiveServerSnapshot().serverId,
+        serverId,
     });
     if (!projectionSupportsStartupInstructionsV1({
         projectionInputs,
@@ -889,7 +921,14 @@ async function buildGlobalVoiceAgentStartupInstructions(
 async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
     requirements: VoiceHomeConversationSessionRequirements | null,
 ): Promise<string> {
+    const expectedSettingsScope = storage.getState().settingsScope;
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime || !areAccountSettingsScopesEqual(expectedSettingsScope, accountLifetime.scope)) {
+        throw Object.assign(new Error('The Voice Agent Account is unavailable.'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+    }
+    assertVoiceConversationAccountCurrent(accountLifetime);
     const target = await waitForVoiceHomeSpawnTarget(VOICE_HOME_SPAWN_TARGET_WAIT_TIMEOUT_MS);
+    assertVoiceConversationAccountCurrent(accountLifetime);
     if (!target) {
         throw Object.assign(new Error('voice_conversation_spawn_target_missing'), { code: 'VOICE_CONVERSATION_TARGET_MISSING' });
     }
@@ -897,20 +936,23 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
     // Bind persistence to the Account that selected this exact target before
     // any retirement, requirement resolution, recovery, or spawn await.
     const state: any = storage.getState();
-    const expectedSettingsScope = state.settingsScope ?? null;
     assertTargetMachineStructurallyReadyForSpawn(target.machineId);
     await retireLegacyVoiceConversationSessions(target).catch(() => {});
+    assertVoiceConversationAccountCurrent(accountLifetime);
     const resolvedRequirements = requirements
         ? await resolveVoiceHomeConversationSessionRequirements(requirements, target.machineId)
         : null;
     const backendTarget = resolvedRequirements?.backendTarget
         ?? await resolveVoiceConversationBackendTarget(state, target.machineId);
+    assertVoiceConversationAccountCurrent(accountLifetime);
     const startupInstructions = resolvedRequirements
         ? await buildGlobalVoiceAgentStartupInstructions(
             target.machineId,
             backendTarget,
+            accountLifetime.scope.serverId,
         )
         : null;
+    assertVoiceConversationAccountCurrent(accountLifetime);
 
     const bestExisting = await findExactVoiceHomeConversationSession({
         state,
@@ -922,12 +964,16 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
             : null,
     });
 
+    assertVoiceConversationAccountCurrent(accountLifetime);
+
     if (bestExisting) {
         await recoverPendingVoiceConversationCustody({
             sessionId: bestExisting.sessionId,
-            serverId: getActiveServerSnapshot().serverId,
+            serverId: accountLifetime.scope.serverId,
+            accountLifetime,
             failureMessage: 'Voice home session custody could not be completed',
         });
+        assertVoiceConversationAccountCurrent(accountLifetime);
         persistVoiceAutoTargetMachineId(target.machineId, expectedSettingsScope);
         await touchVoiceConversationSessionWithScope(
             bestExisting.sessionId,
@@ -936,11 +982,12 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
                 ? GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_MARKER
                 : undefined,
         );
+        assertVoiceConversationAccountCurrent(accountLifetime);
         await applyVoiceConversationRetentionPolicy({ keepSessionId: bestExisting.sessionId }).catch(() => {});
         return bestExisting.sessionId;
     }
 
-    const serverId = getActiveServerSnapshot().serverId;
+    const serverId = accountLifetime.scope.serverId;
     const creationKey = buildVoiceSpawnUserAttemptId({
             surface: 'voice_home',
             serverId,
@@ -956,6 +1003,7 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
     const spawnedSessionId = await spawnVoiceConversationSession({
         machineId: target.machineId,
         serverId,
+        accountLifetime,
         directory: target.directory,
         backendTarget,
         permissionMode: resolvedRequirements?.permissionIntent
@@ -967,14 +1015,17 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
         ...(startupInstructions ? { startupInstructions } : {}),
     });
 
+    assertVoiceConversationAccountCurrent(accountLifetime);
     persistVoiceAutoTargetMachineId(target.machineId, expectedSettingsScope);
     await finalizeSpawnedVoiceConversationSession({
         sessionId: spawnedSessionId,
         scope: { kind: 'voice_home' },
+        accountLifetime,
         ...(startupInstructions
             ? { startupInstructionsMarker: GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_MARKER }
             : {}),
     });
+    assertVoiceConversationAccountCurrent(accountLifetime);
     await applyVoiceConversationRetentionPolicy({ keepSessionId: spawnedSessionId }).catch(() => {});
     return spawnedSessionId;
 }

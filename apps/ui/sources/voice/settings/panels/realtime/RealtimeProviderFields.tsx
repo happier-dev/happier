@@ -31,7 +31,7 @@ import {
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useVoiceContributedSettingRefs } from '@/voice/settings/useVoiceContributedSettingRefs';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
-import { confirmRealtimeProviderSettingChange } from './confirmRealtimeProviderSettingChange';
+import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
 import { isVoiceWelcomeLanguageSupported } from '@/voice/agent/voiceWelcomeText';
 
 export type { RealtimeCatalogState } from './realtimeVoiceCatalogMenu';
@@ -116,7 +116,6 @@ export function RealtimeProviderFields(props: Readonly<{
   descriptor: RealtimeSettingsDescriptor;
   owner: RealtimeProviderSettingsOwner;
   config: SettingsValue;
-  onConfigChange: (next: SettingsValue) => void;
   credentialStatus: AccountVoiceCredentialUseStatus;
   catalog: RealtimeCatalogState;
   onRequestCatalog: () => void;
@@ -128,6 +127,13 @@ export function RealtimeProviderFields(props: Readonly<{
 }>) {
   const { theme } = useUnistyles();
   const settingRef = useVoiceContributedSettingRefs(props.providerId);
+  const writeSetting = useSettingActionWriter();
+  const fieldLifetime = React.useMemo(() => ({ controller: new AbortController() }), [props.providerId]);
+  React.useEffect(() => {
+    if (fieldLifetime.controller.signal.aborted) fieldLifetime.controller = new AbortController();
+    const controller = fieldLifetime.controller;
+    return () => controller.abort();
+  }, [fieldLifetime]);
   const [openField, setOpenField] = React.useState<string | null>(null);
   /** The menu whose Custom entry is being typed inline beneath it. */
   const [customField, setCustomField] = React.useState<string | null>(null);
@@ -140,13 +146,11 @@ export function RealtimeProviderFields(props: Readonly<{
     providerId: props.providerId,
     owner: props.owner,
     config: props.config,
-    onConfigChange: props.onConfigChange,
   });
   latestSettingsRef.current = {
     providerId: props.providerId,
     owner: props.owner,
     config: props.config,
-    onConfigChange: props.onConfigChange,
   };
   const credentialUsable = props.credentialStatus === 'ready';
   const credentialUnavailableDetail = props.credentialStatus === 'review_required'
@@ -171,26 +175,38 @@ export function RealtimeProviderFields(props: Readonly<{
   const { statusRows: catalogStatusRows, catalogRows } = useRealtimeCatalogMenuItems({ catalog: props.catalog, credentialUsable,
     credentialUnavailableDetail, previewingId, onPreview: playPreview });
 
-  const write = React.useCallback((
+  const write = React.useCallback(async (
     field: RealtimeSettingsFieldDescriptor,
     value: unknown,
     expectedProviderId?: string,
   ) => {
     const latest = latestSettingsRef.current;
     if (expectedProviderId && latest.providerId !== expectedProviderId) return false;
-    const next = updateRealtimeProviderConfig(latest.owner, latest.config, field.pathSegments, value);
-    if (!next) {
+    const setting = settingRef(field.path);
+    const binding = setting?.storage;
+    const encoded = value !== null && typeof value === 'object' ? JSON.stringify(value) : value;
+    const parsed = binding?.scope === 'account' && binding.kind === 'owner' ? binding.parse(encoded) : null;
+    if (!setting || !parsed?.success || !updateRealtimeProviderConfig(latest.owner, latest.config, field.pathSegments, value)) {
       Modal.alert(t('common.error'), tLoose('settingsVoice.realtimeProviders.invalidValue'));
       return false;
     }
-    latest.onConfigChange(next);
-    return true;
-  }, []);
+    try {
+      const result = await writeSetting(setting, parsed.value, { signal: fieldLifetime.controller.signal });
+      if (!result.ok || result.result && typeof result.result === 'object' && 'ok' in result.result && result.result.ok === false) {
+        if (!fieldLifetime.controller.signal.aborted) Modal.alert(t('common.error'), tLoose('settingsVoice.realtimeProviders.operationFailed'));
+        return false;
+      }
+      return true;
+    } catch {
+      if (!fieldLifetime.controller.signal.aborted) Modal.alert(t('common.error'), tLoose('settingsVoice.realtimeProviders.operationFailed'));
+      return false;
+    }
+  }, [fieldLifetime, settingRef, writeSetting]);
 
   /** Saves a typed text value; an empty value clears it. Returns the text the field shows afterwards. */
   const commitText = React.useCallback((field: RealtimeSettingsFieldDescriptor, current: unknown, draft: string) => {
-    if (!write(field, draft.length > 0 ? draft : null, props.providerId)) return textValue(current);
-    return draft;
+    fireAndForget(write(field, draft.length > 0 ? draft : null, props.providerId), { tag: 'RealtimeProviderFields.text' });
+    return textValue(current);
   }, [props.providerId, write]);
 
   /**
@@ -217,15 +233,8 @@ export function RealtimeProviderFields(props: Readonly<{
       Modal.alert(t('common.error'), tLoose('settingsVoice.realtimeProviders.invalidValue'));
       return numberValue(current);
     }
-    if (next !== null && field.requiresOptIn === true) {
-      fireAndForget((async () => {
-        const confirmed = await confirmRealtimeProviderSettingChange({ field, value: next, isCurrent: () => latestSettingsRef.current.providerId === providerId });
-        if (confirmed) write(field, next, providerId);
-      })(), { tag: `RealtimeProviderFields.number.${field.kind}` });
-      return numberValue(current);
-    }
-    if (!write(field, next, providerId)) return numberValue(current);
-    return numberValue(next);
+    fireAndForget(write(field, next, providerId), { tag: `RealtimeProviderFields.number.${field.kind}` });
+    return numberValue(current);
   }, [props.providerId, write]);
 
   const renderNumberField = (field: RealtimeSettingsFieldDescriptor, current: unknown, key: string, title: unknown, subtitle: unknown) => {
@@ -311,11 +320,7 @@ export function RealtimeProviderFields(props: Readonly<{
                 const providerId = props.providerId;
                 fireAndForget((async () => {
                   try {
-                    if (next) {
-                      const confirmed = await confirmRealtimeProviderSettingChange({ field, value: next, isCurrent: () => latestSettingsRef.current.providerId === providerId });
-                      if (!confirmed) return;
-                    }
-                    write(field, next, providerId);
+                    await write(field, next, providerId);
                   } catch {
                     if (latestSettingsRef.current.providerId !== providerId) return;
                     await Modal.alertAsync(t('common.error'), tLoose('settingsVoice.realtimeProviders.operationFailed'));
@@ -384,8 +389,8 @@ export function RealtimeProviderFields(props: Readonly<{
           onCommit={(draft) => {
             const terms = draft.split(/[\n,]/u).map((term) => term.trim()).filter(Boolean);
             const deduped = [...new Map(terms.map((term) => [term.toLocaleLowerCase('en-US'), term])).values()];
-            if (!write(field, deduped, props.providerId)) return stringList(value).join(', ');
-            return deduped.join(', ');
+            fireAndForget(write(field, deduped, props.providerId), { tag: 'RealtimeProviderFields.keyterms' });
+            return stringList(value).join(', ');
           }} />;
       }
 
@@ -475,7 +480,7 @@ export function RealtimeProviderFields(props: Readonly<{
             ? credentialUnavailableDetail
             : detail(value) }}
         items={[...statusRows, ...rows, ...customRow]}
-        onSelect={(id) => {
+        onSelect={async (id) => {
           if (id === '__retry__') { props.onRequestCatalog(); return; }
           if (id === '__status__') return;
           if (id === '__custom__') {
@@ -488,17 +493,12 @@ export function RealtimeProviderFields(props: Readonly<{
             const next = separator > 0 ? { kind: id.slice(0, separator), id: id.slice(separator + 1) } : null;
             if (!next) return;
             const providerId = props.providerId;
-            const commit = () => { write(field, next, providerId); setOpenField(null); };
-            if (next.kind === 'moving_alias' && field.movingAliasRequiresOptIn === true) {
-              fireAndForget((async () => {
-                const confirmed = await confirmRealtimeProviderSettingChange({ field, value: next, isCurrent: () => latestSettingsRef.current.providerId === providerId });
-                if (confirmed) commit();
-              })(), { tag: 'RealtimeProviderFields.confirmMovingAlias' });
-            } else commit();
+            await write(field, next, providerId);
+            setOpenField(null);
             return;
           }
-          if (field.kind === 'voice_catalog') write(field, field.valueShape === 'string' ? id : { kind: 'catalog', id });
-          else write(field, id || null);
+          if (field.kind === 'voice_catalog') await write(field, field.valueShape === 'string' ? id : { kind: 'catalog', id });
+          else await write(field, id || null);
           setOpenField(null);
         }}
       />
@@ -514,7 +514,8 @@ export function RealtimeProviderFields(props: Readonly<{
           if (!draft) return customId;
           const next = field.kind === 'model' ? { kind: 'pinned', id: draft }
             : field.kind === 'voice_catalog' && field.valueShape !== 'string' ? { kind: 'custom', id: draft } : draft;
-          if (!write(field, next, props.providerId)) return customId;
+          fireAndForget(write(field, next, props.providerId), { tag: 'RealtimeProviderFields.custom' });
+          return customId;
         }}
       />}
       </React.Fragment>;

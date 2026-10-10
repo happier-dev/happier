@@ -23,7 +23,10 @@ export function resolveVoiceMarkGeometry(input: Readonly<{
     const key = `${input.size}:${input.theme}:${input.pose}:${input.light?.join(',') ?? ''}`;
     const cached = cache.get(key);
     if (cached) return cached;
-    const geometry = createPlanetMarkGeometry(input);
+    const brand = createPlanetMarkGeometry(input);
+    // The app rests on the line waveform glyph (VE-02, amended 2026-10-10): the microphone samples stay
+    // the origin the tap's dots stream from, but are never drawn.
+    const geometry = Object.freeze({ ...brand, micA: brand.micA.map(() => 0) });
     cache.set(key, geometry);
     return geometry;
 }

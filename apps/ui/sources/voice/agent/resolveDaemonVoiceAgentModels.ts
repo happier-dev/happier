@@ -2,16 +2,16 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import {
     describeEffectiveModelMode,
 } from '@/sync/domains/models/describeEffectiveModelMode';
-import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
 
 export type DaemonVoiceAgentModelIds = Readonly<{
-    chatModelId: string;
-    commitModelId: string;
+    chatModelId?: string;
+    commitModelId?: string;
 }>;
 
 /**
- * Model ids for a daemon voice run, or `null` when the target Session's Agent
+ * Explicit model ids for a daemon voice run. Session choices remain omitted for
+ * host admission, or `null` when the target Session's Agent
  * identity is unreadable.
  *
  * `null` is the typed unavailable: with no Agent there is no Agent-owned model
@@ -21,7 +21,6 @@ export type DaemonVoiceAgentModelIds = Readonly<{
  * unavailable case explicitly.
  */
 export function resolveDaemonVoiceAgentModelIds(params: {
-    modelMode: Session['modelMode'];
     metadata: Metadata | null;
     agent: {
         chatModelSource?: 'session' | 'custom';
@@ -34,13 +33,11 @@ export function resolveDaemonVoiceAgentModelIds(params: {
     const agentId = resolveAgentIdFromSessionMetadata(metadata);
     if (!agentId) return null;
 
-    const sessionSelected = params.modelMode ?? 'default';
-
     const chatSelected =
         params.agent.chatModelSource === 'session'
-            ? sessionSelected
+            ? undefined
             : (params.agent.chatModelId ?? 'default');
-    const chatModelId = describeEffectiveModelMode({
+    const chatModelId = chatSelected === undefined ? undefined : describeEffectiveModelMode({
         agentType: agentId,
         selectedModelId: chatSelected,
         metadata,
@@ -49,7 +46,7 @@ export function resolveDaemonVoiceAgentModelIds(params: {
     const commitSelected = (() => {
         switch (params.agent.commitModelSource) {
             case 'session':
-                return sessionSelected;
+                return undefined;
             case 'custom':
                 return params.agent.commitModelId ?? 'default';
             case 'chat':
@@ -58,11 +55,14 @@ export function resolveDaemonVoiceAgentModelIds(params: {
         }
     })();
 
-    const commitModelId = describeEffectiveModelMode({
+    const commitModelId = commitSelected === undefined ? undefined : describeEffectiveModelMode({
         agentType: agentId,
         selectedModelId: commitSelected,
         metadata,
     }).effectiveModelId;
 
-    return { chatModelId, commitModelId };
+    return {
+        ...(chatModelId === undefined ? {} : { chatModelId }),
+        ...(commitModelId === undefined ? {} : { commitModelId }),
+    };
 }

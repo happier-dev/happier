@@ -1,16 +1,15 @@
+import { isVoiceProviderSettingsProjectionCurrent, projectVoiceProviderSettings, projectVoiceProviderDeclarationRegistryBase, type VoiceProviderSettingsProjection, type VoiceProviderSelectionOption } from '@happier-dev/protocol/voice/settings/providerRegistry';
+export { isVoiceProviderSettingsProjectionCurrent, projectVoiceProviderSettings, projectVoiceProviderDeclarationRequirements, projectVoiceProviderDeclarationRegistryBase, createDeclaredSettingsProjector, type VoiceProviderSettingsProjection, type VoiceProviderSelectionOption } from '@happier-dev/protocol/voice/settings/providerRegistry';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createRecipientContractDigestV1, normalizeRecipientContractV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
-import { VoiceProviderSettingsJsonValueV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
 import type { VoiceReadinessRequirement, VoiceReadinessRole, VoiceRuntimePlatform } from '@happier-dev/protocol/voice/realtime/capabilities';
 import type { VoiceServiceMark } from '@happier-dev/plugin-sdk/voice';
-import { z } from 'zod';
 
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import type { ExternalVoiceProviderSettingsDescriptor } from '@/voice/settings/externalProviderSettings';
 import {
   createExternalVoiceProviderSettingsDescriptor,
-  projectExternalVoiceProviderSettings,
 } from '@/voice/settings/externalProviderSettings';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import type { VoiceConnectedAccountTargetEligibility } from '@/voice/credentials/sourceEligibility';
@@ -19,44 +18,6 @@ import {
   indexVoiceProviderPresentations,
 } from './bundledVoiceManifestProjection';
 import type { VoiceProviderPresentation } from './voiceProviderPresentation';
-
-const VoiceProviderSettingsProjectionSchema = z.object({
-  status: z.enum([
-    'ready',
-    'missing_required_setting',
-    'needs_migration',
-    'invalid',
-    'unsupported_version',
-  ]),
-  modeId: z.string().min(1).max(64).regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u).nullable(),
-  requirements: z.array(z.enum([
-    'server_feature',
-    'execution_machine',
-    'credential',
-    'endpoint',
-    'runtime',
-    'model',
-  ])).max(6).superRefine((values, context) => {
-    if (new Set(values).size !== values.length) {
-      context.addIssue({ code: 'custom', message: 'Expected unique requirements' });
-    }
-  }).optional(),
-}).strict();
-
-const VoiceProviderSettingsJsonObjectV1Schema = z.record(
-  z.string(),
-  VoiceProviderSettingsJsonValueV1Schema,
-);
-
-export type VoiceProviderSettingsProjection = z.infer<typeof VoiceProviderSettingsProjectionSchema>;
-
-export function isVoiceProviderSettingsProjectionCurrent(
-  projection: VoiceProviderSettingsProjection | null | undefined,
-): projection is VoiceProviderSettingsProjection & Readonly<{
-  status: 'ready' | 'missing_required_setting';
-}> {
-  return projection?.status === 'ready' || projection?.status === 'missing_required_setting';
-}
 
 export type VoiceProviderCredentialReadinessProjection = Readonly<{
   status: 'ready' | 'missing' | 'unknown';
@@ -76,15 +37,6 @@ export type VoiceProviderCredentialReadinessContext = Readonly<{
      */
     status: 'ready' | 'missing' | 'unknown';
   }>;
-}>;
-
-export type VoiceProviderSelectionOption = Readonly<{
-  id: string;
-  modeId: string | null;
-  order: number;
-  titleKey: string;
-  subtitleKey: string;
-  configPatch?: Readonly<Record<string, unknown>>;
 }>;
 
 type VoiceUiRuntimeContributionBase = Readonly<{
@@ -158,29 +110,6 @@ export type VoiceProviderRegistry = Readonly<{
   subscribe?: (listener: () => void) => () => void;
 }>;
 
-const INVALID_SETTINGS_PROJECTION = Object.freeze({
-  status: 'invalid' as const,
-  modeId: null,
-});
-
-/**
- * Sole executable-projector boundary. Bundled modules are trusted first-party
- * code, but their failures and malformed return values must not escape into a
- * generic settings surface or activate a provider.
- */
-export function projectVoiceProviderSettings(
-  entry: Pick<VoiceProviderRegistryEntry, 'projectSettings'>,
-  envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
-): VoiceProviderSettingsProjection | null {
-  if (!entry.projectSettings) return null;
-  try {
-    const projection = VoiceProviderSettingsProjectionSchema.safeParse(entry.projectSettings(envelope));
-    return projection.success ? deepFreeze(projection.data) : INVALID_SETTINGS_PROJECTION;
-  } catch {
-    return INVALID_SETTINGS_PROJECTION;
-  }
-}
-
 export function projectVoiceProviderCredentialReadiness(
   entry: VoiceProviderRegistryEntry,
   envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
@@ -236,15 +165,6 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
-function isConfigPatchMatch(config: unknown, patch: unknown): boolean {
-  if (Object.is(config, patch)) return true;
-  if (!patch || typeof patch !== 'object' || Array.isArray(patch)
-    || !config || typeof config !== 'object' || Array.isArray(config)) return false;
-  const configRecord = config as Readonly<Record<string, unknown>>;
-  return Object.entries(patch as Readonly<Record<string, unknown>>)
-    .every(([key, value]) => isConfigPatchMatch(configRecord[key], value));
-}
-
 export function projectVoiceProviderAccountCredentialSlot(
   declaration: VoiceProviderContribution,
   recipientContract: RecipientContractV1 | null,
@@ -266,149 +186,6 @@ export function projectVoiceProviderAccountCredentialSlot(
     recipientContract: normalizedRecipientContract,
     recipientContractDigest: createRecipientContractDigestV1(normalizedRecipientContract),
   });
-}
-
-function isNonEmptySetting(value: unknown): boolean {
-  if (typeof value === 'string') return value.trim().length > 0;
-  if (Array.isArray(value)) return value.length > 0;
-  if (value && typeof value === 'object') return Object.keys(value).length > 0;
-  return value !== null && value !== undefined;
-}
-
-function projectDeclaredSettingsReadiness(
-  declaration: VoiceProviderContribution,
-  config: Readonly<Record<string, unknown>>,
-): 'ready' | 'missing_required_setting' {
-  const readiness = declaration.settings?.readiness ?? [];
-  for (const requirement of readiness) {
-    if (requirement.when
-      && config[requirement.when.settingId] !== requirement.when.equals) continue;
-    if (!isNonEmptySetting(config[requirement.settingId])) return 'missing_required_setting';
-  }
-  return 'ready';
-}
-
-function projectDeclaredSettingsRequirements(
-  declaration: VoiceProviderContribution,
-  config: Readonly<Record<string, unknown>>,
-): readonly VoiceReadinessRequirement[] | null {
-  const credentialRequirement = declaration.credentials?.requirement;
-  if (credentialRequirement?.kind !== 'when_setting_equals') return null;
-  const requirements = projectVoiceProviderDeclarationRequirements(declaration);
-  return config[credentialRequirement.settingId] === credentialRequirement.value
-    ? requirements
-    : Object.freeze(requirements.filter((requirement) => requirement !== 'credential'));
-}
-
-export function projectVoiceProviderDeclarationRequirements(
-  declaration: VoiceProviderContribution,
-): readonly VoiceReadinessRequirement[] {
-  const requirements: VoiceReadinessRequirement[] = [];
-  if (declaration.kind === 'speech') requirements.push('execution_machine');
-  if (declaration.kind === 'conversation'
-    && declaration.execution?.kind === 'experimental_agent_session_realtime') {
-    requirements.push('execution_machine', 'runtime');
-  }
-  if (declaration.kind === 'speech'
-    && declaration.settings?.fields.some((field) => field.id === 'baseUrl')) {
-    requirements.push('endpoint');
-  }
-  if (declaration.credentials && declaration.credentials.requirement.kind !== 'optional') {
-    requirements.push('credential');
-  }
-  return Object.freeze(requirements);
-}
-
-function deriveRequirementsByMode(
-  declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>,
-  selectionOptions: readonly VoiceProviderSelectionOption[],
-): Readonly<Record<string, readonly VoiceReadinessRequirement[]>> | undefined {
-  const requirement = declaration.credentials?.requirement;
-  if (requirement?.kind !== 'when_setting_equals') return undefined;
-  return Object.freeze(Object.fromEntries(selectionOptions.flatMap((option) => option.modeId
-    ? [[option.modeId, Object.freeze([
-        ...(option.configPatch?.[requirement.settingId] === requirement.value ? ['credential' as const] : []),
-      ])] as const]
-    : [])));
-}
-
-/**
- * Shared declaration-backed registry facts. Provenance and executable leaves
- * remain with their activation owners; manifest settings, readiness, and
- * conditional credential requirements must not vary by bundled/external
- * delivery.
- */
-export function projectVoiceProviderDeclarationRegistryBase(input: Readonly<{
-  declaration: VoiceProviderContribution;
-  providerSettings: ExternalVoiceProviderSettingsDescriptor | null;
-  selectionOptions?: readonly VoiceProviderSelectionOption[];
-}>): Readonly<{
-  roles: readonly VoiceReadinessRole[];
-  requirements: readonly VoiceReadinessRequirement[];
-  requirementsByMode?: Readonly<Record<string, readonly VoiceReadinessRequirement[]>>;
-  supportedPlatforms: readonly VoiceRuntimePlatform[];
-  selectionOptions?: readonly VoiceProviderSelectionOption[];
-  providerSettings?: ExternalVoiceProviderSettingsDescriptor;
-  mark?: VoiceServiceMark;
-  projectSettings?: (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) => VoiceProviderSettingsProjection;
-}> {
-  const selectionOptions = deepFreeze([...(input.selectionOptions ?? [])]);
-  const requirementsByMode = input.declaration.kind === 'conversation'
-    ? deriveRequirementsByMode(input.declaration, selectionOptions)
-    : undefined;
-  return deepFreeze({
-    roles: [...input.declaration.roles],
-    ...(input.declaration.mark ? { mark: input.declaration.mark } : {}),
-    requirements: projectVoiceProviderDeclarationRequirements(input.declaration),
-    supportedPlatforms: [...input.declaration.platforms],
-    ...(selectionOptions.length > 0 ? { selectionOptions } : {}),
-    ...(requirementsByMode ? { requirementsByMode } : {}),
-    ...(input.providerSettings
-      ? {
-          providerSettings: input.providerSettings,
-          projectSettings: createDeclaredSettingsProjector(
-            input.declaration,
-            input.providerSettings,
-            selectionOptions,
-          ),
-        }
-      : {}),
-  });
-}
-
-/**
- * The one declaration-driven settings projector. Bundled and external
- * descriptors share it so a declared `settings.readiness` rule and the selected
- * mode are answered from the manifest, never from where the contribution came
- * from.
- */
-export function createDeclaredSettingsProjector(
-  declaration: VoiceProviderContribution,
-  providerSettings: ExternalVoiceProviderSettingsDescriptor,
-  selectionOptions: readonly VoiceProviderSelectionOption[],
-) {
-  return (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) => {
-    const projection = projectExternalVoiceProviderSettings(envelope, providerSettings);
-    if (!isVoiceProviderSettingsProjectionCurrent(projection)) return projection;
-    const parsedConfig = providerSettings.parseConfig(envelope?.config);
-    const parsedConfigObject = VoiceProviderSettingsJsonObjectV1Schema.safeParse(parsedConfig);
-    if (!parsedConfigObject.success) return INVALID_SETTINGS_PROJECTION;
-    const selectedMode = selectionOptions.find(
-      (option) => option.configPatch && isConfigPatchMatch(parsedConfigObject.data, option.configPatch),
-    )?.modeId ?? selectionOptions[0]?.modeId ?? projection.modeId;
-    const settingsRequirements = projectDeclaredSettingsRequirements(
-      declaration,
-      parsedConfigObject.data,
-    );
-    return Object.freeze({
-      ...projection,
-      status: projection.status === 'ready'
-        ? projectDeclaredSettingsReadiness(declaration, parsedConfigObject.data)
-        : projection.status,
-      modeId: selectedMode,
-      ...(settingsRequirements ? { requirements: [...settingsRequirements] } : {}),
-    });
-  };
 }
 
 function normalizeBuiltInContribution(raw: VoiceUiRuntimeContribution): VoiceProviderRegistryEntry {

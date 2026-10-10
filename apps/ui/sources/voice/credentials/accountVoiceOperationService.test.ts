@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
@@ -21,7 +22,12 @@ import {
   resetSavedSecretCatalogSnapshotsForTests,
   resolveSavedSecretReference,
 } from '@/sync/store/settings/savedSecretCatalogSnapshot';
-import { resolveAccountVoiceCredentialApprovalDigest } from './accountVoiceCredential';
+import { mutateScopedAccountVoiceCredentialSource, resolveAccountVoiceCredentialApprovalDigest } from './accountVoiceCredential';
+import { ConnectedAccountCatalogRowMutationV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import {
+  applyConnectedAccountCatalogSnapshot,
+  resetConnectedAccountCatalogSnapshotsForTests,
+} from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 
 import {
   createAccountVoiceCredentialAuthorityLease,
@@ -106,7 +112,7 @@ let credentialFixture = {
         createdAt: 1,
         updatedAt: 1,
       }],
-      connectedAccountPurposeBindingsV1: undefined as TestConnectedAccountPurposeBindings | undefined,
+      connectedPurposes: undefined as TestConnectedAccountPurposeBindings | undefined,
     },
       profile: {
       connectedServicesV2: [] as Array<{
@@ -133,9 +139,13 @@ const accountFixture = {
   get state() { return credentialFixture; },
   set state(value: typeof credentialFixture) {
     credentialFixture = value;
+    const { connectedPurposes, ...settings } = value.settings;
+    if (value.settingsScope) applyConnectedAccountCatalogSnapshot(value.settingsScope, 'purposes', {
+      status: 'ready', revision: 1, record: { key: 'purposes', value: connectedPurposes ?? { v: 1, bindings: [] } },
+    }, true);
     storage.setState({
       settingsScope: value.settingsScope,
-      settings: settingsParse(value.settings),
+      settings: settingsParse(settings),
     });
   },
 };
@@ -145,10 +155,8 @@ let accountScope = { serverId: 'server-1', accountId: 'account-1' };
 
 // The Home's authorized Saved Secret catalog read is the network boundary; the
 // catalog engine, snapshot store and resolver below it stay real.
-const catalogBoundary = vi.hoisted(() => ({ readSavedSecretCatalog: vi.fn() }));
-vi.mock('@/sync/api/account/apiSavedSecretCatalog', () => ({
-  readSavedSecretCatalog: catalogBoundary.readSavedSecretCatalog,
-}));
+const catalogBoundary = { readMaterials: vi.fn(async () => Response.json({ resources: [] })) };
+let accountRowBoundary: ((path: string, init?: RequestInit) => Response | null) | null = null;
 
 function createSettings(
   secretId: string,
@@ -184,7 +192,7 @@ function createSettings(
       createdAt: 1,
       updatedAt,
     }],
-    connectedAccountPurposeBindingsV1: undefined as TestConnectedAccountPurposeBindings | undefined,
+    connectedPurposes: undefined as TestConnectedAccountPurposeBindings | undefined,
   };
 }
 
@@ -457,20 +465,27 @@ async function retireAndReenterSameAccount(): Promise<void> {
   expect(captureActiveServerAccountScopeLifetime()).not.toBeNull();
 }
 
+// Cold shared-graph transformation is not part of the Account admission budget.
+await loadSyncSingletonForTests();
+
 describe('account Voice operation service', () => {
   beforeEach(async () => {
+    accountRowBoundary = null;
+    catalogBoundary.readMaterials.mockClear();
+    resetConnectedAccountCatalogSnapshotsForTests();
     resetSavedSecretCatalogSnapshotsForTests();
     retireActiveServerAccountScopeLifetime();
-    // Bridge Metro's lazy require to the same real Sync used by the connection
-    // harness; catalog materialization must not receive a fake singleton.
-    await loadSyncSingletonForTests();
     connection = await restoreServerAccountForTest({
       serverUrl: 'https://voice-home.example.test',
       accountId: 'account-1',
-      request: async (url) => {
+      request: async (url, init) => {
         const path = new URL(String(url)).pathname;
+        const rowResponse = accountRowBoundary?.(path, init);
+        if (rowResponse) return rowResponse;
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+        if (path === '/v1/account/saved-secrets/resources/materials') return catalogBoundary.readMaterials();
         return Response.json({}, { status: 404 });
       },
     });
@@ -490,6 +505,162 @@ describe('account Voice operation service', () => {
   afterEach(async () => {
     await connection?.dispose();
     connection = null;
+  });
+
+  it('commits an external catalog transaction even when its paired Settings are unchanged', async () => {
+    let catalogCommitted = false;
+    const result = await sync.mutateAccountSettingsOnce({
+      expectedSettingsScope: accountScope,
+      expectedSettingsVersion: 1,
+      mutate: raw => ({ settings: { ...raw }, value: 'catalog-reference' }),
+      // The remote transaction is the boundary. Settings preparation and the
+      // one-shot decision remain the real Sync owner.
+      commitPrepared: async prepared => {
+        expect(prepared.content).toEqual({ t: 'plain', v: {} });
+        catalogCommitted = true;
+        return { status: 'applied', settingsVersion: prepared.expectedSettingsVersion + 1 };
+      },
+    });
+    expect(result).toMatchObject({ status: 'applied', settingsVersion: 2, value: 'catalog-reference' });
+    expect(catalogCommitted).toBe(true);
+  });
+
+  it('refuses an existing Voice shared-secret binding after its use grant was revoked before the paired write', async () => {
+    const selectedRef = 'happier:shared-secret:v1:resource-voice-bound';
+    let persistedSettings: Readonly<Record<string, unknown>> = {};
+    let purposeRevision = 1;
+    accountRowBoundary = (path, init) => {
+      if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: persistedSettings }, version: 1 });
+      if (path !== '/v1/account/entity-rows/connected-accounts/purposes') return null;
+      if (init?.method !== 'POST') return Response.json({ status: 'present', revision: purposeRevision,
+        content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } },
+      });
+      // Genuine Account HTTP boundary: preserve the old omitted-proof behavior
+      // so this regression exercises the caller's canonical resource admission.
+      const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+      if (mutation.settingsMutation?.content?.t !== 'plain') throw new Error('expected plain paired Settings');
+      persistedSettings = mutation.settingsMutation.content.v;
+      purposeRevision += 1;
+      return Response.json({ status: 'updated', revision: purposeRevision, cursor: purposeRevision, settingsVersion: 2 });
+    };
+    // The picker can have shown a formerly usable resource. The current Home
+    // no longer returns its material, and no catalog/Settings mutation may land.
+    await expect(mutateScopedAccountVoiceCredentialSource({
+      scope: accountScope,
+      mutation: { contribution, credentialSlotId: 'api_key', selection: { kind: 'savedSecret' },
+        expectedSettingsVersion: 1,
+        savedSecretMutation: { kind: 'bindVoiceCredentialSavedSecret',
+          target: { contribution, credentialSlotId: 'api_key', machineId: null },
+          secretId: selectedRef, expectedSecretId: null, expectedSecretUpdatedAt: null,
+        },
+      },
+      expectedDeclaration: defaultCredentialDeclaration,
+      resolveCurrentDeclaration: () => defaultCredentialDeclaration,
+    })).rejects.toThrow();
+    expect(persistedSettings).toEqual({});
+    expect(purposeRevision).toBe(1);
+  });
+
+  it('pairs a live existing Voice shared-secret binding with its admitted resource revision', async () => {
+    const selectedRef = 'happier:shared-secret:v1:resource-voice-bound';
+    let persistedSettings: Readonly<Record<string, unknown>> = {};
+    let purposeRevision = 1;
+    catalogBoundary.readMaterials.mockImplementationOnce(() => Response.json({ resources: [{
+      resourceId: 'resource-voice-bound', encryptionMode: 'plain', recipientEnvelope: null,
+      storedContent: { t: 'plain', v: { v: 1, name: 'Voice key', kind: 'apiKey', value: 'private-voice-key' } },
+      entry: { ref: selectedRef, source: 'shared_resource', relationship: 'owner',
+        name: 'Voice key', kind: 'apiKey', revision: 7, materialStatus: 'ready',
+        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
+      },
+    }] }));
+    accountRowBoundary = (path, init) => {
+      if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: persistedSettings }, version: 1 });
+      if (path !== '/v1/account/entity-rows/connected-accounts/purposes') return null;
+      if (init?.method !== 'POST') return Response.json({ status: 'present', revision: purposeRevision,
+        content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } },
+      });
+      const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+      expect(mutation.referencedSavedSecretIds).toEqual([selectedRef]);
+      expect(mutation.savedSecretRevisions).toEqual([{ resourceId: 'resource-voice-bound', expectedRevision: 7 }]);
+      if (mutation.settingsMutation?.content?.t !== 'plain') throw new Error('expected plain paired Settings');
+      persistedSettings = mutation.settingsMutation.content.v;
+      purposeRevision += 1;
+      return Response.json({ status: 'updated', revision: purposeRevision, cursor: purposeRevision, settingsVersion: 2 });
+    };
+    await expect(mutateScopedAccountVoiceCredentialSource({
+      scope: accountScope,
+      mutation: { contribution, credentialSlotId: 'api_key', selection: { kind: 'savedSecret' },
+        expectedSettingsVersion: 1,
+        savedSecretMutation: { kind: 'bindVoiceCredentialSavedSecret',
+          target: { contribution, credentialSlotId: 'api_key', machineId: null },
+          secretId: selectedRef, expectedSecretId: null, expectedSecretUpdatedAt: null,
+        },
+      },
+      expectedDeclaration: defaultCredentialDeclaration,
+      resolveCurrentDeclaration: () => defaultCredentialDeclaration,
+    })).resolves.toMatchObject({ status: 'applied', settingsVersion: 2 });
+    expect(purposeRevision).toBe(2);
+    expect(JSON.stringify(persistedSettings)).toContain(selectedRef);
+    expect(JSON.stringify(persistedSettings)).not.toContain('private-voice-key');
+  });
+
+  it('can select no Voice credential without spending the revoked previous shared-secret reference', async () => {
+    const selectedRef = 'happier:shared-secret:v1:resource-voice-revoked';
+    let persistedSettings: Readonly<Record<string, unknown>> = { ...createSettings(selectedRef, 7), secrets: [] };
+    accountRowBoundary = (path, init) => {
+      if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: persistedSettings }, version: 1 });
+      if (path !== '/v1/account/entity-rows/connected-accounts/purposes') return null;
+      if (init?.method !== 'POST') return Response.json({ status: 'present', revision: 1,
+        content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } },
+      });
+      const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+      expect(mutation.referencedSavedSecretIds).toEqual([]);
+      if (mutation.settingsMutation?.content?.t !== 'plain') throw new Error('expected plain paired Settings');
+      persistedSettings = mutation.settingsMutation.content.v;
+      return Response.json({ status: 'updated', revision: 2, cursor: 2, settingsVersion: 2 });
+    };
+    await expect(mutateScopedAccountVoiceCredentialSource({
+      scope: accountScope,
+      mutation: { contribution, credentialSlotId: 'api_key', selection: { kind: 'none' }, expectedSettingsVersion: 1 },
+      expectedDeclaration: defaultCredentialDeclaration,
+      resolveCurrentDeclaration: () => defaultCredentialDeclaration,
+    })).resolves.toMatchObject({ status: 'applied', settingsVersion: 2 });
+    const settings = settingsParse(persistedSettings);
+    expect(settings.voiceSettingsV1.credentialBindings[0]?.credentialSource).toEqual({ kind: 'none' });
+  });
+
+  it('retires credential authority when its qualified purpose catalog changes without a Settings write', () => {
+    const settings = createSettings('secret-1', 1);
+    accountFixture.state = {
+      ...accountFixture.state,
+      settings: {
+        ...settings,
+        voiceSettingsV1: {
+          ...settings.voiceSettingsV1,
+          credentialBindings: [{
+            ...settings.voiceSettingsV1.credentialBindings[0]!,
+            credentialSource: { kind: 'connectedAccount' },
+          }],
+        },
+      },
+    };
+    const publish = (accountId: string) => applyConnectedAccountCatalogSnapshot(accountScope, 'purposes', {
+      status: 'ready', revision: 1,
+      record: { key: 'purposes', value: { v: 1, bindings: [{
+        purpose: { consumer: contribution, purpose: 'voice.client-auth' },
+        target: { kind: 'account', account: {
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId,
+        } },
+      }] } },
+    }, true);
+    publish('first-account');
+    const lease = createAccountVoiceCredentialAuthorityLease({
+      contribution, providerId: 'happier.voice.openai/realtime-openai', credentialSlotId: 'api_key',
+      purpose: { consumer: contribution, purpose: 'voice.client-auth' }, isCurrent: () => true,
+    });
+    expect(lease.isCurrent()).toBe(true);
+    publish('second-account');
+    expect(lease.isCurrent()).toBe(false);
   });
 
   it('uses a shared-only catalog ref and fails closed once that scoped material is stale', async () => {
@@ -600,7 +771,6 @@ describe('account Voice operation service', () => {
     };
     // The owner removed the grant; the AccountChange that would have said so
     // never arrived, so the local catalog still holds a ready row.
-    catalogBoundary.readSavedSecretCatalog.mockResolvedValueOnce({ ok: true, resources: [] });
     const fetch = vi.fn(async () => new Response('{}', {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -616,7 +786,6 @@ describe('account Voice operation service', () => {
     // The re-read withdrew the captured authority, which the service reports
     // as a cancelled operation, exactly as for any authority change.
     await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'voice_account_operation_cancelled' });
-    expect(catalogBoundary.readSavedSecretCatalog).toHaveBeenCalledWith(scope);
     expect(resolveSavedSecretReference(scope, [], ref).status).toBe('access_removed');
     // The revoked value never reached the Provider.
     expect(fetch).not.toHaveBeenCalled();
@@ -840,7 +1009,7 @@ describe('account Voice operation service', () => {
             credentialSource: { kind: 'connectedAccount' as const },
           }],
         },
-        connectedAccountPurposeBindingsV1: {
+        connectedPurposes: {
           v: 1 as const,
           bindings: [{
             purpose: { consumer: contribution, purpose: 'voice.client-auth' },
@@ -885,7 +1054,7 @@ describe('account Voice operation service', () => {
             credentialSource: { kind: 'connectedAccount' as const },
           }],
         },
-        connectedAccountPurposeBindingsV1: {
+        connectedPurposes: {
           v: 1 as const,
           bindings: [{
             purpose: { consumer: contribution, purpose: 'voice.client-auth' },
@@ -962,7 +1131,7 @@ describe('account Voice operation service', () => {
             credentialSource: { kind: 'connectedAccount' as const },
           }],
         },
-        connectedAccountPurposeBindingsV1: {
+        connectedPurposes: {
           v: 1 as const,
           bindings: [{
             // Source selection is owned by the credential slot purpose even
@@ -1071,7 +1240,7 @@ describe('account Voice operation service', () => {
             credentialSource: { kind: 'connectedAccount' as const },
           }],
         },
-        connectedAccountPurposeBindingsV1: undefined,
+        connectedPurposes: undefined,
       },
     };
     const materializeSecret = vi.fn(async () => 'must-not-materialize');
@@ -1555,7 +1724,7 @@ describe('account Voice operation service', () => {
             credentialSource: { kind: 'connectedAccount' as const },
           }],
         },
-        connectedAccountPurposeBindingsV1: {
+        connectedPurposes: {
           v: 1 as const,
           bindings: [{
             purpose: { consumer: contribution, purpose: 'voice.client-auth' },
@@ -1645,7 +1814,7 @@ describe('account Voice operation service', () => {
             credentialSource: { kind: 'connectedAccount' as const },
           }],
         },
-        connectedAccountPurposeBindingsV1: {
+        connectedPurposes: {
           v: 1 as const,
           bindings: [{
             purpose: { consumer: contribution, purpose: 'voice.client-auth' },
@@ -1721,24 +1890,26 @@ describe('account Voice operation service', () => {
     await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
   });
 
-  it('preserves a stable unscoped bootstrap credential authority', async () => {
+  it('refuses unscoped bootstrap credentials without admitted Account catalog authority', async () => {
     storage.setState({ profileScope: null });
     accountFixture.state = {
       ...accountFixture.state,
       settingsScope: null,
     };
+    const fetch = vi.fn();
+    const materializeSecret = vi.fn(async () => 'must-not-disclose');
     const service = createAccountVoiceOperationService({
       providerId: 'happier.voice.openai/realtime-openai',
       recipientContract,
       signal: new AbortController().signal,
       isCurrent: () => true,
-      fetch: async () => new Response(JSON.stringify({
-        value: 'short-lived-client-auth',
-        expires_at: Math.floor(Date.now() / 1_000) + 60,
-      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      fetch,
+      materializeSecret,
     });
 
-    await expect(requestClientAuth(service)).resolves.toMatchObject({ status: 200 });
+    await expect(requestClientAuth(service)).rejects.toMatchObject({ code: 'service_temporarily_unavailable' });
+    expect(materializeSecret).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
 });

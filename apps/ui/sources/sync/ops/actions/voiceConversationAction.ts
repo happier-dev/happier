@@ -118,7 +118,8 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
         canCommitInput: control.canCommitInput === true, canHoldToTalk: state.localSettings.voiceHoldToTalkEnabled === true
             && snapshot.status === 'connected' && snapshot.canHoldToTalk === true,
         muted: control.muted, canDismissFailedAttempt: control.canDismissFailedAttempt === true,
-        canDismissEnded: ended !== null, recoveryAction, availability: control.availability };
+        canDismissEnded: ended !== null, recoveryAction, availability: control.availability,
+        inUseVoice: snapshot.status === 'connected' ? snapshot.inUseVoice ?? null : null };
     return { voice, idleTarget, context, recoveryAction, setupIncomplete, capabilities };
 }
 

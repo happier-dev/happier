@@ -18,6 +18,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import { ConnectedAccountCatalogRowMutationV1Schema, ConnectedPurposeCatalogV1Schema, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol';
 import 'fake-indexeddb/auto';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -156,6 +158,13 @@ function credentialDetail(): string {
     return requireNode('voice-credential').textContent ?? '';
 }
 
+function importedSecretRef(personalId: string): string {
+    const source = SECRETS.find(secret => secret.id === personalId);
+    const resource = account?.resources.find(material => material.entry.name === source?.name);
+    if (!resource) throw new Error(`Missing acknowledged fixture Resource for ${personalId}`);
+    return resource.entry.ref;
+}
+
 function query(testID: string): HTMLElement | null {
     return document.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
 }
@@ -180,6 +189,7 @@ async function flush(): Promise<void> {
 }
 
 async function openSavedSecretPicker(): Promise<void> {
+    await vi.waitFor(() => expect(requireNode('voice-credential').querySelector<HTMLElement>('[tabindex="0"],[role="button"],button')).not.toBeNull());
     const trigger = requireNode('voice-credential').querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
     if (!trigger) throw new Error('missing actual Voice credential dropdown trigger');
     await act(async () => { pressWithPointer(trigger); });
@@ -197,10 +207,14 @@ async function openSavedSecretPicker(): Promise<void> {
 }
 
 async function renderRow(options: Readonly<{
+    mode?: 'plain' | 'e2ee';
+    connectedPurposes?: ConnectedPurposeCatalogV1;
     credentialSourcePurpose?: string;
     initialRawSettings?: Record<string, unknown>;
     multiSource?: boolean;
     withRecipientContract?: boolean;
+    approvalRequired?: boolean;
+    onChanged?: () => void;
 }> = {}): Promise<string | null> {
     const { ModalProvider } = await import('@/modal');
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
@@ -308,7 +322,41 @@ async function renderRow(options: Readonly<{
         adapter: null,
     });
 
-    account = await createSecretSettingsTestHarness({ mode: 'e2ee' });
+    // The boundary's full personal-promotion transaction is Plain. E2EE
+    // material admission is exercised by the canonical resource-owner suites.
+    account = await createSecretSettingsTestHarness({ mode: options.mode ?? 'plain', approvalRequired: options.approvalRequired });
+    const purposesPath = '/v1/account/entity-rows/connected-accounts/purposes';
+    let purposes = options.connectedPurposes ?? { v: 1 as const, bindings: [] };
+    let purposeRevision = 9;
+    account.catalogRows.set(purposesPath, {
+        status: 'present', revision: purposeRevision, content: { t: 'plain', v: { key: 'purposes', value: purposes } },
+    });
+    // The real source owner commits the purpose row and Settings atomically;
+    // extend only this HTTP boundary, retaining its actual DTO and Settings CAS.
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    setRuntimeFetch(async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/auth/ping') return Response.json({});
+        if (path !== purposesPath || init?.method !== 'POST') return account!.request(url, init);
+        const input = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+        if (input.expectedRevision !== purposeRevision) return Response.json({ status: 'conflict', revision: purposeRevision });
+        if (input.content?.t !== 'plain' || input.content.v.key !== 'purposes') throw new Error('Expected Plain purpose row');
+        let settingsVersion: number | undefined;
+        if (input.settingsMutation) {
+            const response = await account!.request(new URL('/v2/account/settings', String(url)), {
+                method: 'POST', body: JSON.stringify({ expectedVersion: input.settingsMutation.expectedSettingsVersion,
+                    content: input.settingsMutation.content }),
+            });
+            const receipt = AccountSettingsV2UpdateResponseSchema.parse(await response.json());
+            if (!receipt.success) return Response.json({ status: 'settings-conflict', revision: receipt.currentVersion });
+            settingsVersion = receipt.version;
+        }
+        purposes = ConnectedPurposeCatalogV1Schema.parse(input.content.v.value);
+        purposeRevision += 1;
+        account!.catalogRows.set(purposesPath, { status: 'present', revision: purposeRevision, content: input.content });
+        return Response.json({ status: 'updated', revision: purposeRevision, cursor: purposeRevision,
+            ...(settingsVersion === undefined ? {} : { settingsVersion }) });
+    });
     const { sync } = await import('@/sync/sync');
     const { storage } = await import('@/sync/domains/state/storage');
     const { requireOneShotAccountSettingsMutationApplied } = await import('@/sync/engine/settings/syncSettings');
@@ -322,8 +370,8 @@ async function renderRow(options: Readonly<{
             value: undefined,
         }),
     }));
-    expect(JSON.stringify(account.settingsWrites)).not.toContain('fixture-live-key');
-    expect(JSON.stringify(account.settingsWrites)).not.toContain('fixture-legacy-key');
+    const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
+    await refreshSavedSecretCatalog(account.scope);
     account.settingsWrites.length = 0;
 
     const container = document.createElement('div');
@@ -347,6 +395,7 @@ async function renderRow(options: Readonly<{
                         recipientContract={recipientContract}
                         recipientContractDigest={recipientContractDigest}
                         disclosePlainStorage={false}
+                        onChanged={options.onChanged}
                     />
                 </ModalProvider>
             </InjectedAuthProvider>,
@@ -370,15 +419,186 @@ await import('@/sync/domains/settings/settings');
 const CASE_TIMEOUT_MS = 180_000;
 
 describe('Voice credential row → saved-secret picker → account-settings write', () => {
+    it.each(['not-required', 'executed', 'canceled'] as const)('saves a new dormant binding without changing the Connected Account source (approval: %s)', async approval => {
+        const approvalRequired = approval !== 'not-required';
+        const onChanged = vi.fn();
+        const purpose: ConnectedPurposeCatalogV1 = {
+            v: 1,
+            bindings: [{
+                purpose: { consumer: CONTRIBUTION, purpose: 'voice.client-auth' },
+                target: {
+                    kind: 'account',
+                    account: {
+                        service: { pluginId: 'com.acme.voice', localId: 'connected-account' },
+                        accountId: 'connected-account-a',
+                    },
+                },
+            }],
+        };
+        await renderRow({
+            mode: 'plain',
+            approvalRequired,
+            onChanged,
+            connectedPurposes: purpose,
+            multiSource: true,
+            initialRawSettings: {
+                secrets: [],
+                voiceSettingsV1: {
+                    credentialBindings: [{
+                        contribution: CONTRIBUTION,
+                        credentialSlotId: 'api-key',
+                        credentialSource: { kind: 'connectedAccount' },
+                        credentialBindings: { account: {} },
+                    }],
+                },
+            },
+        });
+        const row = requireNode('voice-credential');
+        const trigger = row.querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
+        await act(async () => { pressWithPointer(trigger ?? row); });
+        if (trigger) {
+            await vi.waitFor(() => expect(query('dropdown-option-enterNew')).not.toBeNull());
+            await act(async () => { pressWithPointer(requireNode('dropdown-option-enterNew')); });
+        }
+        await vi.waitFor(() => expect(query('web-prompt-input')).not.toBeNull());
+        const input = requireNode('web-prompt-input') as HTMLInputElement;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'fixture-new-dormant-key');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await act(async () => { pressWithPointer(requireNode('web-prompt-confirm')); });
+        if (approvalRequired) {
+            await vi.waitFor(() => expect(account!.artifacts.list()).toHaveLength(1));
+            await flush();
+            expect(voiceCredentialGestureRecords()).toEqual([]);
+            expect(account!.promotions).toHaveLength(0);
+            expect(account!.settingsWrites).toHaveLength(0);
+            expect(appliedVoiceBinding()).toMatchObject({ credentialSource: { kind: 'connectedAccount' }, credentialBindings: { account: {} } });
+            await act(async () => { pressWithPointer(requireNode('voice-credential')); });
+            await flush();
+            expect(query('web-prompt-input')).toBeNull();
+            expect(account!.artifacts.list()).toHaveLength(1);
+            const { StoredApprovalRequestSchema, buildApprovalRequestArtifactHeaderV1, encodePlainArtifactStoredContent } = await import('@happier-dev/protocol');
+            const { SharedSavedSecretPromoteInputV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretResourceActionsV1');
+            const artifact = account!.artifacts.list()[0]!;
+            const request = StoredApprovalRequestSchema.parse(JSON.parse(account!.artifacts.readPlainBody(artifact.id)!));
+            if (request.v !== 2) throw new Error('Expected the original result-bearing approval');
+            const originalInput = SharedSavedSecretPromoteInputV1Schema.parse(request.actionArgs);
+            const settledAt = request.createdAtMs + 1;
+            // Only the server transport is synthetic. Execute the exact sealed
+            // operand accepted by Ask, then deliver its durable Artifact result.
+            const result = approval === 'executed'
+                ? await (await account!.request('https://approval-boundary.test/v1/account/saved-secrets/resources/promote', {
+                    method: 'POST', body: JSON.stringify(originalInput),
+                })).json() as unknown
+                : null;
+            const settled = StoredApprovalRequestSchema.parse(approval === 'canceled'
+                ? { ...request, status: 'canceled', updatedAtMs: settledAt }
+                : { ...request, status: 'executed', updatedAtMs: settledAt,
+                    decision: { kind: 'approve', decidedAtMs: settledAt },
+                    execution: { ok: true, executedAtMs: settledAt, result } });
+            const response = await account!.artifacts.handle(`/v1/artifacts/${artifact.id}`, {
+                method: 'POST', body: JSON.stringify({
+                    header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(settled)), expectedHeaderVersion: artifact.headerVersion,
+                    body: encodePlainArtifactStoredContent({ body: JSON.stringify(settled) }), expectedBodyVersion: artifact.bodyVersion,
+                }),
+            });
+            expect(await response?.json()).toMatchObject({ success: true });
+            const persistedArtifact = account!.artifacts.read(artifact.id);
+            if (!persistedArtifact) throw new Error('Expected the acknowledged terminal Artifact');
+            const { storage } = await import('@/sync/domains/state/storage');
+            await act(async () => { storage.getState().updateArtifact({ id: artifact.id,
+                header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled), title: null,
+                headerVersion: persistedArtifact.headerVersion, bodyVersion: persistedArtifact.bodyVersion,
+                seq: persistedArtifact.seq, createdAt: persistedArtifact.createdAt, updatedAt: persistedArtifact.updatedAt, isDecrypted: true }); });
+            if (approval === 'canceled') {
+                await vi.waitFor(() => expect(voiceCredentialGestureRecords().length).toBeGreaterThan(0));
+                expect(account!.promotions).toHaveLength(0);
+                expect(onChanged).not.toHaveBeenCalled();
+                expect(appliedVoiceBinding()).toMatchObject({ credentialSource: { kind: 'connectedAccount' }, credentialBindings: { account: {} } });
+                return;
+            }
+            await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+            expect(account!.promotions).toHaveLength(1);
+            expect(account!.promotions[0]!.resourceId).toBe(originalInput.resourceId);
+        }
+        await vi.waitFor(() => {
+            const binding = appliedVoiceBinding();
+            expect(binding).toMatchObject({ credentialSource: { kind: 'connectedAccount' } });
+            const refs = binding?.credentialBindings as { account?: Record<string, string> } | undefined;
+            expect(refs?.account?.['api-key'], voiceCredentialGestureRecords().join('\n'))
+                .toEqual(expect.stringMatching(/^happier:shared-secret:v1:/));
+        }, { timeout: CASE_TIMEOUT_MS });
+        expect(account!.settingsWrites).toHaveLength(0);
+        expect(account!.catalogRows.get('/v1/account/entity-rows/connected-accounts/purposes'))
+            .toMatchObject({ revision: 9, content: { v: { value: purpose } } });
+        expect(account!.persistedSettings.secrets.some((secret) => secret.encryptedValue.value === 'fixture-new-dormant-key')).toBe(false);
+    }, CASE_TIMEOUT_MS);
+
+    it.each([false, true])('verifies the original uncertain new-credential gesture before offering another credential (temporarily unavailable: %s)', async temporarilyUnavailable => {
+        const onChanged = vi.fn();
+        await renderRow({ mode: 'plain', onChanged, initialRawSettings: { secrets: [], voiceSettingsV1: { credentialBindings: [] } } });
+        account!.setLosePromotionResponse(true);
+        await act(async () => { pressWithPointer(requireNode('voice-credential')); });
+        await vi.waitFor(() => expect(query('web-prompt-input')).not.toBeNull());
+        const input = requireNode('web-prompt-input') as HTMLInputElement;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'original-uncertain-key');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        await act(async () => { pressWithPointer(requireNode('web-prompt-confirm')); });
+        await vi.waitFor(() => expect(account!.promotions).toHaveLength(1));
+        await vi.waitFor(() => expect(voiceCredentialGestureRecords().length).toBeGreaterThan(0));
+        // Dismiss the existing outcome alert, not the owning credential row.
+        await vi.waitFor(() => expect(query('web-modal-button-0')).not.toBeNull());
+        await act(async () => { pressWithPointer(requireNode('web-modal-button-0')); });
+        await flush();
+        const originalId = account!.promotions[0]!.resourceId;
+        const originalResources = [...account!.resources];
+        if (temporarilyUnavailable) account!.resources.splice(0);
+        const row = requireNode('voice-credential');
+        const trigger = row.querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
+        await act(async () => { pressWithPointer(trigger ?? row); });
+        if (trigger) {
+            await vi.waitFor(() => expect(query('dropdown-option-enterNew')).not.toBeNull());
+            await act(async () => { pressWithPointer(requireNode('dropdown-option-enterNew')); });
+        }
+        if (temporarilyUnavailable) {
+            await vi.waitFor(() => expect(Boolean(query('web-modal-button-0') ?? query('web-prompt-input'))).toBe(true));
+            expect(onChanged).not.toHaveBeenCalled();
+            expect(query('web-prompt-input')).toBeNull();
+            expect(query('web-modal-button-0')).not.toBeNull();
+            expect(account!.promotions).toHaveLength(1);
+            await act(async () => { pressWithPointer(requireNode('web-modal-button-0')); });
+            // The canonical materials endpoint again observes the exact accepted
+            // resource. Recovery still verifies the original sealed intent.
+            account!.resources.push(...originalResources);
+            await flush();
+            const nextRow = requireNode('voice-credential');
+            const nextTrigger = nextRow.querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
+            await act(async () => { pressWithPointer(nextTrigger ?? nextRow); });
+            if (nextTrigger) {
+                await vi.waitFor(() => expect(query('dropdown-option-enterNew')).not.toBeNull());
+                await act(async () => { pressWithPointer(requireNode('dropdown-option-enterNew')); });
+            }
+        }
+        await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+        expect(query('web-prompt-input')).toBeNull();
+        expect(account!.promotions).toHaveLength(1);
+        expect(account!.resources.map(resource => 'resourceId' in resource ? resource.resourceId : null)).toEqual([originalId]);
+        expect(account!.settingsWrites).toHaveLength(0);
+    }, CASE_TIMEOUT_MS);
+
     it('writes the selected SavedSecret when a real click lands on a picker row', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
         await openSavedSecretPicker();
 
         // The picker is open and lists the account's stored records.
-        const row = requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666');
+        const selectedRef = importedSecretRef(SECRETS[1]!.id);
+        const row = requireNode(`saved-secret:${selectedRef}`);
 
         await act(async () => { pressWithPointer(row); });
-        await flush();
+        await vi.waitFor(() => expect(appliedVoiceBinding(), JSON.stringify(voiceCredentialGestureRecords())).not.toBeNull());
 
         // Asserting the call alone is what let three rounds of tests pass against
         // a feature that never worked: the contract is the CONTENT that reached
@@ -387,23 +607,23 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         expect(appliedVoiceBinding()).toMatchObject({
             credentialSlotId: 'api-key',
             credentialSource: { kind: 'savedSecret' },
-            credentialBindings: { account: { 'api-key': '2cd702f5-1111-4222-8333-444455556666' } },
+            credentialBindings: { account: { 'api-key': selectedRef } },
         });
         expect(credentialDetail()).toContain('settingsVoice.local.voiceCredential.setOnAccount');
         expect(voiceCredentialGestureRecords()).toEqual([]);
     }, CASE_TIMEOUT_MS);
 
-    it('writes a colon-bearing SavedSecret id unchanged', async () => {
+    it('imports a colon-bearing personal SavedSecret before binding its acknowledged Resource', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
         await openSavedSecretPicker();
 
         await act(async () => {
-            pressWithPointer(requireNode('saved-secret:voice:realtime_elevenlabs:api_key'));
+            pressWithPointer(requireNode(`saved-secret:${importedSecretRef(SECRETS[0]!.id)}`));
         });
-        await flush();
+        await vi.waitFor(() => expect(appliedVoiceBinding(), JSON.stringify(voiceCredentialGestureRecords())).not.toBeNull());
 
         expect(appliedVoiceBinding()).toMatchObject({
-            credentialBindings: { account: { 'api-key': 'voice:realtime_elevenlabs:api_key' } },
+            credentialBindings: { account: { 'api-key': importedSecretRef(SECRETS[0]!.id) } },
         });
     }, CASE_TIMEOUT_MS);
 
@@ -418,41 +638,33 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         await renderRow({
             credentialSourcePurpose: 'voice.client-auth',
             multiSource: true,
+            connectedPurposes: { v: 1, bindings: [{
+                purpose: { consumer: CONTRIBUTION, purpose: 'voice.client-auth' }, target: orphanedTarget,
+            }] },
             initialRawSettings: {
                 secrets: [SECRETS[1]!],
                 voiceSettingsV1: { credentialBindings: [] },
-                connectedAccountPurposeBindingsV1: {
-                    v: 1,
-                    bindings: [{
-                        purpose: {
-                            consumer: CONTRIBUTION,
-                            purpose: 'voice.client-auth',
-                        },
-                        target: orphanedTarget,
-                    }],
-                },
             },
         });
         const savedRecordsBefore = account!.persistedSettings.secrets;
 
         await openSavedSecretPicker();
         await act(async () => {
-            pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
+            pressWithPointer(requireNode(`saved-secret:${importedSecretRef(SECRETS[1]!.id)}`));
         });
-        await flush();
+        await vi.waitFor(() => expect(appliedVoiceBinding(), JSON.stringify(voiceCredentialGestureRecords())).not.toBeNull());
 
         expect(account!.settingsWrites).toHaveLength(1);
         expect(appliedVoiceBinding()).toMatchObject({
             credentialSlotId: 'api-key',
             credentialSource: { kind: 'savedSecret' },
-            credentialBindings: { account: { 'api-key': '2cd702f5-1111-4222-8333-444455556666' } },
+            credentialBindings: { account: { 'api-key': importedSecretRef(SECRETS[1]!.id) } },
         });
-        expect(account!.persistedSettings.connectedAccountPurposeBindingsV1).toEqual({
-            v: 1,
-            bindings: [],
+        expect(account!.catalogRows.get('/v1/account/entity-rows/connected-accounts/purposes')).toMatchObject({
+            content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } },
         });
         expect(account!.persistedSettings.secrets).toEqual(savedRecordsBefore);
-        expect(savedRecordsBefore.map((secret) => secret.id)).toEqual([SECRETS[1]!.id]);
+        expect(savedRecordsBefore).toEqual([]);
         expect(JSON.stringify(account!.settingsWrites)).not.toContain('fixture-live-key');
     }, CASE_TIMEOUT_MS);
 
@@ -460,7 +672,7 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         const approvedDigest = await renderRow({ credentialSourcePurpose: 'voice.client-auth', withRecipientContract: true });
         await openSavedSecretPicker();
         await act(async () => {
-            pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
+            pressWithPointer(requireNode(`saved-secret:${importedSecretRef(SECRETS[1]!.id)}`));
         });
         await flush();
 
@@ -469,15 +681,16 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         expect(account!.settingsWrites).toHaveLength(0);
         expect(appliedVoiceBinding()).toBeNull();
         await act(async () => { pressWithPointer(confirm!); });
-        await flush();
+        await vi.waitFor(() => expect(appliedVoiceBinding(), JSON.stringify(voiceCredentialGestureRecords())).not.toBeNull());
 
         expect(appliedVoiceBinding()).toMatchObject({
             credentialSource: { kind: 'savedSecret' },
-            credentialBindings: { account: { 'api-key': '2cd702f5-1111-4222-8333-444455556666' } },
-            approvedRecipientContractDigest: approvedDigest,
+            credentialBindings: { account: { 'api-key': importedSecretRef(SECRETS[1]!.id) } },
+            approvedRecipientContractDigest: expect.stringMatching(/^sha256:/),
         });
         expect(account!.settingsWrites).toHaveLength(1);
         expect(credentialDetail()).toContain('settingsVoice.local.voiceCredential.setOnAccount');
+        expect(appliedVoiceBinding()?.approvedRecipientContractDigest).not.toBe(approvedDigest);
     }, CASE_TIMEOUT_MS);
 
     it('records one bounded failure when the Home refuses the settings compare-and-set', async () => {
@@ -486,9 +699,9 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         account!.setRejectSettingsWrites(true);
         await openSavedSecretPicker();
         await act(async () => {
-            pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
+            pressWithPointer(requireNode(`saved-secret:${importedSecretRef(SECRETS[1]!.id)}`));
         });
-        await flush();
+        await vi.waitFor(() => expect(voiceCredentialGestureRecords()).toHaveLength(1));
 
         expect(account!.settingsWrites).toHaveLength(1);
         expect(account!.persistedSettings.voiceSettingsV1).toEqual(before);

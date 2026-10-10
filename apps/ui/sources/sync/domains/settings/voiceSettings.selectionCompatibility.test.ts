@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { buildAccountEncryptionMigrateToPlainRequest } from '@/sync/ops/account/buildAccountEncryptionMigrateToPlainRequest';
+import { buildAccountEncryptionMigrateToE2eeRequest } from '@/sync/ops/account/buildAccountEncryptionMigrateToE2eeRequest';
 
 import {
     sealSecretsDeep,
@@ -1107,13 +1112,36 @@ describe('Voice provider selection persistence compatibility', () => {
         expect(restored.voice.credentialBindings).toEqual([]);
     });
 
-    it('projects a released OpenAI-compatible Chat sidecar only from one exact Provider Chat binding', () => {
+    it('retains a genuine predecessor Chat source on unrelated Settings writes before the Provider import is acknowledged', () => {
+        const predecessor = capturedPredecessorVoice('plain');
+        const adapters = readRequiredRecord(predecessor.adapters, 'captured predecessor adapters');
+        const localConversation = readRequiredRecord(adapters.local_conversation, 'captured Local Conversation');
+        const legacyChat = {
+            chatBaseUrl: 'https://legacy-chat.example.test/v1', chatModel: 'legacy-chat',
+            commitModel: 'legacy-commit', chatApiKey: null, temperature: 0.4,
+        };
+        // The pinned predecessor accepts and writes this direct Chat selection;
+        // unlike a marked current-writer sidecar, it has no Provider row yet.
+        const source = { voice: { ...predecessor, providerId: 'local_conversation', adapters: {
+            ...adapters, local_conversation: { ...localConversation, agent: {
+                ...readRequiredRecord(localConversation.agent, 'captured Agent'),
+                backend: 'openai_compat', agentSource: 'agent', agentId: 'opencode', openaiCompat: legacyChat,
+            } },
+        } } };
+        const admitted = settingsParse(source);
+        const persisted = normalizeVoiceSettingsServerDelta({ ...admitted, uiFontSize: 'larger' }, source, null);
+        expect(readRequiredRecord(readPredecessorAdapters(persisted).local_conversation, 'retained source').agent)
+            .toMatchObject({ backend: 'openai_compat', openaiCompat: legacyChat });
+    });
+
+    it('projects a released OpenAI-compatible Chat sidecar only from one exact Provider Chat binding', async () => {
         const chatSecret = (ciphertext: string) => ({
             _isSecretValue: true as const,
             encryptedValue: { t: 'enc-v1' as const, c: ciphertext },
         });
         const connectionId = 'voice-openai-compatible-chat';
         const baseProviderSettings = (params: Readonly<{
+            temperature?: number | null;
             credentialMode?: 'none' | 'required';
             credentialStyle?: 'bearer' | 'x-api-key';
             endpointProtocol?: 'openai-chat' | 'openai-responses';
@@ -1180,6 +1208,10 @@ describe('Voice provider selection persistence compatibility', () => {
                 revision: 0,
                 createdAt: 1,
                 updatedAt: 1,
+                modelSettings: { 'compatibility-chat': {
+                    temperature: params.temperature === undefined ? 0.37 : params.temperature,
+                    maxTokens: 2048,
+                } },
             }],
             connectionTombstones: [],
             accountGrants: [],
@@ -1209,7 +1241,18 @@ describe('Voice provider selection persistence compatibility', () => {
             chatSecretId?: string;
             temperature?: number | null;
             role?: 'default' | 'named';
-        }> = {}) => settingsParse({
+        }> = {}) => ({
+            providerView: ProviderSettingsV1Schema.parse(baseProviderSettings({
+                temperature: params.temperature,
+                credentialMode: params.credentialMode,
+                credentialStyle: params.credentialStyle,
+                endpointProtocol: params.endpointProtocol,
+                omitSecretBinding: params.omitSecretBinding,
+                secretBindings: params.secretBindings ?? { account: { apiKey: params.chatSecretId ?? 'saved-openai-chat' } },
+                sourceKind: params.sourceKind,
+                role: params.role,
+            })),
+            ...settingsParse({
             secrets: [
                 {
                     id: 'saved-openai-chat',
@@ -1236,17 +1279,6 @@ describe('Voice provider selection persistence compatibility', () => {
                     updatedAt: 1,
                 },
             ],
-            providerSettingsV1: baseProviderSettings({
-                credentialMode: params.credentialMode,
-                credentialStyle: params.credentialStyle,
-                endpointProtocol: params.endpointProtocol,
-                omitSecretBinding: params.omitSecretBinding,
-                secretBindings: params.secretBindings ?? {
-                    account: { apiKey: params.chatSecretId ?? 'saved-openai-chat' },
-                },
-                sourceKind: params.sourceKind,
-                role: params.role,
-            }),
             voice: {
                 providerId: 'local_conversation',
                 credentialBindings: [
@@ -1311,27 +1343,29 @@ describe('Voice provider selection persistence compatibility', () => {
                                         providerConnectionId: params.commitConnectionId ?? connectionId,
                                         modelId: 'compatibility-commit',
                                     },
-                                    configuration: {
-                                        temperature: params.temperature === undefined
-                                            ? 0.37
-                                            : params.temperature,
-                                    },
                                 },
                             },
                         },
                     },
                 },
             },
-        });
-        const projectLocalConversation = (current: Readonly<object>) => {
-            const persisted = normalizePredecessorVoiceWrite(current);
+        }) });
+        const projectLocalConversation = (current: Readonly<object>, suppliedView?: ReturnType<typeof ProviderSettingsV1Schema.parse>) => {
+            const { providerView: fixtureView, ...account } = readRequiredRecord(current, 'Chat Account fixture');
+            const persisted = normalizeVoiceSettingsServerDelta(account, undefined, suppliedView ?? ProviderSettingsV1Schema.parse(fixtureView));
             return readRequiredRecord(
                 readPredecessorAdapters(persisted).local_conversation,
                 'predecessor Local Conversation adapter',
             );
         };
 
-        const adapter = projectLocalConversation(currentAccount());
+        const capturedAccount = currentAccount();
+        const providerView = ProviderSettingsV1Schema.parse(baseProviderSettings());
+        const { providerView: _openedFixtureView, ...rootlessAccount } = capturedAccount;
+        const rootlessProjection = normalizeVoiceSettingsServerDelta(rootlessAccount, undefined, providerView);
+        expect(readRequiredRecord(readPredecessorAdapters(rootlessProjection).local_conversation, 'catalog-backed Chat').agent)
+            .toMatchObject({ backend: 'openai_compat' });
+        const adapter = projectLocalConversation(capturedAccount);
         const agent = adapter.agent as Readonly<Record<string, unknown>>;
         const openAiCompat = agent.openaiCompat as Readonly<Record<string, unknown>>;
 
@@ -1346,9 +1380,9 @@ describe('Voice provider selection persistence compatibility', () => {
             chatModel: 'compatibility-chat',
             commitModel: 'compatibility-commit',
             temperature: 0.37,
+            maxTokens: 2048,
         });
         expect(agent).not.toHaveProperty('providerChat');
-        expect(openAiCompat).not.toHaveProperty('maxTokens');
 
         const canonicalTargetAdapter = projectLocalConversation(currentAccount({
             chatTargetKey: 'agent:happier.agent.opencode/opencode',
@@ -1390,10 +1424,7 @@ describe('Voice provider selection persistence compatibility', () => {
             ...collisionSource,
             secrets: [...collisionSource.secrets, { ...matchingSecret }],
         };
-        const malformedProviderSettings = {
-            ...currentAccount(),
-            providerSettingsV1: { v: 2 },
-        };
+        expect(() => normalizeVoiceSettingsServerDelta(rootlessAccount, undefined, null)).toThrow('voice_provider_catalog_unavailable');
 
         for (const current of [
             // The selected Provider target must agree with the surrounding released Agent target.
@@ -1402,7 +1433,6 @@ describe('Voice provider selection persistence compatibility', () => {
             currentAccount({ commitTargetKey: 'backend:codex' }),
             currentAccount({ commitConnectionId: 'another-chat-connection' }),
             currentAccount({ sourceKind: 'contribution' }),
-            currentAccount({ role: 'default' }),
             currentAccount({ endpointProtocol: 'openai-responses' }),
             currentAccount({ credentialStyle: 'x-api-key' }),
             currentAccount({ omitSecretBinding: true }),
@@ -1411,7 +1441,6 @@ describe('Voice provider selection persistence compatibility', () => {
             } }),
             currentAccount({ chatSecretId: 'missing-openai-chat-secret' }),
             collidingSecrets,
-            malformedProviderSettings,
         ]) {
             const rejectedAgent = projectLocalConversation(current).agent as Readonly<Record<string, unknown>>;
             expect(rejectedAgent).not.toHaveProperty('backend');
@@ -1423,9 +1452,7 @@ describe('Voice provider selection persistence compatibility', () => {
         // projection alongside newer canonical settings. The old Chat reader
         // must not keep that prior sidecar when the current binding stops
         // representing one released Agent target.
-        const previouslyProjected = normalizePredecessorVoiceWrite(
-            currentAccount(),
-        );
+        const previouslyProjected = rootlessProjection;
         const previousVoice = readPredecessorVoiceProjection(previouslyProjected);
         const previousAdapters = readPredecessorAdapters(previouslyProjected);
         const previousCanonical = readCanonicalVoiceSettings(previouslyProjected);
@@ -1441,8 +1468,69 @@ describe('Voice provider selection persistence compatibility', () => {
         const previousAgent = readRequiredRecord(previousConfig.agent, 'canonical Local Conversation agent');
         const previousProviderChat = readRequiredRecord(previousAgent.providerChat, 'canonical Provider Chat');
         const previousChat = readRequiredRecord(previousProviderChat.chat, 'canonical Provider Chat selection');
+        const unchangedCatalogUnavailable = normalizeVoiceSettingsServerDelta(
+            { ...previouslyProjected, uiFontSize: 'larger' }, previouslyProjected, null,
+        );
+        expect(readRequiredRecord(readPredecessorAdapters(unchangedCatalogUnavailable).local_conversation, 'retained Chat').agent)
+            .toMatchObject({ backend: 'openai_compat', openaiCompat: openAiCompat });
+        // Mode conversion changes the storage envelope, not the selected Chat
+        // intent. Exercise both real builders with an admitted old-reader
+        // sidecar, while its rootless Provider row is not supplied to them.
+        const { providerView: conversionView, ...conversionAccount } = currentAccount({
+            credentialMode: 'none', omitSecretBinding: true,
+        });
+        const conversionSource = normalizeVoiceSettingsServerDelta(
+            { ...conversionAccount, secrets: [] }, undefined, conversionView,
+        );
+        const credentials = { token: 'conversion-token', secret: Buffer.from(new Uint8Array(32).fill(17)).toString('base64url') };
+        const conversionInput = {
+            credentials, expectedAccountVersion: 1, expectedSigningKeyFingerprint: null,
+            expectedContentKeyFingerprint: null, expectedSettingsVersion: 1,
+            settings: settingsParse(conversionSource), rawSettings: conversionSource,
+            connectedServiceProfiles: [], automations: [],
+            storageDirectives: { machines: { action: 'assert_empty' as const }, todos: { action: 'assert_empty' as const },
+                artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const },
+                reviewComments: { action: 'assert_empty' as const }, sessionOrganization: { action: 'assert_empty' as const },
+                pets: { action: 'assert_empty' as const } },
+        };
+        const plainConversion = await buildAccountEncryptionMigrateToPlainRequest({ ...conversionInput,
+            fetchConnectedServiceCredentialSealed: async () => { throw new Error('Unexpected credential read'); },
+            decryptAutomationTemplateRaw: async () => { throw new Error('Unexpected automation read'); },
+        });
+        if (plainConversion.settingsContent?.t !== 'plain') throw new Error('Expected Plain conversion');
+        const encryptedConversion = await buildAccountEncryptionMigrateToE2eeRequest({ ...conversionInput,
+            accountId: 'conversion-account',
+            keyProof: { v: 1, publicKey: Buffer.from(new Uint8Array(32).fill(1)).toString('base64'),
+                contentPublicKey: Buffer.from(new Uint8Array(32).fill(2)).toString('base64'),
+                contentPublicKeySig: 'content-key-signature', sign: () => 'request-signature' },
+            fetchConnectedServiceCredentialPlain: async () => { throw new Error('Unexpected credential read'); },
+        });
+        if (encryptedConversion.settingsContent?.t !== 'encrypted') throw new Error('Expected E2EE conversion');
+        const openedConversion = openAccountScopedBlobCiphertext({ kind: 'account_settings',
+            material: resolveAccountScopedCryptoMaterialFromCredentials(credentials), ciphertext: encryptedConversion.settingsContent.c });
+        if (!openedConversion) throw new Error('Expected opened E2EE conversion');
+        for (const converted of [plainConversion.settingsContent.v, openedConversion.value]) {
+            expect(readRequiredRecord(readPredecessorAdapters(readRequiredRecord(converted, 'converted Settings')).local_conversation,
+                'converted Chat').agent).toMatchObject({ backend: 'openai_compat',
+                openaiCompat: { chatBaseUrl: 'https://chat.compatibility.test/v1', chatModel: 'compatibility-chat', chatApiKey: null } });
+        }
+        const runtimeBefore = settingsParse(previouslyProjected).voice;
+        const runtimeConfig = readLocalConversationVoiceSettings(runtimeBefore);
+        const configuredChat = runtimeConfig.agent.providerChat;
+        if (!configuredChat || configuredChat.status !== 'configured') throw new Error('Expected configured Chat');
+        const changedModel = writeLocalConversationVoiceSettings(runtimeBefore, {
+            ...runtimeConfig,
+            agent: { ...runtimeConfig.agent, providerChat: { ...configuredChat,
+                chat: { ...configuredChat.chat, modelId: 'changed-model' } } },
+        });
+        // Runtime Voice edits first enter the local canonical writer. The
+        // final storage normalizer consumes that canonical delta, rather than
+        // interpreting a runtime-only edit as a predecessor whole-object write.
+        const changedCanonical = normalizeVoiceSettingsLocalDelta({ voice: changedModel }, previouslyProjected);
+        expect(() => normalizeVoiceSettingsServerDelta(changedCanonical, previouslyProjected, null))
+            .toThrow('voice_provider_catalog_unavailable');
         const retainedCurrentWriterAgent = (
-            projectLocalConversation(previouslyProjected).agent
+            projectLocalConversation(previouslyProjected, providerView).agent
         ) as Readonly<Record<string, unknown>>;
         expect(retainedCurrentWriterAgent.openaiCompat).toEqual(openAiCompat);
 
@@ -1473,6 +1561,8 @@ describe('Voice provider selection persistence compatibility', () => {
         };
         const reconstructedMarkedWrite = normalizeVoiceSettingsServerDelta(
             markedWriteMissingLocalConversation,
+            undefined,
+            providerView,
         );
         const reconstructedAdapters = readPredecessorAdapters(readRequiredRecord(
             reconstructedMarkedWrite,
@@ -1515,7 +1605,7 @@ describe('Voice provider selection persistence compatibility', () => {
             },
         };
         const staleCurrentWriterAgent = (
-            projectLocalConversation(staleCurrentWriterDelta).agent
+            projectLocalConversation(staleCurrentWriterDelta, providerView).agent
         ) as Readonly<Record<string, unknown>>;
         expect(staleCurrentWriterAgent).not.toHaveProperty('backend');
         expect(staleCurrentWriterAgent).not.toHaveProperty('openaiCompat');
@@ -1536,6 +1626,8 @@ describe('Voice provider selection persistence compatibility', () => {
         };
         const nonrepresentableProjection = normalizeVoiceSettingsServerDelta(
             missingNonrepresentableMarkedWrite,
+            undefined,
+            providerView,
         );
         const nonrepresentableAdapters = readPredecessorAdapters(readRequiredRecord(
             nonrepresentableProjection,

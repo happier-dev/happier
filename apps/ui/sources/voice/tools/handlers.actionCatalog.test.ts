@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import {
   formatQualifiedPluginActionId,
@@ -6,9 +7,32 @@ import {
   type ActionDefinitionV1,
 } from '@happier-dev/protocol';
 
-import { createVoiceToolHandlers } from './handlers';
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+const { createVoiceToolHandlers, resolveVoiceToolEffectClass } = await import('./handlers');
 
 describe('Voice Action reference catalog', () => {
+  beforeEach(async () => { await home.reset(); });
+  afterEach(async () => { await home.reset(); });
+  it.each(['localServices_actions_copyUrl', 'localServices_actions_openPreview'] as const)(
+    'does not advertise %s when the permission receipt has no answering clipboard or navigation client', toolName => {
+      const handlers = createVoiceToolHandlers({ resolveSessionId: () => null });
+      expect(handlers[toolName]).toBeUndefined();
+    });
+  it.each(['localServices_launcher_start', 'localServices_actions_stopManaged'] as const)(
+    'routes %s through the actual Action input boundary and retains mutation custody classification', async toolName => {
+      // The front door captures an actual signed-in Home before dispatch.
+      // Seed its credential/network boundaries, not an internal executor.
+      const serverId = await home.addHome({ name: 'Service Home', serverUrl: 'https://service-home.test', accountId: 'account-a', currentAccount: true });
+      const handlers = createVoiceToolHandlers({ resolveSessionId: () => null });
+      const handler = handlers[toolName];
+      expect(handler).toBeTypeOf('function');
+      expect(resolveVoiceToolEffectClass(toolName)).toBe('mutation');
+      // No internal Action executor replacement: invalid semantic input must
+      // settle before a Machine effect can occur, even without a selected Session.
+      expect(JSON.parse(await handler!({}, { effectId: 'voice-service-effect', serverId })))
+        .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    });
   it('composes current contributed Actions into the existing action.spec tools', async () => {
     const contributedAction: ActionDefinitionV1 = {
       kindVersion: 1,

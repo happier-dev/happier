@@ -11,8 +11,9 @@ describe('voice welcome settings view model', () => {
   });
 
   it('updates only the shared welcome setting and preserves provider envelopes', () => {
-    const next = applyVoiceWelcomeSelection(voiceSettingsDefaults, 'on_first_turn');
-    expect(next.welcome).toEqual({ enabled: true, mode: 'on_first_turn', templateId: null });
+    const settings = { ...voiceSettingsDefaults, welcome: { ...voiceSettingsDefaults.welcome, templateId: 'selected-welcome-doc' } };
+    const next = applyVoiceWelcomeSelection(settings, 'on_first_turn');
+    expect(next.welcome).toEqual({ enabled: true, mode: 'on_first_turn', templateId: 'selected-welcome-doc' });
     expect(next.providers).toBe(voiceSettingsDefaults.providers);
     expect(JSON.stringify(next)).not.toContain('"adapters"');
   });

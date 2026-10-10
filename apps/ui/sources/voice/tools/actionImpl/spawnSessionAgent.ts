@@ -11,6 +11,7 @@ import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
 
 /**
  * The one operational backend target for a selected Agent.
@@ -58,7 +59,7 @@ export function resolveSpawnBackendTargetFromState(
     lastUsedBackendTarget: settings.lastUsedBackendTarget,
     defaultBuiltInAgentId: DEFAULT_AGENT_ID as AgentId,
     backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
-    acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+    acpCatalogSnapshot: getAcpCatalogSnapshot(state?.settingsScope)?.catalog,
     daemonMergedProjectionInputs: opts?.daemonMergedProjectionInputs ?? null,
   });
   return resolveOperationalBackendTarget(preferredTarget, opts?.daemonMergedProjectionInputs);
@@ -221,10 +222,17 @@ export function resolveVoiceToolSpawnBackendTarget(params: Readonly<{
     return { ok: true, backendTarget: { kind: 'backend', backendId: requestedAgentId } };
   }
 
-  return {
-    ok: true,
-    backendTarget: resolveSpawnBackendTargetFromState(params.state, {
-      daemonMergedProjectionInputs: params.daemonMergedProjectionInputs ?? null,
-    }),
-  };
+  try {
+    return {
+      ok: true,
+      backendTarget: resolveSpawnBackendTargetFromState(params.state, {
+        daemonMergedProjectionInputs: params.daemonMergedProjectionInputs ?? null,
+      }),
+    };
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'acp_catalog_unavailable') {
+      return { ok: false, errorCode: 'acp_catalog_unavailable', errorMessage: 'acp_catalog_unavailable' };
+    }
+    throw error;
+  }
 }

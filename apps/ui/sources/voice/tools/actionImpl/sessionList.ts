@@ -3,6 +3,7 @@ import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePriva
 import { storage } from '@/sync/domains/state/storage';
 import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1, type SessionListViewV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
+import { matchSessionBotFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { fetchSessionListQueryPageForHome, readOrdinarySessionListLifecycle } from '@/sync/domains/session/listing/sessionListQueryRuntime';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
@@ -132,7 +133,13 @@ export async function listSessionsForVoiceTool(params: Readonly<{
         .filter((sessionId) => page.isSessionCurrent?.(sessionId) !== false)
         .map((sessionId) => findSessionListLookupSession(state, { serverId, sessionId })?.session);
       if (rows.some((row) => !row)) return failure('invalid_response');
-      const sessions = rows.flatMap((row) => row ? [row] : []);
+      let botFilterUnavailableCount = 0;
+      const sessions = rows.flatMap((row) => {
+        if (!row) return [];
+        const match = matchSessionBotFilterV1(row.metadata, params.query?.bot);
+        if (match === 'unavailable') botFilterUnavailableCount += 1;
+        return match === 'match' ? [row] : [];
+      });
       const metadataUpgradeRequiredCount = page.metadataUpgradeRequiredCount ?? 0;
       if (params.view === 'awareness') {
         const pageResult = {
@@ -140,6 +147,7 @@ export async function listSessionsForVoiceTool(params: Readonly<{
           nextCursor: page.nextCursor,
           hasNext: page.hasNext,
           ...(metadataUpgradeRequiredCount > 0 ? { metadataUpgradeRequiredCount } : {}),
+          ...(botFilterUnavailableCount > 0 ? { botFilterUnavailableCount } : {}),
         };
         // Lane 07 attention continuation is a strict-query fact: a strict query proves
         // both page families, while an ordinary awareness read never queried that
@@ -166,6 +174,7 @@ export async function listSessionsForVoiceTool(params: Readonly<{
         attentionNextCursor: page.attentionNextCursor ?? null,
         attentionHasNext: page.attentionHasNext ?? false,
         ...(metadataUpgradeRequiredCount > 0 ? { metadataUpgradeRequiredCount } : {}),
+        ...(botFilterUnavailableCount > 0 ? { botFilterUnavailableCount } : {}),
       };
       return markSessionListQueryResultV1(result);
     } catch (error) {

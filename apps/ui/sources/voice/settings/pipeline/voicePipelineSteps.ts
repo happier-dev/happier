@@ -1,7 +1,8 @@
 import type { LocalNeuralExecution } from '@happier-dev/protocol';
 import type { VoiceServiceMark } from '@happier-dev/plugin-sdk/voice';
 
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { t } from '@/text';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { parseLocalVoiceSttSettings, parseLocalVoiceTtsSettings, resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
@@ -55,7 +56,7 @@ function speechPlacement(
 }
 
 function agentTitle(agentId: string): string {
-    return isBundledAgentId(agentId) ? t(getAgentCore(agentId).displayNameKey) : agentId;
+    return isBundledAgentId(agentId) ? resolveAgentCatalogTitle(agentId) : agentId;
 }
 
 /**

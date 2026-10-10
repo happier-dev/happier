@@ -120,7 +120,8 @@ describe('bundled speech selected-daemon client', () => {
   });
 
   it('routes an external speech contribution through its qualified daemon target', async () => {
-    const rpc = vi.fn(async (request: Readonly<{ method: string; payload: unknown }>) => {
+    const rpc = vi.fn(async (request: Readonly<{ machineId: string; method: string; payload: unknown }>) => {
+      expect(request.machineId).toBe('machine-origin');
       expect(request.method).toBe('daemon.voice.speech.catalog');
       expect(request.payload).toEqual({
         target: { pluginId: 'acme.voice', localId: 'speech-v2' },
@@ -137,8 +138,8 @@ describe('bundled speech selected-daemon client', () => {
       }),
     });
 
-    const client = new BundledSpeechDaemonClient({ resolveMachineId: () => 'machine-1', machineRpc: rpc as never });
-    await expect(client.fetchCatalog(contribution, 'voices')).resolves.toEqual([
+    const client = new BundledSpeechDaemonClient({ resolveMachineId: override => override?.machineId ?? 'machine-other', machineRpc: rpc as never });
+    await expect(client.fetchCatalog(contribution, 'voices', undefined, 'machine-origin')).resolves.toEqual([
       { id: 'acme-voice', name: 'Acme Voice', metadata: {} },
     ]);
   });
@@ -163,6 +164,7 @@ describe('bundled speech selected-daemon client', () => {
   });
 
   it('uses the same supplied contribution for transcribe and synthesize targets', async () => {
+    const voicePreference = { providerContributionId: 'acme.voice/speech-v2', settingFieldPath: 'voiceName', value: 'bound-voice' };
     const rpc = vi.fn(async (request: Readonly<{ method: string; payload: any }>) => {
       if (request.method === 'daemon.voice.speech.transcribe') {
         expect(request.payload).toEqual({
@@ -179,6 +181,7 @@ describe('bundled speech selected-daemon client', () => {
           target: { pluginId: 'acme.voice', localId: 'speech-v2' },
           requestId: expect.any(String),
           input: 'hello',
+          voicePreference,
           recipientPublicKeyBase64: 'recipient-public-key',
         });
         return {
@@ -188,6 +191,7 @@ describe('bundled speech selected-daemon client', () => {
           sizeBytes: 3,
           mimeType: 'audio/wav',
           chunkSizeBytes: 3,
+          appliedVoice: voicePreference,
         };
       }
       throw new Error(`unexpected_method:${request.method}`);
@@ -205,9 +209,11 @@ describe('bundled speech selected-daemon client', () => {
     await expect(client.synthesize({
       entry: contribution,
       input: 'hello',
+      voicePreference,
     })).resolves.toEqual({
       bytes: new Uint8Array([7, 8, 9]),
       mimeType: 'audio/wav',
+      appliedVoice: voicePreference,
     });
     expect(closeUploadSource).toHaveBeenCalledTimes(1);
   });

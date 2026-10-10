@@ -70,6 +70,28 @@ function bundledSpeechContribution(
 }
 
 describe('voice provider registry', () => {
+  it('reuses immutable bundled descriptors across default registry consumers without retaining config validation results', () => {
+    const registries = Array.from({ length: 40 }, () => createDefaultVoiceProviderRegistry());
+    const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+    const first = registries[0]!.get(providerId)!;
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Reflect.set(first, 'settingsSectionId', 'changed-section')).toBe(false);
+    for (const registry of registries.slice(1)) expect(registry.get(providerId)).toBe(first);
+    const defaults = first.providerSettings!.defaultConfig;
+    expect(Object.isFrozen(defaults)).toBe(true);
+    expect(Object.isFrozen(defaults.byo)).toBe(true);
+    if (defaults.byo && typeof defaults.byo === 'object') {
+      expect(Reflect.set(defaults.byo, 'apiKey', 'changed-key')).toBe(false);
+    }
+    expect(first.providerSettings!.parseConfig(defaults)).not.toBeNull();
+    expect(first.providerSettings!.parseConfig({ ...defaults, billingMode: 'byo' }))
+      .toMatchObject({ billingMode: 'byo' });
+    expect(first.providerSettings!.parseConfig({ ...defaults, billingMode: 'invalid-mode' })).toBeNull();
+    expect(first.providerSettings!.parseConfig(defaults)).not.toBeNull();
+    const disabled = createDefaultVoiceProviderRegistry({ enabledPluginIds: new Set() });
+    expect(disabled.get(providerId)).toBeNull();
+    expect(disabled.get('device')).toBe(registries[0]!.get('device'));
+  });
   it('retains built-in service art at the same public mark owner', () => {
     const registry = createVoiceProviderRegistry({ builtIn: BUILT_IN_VOICE_UI_ENTRIES });
     expect(registry.get('local_conversation')?.mark).toEqual({ kind: 'icon', name: 'desktop' });

@@ -136,6 +136,7 @@ export function resolveVoiceDictationExecutionMachineRequirement(input: Readonly
  * or starts a provider operation.
  */
 export function resolveVoiceDictationReadiness(input: Readonly<{
+  connectedPurposes: Parameters<typeof projectVoiceSpeechCredentialReadiness>[0]['connectedPurposes'];
   registry: VoiceProviderRegistry;
   settings: any;
   platform: VoiceRuntimePlatform | 'unknown';
@@ -202,8 +203,8 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
         settings: {
           voiceSettingsV1: input.settings.voiceSettingsV1,
           secrets: Array.isArray(input.settings?.secrets) ? input.settings.secrets : [],
-          connectedAccountPurposeBindingsV1: input.settings.connectedAccountPurposeBindingsV1,
         },
+        connectedPurposes: input.connectedPurposes,
         executionMachineId: input.executionMachineId,
         providerEnvelope,
         rawAuthorization: input.rawCredentialAuthorization ?? null,

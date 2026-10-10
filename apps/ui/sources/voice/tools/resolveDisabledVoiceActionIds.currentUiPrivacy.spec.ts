@@ -38,6 +38,17 @@ function enabledVoiceActionIds(state: Readonly<{ settings?: unknown }>): readonl
 }
 
 describe('voice Action catalog current-UI privacy', () => {
+  it('uses the admitted Session memory choice for offered write tools while global Voice keeps its own availability', () => {
+    const state = stateWithCurrentUiContextMode('automatic');
+    const off = { sessionMetadata: { work: { memoryEnabled: false } } };
+    const on = { sessionMetadata: { work: { memoryEnabled: true } } };
+    const writes = ['memory.remember', 'memory.update', 'memory.forget'];
+    expect(resolveDisabledVoiceActionIdsFromState(state, off)).toEqual(expect.arrayContaining(writes));
+    expect(resolveEnabledVoiceToolActionSpecsFromState(state, off).map(spec => spec.id)).not.toEqual(expect.arrayContaining(writes));
+    expect(resolveDisabledVoiceActionIdsFromState(state, on)).not.toEqual(expect.arrayContaining(writes));
+    expect(resolveDisabledVoiceActionIdsFromState(state)).not.toEqual(expect.arrayContaining(writes));
+    expect(resolveEnabledVoiceToolActionSpecsFromState(state, off).map(spec => spec.id)).toContain('memory.read');
+  });
   it('withholds current-UI Action specs from the next Local Voice attempt when sharing is off', () => {
     const state = stateWithCurrentUiContextMode('off');
     const enabledIds = enabledVoiceActionIds(state);

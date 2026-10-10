@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable } from 'react-native';
+import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -19,12 +20,6 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 
 const REMOVE_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
-const REMOVE_BUTTON_STYLE = {
-    width: REMOVE_TARGET_SIZE,
-    height: REMOVE_TARGET_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
-} as const;
 
 export function DaemonModelPackRow(props: Readonly<{
     row: ModelCatalogRow;
@@ -45,34 +40,31 @@ export function DaemonModelPackRow(props: Readonly<{
     const actionLabel = isDiscard ? t('common.discard') : t('common.remove');
 
     const rightElement = props.actionInFlight && props.onCancel ? (
-        <Pressable
+        <IconButton
             testID={`voice-model-cancel-${row.packId}`}
-            accessibilityRole="button"
             accessibilityLabel={`${t('common.cancel')}: ${row.displayName}`}
-            style={REMOVE_BUTTON_STYLE}
-            onPress={(event: any) => {
+            variant="plain"
+            size={REMOVE_TARGET_SIZE}
+            onPress={(event) => {
                 event?.stopPropagation?.();
                 props.onCancel?.();
             }}
-        >
-            <Icon name="x" size={20} color={theme.colors.text.secondary} />
-        </Pressable>
+            icon={<Icon name="x" size={20} color={theme.colors.text.secondary} />}
+        />
     ) : showRemove ? (
-        <Pressable
+        <IconButton
             testID={`voice-model-remove-${row.packId}`}
-            accessibilityRole="button"
             accessibilityLabel={`${actionLabel}: ${row.displayName}`}
-            accessibilityState={{ disabled: props.actionsDisabled === true }}
             disabled={props.actionsDisabled === true}
-            style={REMOVE_BUTTON_STYLE}
-            onPress={(event: any) => {
+            variant="plain"
+            size={REMOVE_TARGET_SIZE}
+            onPress={(event) => {
                 event?.stopPropagation?.();
                 if (props.actionsDisabled || props.actionInFlight) return;
                 fireAndForget(Promise.resolve(props.onRemove(row.packId)), { tag: 'DaemonModelPackRow.remove' });
             }}
-        >
-            <Icon name="trash" size={20} color={theme.colors.text.secondary} />
-        </Pressable>
+            icon={<Icon name="trash" size={20} color={theme.colors.text.secondary} />}
+        />
     ) : row.isDefault ? (
         <Icon name="check-circle" size={20} color={theme.colors.text.link} accessibilityLabel={t('settingsVoice.local.models.defaultBadge')} />
     ) : row.canInstall ? (

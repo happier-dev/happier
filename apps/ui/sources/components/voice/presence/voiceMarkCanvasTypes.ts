@@ -15,4 +15,8 @@ export type VoiceMarkCanvasProps = Readonly<{
     energy: SharedValue<number>;
     /** < 0 the person is heard, > 0 Voice speaks. */
     flow: SharedValue<number>;
+    /** One-shot gather: 1 dispersed … 0 home (settled). */
+    gather: SharedValue<number>;
+    /** One-shot leave: 0 the planet … 1 the rest microphone. */
+    leave: SharedValue<number>;
 }>;

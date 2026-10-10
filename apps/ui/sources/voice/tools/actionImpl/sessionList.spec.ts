@@ -73,6 +73,27 @@ function seedSession(privacyOverrides: Record<string, unknown>): void {
 }
 
 describe('listSessionsForVoiceTool privacy', () => {
+  it('applies the Bot facet to authorized hydrated rows while reporting locked candidates and continuations', async () => {
+    seedSession({ shareSessionSummary: true });
+    storage.setState((current) => ({ ...current, sessionListRowsByServerId: {
+      'server-a': {
+        s1: { id: 's1', updatedAt: 100, active: true, metadata: { bot: { kind: 'bot' }, path: '/repo' } },
+        ordinary: { id: 'ordinary', updatedAt: 99, active: true, metadata: { summaryText: 'Bot', path: '/repo' } },
+        locked: { id: 'locked', updatedAt: 98, active: true, metadata: null },
+      },
+    } }) as never);
+    fetchSessionListQueryPageForHome.mockResolvedValue({
+      current: true, sessionIds: ['s1', 'ordinary', 'locked'], nextCursor: 'next', hasNext: true,
+      attentionNextCursor: 'attention', attentionHasNext: true,
+    });
+    const { listSessionsForVoiceTool } = await import('./sessionList');
+    const result = await listSessionsForVoiceTool({ query: {
+      v: 1, storage: 'active', includeInactive: true, scope: 'my_work', attention: 'any',
+      audiences: [], tagIds: [], bot: 'bot',
+    } });
+    expect(result).toMatchObject({ sessions: [{ id: 's1' }], botFilterUnavailableCount: 1,
+      nextCursor: 'next', hasNext: true, attentionNextCursor: 'attention', attentionHasNext: true });
+  });
   beforeEach(() => {
     fetchSessionListQueryPageForHome.mockReset();
     acquireAdmittedSessionReferenceCorpusOptions.mockReset();

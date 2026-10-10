@@ -1,5 +1,6 @@
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import type { VoiceAdapterId } from '@/voice/session/types';
+import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 import {
     DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
@@ -65,6 +66,7 @@ export type VoiceConversationRuntimeMachine = Readonly<{
         retryAvailable?: boolean;
     }) => void;
     setMuted: (args: MuteArgs) => void;
+    setInUseVoice: (args: TransitionArgs & { inUseVoice: VoiceConversationInUseVoice | null }) => void;
     setError: (args: TransitionArgs & { error: VoiceMachineError }) => void;
     reset: () => void;
 }>;
@@ -278,6 +280,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                 micMuted: clearsAttempt || (isEntryTransition && !sameOwner)
                     ? false
                     : current.micMuted,
+                inUseVoice: terminalState || (isEntryTransition && !sameOwner) ? undefined : current.inUseVoice,
                 error: nextError,
             }, nextReconnecting && current.reconnectRetryAvailable === true);
         });
@@ -446,6 +449,15 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                     return current;
                 }
                 return { ...current, micMuted };
+            });
+        },
+        setInUseVoice: ({ controlSessionId, adapterId, attemptId, inUseVoice }) => {
+            patchSnapshot(current => {
+                if (current.controlSessionId !== controlSessionId || current.adapterId !== (adapterId ?? null)
+                    || (attemptId !== undefined && activeAttemptId !== attemptId)
+                    || current.state === 'disconnected' || current.state === 'ending'
+                    || current.state === 'error' || current.state === 'mic_error') return current;
+                return { ...current, inUseVoice: inUseVoice ?? undefined };
             });
         },
         setError: ({ controlSessionId, adapterId, attemptId, error }) => {

@@ -3,6 +3,11 @@ import { resolveVoiceSpeechSettingsCorrespondence } from '@happier-dev/protocol/
 import { resolveVoiceSpeechSynthesisInputLimits } from '@happier-dev/protocol/voice/speech';
 import { batchSpeechTextForSynthesis } from '@happier-dev/protocol/voice/speechText';
 import type { VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import type { SessionVoicePreferenceV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
+import { readSessionVoiceSettingFieldV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
+import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { resolveSessionVoicePreference } from '@/voice/settings/resolveSessionVoicePreference';
 
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { guessAudioMimeType } from '@/voice/input/guessAudioMimeType';
@@ -11,7 +16,15 @@ import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { bundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClient';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 
-type BundledSpeechClient = Pick<typeof bundledSpeechDaemonClient, 'transcribe' | 'synthesize'>;
+type BundledSpeechClient = Pick<typeof bundledSpeechDaemonClient, 'transcribe' | 'synthesize'>
+  & Partial<Pick<typeof bundledSpeechDaemonClient, 'fetchCatalog'>>;
+
+export type BundledSpeechPreparation = Readonly<{
+  targetSessionAddress: SessionAddress | null;
+  preference: SessionVoicePreferenceV1 | null;
+  isCurrent(): boolean;
+  onVoiceApplied?(voice: VoiceConversationInUseVoice | null): void;
+}>;
 
 function createRuntimeError(code: 'provider_unavailable' | 'provider_settings_invalid' | 'unsupported_audio'): Error & { code: string } {
   return Object.assign(new Error(code), { code });
@@ -109,15 +122,31 @@ export function createBundledSpeechRuntime(input: Readonly<{
     async speak(providerId: string, params: Readonly<{
       text: string;
       providerConfig: unknown;
+      preparation?: BundledSpeechPreparation;
+      originMachineId?: string | null;
       registerPlaybackStopper: VoicePlaybackStopperRegistrar;
       onPlaybackStarted?: () => void;
       signal?: AbortSignal | null;
     }>): Promise<void> {
       const { contribution, declaration, settings } = readDescriptor(providerId, 'tts');
-      const config = settings.parseConfig(params.providerConfig);
+      let config = settings.parseConfig(params.providerConfig);
       if (!config || !isVoiceProviderSettingsJsonObject(config)) {
         throw createRuntimeError('provider_settings_invalid');
       }
+      let catalog: readonly Readonly<{ id: string; name: string }>[] | null = null;
+      if (params.preparation) {
+        if (!params.preparation.isCurrent() || params.signal?.aborted) return;
+        if (readSessionVoiceSettingFieldV1(declaration)) {
+          try { catalog = await getClient().fetchCatalog?.(contribution, 'voices', params.signal, params.originMachineId) ?? null; }
+          catch (error) { if (params.signal?.aborted) throw error; }
+        }
+        if (!params.preparation.isCurrent() || params.signal?.aborted) return;
+        const resolved = resolveSessionVoicePreference({ providerContributionId: providerId,
+          declaration, providerConfig: config, preference: params.preparation.preference, catalog });
+        if (resolved.kind === 'unavailable') throw createRuntimeError('provider_settings_invalid');
+        config = resolved.providerConfig;
+      }
+      if (!isVoiceProviderSettingsJsonObject(config)) throw createRuntimeError('provider_settings_invalid');
       let correspondence: ReturnType<typeof resolveVoiceSpeechSettingsCorrespondence>;
       try {
         correspondence = resolveVoiceSpeechSettingsCorrespondence({ contribution: declaration, settings: config });
@@ -150,13 +179,15 @@ export function createBundledSpeechRuntime(input: Readonly<{
         if (abortController.signal.aborted) return;
         let playbackStarted = false;
         for (const text of batches) {
-          if (abortController.signal.aborted) return;
+          if (abortController.signal.aborted || params.preparation?.isCurrent() === false) return;
           const result = await getClient().synthesize({
             entry: contribution,
             input: text,
+            originMachineId: params.originMachineId,
+            ...(params.preparation?.preference ? { voicePreference: params.preparation.preference } : {}),
             signal: abortController.signal,
           });
-          if (abortController.signal.aborted) return;
+          if (abortController.signal.aborted || params.preparation?.isCurrent() === false) return;
           const registerPlaybackOnly: VoicePlaybackStopperRegistrar = (stopper) => {
             stopPlayback = stopper;
             return () => {
@@ -171,8 +202,14 @@ export function createBundledSpeechRuntime(input: Readonly<{
             format: result.mimeType === 'audio/wav' ? 'wav' : 'mp3',
             registerPlaybackStopper: registerPlaybackOnly,
             onPlaybackStarted: () => {
-              if (playbackStarted) return;
+              if (playbackStarted || abortController.signal.aborted || params.preparation?.isCurrent() === false) return;
               playbackStarted = true;
+              const actual = result.appliedVoice;
+              const applied = actual ? resolveSessionVoicePreference({ providerContributionId: providerId,
+                declaration, providerConfig: config, preference: actual, catalog }) : null;
+              const accepted = applied && applied.kind !== 'unavailable' && applied.inUseVoice
+                ? Object.freeze(applied.inUseVoice) : null;
+              params.preparation?.onVoiceApplied?.(accepted);
               params.onPlaybackStarted?.();
             },
           });

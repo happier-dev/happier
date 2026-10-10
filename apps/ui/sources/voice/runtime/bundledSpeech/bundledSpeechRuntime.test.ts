@@ -115,6 +115,47 @@ function createFakeSpeechRegistry(
 }
 
 describe('bundledSpeechRuntime', () => {
+  it('carries the captured Session voice into synthesis and publishes only the actually accepted playback voice', async () => {
+    const preference = { providerContributionId: CATALOG_TTS_ID, settingFieldPath: 'catalogVoice', value: ' bound-voice ' };
+    const actualVoice = { ...preference, value: 'bound-voice' };
+    const synthesize = vi.fn(async () => ({ bytes: new Uint8Array([1]), mimeType: 'audio/wav' as const,
+      appliedVoice: actualVoice }));
+    const applied = vi.fn();
+    let started!: () => void;
+    const runtime = createBundledSpeechRuntime({
+      registry: createFakeSpeechRegistry([CATALOG_TTS_DECLARATION]).registry,
+      client: { transcribe: async () => '', synthesize },
+      play: async (params) => { started = () => params.onPlaybackStarted?.(); },
+    });
+    await runtime.speak(CATALOG_TTS_ID, {
+      text: 'hello', providerConfig: { catalogVoice: 'account-voice', format: 'wav', languageCode: '', speakingRate: 1, pitch: 0 },
+      preparation: { targetSessionAddress: { serverId: 'home-a', sessionId: 'bound-a' }, preference,
+        isCurrent: () => true, onVoiceApplied: applied },
+      registerPlaybackStopper: () => () => {},
+    });
+    expect(synthesize).toHaveBeenCalledWith(expect.objectContaining({ voicePreference: preference }));
+    expect(applied).not.toHaveBeenCalled();
+    started();
+    expect(applied).toHaveBeenCalledWith(expect.objectContaining(actualVoice));
+  });
+
+  it('drops a synthesis completed after its captured target retires', async () => {
+    let current = true;
+    let finish!: (value: { bytes: Uint8Array; mimeType: 'audio/wav' }) => void;
+    const pending = new Promise<{ bytes: Uint8Array; mimeType: 'audio/wav' }>(resolve => { finish = resolve; });
+    const synthesize = vi.fn(async () => { current = false; return pending; });
+    const play = vi.fn(async () => {});
+    const runtime = createBundledSpeechRuntime({ registry: createFakeSpeechRegistry([CATALOG_TTS_DECLARATION]).registry,
+      client: { transcribe: async () => '', synthesize }, play });
+    const speaking = runtime.speak(CATALOG_TTS_ID, {
+      text: 'hello', providerConfig: { catalogVoice: 'account-voice', format: 'wav', languageCode: '', speakingRate: 1, pitch: 0 },
+      preparation: { targetSessionAddress: { serverId: 'home-a', sessionId: 'bound-a' }, preference: null,
+        isCurrent: () => current }, registerPlaybackStopper: () => () => {},
+    });
+    finish({ bytes: new Uint8Array([1]), mimeType: 'audio/wav' });
+    await speaking;
+    expect(play).not.toHaveBeenCalled();
+  });
   it('batches multibyte replies by the declared UTF-8 cap through the real settings owner', async () => {
     const declaration = { ...CATALOG_TTS_DECLARATION, limits: { synthesize: { maxInputUtf8Bytes: 9 } } };
     const received: string[] = [];

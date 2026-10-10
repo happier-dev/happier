@@ -1,4 +1,7 @@
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
+import type { Settings } from '@/sync/domains/settings/settings';
+import { readLocalNeuralVoiceCatalog } from '@/voice/kokoro/assets/readLocalNeuralVoiceCatalog';
+import { resolveSessionVoicePreference } from '@/voice/settings/resolveSessionVoicePreference';
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
 import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
 import { speakDeviceText } from '@/voice/local/speakDeviceText';
@@ -9,11 +12,24 @@ import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineErr
 import type { VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 import { readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { storage } from '@/sync/domains/state/storage';
+import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { areSessionAddressesEqual } from '@/sync/domains/session/sessionAddress';
+import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
+import { BUILT_IN_LOCAL_NEURAL_VOICE_DECLARATION, BUILT_IN_LOCAL_NEURAL_VOICE_PROVIDER_ID, readSessionVoicePreferenceV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
+import { getVoiceSessionAttemptId } from '@/voice/session/voiceSessionStore';
+import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
+import { isCapturedVoiceExecutionMachineCurrent, resolveVoiceExecutionMachineId } from '@/voice/settings/executionMachine';
+import type { BundledSpeechPreparation } from '@/voice/runtime/bundledSpeech/bundledSpeechRuntime';
 
 export type LocalVoiceTtsRequest = Readonly<{
     sessionId?: string | null;
     text: string;
-    settings: any;
+    settings: Readonly<Pick<Settings, 'voice'>>;
+    preparation?: BundledSpeechPreparation;
     tts: VoiceLocalTtsSettings;
     networkTimeoutMs: number;
     registerPlaybackStopper: VoicePlaybackStopperRegistrar;
@@ -40,7 +56,7 @@ function isTtsAbortError(error: unknown): boolean {
 }
 
 /** Report a genuine (non-abort) TTS failure as a recoverable `tts_failed` error. */
-function reportTtsFailure(ctx: LocalVoiceTtsRequest, error: unknown): void {
+export function reportTtsFailure(ctx: LocalVoiceTtsRequest, error: unknown): void {
     if (isTtsAbortError(error)) {
         return;
     }
@@ -59,6 +75,7 @@ export type LocalVoiceTtsProviderId = VoiceLocalTtsSettings['provider'];
 
 export type LocalVoiceTtsProviderController = Readonly<{
     speak: (ctx: LocalVoiceTtsRequest) => Promise<void>;
+    sessionVoiceProviderId?: string;
 }>;
 
 export type LocalVoiceTtsController = Readonly<{
@@ -72,7 +89,7 @@ function normalizeLocalNeuralTtsSettings(tts: VoiceLocalTtsSettings): Readonly<{
     speed: number;
     voiceId: string | null;
 }> {
-    const localNeural = (tts.localNeural ?? null) as any;
+    const localNeural = tts.localNeural;
     return {
         assetSetId: typeof localNeural?.assetId === 'string' && localNeural.assetId.trim() ? localNeural.assetId.trim() : null,
         execution: localNeural?.execution ?? 'auto',
@@ -153,6 +170,11 @@ async function speakWithLocalNeuralDaemonRuntime(
 
 async function speakWithLocalNeuralTts(ctx: LocalVoiceTtsRequest): Promise<void> {
     const localNeural = normalizeLocalNeuralTtsSettings(ctx.tts);
+    const preparation = ctx.preparation;
+    const originMachineId = resolveVoiceExecutionMachineId();
+    const current = () => (!preparation || preparation.isCurrent())
+        && isCapturedVoiceExecutionMachineCurrent(originMachineId);
+    if (!current()) return;
     if (localNeural.model !== 'kokoro') {
         reportTtsFailure(ctx, new Error('local_neural_tts_model_unavailable'));
         return;
@@ -170,18 +192,99 @@ async function speakWithLocalNeuralTts(ctx: LocalVoiceTtsRequest): Promise<void>
         return;
     }
 
+    let selectedVoiceId = localNeural.voiceId;
+    let selectedName = selectedVoiceId;
+    if (preparation?.preference) {
+        try {
+            const catalog = await readLocalNeuralVoiceCatalog({ config: ctx.tts.localNeural,
+                sessionId: ctx.sessionId, originMachineId, resolvedExecution });
+            if (!current()) return;
+            const selected = resolveSessionVoicePreference({
+                providerContributionId: BUILT_IN_LOCAL_NEURAL_VOICE_PROVIDER_ID,
+                declaration: BUILT_IN_LOCAL_NEURAL_VOICE_DECLARATION,
+                providerConfig: { voiceId: localNeural.voiceId },
+                preference: preparation.preference, catalog: catalog.rows,
+            });
+            if (selected.kind === 'unavailable') {
+                reportTtsFailure(ctx, new Error(selected.reason));
+                return;
+            }
+            const value = selected.providerConfig;
+            selectedVoiceId = value && typeof value === 'object' && !Array.isArray(value)
+                && typeof value.voiceId === 'string' ? value.voiceId : null;
+            selectedName = selected.inUseVoice?.displayName ?? selectedVoiceId;
+        } catch (error) {
+            reportTtsFailure(ctx, error);
+            return;
+        }
+    }
+    if (!current()) return;
+    const playbackRequest: LocalVoiceTtsRequest = { ...ctx, onSpeaking: () => {
+        if (!current()) return;
+        // Both engines fire this only after accepting the exact requested voice and starting audio.
+        preparation?.onVoiceApplied?.(selectedVoiceId ? {
+            providerContributionId: BUILT_IN_LOCAL_NEURAL_VOICE_PROVIDER_ID, settingFieldPath: 'voiceId',
+            value: selectedVoiceId, displayName: selectedName ?? selectedVoiceId,
+        } : null);
+        ctx.onSpeaking();
+    } };
+    const selection = { ...localNeural, voiceId: selectedVoiceId };
     if (resolvedExecution === 'daemon') {
-        await speakWithLocalNeuralDaemonRuntime(ctx, localNeural);
+        await speakWithLocalNeuralDaemonRuntime(playbackRequest, selection);
         return;
     }
 
-    await speakWithLocalNeuralDeviceRuntime(ctx, localNeural);
+    await speakWithLocalNeuralDeviceRuntime(playbackRequest, selection);
+}
+
+export function prepareLocalVoiceTtsRequest(ctx: LocalVoiceTtsRequest): BundledSpeechPreparation | null {
+    const accountLifetime = captureActiveServerAccountScopeCurrentness();
+    const serverId = getAppliedActiveServerSnapshot().serverId;
+    const attemptId = getVoiceSessionAttemptId();
+    const resolveBinding = () => ctx.sessionId
+        ? voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: ctx.sessionId })
+            ?? voiceConversationBindingResolver.resolveByConversationSessionId({ conversationSessionId: ctx.sessionId })
+        : null;
+    const binding = resolveBinding();
+    const target = binding?.targetSessionAddress ?? null;
+    const metadata = target ? readVoiceSessionOwnerMetadataFromState(storage.getState(), target, { activeServerId: serverId }) : null;
+    const preference = readSessionVoicePreferenceV1(metadata?.work?.voicePreference);
+    const isCurrent = () => {
+        if (!accountLifetime.isCurrent() || getVoiceSessionAttemptId() !== attemptId
+            || !areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerSnapshot().serverId)) return false;
+        const current = resolveBinding();
+        if (!binding) return current === null;
+        return current?.controlSessionId === binding.controlSessionId
+            && current.conversationSessionId === binding.conversationSessionId
+            && current.updatedAt === binding.updatedAt
+            && areSessionAddressesEqual(current.conversationSessionAddress, binding.conversationSessionAddress)
+            && (target === null ? current.targetSessionAddress === null : areSessionAddressesEqual(current.targetSessionAddress, target))
+            && (!target || metadata === null || readVoiceSessionOwnerMetadataFromState(storage.getState(), target, { activeServerId: serverId }) !== null);
+    };
+    if (!isCurrent()) return null;
+    // The incumbent speech Machine chooser is Home-local. An inactive Home's
+    // retained Session cannot authorize speech on the active Home's daemon.
+    if (target && (!metadata || !areServerProfileIdentifiersEquivalent(target.serverId, serverId))) {
+        reportTtsFailure(ctx, new Error('session_metadata_unavailable'));
+        return null;
+    }
+    return Object.freeze({
+        targetSessionAddress: target, preference, isCurrent,
+        onVoiceApplied: inUseVoice => {
+            if (!isCurrent() || !ctx.sessionId) return;
+            voiceConversationRuntimeMachine.setInUseVoice({ controlSessionId: binding?.controlSessionId ?? ctx.sessionId, inUseVoice });
+        },
+    } satisfies BundledSpeechPreparation);
 }
 
 export async function speakWithBundledSpeechTts(
     providerId: string,
     ctx: LocalVoiceTtsRequest,
+    preparation?: BundledSpeechPreparation,
 ): Promise<boolean> {
+    const prepared = preparation ?? prepareLocalVoiceTtsRequest(ctx);
+    if (!prepared) return true;
+    const originMachineId = resolveVoiceExecutionMachineId();
     // Loading the complete first-party registry while the built-in TTS controller
     // module initializes creates a registry -> runtime -> TTS cycle. Resolve the
     // optional bundled leaf only when a selected non-built-in provider is used.
@@ -205,6 +308,7 @@ export async function speakWithBundledSpeechTts(
         contribution,
     );
     if (!descriptor || (descriptor.role !== 'tts' && descriptor.role !== 'both')) return false;
+    if (!prepared.isCurrent()) return true;
     const runtime = runtimeModule.createBundledSpeechRuntime({ registry });
     await runtime.speak(providerId, {
         text: ctx.text,
@@ -212,6 +316,8 @@ export async function speakWithBundledSpeechTts(
             voiceSettingsParse(ctx.settings?.voice),
             providerId,
         ),
+        preparation: prepared,
+        originMachineId,
         registerPlaybackStopper: ctx.registerPlaybackStopper,
         onPlaybackStarted: ctx.onSpeaking,
     }).catch((error) => reportTtsFailure(ctx, error));
@@ -221,7 +327,7 @@ export async function speakWithBundledSpeechTts(
 export function createDefaultLocalVoiceTtsProviderControllers(): ReadonlyMap<string, LocalVoiceTtsProviderController> {
     const entries: Array<readonly [string, LocalVoiceTtsProviderController]> = [
         ['device', { speak: speakWithDeviceSpeech }],
-        ['local_neural', { speak: speakWithLocalNeuralTts }],
+        ['local_neural', { speak: speakWithLocalNeuralTts, sessionVoiceProviderId: BUILT_IN_LOCAL_NEURAL_VOICE_PROVIDER_ID }],
     ];
     return new Map(entries);
 }

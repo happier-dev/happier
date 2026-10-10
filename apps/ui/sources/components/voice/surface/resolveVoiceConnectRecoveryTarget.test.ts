@@ -237,13 +237,36 @@ describe('resolveVoiceConnectRecoveryTarget', () => {
         })).toEqual({ kind: 'unavailable' });
     });
 
+    it('keeps the selected account repair route available when execution is unavailable', () => {
+        expect(resolveVoiceConnectRecoveryTarget({
+            agentRuntime,
+            bindingScope: 'global',
+            runtimeTarget,
+            provider,
+            providerConfig: {
+                agentAccounts: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        'openai-codex': { source: 'connected', profileId: 'account-work' },
+                    },
+                },
+            },
+            sessionMetadata: null,
+            connectedServiceEntries: [{ ...connectedServiceEntry, executable: false }],
+        })).toEqual({
+            kind: 'exact',
+            route: {
+                pathname: '/(app)/settings/connected-services/account',
+                params: {
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                    accountId: 'account-work',
+                },
+            },
+        });
+    });
+
     it.each([
-        {
-            title: 'selected service is no longer executable',
-            agent: agentRuntime,
-            runtime: runtimeTarget,
-            entries: [{ ...connectedServiceEntry, executable: false }],
-        },
         {
             title: 'selected runtime target is unavailable',
             agent: agentRuntime,

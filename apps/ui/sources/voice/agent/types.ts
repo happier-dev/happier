@@ -35,8 +35,9 @@ export type VoiceAgentStartParams = Readonly<{
   agentSource?: VoiceAgentAgentSource;
   agentId?: string;
   verbosity?: VoiceAgentVerbosity;
-  chatModelId: string;
-  commitModelId: string;
+  /** Omitted attached choices are resolved from the applied Session by the host. */
+  chatModelId?: string;
+  commitModelId?: string;
   chatModelSelection?: ProviderBoundModelRef;
   commitModelSelection?: ProviderBoundModelRef;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Platform } from 'react-native';
 
 import { resolveVoiceConnectRecoveryTarget } from '@/components/voice/surface/resolveVoiceConnectRecoveryTarget';
@@ -29,6 +29,7 @@ import {
     dismissVoiceSessionEndedAttempt,
     getVoiceSessionAttemptStartedAt,
     getVoiceSessionPresentedAttemptId,
+    getVoiceSessionArrivedAttemptId,
     getVoiceSessionEndedAttempt,
     subscribeToVoiceSessionEndedAttempt,
     type VoiceSessionEndedAttempt,
@@ -44,6 +45,7 @@ import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBind
 import { resolveVoiceConversationNavigationAddress } from '@/voice/binding/resolveVoiceConversationNavigationAddress';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { useVoiceSetupDismissed } from '@/voice/settings/setup/useVoiceSetupItem';
+import { resolveVoiceMarkEvent, type VoiceMarkEvent } from '@/components/voice/presence/resolveVoiceMarkPose';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
@@ -108,6 +110,8 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
     ended?: VoiceSessionEndedAttempt | null;
     /** Puts the ended conversation away (never touches a running attempt). */
     onDismissEnded?: () => void;
+    /** The attempt's one-shot continuation event for the mark (leave / arrive). Omitted by static previews. */
+    markEvent?: VoiceMarkEvent | null;
     /** Acknowledges a terminal failure through the lifecycle owner and releases its media. */
     onDismissFailedAttempt?: () => void;
     /** Truthful transport semantics and copy, selected once for every placement. */
@@ -122,6 +126,13 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
     captionLabel: string;
     /** The presented service, including an active attempt that outlives a settings selection. Omitted by static previews. */
     serviceTitle?: string;
+    /**
+     * The Session the running attempt talks to, captured when it started (null in global mode or while
+     * idle). Presence names this target; opening another Session never changes it.
+     */
+    targetSessionAddress?: SessionAddress | null;
+    /** Applied voice from the current admitted attempt; never the next saved preference. */
+    inUseVoice?: import('@happier-dev/protocol/actions/voiceConversationActionFamily').VoiceConversationInUseVoice | null;
     onPrimaryAction: () => void;
     /** Starts the caller's idle target when idle; ends the running attempt otherwise. Never re-targets. */
     onToggle: () => void;
@@ -267,6 +278,12 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     );
     const capturedAttemptTarget = expectedAttempt ? voiceSessionManager.getAttemptTargetSessionAddress() : null;
     const recoveryBindingScope = expectedAttempt ? capturedAttemptTarget ? 'session' : 'global' : bindingScope;
+    const targetServerId = capturedAttemptTarget?.serverId ?? null;
+    const targetSessionId = capturedAttemptTarget?.sessionId ?? null;
+    const targetSessionAddress = React.useMemo<SessionAddress | null>(
+        () => targetSessionId && targetServerId ? { serverId: targetServerId, sessionId: targetSessionId } : null,
+        [targetServerId, targetSessionId],
+    );
     /*
      * The session a recovery is about: the running attempt's control session, or — when nothing is
      * running — the conversation this caller would start. Never a third session.
@@ -365,6 +382,15 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         getVoiceSessionEndedAttempt,
     );
     const presentedEnded = snap.status === 'disconnected' ? ended : null;
+    const arrivedAttemptId = React.useSyncExternalStore(
+        subscribeToVoiceSessionEndedAttempt,
+        getVoiceSessionArrivedAttemptId,
+        getVoiceSessionArrivedAttemptId,
+    );
+    const markEvent = React.useMemo(
+        () => resolveVoiceMarkEvent({ ended: presentedEnded, arrivedAttemptId }),
+        [arrivedAttemptId, presentedEnded],
+    );
     const currentAccountScope = useActiveServerAccountScope();
     const subscribeBindingSources = React.useCallback((notify: () => void) => {
         const unsubscribeSessions = storage.subscribe(notify);
@@ -640,6 +666,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             canHoldToTalk,
             beginHoldToTalk,
             ended: presentedEnded,
+            markEvent,
             onDismissEnded,
             onDismissFailedAttempt,
             onToggle,
@@ -655,6 +682,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             captionLabel,
             onPrimaryAction,
             serviceTitle,
+            inUseVoice: snap.status === 'connected' ? snap.inUseVoice ?? null : null,
+            targetSessionAddress,
             openConversationSessionId,
             openConversationSessionAddress,
             canOpenConversation,
@@ -664,11 +693,15 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             control,
             statusWord,
             serviceTitle,
+            snap.status,
+            snap.inUseVoice,
+            targetSessionAddress,
             statusLabel,
             elapsedStartedAt,
             canHoldToTalk,
             beginHoldToTalk,
             presentedEnded,
+            markEvent,
             onDismissEnded,
             onDismissFailedAttempt,
             onCommitInput,

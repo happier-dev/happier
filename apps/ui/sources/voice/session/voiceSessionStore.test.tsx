@@ -12,6 +12,18 @@ afterEach(async () => {
 });
 
 describe('voiceSessionStore', () => {
+  it('publishes changes to the applied voice and clears it when the attempt is no longer connected', async () => {
+    const store = await import('./voiceSessionStore');
+    const snapshot = { adapterId: 'realtime', sessionId: 's1', status: 'connected' as const, mode: 'listening' as const, canStop: true };
+    store.setVoiceSessionSnapshot(snapshot);
+    const first = store.getVoiceSessionSnapshot();
+    const inUseVoice = { providerContributionId: 'happier.openai/realtime', settingFieldPath: 'voice', value: 'coral', displayName: 'Coral' };
+    store.setVoiceSessionSnapshot({ ...snapshot, inUseVoice });
+    expect(store.getVoiceSessionSnapshot()).not.toBe(first);
+    expect(store.getVoiceSessionSnapshot()).toHaveProperty('inUseVoice', inUseVoice);
+    store.setVoiceSessionSnapshot({ ...snapshot, inUseVoice, status: 'disconnected', canStop: false });
+    expect(store.getVoiceSessionSnapshot().inUseVoice).toBeUndefined();
+  });
   it('retains the last ended exact conversation independently of later binding removal or route changes', async () => {
     const store = await import('./voiceSessionStore');
     const conversationSessionAddress = { serverId: 'home-a', sessionId: 'conversation' };
@@ -370,5 +382,31 @@ describe('voiceSessionStore', () => {
       mode: 'idle',
       canStop: false,
     });
+  });
+});
+
+describe('voiceSessionStore continuation arrival', () => {
+  it('marks only the current live attempt as arrived from another device, for that attempt\'s life', async () => {
+    const store = await import('./voiceSessionStore');
+    const notified: Array<string | null> = [];
+    const unsubscribe = store.subscribeToVoiceSessionEndedAttempt(() => notified.push(store.getVoiceSessionArrivedAttemptId()));
+    try {
+      store.setVoiceSessionSnapshot({ adapterId: 'service', sessionId: 'control', status: 'connected', mode: 'listening', canStop: true });
+      const attemptId = store.getVoiceSessionAttemptId();
+      store.recordVoiceSessionArrival('service', 'other-control');
+      expect(store.getVoiceSessionArrivedAttemptId()).toBeNull();
+      store.recordVoiceSessionArrival('service', 'control');
+      expect(store.getVoiceSessionArrivedAttemptId()).toBe(attemptId);
+      expect(notified).toEqual([attemptId]);
+      store.setVoiceSessionSnapshot({ adapterId: 'service', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+      expect(store.getVoiceSessionArrivedAttemptId()).toBeNull();
+      // A terminal attempt cannot be marked, and the next start begins unmarked.
+      store.recordVoiceSessionArrival('service', 'control');
+      expect(store.getVoiceSessionArrivedAttemptId()).toBeNull();
+      store.setVoiceSessionSnapshot({ adapterId: 'service', sessionId: 'control-2', status: 'connecting', mode: 'idle', canStop: true });
+      expect(store.getVoiceSessionArrivedAttemptId()).toBeNull();
+    } finally {
+      unsubscribe();
+    }
   });
 });

@@ -18,6 +18,7 @@ import {
 import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { useAllMachines } from '@/sync/store/hooks';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { t } from '@/text';
@@ -50,9 +51,9 @@ export function VoiceExecutionMachineSection(props: Readonly<{
   const accountSettings = useSettingsSelector((settings) => ({
       voiceSettingsV1: settings.voiceSettingsV1,
       secrets: settings.secrets,
-      connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
   }));
   const settingsScope = useAccountSettingsScope();
+  const purposes = useConnectedAccountCatalog('purposes', settingsScope);
   const rememberedAutoMachineId = useVoiceTargetStore((state) => settingsScope
     ? state.autoTargetMachineByScope[accountSettingsScopeKeySuffix(settingsScope)]
     : undefined);
@@ -80,6 +81,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
     try {
       credentialSourceKind = resolveAccountVoiceCredentialSourceSelection({
         settings: accountSettings,
+        connectedPurposes: purposes.status === 'ready' && !purposes.stale ? purposes.value : null,
         contribution: { pluginId: entry.pluginId, localId: entry.declaration.id },
         credentialSlotId: entry.declaration.credentials.slot.id,
         purpose: {

@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import {
   resolveAccountVoiceCredentialSourceSelection,
@@ -63,7 +64,8 @@ export function projectVoiceSpeechCredentialReadiness(input: Readonly<{
   registry: VoiceProviderRegistry;
   role: VoiceReadinessRole;
   providerId: string;
-  settings: Pick<Settings, 'voiceSettingsV1' | 'secrets' | 'connectedAccountPurposeBindingsV1'>;
+  settings: Pick<Settings, 'voiceSettingsV1' | 'secrets'>;
+  connectedPurposes: ConnectedPurposeCatalogV1 | null;
   executionMachineId: string | null | undefined;
   providerEnvelope?: VoiceProviderSettingsEnvelopeV1 | null;
   rawAuthorization?: Readonly<{
@@ -106,6 +108,7 @@ export function projectVoiceSpeechCredentialReadiness(input: Readonly<{
   try {
     selected = resolveAccountVoiceCredentialSourceSelection({
       settings: input.settings,
+      connectedPurposes: input.connectedPurposes,
       contribution,
       credentialSlotId,
       purpose: {

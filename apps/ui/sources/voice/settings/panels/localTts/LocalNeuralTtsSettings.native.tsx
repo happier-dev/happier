@@ -2,10 +2,11 @@ import * as React from 'react';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -37,12 +38,6 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { useDaemonVoiceModelCatalogController } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 
 const ACCESSORY_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
-const ACCESSORY_BUTTON_STYLE = {
-  width: ACCESSORY_TARGET_SIZE,
-  height: ACCESSORY_TARGET_SIZE,
-  alignItems: 'center',
-  justifyContent: 'center',
-} as const;
 
 export function LocalNeuralTtsSettings(props: {
   cfgKokoro: VoiceLocalTtsSettings['localNeural'];
@@ -250,17 +245,16 @@ export function LocalNeuralTtsSettings(props: {
             }}
             rightElement={
               modelStatus === 'downloading' ? (
-                <Pressable
-                  accessibilityRole="button"
+                <IconButton
                   accessibilityLabel={t('common.cancel')}
-                  style={ACCESSORY_BUTTON_STYLE}
+                  variant="plain"
+                  size={ACCESSORY_TARGET_SIZE}
                   onPress={(event) => {
-                    event.stopPropagation?.();
+                    event?.stopPropagation?.();
                     cancelPrepare();
                   }}
-                >
-                  <Icon name="x" size={20} color={theme.colors.text.secondary} />
-                </Pressable>
+                  icon={<Icon name="x" size={20} color={theme.colors.text.secondary} />}
+                />
               ) : (
                 <Icon name="download" size={20} color={theme.colors.text.secondary} />
               )
@@ -323,21 +317,20 @@ export function LocalNeuralTtsSettings(props: {
           subtitle: v.subtitle,
           rightElement: usesDaemonExecution ? undefined : (
             <View style={{ paddingRight: 4 }}>
-              <Pressable
-                accessibilityRole="button"
+              <IconButton
                 accessibilityLabel={t('settingsVoice.realtimeProviders.catalog.preview', { voice: v.title })}
-                style={ACCESSORY_BUTTON_STYLE}
+                variant="plain"
+                size={ACCESSORY_TARGET_SIZE}
                 onPress={(e) => {
-                  e.stopPropagation?.();
+                  e?.stopPropagation?.();
                   void playPreview(v.id);
                 }}
-              >
-                <Icon
+                icon={<Icon
                   name={previewingVoiceId === v.id ? 'pause-circle' : 'play'}
                   size={16}
                   color={theme.colors.text.secondary}
-                />
-              </Pressable>
+                />}
+              />
             </View>
           ),
         }))}

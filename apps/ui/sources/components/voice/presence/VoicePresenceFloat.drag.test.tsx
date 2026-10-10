@@ -25,6 +25,7 @@ import { VoicePresenceFloat } from './VoicePresenceFloat';
 import { VoiceTransport } from './VoiceTransport';
 import { VoiceOrb } from './VoiceOrb';
 import { resolveVoiceOrbContainerWidth, VOICE_ORB_BODY_SIZE } from './voicePresenceAnatomy';
+import { setVoicePresencePosition } from './voiceCompanionSectionReveal';
 
 function attempt(reconnecting = false): VoiceAttemptControlProjection {
     const state = reconnecting ? 'reconnecting' : 'listening';
@@ -42,6 +43,29 @@ function attempt(reconnecting = false): VoiceAttemptControlProjection {
 }
 
 describe('VoicePresenceFloat native drag boundary', () => {
+    it('sets normalized geometry through the mounted position owner and begins subsequent drag there', async () => {
+        const rects: (Readonly<{ x: number; y: number; width: number; height: number }> | null)[] = [];
+        let positionX = () => 0;
+        const screen = await renderScreen(<VoicePresenceFloat width={84} height={84}
+            restingBottomInset={80} edgeInset={14} minimumTop={60} testID="action-float"
+            onRectChange={(rect) => rects.push(rect)}>
+            {(render) => { positionX = () => render.translateX.get(); return null; }}
+        </VoicePresenceFloat>);
+        try {
+            expect(setVoicePresencePosition({ x: 0.5, y: 0.5 })).toBe(false);
+            await act(async () => { screen.findByTestId('action-float')!.props.onLayout({ nativeEvent: { layout: { width: 1000, height: 800 } } }); });
+            await act(async () => { expect(setVoicePresencePosition({ x: 0.5, y: 0.5 })).toBe(true); });
+            expect(positionX()).toBe(458);
+            expect(rects.at(-1)).toEqual({ x: 458, y: 348, width: 84, height: 84 });
+            const gesture = screen.tree.root.findByType('GestureDetector').props.gesture as TestGestureChain;
+            await act(async () => {
+                gesture.__handlers.onBegin({ absoluteX: 500, absoluteY: 380 });
+                gesture.__handlers.onUpdate({ translationX: -20, translationY: -10 });
+            });
+            expect(positionX()).toBe(438);
+        } finally { await screen.unmount(); }
+        expect(setVoicePresencePosition({ x: 0, y: 0 })).toBe(false);
+    });
     it('uses current measured viewer obstacles at rest and release without publishing pointer samples', async () => {
         const rects: (Readonly<{ x: number; y: number; width: number; height: number }> | null)[] = [];
         const reportRect = (rect: typeof rects[number]) => { rects.push(rect); };

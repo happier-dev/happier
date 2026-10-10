@@ -1,8 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { cancelAnimation, Easing, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { interpolatePlanetMarkGeometry, type PlanetDotPose, type PlanetMarkGeometry } from '@happier-dev/brand/planet';
+import {
+    interpolatePlanetMarkGeometry,
+    PLANET_MARK_EVENT_SECONDS,
+    planetMarkRestGlyphOpacity,
+    type PlanetDotPose,
+    type PlanetMarkGeometry,
+} from '@happier-dev/brand/planet';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { shadowLevelStyle } from '@/shadowElevation';
@@ -14,9 +20,9 @@ import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import { VoiceMarkCanvas } from './VoiceMarkCanvas';
 import { resolveVoiceMarkGeometry } from './voiceMarkGeometry';
-import { resolveVoiceMarkPose, type VoiceMarkPose } from './resolveVoiceMarkPose';
+import { resolveVoiceMarkPose, type VoiceMarkEvent, type VoiceMarkPose } from './resolveVoiceMarkPose';
 
-export type { VoiceMarkPose } from './resolveVoiceMarkPose';
+export type { VoiceMarkEvent, VoiceMarkPose } from './resolveVoiceMarkPose';
 
 /** The mic ↔ planet morph (VE-02): one shot, about 0.55 s, reversible from wherever it is. */
 const VOICE_MARK_MORPH_MS = 550;
@@ -25,6 +31,9 @@ const VOICE_MARK_POSE_MS = 900;
 
 const MORPH_TIMING = { duration: VOICE_MARK_MORPH_MS, easing: Easing.linear } as const;
 const POSE_TIMING = { duration: VOICE_MARK_POSE_MS, easing: Easing.out(Easing.cubic) } as const;
+/** Lab vmGather / vmLeave: one 1.2 s shot, ease-out home for a gather, ease-in-out away for a leave. */
+const GATHER_TIMING = { duration: PLANET_MARK_EVENT_SECONDS * 1000, easing: Easing.out(Easing.cubic) } as const;
+const LEAVE_TIMING = { duration: PLANET_MARK_EVENT_SECONDS * 1000, easing: Easing.inOut(Easing.cubic) } as const;
 
 /**
  * The Voice mark, wired to the attempt projection (§4.1): `<VoiceMark voice={voice} size={24} />`.
@@ -40,6 +49,7 @@ export const VoiceMark = React.memo(function VoiceMark(props: Readonly<{
     return (
         <VoiceMarkArt
             pose={resolveVoiceMarkPose(props.voice)}
+            event={props.voice.markEvent}
             muted={props.voice.live && props.voice.muted}
             size={props.size}
             testID={props.testID}
@@ -48,12 +58,17 @@ export const VoiceMark = React.memo(function VoiceMark(props: Readonly<{
 });
 
 /**
- * The mark at an explicit pose: the rest microphone, or the Daybreak dot planet at a pose.
+ * The mark at an explicit pose: the rest glyph (the line waveform, in the neighbouring icons' tint),
+ * or the Daybreak dot planet at a pose. `mic` names the rest pose.
  *
- * - **Morph.** Entering or leaving `mic` moves every microphone dot to its planet slot in one
- *   ~0.55 s shot; a reversal starts from the visible progress, never from either end.
+ * - **Morph.** Leaving rest, the glyph hands over to dots that stream out of its place onto their
+ *   planet slots in one ~0.55 s shot; End regathers them into the glyph. A reversal starts from the
+ *   visible progress, never from either end.
  * - **Pose.** A change between planet poses (shadow → light when the call connects) is one event
  *   transform, then still.
+ * - **Events.** A real one-shot fact (`event`): dots gather into the planet (first success, a
+ *   conversation arriving here) or leave it for the rest glyph (this device let the
+ *   conversation go). Each id plays once; one already present when the mark mounts is history.
  * - **Atmosphere.** Follows the energy owner's real level; silence draws no atmosphere and asks for
  *   no frames. Reduced motion holds the semantic pose with no morph and no atmosphere.
  * - Muted adds the slashed-mic pip, so mute is never carried by colour alone.
@@ -62,6 +77,8 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
     pose: VoiceMarkPose;
     size: number;
     muted?: boolean;
+    /** The latest real one-shot event for this mark, by stable id; never time or a replayed fact. */
+    event?: VoiceMarkEvent | null;
     /**
      * Frozen values for a static specimen (design boards, settings tiles). Preview only: a live
      * container never passes it, and its absence never falls back to synthetic motion.
@@ -113,20 +130,70 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
     const previewMorph = props.preview?.morph;
     const morph = useSharedValue(previewMorph ?? (live ? 1 : 0));
     const poseProgress = useSharedValue(1);
+    const gather = useSharedValue(0);
+    const leave = useSharedValue(0);
+    // An event already present at mount is history (hydration, a remount): only a new id plays.
+    const eventId = props.event?.id ?? null;
+    const eventKind = props.event?.kind ?? null;
+    const playedEventId = React.useRef(eventId);
+    // While a leave carries the planet back to the rest glyph, the ordinary regather does not run.
+    const leaving = React.useRef(false);
     const geometryKey = `${props.size}:${planetTheme}`;
-    const to = resolveVoiceMarkGeometry({ size: props.size, theme: planetTheme, ...poses.to });
-    const from = poses.displayed?.key === geometryKey
-        ? poses.displayed.geometry
-        : resolveVoiceMarkGeometry({ size: props.size, theme: planetTheme, ...poses.from });
+    const to = React.useMemo(
+        () => resolveVoiceMarkGeometry({ size: props.size, theme: planetTheme, ...poses.to }),
+        [props.size, planetTheme, poses.to],
+    );
+    const sourceGeometry = React.useMemo(
+        () => resolveVoiceMarkGeometry({ size: props.size, theme: planetTheme, ...poses.from }),
+        [props.size, planetTheme, poses.from],
+    );
+    const from = poses.displayed?.key === geometryKey ? poses.displayed.geometry : sourceGeometry;
+    // Declared before the morph effect so a leave arriving with the return to `mic` claims it first.
+    React.useEffect(() => {
+        if (eventId === null || eventId === playedEventId.current) return;
+        playedEventId.current = eventId;
+        cancelAnimation(gather);
+        cancelAnimation(leave);
+        gather.value = 0;
+        leave.value = 0;
+        leaving.current = false;
+        // Under reduced motion or while not presented the fact lands instantly (the morph effect settles the pose).
+        if (reduced || !animationActive) return;
+        if (eventKind === 'gather') {
+            gather.value = 1;
+            gather.value = withTiming(0, GATHER_TIMING);
+            return;
+        }
+        leaving.current = true;
+        cancelAnimation(morph);
+        leave.value = withTiming(1, LEAVE_TIMING, (finished) => {
+            'worklet';
+            if (!finished) return;
+            // The leave ended on the rest glyph; hand it back to the morph at the same frame.
+            morph.value = 0;
+            leave.value = 0;
+        });
+    }, [animationActive, eventId, eventKind, gather, leave, morph, reduced]);
     React.useEffect(() => {
         const target = previewMorph ?? (live ? 1 : 0);
         if (reduced || !animationActive) {
             cancelAnimation(morph);
+            cancelAnimation(gather);
+            cancelAnimation(leave);
             morph.value = target;
+            gather.value = 0;
+            leave.value = 0;
+            leaving.current = false;
+        } else if (leaving.current) {
+            if (!live) return;
+            // Voice started again mid-leave: the planet re-forms from where the dots are.
+            leaving.current = false;
+            leave.value = withTiming(0, MORPH_TIMING);
+            if (morph.value !== target) morph.value = withTiming(target, MORPH_TIMING);
         } else if (morph.value !== target) {
             morph.value = withTiming(target, MORPH_TIMING);
         }
-    }, [animationActive, live, morph, previewMorph, reduced]);
+    }, [animationActive, gather, leave, live, morph, previewMorph, reduced]);
     React.useLayoutEffect(() => {
         if (nextKey === planetLookKey(poses.to)) return;
         cancelAnimation(poseProgress);
@@ -164,10 +231,37 @@ export const VoiceMarkArt = React.memo(function VoiceMarkArt(props: Readonly<{
         >
             <VoiceMarkEnergy live={live && !reduced && !props.still && !props.presentationOnly} preview={props.preview}>
                 {(energy, flow) => (
-                    <VoiceMarkCanvas to={to} from={from} morph={morph} pose={poseProgress} energy={energy} flow={flow} />
+                    <VoiceMarkCanvas to={to} from={from} morph={morph} pose={poseProgress} energy={energy} flow={flow} gather={gather} leave={leave} />
                 )}
             </VoiceMarkEnergy>
+            <VoiceMarkRestGlyph size={props.size} morph={morph} leave={leave} testID={props.testID ? `${props.testID}-rest` : undefined} />
             {props.muted ? <VoiceMarkMutePip size={props.size} /> : null}
+        </View>
+    );
+});
+
+/**
+ * The rest glyph: the app's line `waveform` icon in the composer's ordinary icon tint (VE-02, amended
+ * 2026-10-10), never coloured and never dots. It hands over to the streaming dots early in the tap
+ * and returns as End or a leave lands (Brand owns the timing); a settled planet asks nothing of it.
+ */
+const VoiceMarkRestGlyph = React.memo(function VoiceMarkRestGlyph(props: Readonly<{
+    size: number;
+    morph: SharedValue<number>;
+    leave: SharedValue<number>;
+    testID?: string;
+}>) {
+    const { theme } = useUnistyles();
+    const { morph, leave } = props;
+    const shown = useAnimatedStyle(() => {
+        const opacity = planetMarkRestGlyphOpacity(morph.value, leave.value);
+        return { opacity, transform: [{ scale: 0.85 + 0.15 * opacity }] };
+    });
+    return (
+        <View pointerEvents="none" style={styles.rest}>
+            <Animated.View testID={props.testID} style={shown}>
+                <Icon name="waveform" size={Math.max(16, Math.round(props.size * 0.62))} color={theme.colors.button.secondary.tint} />
+            </Animated.View>
         </View>
     );
 });
@@ -232,6 +326,15 @@ const VoiceMarkMutePip = React.memo(function VoiceMarkMutePip(props: Readonly<{ 
 });
 
 const styles = StyleSheet.create({
+    rest: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     pip: {
         position: 'absolute',
         alignItems: 'center',

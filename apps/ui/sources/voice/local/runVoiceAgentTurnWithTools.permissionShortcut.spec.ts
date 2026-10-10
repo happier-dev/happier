@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { VoiceAgentSendTurnOptions } from '@/voice/agent/types';
 
 import {
   getStorage,
@@ -232,7 +233,11 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
   });
 
-  it('cannot advance a permission-labeled AskUserQuestion from a spoken denial and preserves the committed transcript on fallback', async () => {
+  it.each([
+    { userText: 'yes', cancel: false },
+    { userText: 'Deny the pending permission request.', cancel: false },
+    { userText: 'Deny the pending permission request.', cancel: true },
+  ])('keeps the request pending with one ordinary transcript for "$userText" (cancel=$cancel)', async ({ userText, cancel }) => {
     const storage = await getStorage();
     storage.__setState({
       settings: {
@@ -296,10 +301,20 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     });
 
     sessionRpcWithServerScope.mockResolvedValue({ ok: true });
-    const sendTurn = vi.fn(async () => ({
-      assistantText: 'Review this request in the session.',
-      actions: [],
-    }));
+    const controller = new AbortController();
+    const committed: Array<Readonly<{ text: string; localId: string }>> = [];
+    const accepted = vi.fn();
+    const assistant = vi.fn();
+    // sendTurn is the daemon/provider boundary; model the daemon's persist directive,
+    // leaving local orchestration and the shared request refusal real.
+    const sendTurn = vi.fn(async (_sessionId: string, text: string, opts?: VoiceAgentSendTurnOptions) => {
+      if (opts?.userTranscript?.mode === 'persist') {
+        committed.push({ text, localId: opts.userTranscript.localId });
+        await opts.onUserTranscriptAccepted?.();
+      }
+      if (cancel) controller.abort();
+      return { assistantText: 'Review this request in the session.', actions: [] };
+    });
     const commitUserTranscript = vi.fn(async () => {});
 
     const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
@@ -307,28 +322,35 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     const refusal = await tools.answerUserActionRequest({ decision: 'reject', currentSessionOnly: true });
     expect(JSON.parse(refusal), refusal).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question' });
 
-    const result = await runVoiceAgentTurnWithTools({
+    const pendingRequest = structuredClone(storage.getState().sessions.s1?.agentState?.requests.req_question);
+    const turn = runVoiceAgentTurnWithTools({
       sessionId: 'voice-hidden-s1',
-      userText: 'Deny the pending permission request.',
+      userText,
       durableLocalId: ' opaque-permission-id ',
       currentToolSessionId: 's1', currentToolSessionAddress,
       voiceAgentSessions: { sendTurn, commitUserTranscript },
+      signal: controller.signal,
+      onUserTranscriptAccepted: accepted,
+      onAssistantTurn: assistant,
     });
-
+    if (cancel) {
+      await expect(turn).rejects.toMatchObject({ name: 'AbortError' });
+      expect(assistant).not.toHaveBeenCalled();
+    } else {
+      const result = await turn;
+      expect(result.totalActions).toBe(0);
+      expect(result.assistantTurns).toEqual(['Review this request in the session.']);
+      expect(result.toolResultBatches).toEqual([]);
+    }
+    expect(storage.getState().sessions.s1?.agentState?.requests.req_question).toEqual(pendingRequest);
     expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
-    expect(commitUserTranscript).toHaveBeenCalledWith(
-      'voice-hidden-s1',
-      'Deny the pending permission request.',
-      ' opaque-permission-id ',
-    );
-    expect(result.totalActions).toBe(0);
-    expect(result.assistantTurns).toEqual(['Review this request in the session.']);
-    expect(result.toolResultBatches).toEqual([]);
-    expect(commitUserTranscript).toHaveBeenCalledTimes(1);
+    expect(committed).toEqual([{ text: userText, localId: ' opaque-permission-id ' }]);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(commitUserTranscript).not.toHaveBeenCalled();
     expect(sendTurn).toHaveBeenCalledWith(
       'voice-hidden-s1',
-      'Deny the pending permission request.',
-      expect.objectContaining({ userTranscript: { mode: 'suppress', localId: ' opaque-permission-id ' } }),
+      userText,
+      expect.objectContaining({ userTranscript: { mode: 'persist', localId: ' opaque-permission-id ' } }),
     );
   });
 

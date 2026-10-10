@@ -6,6 +6,23 @@ import { readVoiceContinuationProvenance, type VoiceContinuationProvenance } fro
 import { areSessionAddressesEqual } from '@/sync/domains/session/sessionAddress';
 import { createVoiceContinuationObservation } from './voiceContinuationObservation';
 
+/**
+ * Whether a connecting attempt continues a conversation last voiced on another device: the newest
+ * synced continuation note of that exact conversation names a different device. Read once, when this
+ * device publishes its own note; unknown or unloaded history is not an arrival.
+ */
+export function readVoiceContinuationArrival(messages: readonly Message[], conversation: SessionAddress, deviceId: string): boolean {
+    if (!deviceId.trim()) return false;
+    let latest: Readonly<{ seq: number; deviceId: string }> | null = null;
+    for (const message of messages) {
+        if (typeof message.seq !== 'number' || (latest && message.seq <= latest.seq)) continue;
+        const continuation = readVoiceContinuationProvenance(message.meta);
+        if (!continuation || !areSessionAddressesEqual(continuation.conversation, conversation)) continue;
+        latest = { seq: message.seq, deviceId: continuation.deviceId };
+    }
+    return latest !== null && latest.deviceId !== deviceId;
+}
+
 /** Attempt-local presentation memory only; sync remains the conversation authority. */
 export function createVoiceContinuationProjection() {
     let attempt: Readonly<{ adapterId: string; controlSessionId: string; conversation: SessionAddress; deviceId: string;

@@ -18,6 +18,7 @@ import {
   type ResolveVoiceProviderAvailabilityInput,
 } from './resolveVoiceProviderAvailability';
 import { projectLocalConversationReadinessFacts } from './projectLocalConversationReadinessFacts';
+import { buildVoiceConversationsPipeline } from './pipeline/voicePipelineSteps';
 
 const registry = createDefaultVoiceProviderRegistry();
 const executionMachineId = 'machine-a';
@@ -90,7 +91,7 @@ function project(settings: Settings) {
     voice: settings.voice,
     voiceSettingsV1: settings.voiceSettingsV1,
     secrets: settings.secrets,
-    connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+    connectedPurposes: { v: 1, bindings: [] },
     platform: 'web',
     local,
     localInput,
@@ -111,6 +112,34 @@ function project(settings: Settings) {
 }
 
 describe('projectLocalConversationReadinessFacts credential readiness', () => {
+  it.each([
+    { name: 'missing Agent selection', agentId: ' ', enabled: true, selectionKind: 'resolved', code: 'settings_missing_required_setting', recoveryAction: 'open_provider_settings' },
+    { name: 'Voice Agent feature disabled', agentId: 'claude', enabled: false, selectionKind: 'resolved', code: 'server_feature_disabled', recoveryAction: 'switch_provider' },
+    { name: 'selected computer offline', agentId: 'claude', enabled: true, selectionKind: 'selected_unreachable', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' },
+    { name: 'all prerequisites ready', agentId: 'claude', enabled: true, selectionKind: 'resolved', code: 'ready', recoveryAction: 'none' },
+  ] as const)('projects Think readiness and its recovery independently of speech: $name', (scenario) => {
+    const settings = createLocalSettings('device', 'device');
+    const config = readLocalConversationVoiceSettings(settings.voice);
+    const voice = writeLocalConversationVoiceSettings(settings.voice, {
+      ...config, conversationMode: 'agent',
+      agent: { ...config.agent, agentSource: 'agent', agentId: scenario.agentId },
+    });
+    const facts = projectLocalConversationReadinessFacts({
+      registry, voice, voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets,
+      connectedPurposes: { v: 1, bindings: [] }, platform: 'web', local, localInput,
+      executionMachineId, executionMachineSelectionKind: scenario.selectionKind,
+      voiceAgentEnabled: scenario.enabled,
+    });
+    expect(facts).toMatchObject({ thinkReadiness: { code: scenario.code, recoveryAction: scenario.recoveryAction } });
+    const pipeline = buildVoiceConversationsPipeline({
+      voice, registry, serviceTitle: 'Local', machine: { machineId: executionMachineId, machineLabel: 'Computer' },
+      readiness: null, localSpeechReadiness: facts.speechReadiness, localThinkReadiness: facts.thinkReadiness,
+    });
+    expect(pipeline?.pipeline.steps.map(step => step.readiness)).toEqual([
+      facts.speechReadiness.hear, facts.thinkReadiness, facts.speechReadiness.speak,
+    ]);
+  });
+
   it('makes fresh device defaults runnable where recognition exists and reports setup when it does not', () => {
     const settings = settingsParse({ voice: { ...voiceSettingsDefaults, providerId: 'local_conversation' } });
     expect(project(settings)).toMatchObject({ runtime: 'ready', endpoint: 'ready', credential: 'ready' });
@@ -119,7 +148,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     };
     expect(projectLocalConversationReadinessFacts({
       registry, voice: settings.voice, voiceSettingsV1: settings.voiceSettingsV1,
-      secrets: settings.secrets, connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+      secrets: settings.secrets, connectedPurposes: { v: 1, bindings: [] },
       platform: 'web', executionMachineId, voiceAgentEnabled: true, localInput: unavailableInput,
       local: resolveVoiceProviderAvailability({ happierVoiceSupported: true, platformOs: 'web', local: unavailableInput }).local,
     })).toMatchObject({
@@ -136,7 +165,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       registry,
       voice: direct.voice,
       voiceSettingsV1: direct.voiceSettingsV1,
-      connectedAccountPurposeBindingsV1: direct.connectedAccountPurposeBindingsV1,
+      connectedPurposes: { v: 1, bindings: [] },
       secrets: direct.secrets,
       platform: 'web',
       local,
@@ -154,7 +183,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       registry,
       voice: agentVoice,
       voiceSettingsV1: direct.voiceSettingsV1,
-      connectedAccountPurposeBindingsV1: direct.connectedAccountPurposeBindingsV1,
+      connectedPurposes: { v: 1, bindings: [] },
       secrets: direct.secrets,
       platform: 'web',
       local,
@@ -240,7 +269,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
         registry,
         voice: settings.voice,
         voiceSettingsV1: settings.voiceSettingsV1,
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+        connectedPurposes: { v: 1, bindings: [] },
         secrets: settings.secrets,
         platform: 'web',
         local: relayDisabledLocal,
@@ -272,7 +301,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
         registry,
         voice: settings.voice,
         voiceSettingsV1: settings.voiceSettingsV1,
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+        connectedPurposes: { v: 1, bindings: [] },
         secrets: settings.secrets,
         platform: 'web',
         local: resolveVoiceProviderAvailability({

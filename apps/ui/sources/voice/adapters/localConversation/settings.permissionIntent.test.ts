@@ -32,7 +32,7 @@ describe('local Voice PermissionIntent settings', () => {
 });
 
 describe('local Voice Provider-backed Chat configuration', () => {
-  it('rejects dev-only maxTokens from the canonical Provider Chat configuration', () => {
+  it('rejects retired per-prompt configuration on Provider-backed Voice selections', () => {
     const parsed = VoiceLocalConversationSchema.safeParse({
       agent: {
         providerChat: {

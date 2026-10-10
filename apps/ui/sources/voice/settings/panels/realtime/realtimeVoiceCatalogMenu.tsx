@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { t, tLoose } from '@/text';
@@ -15,6 +16,7 @@ import {
   readRealtimeCatalogPreview,
   stopRealtimeCatalogPreview,
   subscribeRealtimeCatalogPreview,
+  type VoiceCatalogPreviewSynthesizer,
 } from './catalogPreview';
 import { fetchVoiceSettingsCatalog, type VoiceCatalogRow } from './voiceCatalog';
 import type { BundledConversationProviderClient } from '@/voice/credentials/bundledConversationClient';
@@ -24,7 +26,10 @@ const PREVIEW_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 export type RealtimeCatalogState = VoiceRemoteCatalogState<VoiceCatalogRow>;
 
 /** The one catalog preview player per provider, shared by Settings and a Session's Work voice picker. */
-export function useRealtimeCatalogPreview(providerId: string): Readonly<{
+export function useRealtimeCatalogPreview(providerId: string, options?: Readonly<{
+  targetKey?: string;
+  synthesize?: VoiceCatalogPreviewSynthesizer;
+}>): Readonly<{
   previewingId: string | null;
   playPreview: (row: VoiceCatalogRow) => void;
   stopPreview: () => void;
@@ -36,15 +41,17 @@ export function useRealtimeCatalogPreview(providerId: string): Readonly<{
   );
   const previewingId =
     snapshot?.providerId === providerId ? snapshot.voiceId : null;
-  const providerRef = React.useRef(providerId);
-  providerRef.current = providerId;
+  const targetKey = options?.targetKey ?? providerId;
+  const synthesize = options?.synthesize;
+  const targetRef = React.useRef({ providerId, targetKey });
+  targetRef.current = { providerId, targetKey };
   const stopPreview = React.useCallback(() => {
     stopRealtimeCatalogPreview(providerId);
-  }, [providerId]);
+  }, [providerId, targetKey]);
   React.useEffect(() => stopPreview, [stopPreview]);
   const playPreview = React.useCallback(
     (row: VoiceCatalogRow) => {
-      if (!row.previewUrl) return;
+      if (!row.previewUrl && !synthesize) return;
       if (previewingId === row.id) {
         stopPreview();
         return;
@@ -53,12 +60,13 @@ export function useRealtimeCatalogPreview(providerId: string): Readonly<{
         playRealtimeCatalogPreview({
           providerId,
           row,
-          isCurrent: () => providerRef.current === providerId,
+          synthesize,
+          isCurrent: () => targetRef.current.providerId === providerId && targetRef.current.targetKey === targetKey,
         }),
         { tag: 'RealtimeCatalogPreview.play' },
       );
     },
-    [previewingId, providerId, stopPreview],
+    [previewingId, providerId, stopPreview, synthesize, targetKey],
   );
   return { previewingId, playPreview, stopPreview };
 }
@@ -75,6 +83,7 @@ export function useRealtimeCatalogMenuItems(
     credentialUnavailableDetail: string;
     previewingId: string | null;
     onPreview: (row: VoiceCatalogRow) => void;
+    canPreview?: boolean;
     inUseId?: string | null;
     category?: string;
   }>,
@@ -89,6 +98,7 @@ export function useRealtimeCatalogMenuItems(
     credentialUnavailableDetail,
     previewingId,
     onPreview,
+    canPreview,
     inUseId,
     category,
   } = params;
@@ -98,30 +108,24 @@ export function useRealtimeCatalogMenuItems(
         ? catalog.rows.map((row) => {
             const inUse =
               inUseId !== undefined && inUseId !== null && inUseId === row.id;
-            const preview = row.previewUrl ? (
-              <Pressable
-                accessibilityRole="button"
+            const preview = row.previewUrl || canPreview ? (
+              <IconButton
+                variant="plain"
+                size={PREVIEW_TARGET_SIZE}
                 accessibilityLabel={t(
                   'settingsVoice.realtimeProviders.catalog.preview',
                   { voice: row.name },
                 )}
-                style={{
-                  minWidth: PREVIEW_TARGET_SIZE,
-                  minHeight: PREVIEW_TARGET_SIZE,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
                 onPress={(event) => {
-                  event.stopPropagation();
+                  event?.stopPropagation?.();
                   onPreview(row);
                 }}
-              >
-                <Icon
+                icon={<Icon
                   name={previewingId === row.id ? 'stop-circle' : 'play-circle'}
                   size={24}
                   color={theme.colors.text.secondary}
-                />
-              </Pressable>
+                />}
+              />
             ) : null;
             return {
               id: row.id,
@@ -177,6 +181,7 @@ export function useRealtimeCatalogMenuItems(
     return { statusRows, catalogRows };
   }, [
     catalog,
+    canPreview,
     category,
     credentialUnavailableDetail,
     credentialUsable,
@@ -192,7 +197,7 @@ export function useRealtimeCatalogMenuItems(
  * retained per `targetKey` (provider + credential): the one fetch owner for Settings and Work.
  */
 export function useRealtimeVoiceCatalog(params: Readonly<{
-  client: BundledConversationProviderClient | null;
+  client: Pick<BundledConversationProviderClient, 'fetchVoiceCatalog'> | null;
   credentialUsable: boolean;
   targetKey: string;
 }>): Readonly<{ catalog: RealtimeCatalogState; requestCatalog: () => void; resetCatalog: () => void }> {

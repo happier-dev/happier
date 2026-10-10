@@ -7,11 +7,11 @@ import { resolveVoiceSpeechSettingsCorrespondence } from '@happier-dev/protocol/
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
-import { Text, TextInput } from '@/components/ui/text/Text';
 import { LANGUAGES, getLanguageDisplayName } from '@/constants/Languages';
-import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -69,30 +69,10 @@ type BundledSpeechCatalogRow = Readonly<{
 }>;
 type BundledSpeechCatalogs = Record<string, VoiceRemoteCatalogState<BundledSpeechCatalogRow>>;
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create(() => ({
   editableField: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-  },
-  editableFieldLabel: {
-    ...Typography.default('semiBold'),
-    color: theme.colors.text.primary,
-    marginBottom: 4,
-  },
-  editableFieldDescription: {
-    ...Typography.default(),
-    color: theme.colors.text.secondary,
-    marginBottom: 8,
-  },
-  editableFieldInput: {
-    ...Typography.default(),
-    minHeight: 88,
-    borderRadius: 10,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    textAlignVertical: 'top',
   },
   editableFieldActions: {
     alignItems: 'flex-end',
@@ -118,7 +98,6 @@ function BundledSpeechEditableField(props: Readonly<{
   config: Record<string, unknown>;
   onCommit: (nextConfig: Record<string, unknown>) => void;
 }>) {
-  const { theme } = useUnistyles();
   const canonicalDraft = serializeEditableFieldValue(props.field, props.config[props.field.key]);
   const [draft, setDraft] = React.useState(canonicalDraft);
   React.useEffect(() => setDraft(canonicalDraft), [canonicalDraft]);
@@ -146,30 +125,20 @@ function BundledSpeechEditableField(props: Readonly<{
     props.onCommit(parsed);
   };
   return (
-    <View style={stylesheet.editableField}>
-      <Text style={stylesheet.editableFieldLabel}>
-        {translateDescriptorKey(props.field.titleKey)}
-      </Text>
-      <Text style={stylesheet.editableFieldDescription}>
-        {translateDescriptorKey(props.field.subtitleKey)}
-      </Text>
-      <TextInput
+    <FieldItem
+      style={stylesheet.editableField}
+      label={translateDescriptorKey(props.field.titleKey)}
+      labelNativeID={`voice-speech-setting:${props.field.key}.label`}
+      supportingText={translateDescriptorKey(props.field.subtitleKey)}
+    >
+      <FieldTextInput
         testID={`voice-speech-setting:${props.field.key}.input`}
         accessibilityLabel={translateDescriptorKey(props.field.titleKey)}
+        accessibilityLabelledBy={`voice-speech-setting:${props.field.key}.label`}
         value={draft}
         onChangeText={setDraft}
         multiline
         autoCapitalize="none"
-        autoCorrect={false}
-        placeholderTextColor={theme.colors.input.placeholder}
-        style={[
-          stylesheet.editableFieldInput,
-          {
-            color: theme.colors.input.text,
-            backgroundColor: theme.colors.input.background,
-            borderColor: theme.colors.border.default,
-          },
-        ]}
       />
       <View style={stylesheet.editableFieldActions}>
         <RoundButton
@@ -181,7 +150,7 @@ function BundledSpeechEditableField(props: Readonly<{
           onPress={commit}
         />
       </View>
-    </View>
+    </FieldItem>
   );
 }
 

@@ -4,6 +4,10 @@ import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc'
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
 import { createSocketIoAckTimeoutError } from '@happier-dev/sync-client';
 import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
+import { createMachineFixture, createSessionFixture } from '@/dev/testkit';
+
+const machineRpc = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
   sessionRpcWithServerAccountScope: vi.fn(),
@@ -33,7 +37,13 @@ installVoiceAgentCommonModuleMocks({
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
       storage: {
-        getState: () => ({ settings: settingsState.current }),
+        getState: () => {
+          const machine = createMachineFixture({ id: 'machine-1' });
+          return { settings: settingsState.current,
+            sessions: { s1: createSessionFixture({ id: 's1', serverId: 'server-a', active: true,
+              metadata: { machineId: machine.id, path: '/work' } }) },
+            machines: { [machine.id]: machine }, machineListByServerId: { 'server-a': [machine] } };
+        },
       },
     });
   },
@@ -57,7 +67,38 @@ async function settleWithin<T>(
 }
 
 describe('DaemonVoiceAgentClient', () => {
+  it('starts an inherited Voice choice through safe ensure/start without an inheritance capability', async () => {
+    const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    machineRpc.mockResolvedValue({ protocolVersion: 1, results: { 'tool.executionRuns': { ok: true, checkedAt: 1,
+      data: { protocolVersion: 2, features: { detachedScope: true, startAndWait: true } } } } });
+    vi.mocked(sessionRpcWithServerAccountScope).mockResolvedValue({ ok: true, runId: 'run_inherited', created: true });
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    await expect(new DaemonVoiceAgentClient({ serverId: 'server-a', accountId: 'account-a' }).start({
+      sessionId: 's1', agentSource: 'session', agentId: 'codex', permissionIntent: 'read-only',
+      idleTtlSeconds: 300, initialContext: 'ctx',
+    })).resolves.toEqual({ voiceAgentId: 'run_inherited' });
+    expect(vi.mocked(sessionRpcWithServerAccountScope).mock.calls[0]?.[0]).toMatchObject({
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+      payload: { runId: null, resume: true, start: { intent: 'voice_agent' } },
+    });
+  });
+  it('carries a custom native Voice chat choice as an exact explicit model tuple', async () => {
+    const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerAccountScope).mockResolvedValueOnce({ ok: true, runId: 'run_native', created: true });
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    await new DaemonVoiceAgentClient({ serverId: 'server-a', accountId: 'account-a' }).start({
+      sessionId: 's1', agentSource: 'session', agentId: 'codex', chatModelId: 'custom-chat',
+      permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
+    });
+    expect(vi.mocked(sessionRpcWithServerAccountScope).mock.calls[0]?.[0].payload).toMatchObject({ start: {
+      modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'custom-chat' },
+    } });
+  });
+
   beforeEach(async () => {
+    machineRpc.mockReset();
+    machineRpc.mockResolvedValue({ protocolVersion: 1, results: { 'tool.executionRuns': { ok: true, checkedAt: 1,
+      data: { protocolVersion: 2, features: { detachedScope: true, startAndWait: true } } } } });
     const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerAccountScope).mockReset();
     settingsState.current = {
@@ -76,6 +117,17 @@ describe('DaemonVoiceAgentClient', () => {
         },
       },
     };
+  });
+
+  it.each(['  Greeting.\n ', ' \n ', ''])('keeps explicitly admitted greeting bytes in the daemon request: %j', async welcomeText => {
+    const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    vi.mocked(sessionRpcWithServerAccountScope).mockResolvedValueOnce({ ok: true, result: { assistantText: 'welcome' } });
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    await new DaemonVoiceAgentClient({ serverId: 'server-a', accountId: 'account-a' })
+      .welcome({ sessionId: 'history', voiceAgentId: 'run', welcomeText });
+    expect(vi.mocked(sessionRpcWithServerAccountScope).mock.calls[0]?.[0].payload).toMatchObject({
+      actionId: 'voice_agent.welcome', input: { welcomeText },
+    });
   });
 
   it('throws RPC errors with rpcErrorCode from ensureOrStart', async () => {
@@ -125,7 +177,7 @@ describe('DaemonVoiceAgentClient', () => {
     expect(vi.mocked(sessionRpcWithServerAccountScope)).not.toHaveBeenCalled();
   });
 
-  it('uses execution.run.ensureOrStart when starting a daemon voice agent', async () => {
+  it('uses the exact-selection ensureOrStart method when starting a daemon voice agent', async () => {
     const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerAccountScope).mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
 
@@ -152,7 +204,7 @@ describe('DaemonVoiceAgentClient', () => {
     expect(vi.mocked(sessionRpcWithServerAccountScope)).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
-        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
         payload: expect.objectContaining({
           runId: 'run_old',
           resume: true,
@@ -255,7 +307,7 @@ describe('DaemonVoiceAgentClient', () => {
     },
   );
 
-  it('keeps native model selections on the legacy-compatible ensureOrStart method', async () => {
+  it('protects exact native model selections with the actual Session host method', async () => {
     const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerAccountScope).mockResolvedValueOnce({ ok: true, runId: 'run_native', created: true } as any);
 
@@ -287,7 +339,7 @@ describe('DaemonVoiceAgentClient', () => {
     });
 
     expect(vi.mocked(sessionRpcWithServerAccountScope)).toHaveBeenCalledWith(expect.objectContaining({
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
     }));
   });
 
@@ -457,7 +509,7 @@ describe('DaemonVoiceAgentClient', () => {
     expect(admittedTarget).toBe(120);
   });
 
-  it('omits default sentinel model ids from the ensureOrStart start payload', async () => {
+  it('keeps default native resets distinct from omitted inherited model choices', async () => {
     const { sessionRpcWithServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerAccountScope).mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
 
@@ -479,13 +531,12 @@ describe('DaemonVoiceAgentClient', () => {
     expect(vi.mocked(sessionRpcWithServerAccountScope)).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: expect.objectContaining({
-          start: expect.not.objectContaining({
-            chatModelId: expect.anything(),
-            commitModelId: expect.anything(),
-          }),
+          start: expect.objectContaining({ modelSelection: null, commitModelId: 'default' }),
         }),
       }),
     );
+    const payload = vi.mocked(sessionRpcWithServerAccountScope).mock.calls[0]?.[0].payload;
+    expect(payload).toMatchObject({ start: expect.not.objectContaining({ chatModelId: expect.anything() }) });
   });
 
   it('surfaces an acknowledgement timeout as outcome-unknown without retrying ensureOrStart', async () => {
@@ -653,8 +704,6 @@ describe('DaemonVoiceAgentClient', () => {
 
     expect(vi.mocked(sessionRpcWithServerAccountScope)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(sessionRpcWithServerAccountScope)).toHaveBeenCalledWith(expect.objectContaining({
-      // Prospective predecessor basis: ../remote-dev@a313378db62c559f24dabebe72ddcf17e0497e6f
-      // exposes only execution.run.ensureOrStart, so this exact current-only method fails closed.
       method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
     }));
   });

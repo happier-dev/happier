@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred } from '@/dev/testkit';
+import { createDeferred, createSessionFixture } from '@/dev/testkit';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 
 const platformOsMock = vi.hoisted(() => ({ value: 'ios' }));
@@ -67,6 +67,10 @@ vi.mock('@/voice/runtime/daemonInference/daemonVoiceInferencePolicy', () => ({
 
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
+import { storage } from '@/sync/domains/state/storage';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 
 describe('speakAssistantText', () => {
   beforeEach(() => {
@@ -461,7 +465,22 @@ describe('speakAssistantText', () => {
     }));
   });
 
-  it('routes a bundled speech provider through the package-owned descriptor and selected-daemon client', async () => {
+  it('routes a bundled speech provider with the exact bound Session preference through the selected-daemon client', async () => {
+    const originalSessions = storage.getState().sessions;
+    const serverId = getActiveServerSnapshot().serverId;
+    const preference = { providerContributionId: 'happier.voice.google/google-cloud-tts', settingFieldPath: 'voiceName', value: 'bound-custom-voice' };
+    storage.setState({ sessions: { ...originalSessions,
+      'target-a': createSessionFixture({ id: 'target-a', serverId, metadata: {
+        path: '/target-a', host: 'host', work: { voicePreference: preference },
+      } }),
+      'history-b': createSessionFixture({ id: 'history-b', serverId, metadata: {
+        path: '/history-b', host: 'host', work: { voicePreference: { ...preference, value: 'wrong-history-voice' } },
+      } }),
+    } });
+    voiceSessionBindingStore.getState().bind({ adapterId: 'local_direct', controlSessionId: 'control-c',
+      conversationSessionId: 'history-b', conversationSessionAddress: { serverId, sessionId: 'history-b' },
+      lifetime: 'runtime_attempt', targetSessionAddress: { serverId, sessionId: 'target-a' },
+      transcriptMode: 'native_session', updatedAt: 1 });
     const onSpeaking = vi.fn();
     const registerPlaybackStopper = (_s: () => void) => () => {};
     let notifyPlaybackStarted!: () => void;
@@ -471,7 +490,9 @@ describe('speakAssistantText', () => {
       notifyPlaybackStarted = callback;
     });
 
+    try {
     await speakAssistantText({
+      sessionId: 'control-c',
       text: 'hello',
       settings: {
         voice: {
@@ -507,12 +528,93 @@ describe('speakAssistantText', () => {
     const synthesizeInput = synthesizeBundledSpeechSpy.mock.calls[0]?.[0] as any;
     expect(synthesizeInput.entry?.providerId).toBe('happier.voice.google/google-cloud-tts');
     expect(synthesizeInput.input).toBe('hello');
+    expect(synthesizeInput.voicePreference).toEqual(preference);
     expect(synthesizeBundledSpeechSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: expect.anything(), androidCertSha1: expect.anything() }),
     );
     expect(onSpeaking).not.toHaveBeenCalled();
     notifyPlaybackStarted();
     expect(onSpeaking).toHaveBeenCalledTimes(1);
+    } finally {
+      storage.setState({ sessions: originalSessions });
+      voiceSessionBindingStore.getState().unbind('history-b');
+    }
+  });
+
+  it.each([
+    { provider: 'device', metadataAvailable: true, reason: 'voice_preference_unavailable' },
+    { provider: 'local_neural', metadataAvailable: true, reason: 'voice_preference_unavailable' },
+    { provider: 'device', metadataAvailable: false, reason: 'session_metadata_unavailable' },
+  ])('refuses unsupported bound speech on $provider instead of playing an inherited default', async (selection) => {
+    const originalSessions = storage.getState().sessions;
+    const serverId = getActiveServerSnapshot().serverId;
+    const preference = { providerContributionId: 'happier.voice.google/google-cloud-tts', settingFieldPath: 'voiceName', value: 'bound-custom-voice' };
+    const targetId = 'native-target';
+    const controlId = 'native-control';
+    storage.setState({ sessions: { ...originalSessions,
+      ...(selection.metadataAvailable ? { [targetId]: createSessionFixture({ id: targetId, serverId,
+        metadata: { path: '/target', host: 'host', work: { voicePreference: preference } } }) } : {}),
+    } });
+    voiceSessionBindingStore.getState().bind({ adapterId: 'local_direct', controlSessionId: controlId,
+      conversationSessionId: 'native-history', conversationSessionAddress: { serverId, sessionId: 'native-history' },
+      lifetime: 'runtime_attempt', targetSessionAddress: { serverId, sessionId: targetId },
+      transcriptMode: 'native_session', updatedAt: 1 });
+    const onTtsFailed = vi.fn();
+    const onSpeaking = vi.fn();
+    try {
+      await speakAssistantText({ sessionId: controlId, text: 'hello',
+        settings: { voice: { providerId: 'local_direct', providers: { local_direct: { schemaVersion: 1,
+          config: { tts: { provider: selection.provider, localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: 1 },
+            autoSpeakReplies: true, bargeInEnabled: true } } } } } },
+        networkTimeoutMs: 15000, registerPlaybackStopper: () => () => {}, onSpeaking, onTtsFailed });
+      expect(onTtsFailed).toHaveBeenCalledWith(expect.objectContaining({ kind: 'tts_failed', reason: selection.reason }));
+      expect(onSpeaking).not.toHaveBeenCalled();
+      expect(speakDeviceTextSpy).not.toHaveBeenCalled();
+      expect(speakKokoroTextSpy).not.toHaveBeenCalled();
+      expect(daemonTtsControllerSpeakSpy).not.toHaveBeenCalled();
+      expect(synthesizeBundledSpeechSpy).not.toHaveBeenCalled();
+    } finally {
+      storage.setState({ sessions: originalSessions });
+      voiceSessionBindingStore.getState().unbind('native-history');
+    }
+  });
+
+  it('retires a prior applied voice only after inherited native playback actually starts', async () => {
+    const originalSessions = storage.getState().sessions;
+    const serverId = getActiveServerSnapshot().serverId;
+    const controlId = 'native-inherited-control';
+    const previousVoice = { providerContributionId: 'happier.voice.google/google-cloud-tts',
+      settingFieldPath: 'voiceName', value: 'previous-voice', displayName: 'Previous voice' };
+    storage.setState({ sessions: { ...originalSessions,
+      'native-inherited-target': createSessionFixture({ id: 'native-inherited-target', serverId,
+        metadata: { path: '/target', host: 'host', work: {} } }),
+    } });
+    voiceSessionBindingStore.getState().bind({ adapterId: 'local_direct', controlSessionId: controlId,
+      conversationSessionId: 'native-inherited-history', conversationSessionAddress: { serverId, sessionId: 'native-inherited-history' },
+      lifetime: 'runtime_attempt', targetSessionAddress: { serverId, sessionId: 'native-inherited-target' },
+      transcriptMode: 'native_session', updatedAt: 1 });
+    voiceConversationRuntimeMachine.reset();
+    voiceConversationRuntimeMachine.transitionToConnecting({ controlSessionId: controlId });
+    voiceConversationRuntimeMachine.transitionToSpeaking({ controlSessionId: controlId });
+    voiceConversationRuntimeMachine.setInUseVoice({ controlSessionId: controlId, inUseVoice: previousVoice });
+    let started!: () => void;
+    speakDeviceTextSpy.mockImplementationOnce(async (_text: string, onStarted: () => void) => { started = onStarted; });
+    const onSpeaking = vi.fn();
+    try {
+      await speakAssistantText({ sessionId: controlId, text: 'hello',
+        settings: { voice: { providerId: 'local_direct', providers: { local_direct: { schemaVersion: 1,
+          config: { tts: { provider: 'device' } } } } } },
+        networkTimeoutMs: 15000, registerPlaybackStopper: () => () => {}, onSpeaking });
+      expect(voiceConversationRuntimeMachine.getSnapshot().inUseVoice).toEqual(previousVoice);
+      expect(onSpeaking).not.toHaveBeenCalled();
+      started();
+      expect(voiceConversationRuntimeMachine.getSnapshot().inUseVoice).toBeUndefined();
+      expect(onSpeaking).toHaveBeenCalledOnce();
+    } finally {
+      storage.setState({ sessions: originalSessions });
+      voiceSessionBindingStore.getState().unbind('native-inherited-history');
+      voiceConversationRuntimeMachine.reset();
+    }
   });
 
   it('rejects delayed bundled playback from a stopped attempt without poisoning restarted playback', async () => {

@@ -18,6 +18,7 @@ import {
   type BundledVoiceRuntimeContribution,
   type VoiceAdapterController,
   type VoiceHostAuthoredContextScope,
+  type VoiceSessionSnapshot,
 } from '@/voice/session/types';
 import type { VoiceConnectionCloseReason } from '@/voice/runtime/connection/VoiceRealtimeConnection';
 import { cleanupBoundAgentSessionRealtimeService } from '@/voice/runtime/agentRealtime/createAgentSessionRealtimeService';
@@ -48,9 +49,10 @@ function readRequest(value: VoiceRealtimeJsonValue): Readonly<Record<string, Voi
     : {};
 }
 
-function readRequestedTargetSessionAddress(
-  request: Readonly<Record<string, VoiceRealtimeJsonValue>>,
+export function readRequestedTargetSessionAddress(
+  request: VoiceRealtimeJsonValue,
 ): SessionAddress | null {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return null;
   const target = request.requestedTargetSessionAddress;
   if (!target || typeof target !== 'object' || Array.isArray(target)) return null;
   const targetRecord = target as Readonly<Record<string, VoiceRealtimeJsonValue>>;
@@ -184,6 +186,7 @@ export function createBundledRealtimeProviderRuntime(
     inputMuteTail: Promise<void>;
     preparePromise: Promise<void | Readonly<{ kind: 'declined'; code: string }>> | null;
     releasePromise: Promise<void> | null;
+    inUseVoice: VoiceSessionSnapshot['inUseVoice'];
   };
   const resourceAttempts = new Map<number, ResourceAttempt>();
   const directMediaReleaseByAttemptIdentity = new Map<string, Promise<void>>();
@@ -346,6 +349,7 @@ export function createBundledRealtimeProviderRuntime(
     inputMuteTail: Promise.resolve(),
     preparePromise: null,
     releasePromise: null,
+    inUseVoice: undefined,
   });
   // Provider mute hooks may control one physical capture resource shared by
   // consecutive controller attempts. The public hook has no cancellation
@@ -427,7 +431,15 @@ export function createBundledRealtimeProviderRuntime(
     ...config.protocol,
     async prepare(input) {
       try {
-        return await config.protocol.prepare(input);
+        const attempt = resourceAttempts.get(input.attemptId) ?? createResourceAttempt();
+        resourceAttempts.set(input.attemptId, attempt);
+        const prepared = await config.protocol.prepare(input);
+        if (attempt && !input.signal.aborted && !disposed && isCurrentGeneration()
+          && resourceAttempts.get(input.attemptId) === attempt && attempt.releasePromise === null
+          && runtime?.getOwnedAttemptId() === input.attemptId) {
+          attempt.inUseVoice = prepared.kind === 'prepared' ? prepared.inUseVoice : undefined;
+        }
+        return prepared;
       } catch (error) {
         const declineCode = readActionableSetupDeclineCode(error);
         if (declineCode) return { kind: 'declined', code: declineCode };
@@ -537,7 +549,7 @@ export function createBundledRealtimeProviderRuntime(
       }
       const attempt: ResourceAttempt = existingAttempt ?? createResourceAttempt();
       resourceAttempts.set(input.attemptId, attempt);
-      if (!existingAttempt) {
+      if (!existingAttempt?.preparePromise) {
         // Mute belongs to the controller attempt. A fresh Start establishes an
         // unmuted baseline once; reconnect/auth-refresh reuse the same resource
         // attempt and therefore preserve an intentional user mute.
@@ -1473,11 +1485,14 @@ export function createBundledRealtimeProviderRuntime(
   });
 
   const projectAdapterSnapshot = (snapshot: unknown) => {
+    const attemptId = runtime?.getOwnedAttemptId();
     const projected = {
       ...host.machine.projectSnapshot(providerId, snapshot),
       canCommitInput: runtime?.canCommitInput() === true,
       canHoldToTalk: runtime?.canHoldToTalk?.() === true,
+      inUseVoice: attemptId != null ? resourceAttempts.get(attemptId)?.inUseVoice : undefined,
     };
+    if (projected.status !== 'connected') projected.inUseVoice = undefined;
     const terminalCode = projected.errorCode === 'provider_error'
       && typeof projected.errorMessage === 'string'
       && projected.errorMessage.startsWith('voice_')

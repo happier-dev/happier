@@ -22,6 +22,8 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 import { useSettings } from '@/sync/domains/state/storage';
 import { useSettingsVersion } from '@/sync/store/hooks';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { t, tLoose } from '@/text';
 import {
   getLocalSttProviderSpec,
@@ -92,6 +94,9 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
   const { theme } = useUnistyles();
   const providerSpecs = useLocalSttProviderSpecs('dictation_stt');
   const accountSettings = useSettings();
+  const settingsScope = useAccountSettingsScope();
+  const purposes = useConnectedAccountCatalog('purposes', settingsScope);
+  const connectedPurposes = purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
   const savedSecretCatalog = useSavedSecretCatalog();
   const settingsVersion = useSettingsVersion();
   const dictation = props.voice.dictation ?? voiceDictationSettingsDefaults;
@@ -106,7 +111,8 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
     settings: readinessSettings,
     platform,
   });
-  const selectedRawSpeechTarget = projectVoiceRawSpeechReadinessTargets(readinessSettings, voiceProviderRegistry, props.executionMachineId, 'dictation')[0] ?? null;
+  const selectedRawSpeechTargets = projectVoiceRawSpeechReadinessTargets(readinessSettings, voiceProviderRegistry, props.executionMachineId, 'dictation', connectedPurposes);
+  const selectedRawSpeechTarget = selectedRawSpeechTargets?.[0] ?? null;
   const selectedRawSpeechContribution = selectedRawSpeechTarget?.contribution ?? null;
   const rawAuthorizationKey = JSON.stringify({
     target: selectedRawSpeechTarget,
@@ -114,6 +120,7 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
     realm: 'daemon',
     phase: 'speech',
     settingsVersion,
+    purposes,
     savedSecretCatalog: {
       status: savedSecretCatalog.status,
       stale: savedSecretCatalog.stale,
@@ -131,6 +138,7 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
   const isCheckingReadiness = readinessCheck?.status === 'checking';
   const checkedReadiness = isCurrentReadinessCheck && readinessCheck?.status === 'checked'
     ? resolveVoiceDictationReadiness({
+        connectedPurposes,
         registry: voiceProviderRegistry,
         settings: readinessSettings,
         platform,
@@ -177,7 +185,7 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
         nativeModelPackId: null,
         status: 'checked',
         nativeLocalNeuralModel: null,
-        rawCredentialAuthorization: null,
+        rawCredentialAuthorization: selectedRawSpeechTargets === null ? 'unknown' : null,
         rawAuthorizationKey,
       });
       return;
@@ -209,7 +217,7 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
           : current
       ));
     });
-  }, [isCheckingReadiness, nativeModelSelection, rawAuthorizationKey, selectedRawSpeechTarget]);
+  }, [isCheckingReadiness, nativeModelSelection, rawAuthorizationKey, selectedRawSpeechTarget, selectedRawSpeechTargets]);
   const handleRecoveryAction = React.useCallback(() => {
     if (!recoveryActionHandler) return;
     if (recoveryAction === 'switch_provider') {
@@ -243,6 +251,7 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
   };
 
   const projectReadiness = (settings: typeof readinessSettings) => resolveVoiceDictationReadiness({
+    connectedPurposes,
     registry: voiceProviderRegistry, settings, platform,
     executionMachineId: props.executionMachineId,
     executionMachineSelectionKind: props.executionMachineSelectionKind,
