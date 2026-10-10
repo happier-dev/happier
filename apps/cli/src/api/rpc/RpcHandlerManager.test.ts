@@ -16,7 +16,8 @@ import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGran
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
+import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
+  WorkspaceSyncSeedRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
 import axios from 'axios';
@@ -39,6 +40,112 @@ import { createCliActionExecutorFromCredentials } from '@/session/actions/create
 
 const bindingCallId = '0123456789abcdef0123456789abcdef';
 const boundWorkspaceModel = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'codex', providerConnectionId: null, modelId: 'bound-model' });
+
+it('admits only the installed Project seed purpose with the original SOURCE actor and retained proofs', async () => {
+  const [{ OpenProjectInputV1Schema }, { ExternalActionRequestEnvelopeV1Schema }, signing, installedContent] = await Promise.all([
+    import('@happier-dev/protocol/projects/openProjectV1'), import('@happier-dev/protocol/actions/externalActionApi'),
+    import('@/api/externalActionExecutionAuthorization'), import('./workspaceSyncTargetContent'),
+  ]);
+  const parent = tweetnacl.sign.keyPair();
+  const chosen = tweetnacl.sign.keyPair();
+  const homeId = 'srv_installed_seed_home';
+  const writer = { machineId: 'physical-source-parent', installationId: 'physical-source-installation' };
+  const admission = { actorAccountId: 'borrower', custodianAccountId: 'source-owner', machineId: 'source-child',
+    installationId: 'source-child-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+  const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [] as string[], extraIncludePatterns: [] as string[] };
+  const contentPolicy = { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) };
+  const input = OpenProjectInputV1Schema.parse({ serverId: homeId, machineId: 'chosen-target',
+    source: { kind: 'workspace', workspaceId: 'logical-source', checkout: { serverId: homeId,
+      workspaceId: 'logical-source', machineId: admission.machineId, rootPath: '/source/workspace' } },
+    materialization: { kind: 'sync', targetPath: '/chosen/workspace', workspaceAction: { kind: 'copy_once', contentPolicy } } });
+  const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'project-request',
+    target: { kind: 'machine', machineId: input.machineId }, input });
+  const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'current-project-root', binding: {
+    accountId: 'borrower', principalId: 'borrower', credentialId: 'pat', grant: API_TOKEN_FULL_GRANT_V1,
+    custodianAccountId: 'target-owner', serverIdentityId: homeId, machineId: input.machineId,
+    installationId: 'chosen-installation', actionId: 'projects.open', requestId: envelope.requestId,
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target } });
+  const constraints = { models: API_TOKEN_FULL_GRANT_V1.models, permissionModes: API_TOKEN_FULL_GRANT_V1.permissionModes };
+  const source = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: 'workspace-operation',
+    accountServerId: homeId, sourceMachineId: admission.machineId, sourceRootPath: '/source/workspace', originalActionEnvelope: envelope,
+    sourceContext: { machineAdmission: admission, callerAuthority: 'account_automation', callerInputConstraints: constraints,
+      workspaceWrites: 'allow' } });
+  const sourceWriterTarget = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, sourceWriter: writer, source,
+    target: { v: 1, phase: 'prepare', operationId: source.operationId, accountServerId: homeId,
+      targetMachineId: input.machineId, targetRootPath: '/chosen/workspace' } });
+  const target = WorkspaceSyncTargetRoutingV1Schema.parse({ ...sourceWriterTarget.target,
+    targetContext: { ...source.sourceContext, machineAdmission: { ...admission, custodianAccountId: 'target-owner',
+      machineId: input.machineId, installationId: root.binding.installationId } } });
+  const seed = WorkspaceSyncSeedRoutingV1Schema.parse({ v: 1, sourceWriterTarget, target });
+  const destination = { ...writer, installationPublicKey: Buffer.from(parent.publicKey).toString('base64url') };
+  const packetMethod = `${writer.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+  const packetContent = installedContent.createWorkspaceSyncTargetContent({ destination, method: packetMethod, routing: source });
+  const packetParams = await socketRpcCodec.encodeParams(packetContent, input, { method: packetMethod, callId: bindingCallId });
+  const packet = WorkspaceSyncSourceExecutionV1Schema.parse({ method: packetMethod, requestId: 'source-packet', params: packetParams,
+    externalActionExecution: signing.createExternalActionMachineRpcExecution({ context: {
+      externalActionExecutionAuthorization: root, externalActionTarget: root.binding.target }, effectActionId: 'projects.open',
+      installationId: root.binding.installationId, method: packetMethod, requestId: 'source-packet', params: packetParams,
+      privateKey: chosen.secretKey, workspaceSyncSourceRouting: source }) });
+  const method = `${writer.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`;
+  const params = { t: 'workspace_sync_seed_v1', operationId: source.operationId, sourceWorkspaceRefId: 'physical-source-ref',
+    targetMachineId: 'physical-target-parent', contentPolicy };
+  const identity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+    ...writer, createdAt: 1, publicKey: destination.installationPublicKey,
+    privateKey: Buffer.from(parent.secretKey).toString('base64url') });
+  let current = true;
+  const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+    expect(String(url)).toBe(`https://installed-seed-home.invalid/v1/machines/${writer.machineId}/admission/verify`);
+    const body = raw as { proof: Parameters<typeof verifyMachineInstallationProof>[0]['proof'] };
+    expect(raw).toMatchObject({ context: admission, method, callerInputAuthorization: root,
+      workspaceSyncSeedRouting: seed, workspaceSyncSourceExecution: packet });
+    expect(verifyMachineInstallationProof({ publicKey: parent.publicKey, proof: body.proof, payload: { version: 1,
+      ...writer, accountId: 'source-owner', rpcAdmission: { context: admission, method, callerInputAuthorization: root,
+        workspaceSyncSeedRouting: seed, workspaceSyncSourceExecution: packet } } })).toBe(true);
+    return current ? { status: 200, data: { v: 1, ok: true } } : { status: 403, data: { error: 'access_denied' } };
+  });
+  const rpc = new RpcHandlerManager({ scopePrefix: writer.machineId, localMachineId: writer.machineId,
+    encryptionMode: 'plain', logger: () => {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
+      machineId: writer.machineId, resolveCustodianAccountId: async () => 'source-owner', resolveInstallationId: () => writer.installationId,
+      verifyMachineAdmission: request => verifyMachineRpcAdmissionCurrent({ ...request,
+        workspaceSyncSeedReceiver: { ...writer, accountId: 'source-owner' }, privateKey: parent.secretKey,
+        daemonToken: 'source-owner-token', serverHttpBaseUrl: 'https://installed-seed-home.invalid' }) }) });
+  let executions = 0;
+  rpc.registerHandler(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE, (body, context) => {
+    expect(body).toEqual(params);
+    expect(context).toMatchObject({ machineAdmission: admission, callerAuthority: 'account_automation',
+      callerInputConstraints: constraints, callerInputAuthorization: root, workspaceSyncSeedRouting: seed,
+      workspaceSyncSourceExecution: packet });
+    executions += 1;
+    return { prepared: true, actorAccountId: context?.machineAdmission?.actorAccountId };
+  });
+  const content = installedContent.createWorkspaceSyncTargetContent({ destination, method, routing: seed });
+  const request = { method, machineAdmission: admission, callerAuthority: 'account_automation' as const,
+    callerInputConstraints: constraints, callerInputAuthorization: root, workspaceSyncSeedRouting: seed,
+    workspaceSyncSourceExecution: packet };
+  const invoke = async (changed: Partial<typeof request> = {}, body: unknown = params) => {
+    const result = await rpc.handleRequest({ ...request, ...changed,
+      params: await socketRpcCodec.encodeParams(content, body, { method, callId: bindingCallId }) });
+    if (result && typeof result === 'object' && 'errorCode' in result) return result;
+    return await socketRpcCodec.decodeResult(content, { ok: true, result }, bindingCallId);
+  };
+  try {
+    expect(await invoke()).toEqual({ prepared: true, actorAccountId: 'borrower' });
+    expect(await invoke({}, { ...params, t: 'workspace_file_download_v1' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await invoke({}, { ...params, operationId: 'unrelated-operation' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await invoke({ callerInputAuthorization: { ...root, token: 'forged-root' } })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await invoke({ workspaceSyncSourceExecution: { ...packet, params: 'substituted-source-packet' } }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await invoke({ workspaceSyncSeedRouting: { ...seed, sourceWriterTarget: { ...sourceWriterTarget,
+      source: { ...source, sourceRootPath: '/substituted/source' } } } }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+    expect(await invoke({ method: `${writer.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE}` }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    current = false;
+    expect(await invoke()).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(executions).toBe(1);
+  } finally { post.mockRestore(); identity.mockRestore(); }
+});
 
 it.each(['ordinary Account-codec baseline', 'installation-sealed request', 'physical-parent installation-sealed request'] as const)(
   'opens an installation-sealed TARGET and binds its reply without borrowing the chosen child Account key: %s', async transport => {
@@ -612,32 +719,61 @@ it('binds the Home-issued input proof to the exact opaque RPC before opening it'
 });
 
 it('retains the Home-admitted original Session proof at exact Project Machine ingress', async () => {
+  const [{ OpenProjectInputV1Schema }, { ExternalActionRequestEnvelopeV1Schema }, { computeExternalActionRequestEnvelopeDigestV1 }] = await Promise.all([
+    import('@happier-dev/protocol/projects/openProjectV1'), import('@happier-dev/protocol/actions/externalActionApi'),
+    import('@happier-dev/protocol/actions/externalActionExecutionAuthorization'),
+  ]);
   const machineAdmission = { actorAccountId: 'requester', custodianAccountId: 'custodian', machineId: 'target',
     installationId: 'target-install', role: 'use' as const, encryptionMode: 'plain' as const };
   const origin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: 'source-session', starterDepth: 2, turnDepth: 3 },
     callerPermissionMode: 'default' as const, sourceTurnId: 'original-turn', requestId: 'original-request' };
+  const input = OpenProjectInputV1Schema.parse({ serverId: 'home', machineId: 'target',
+    source: { kind: 'folder', path: '/target/project' }, materialization: { kind: 'attach' } });
+  const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: origin.requestId,
+    target: { kind: 'machine', machineId: 'target' }, input });
   const proof: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-issued-token', binding: {
     accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
     machineId: 'target', custodianAccountId: 'custodian', installationId: 'target-install', actionId: 'projects.open',
-    requestId: origin.requestId, requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'target' },
+    requestId: origin.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
     sessionActionOrigin: origin, sessionActionSource: { machineId: 'source', installationId: 'source-install' },
   } };
+  const targetKey = tweetnacl.sign.keyPair();
+  const method = `target:${RPC_METHODS.PROJECTS_OPEN}`;
+  const post = vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+    expect(String(url)).toBe('https://project-home.invalid/v1/machines/target/admission/verify');
+    const body = raw as { proof: Parameters<typeof verifyMachineInstallationProof>[0]['proof'] };
+    expect(raw).toMatchObject({ context: machineAdmission, method });
+    expect(verifyMachineInstallationProof({ publicKey: targetKey.publicKey, proof: body.proof, payload: {
+      version: 1, machineId: 'target', installationId: 'target-install', accountId: 'custodian',
+      rpcAdmission: { context: machineAdmission, method },
+    } })).toBe(true);
+    return { status: 200, data: { v: 1, ok: true } };
+  });
   const rpc = new RpcHandlerManager({ scopePrefix: 'target', localMachineId: 'target', encryptionMode: 'plain',
-    authorizeRequest: async () => ({ ok: true }), logger: () => {} });
-  const effect = vi.fn(async (_input: unknown, context?: RpcHandlerContext) => ({ proof: context?.callerInputAuthorization,
-    origin: context?.sessionActionOrigin, authority: context?.callerAuthority }));
-  rpc.registerHandler(RPC_METHODS.PROJECTS_OPEN, effect);
+    authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'target',
+      resolveCustodianAccountId: async () => 'custodian', resolveInstallationId: () => 'target-install',
+      verifyMachineAdmission: request => verifyMachineRpcAdmissionCurrent({ ...request, privateKey: targetKey.secretKey,
+        daemonToken: 'custodian-token', serverHttpBaseUrl: 'https://project-home.invalid' }) }), logger: () => {} });
+  let effects = 0;
+  rpc.registerHandler(RPC_METHODS.PROJECTS_OPEN, (_input, context) => {
+    effects += 1;
+    return { proof: context?.callerInputAuthorization, origin: context?.sessionActionOrigin, authority: context?.callerAuthority };
+  });
   // The authenticated Home is the mocked transport boundary. Its relay correlation is distinct from original Action identity.
-  const request = { method: `target:${RPC_METHODS.PROJECTS_OPEN}`, requestId: 'relay-correlation', params: {},
+  const request = { method, requestId: 'relay-correlation', params: input, originalActionEnvelope: envelope,
     machineAdmission, callerAuthority: 'account_automation' as const, sessionActionOrigin: origin, callerInputAuthorization: proof };
-  expect(await rpc.handleRequest(request)).toEqual({ proof, origin, authority: 'account_automation' });
-  for (const binding of [
-    { ...proof.binding, accountId: 'other' }, { ...proof.binding, installationId: 'retired-install' },
-    { ...proof.binding, actionId: 'projects.trust.list' },
-    { ...proof.binding, sessionActionOrigin: { ...origin, sourceTurnId: 'other-turn' } },
-  ]) expect(await rpc.handleRequest({ ...request, callerInputAuthorization: { ...proof, binding } }))
-    .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
-  expect(effect).toHaveBeenCalledOnce();
+  try {
+    expect(await rpc.handleRequest(request)).toEqual({ proof, origin, authority: 'account_automation' });
+    for (const binding of [
+      { ...proof.binding, accountId: 'other' }, { ...proof.binding, installationId: 'retired-install' },
+      { ...proof.binding, actionId: 'projects.trust.list' },
+      { ...proof.binding, sessionActionOrigin: { ...origin, sourceTurnId: 'other-turn' } },
+    ]) expect(await rpc.handleRequest({ ...request, callerInputAuthorization: { ...proof, binding } }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await rpc.handleRequest({ ...request, params: { ...input, source: { kind: 'folder', path: '/unreviewed/project' } } }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(effects).toBe(1);
+  } finally { post.mockRestore(); }
 });
 
 it('rechecks Session transfer routing against the hosted namespace and decrypted init', async () => {

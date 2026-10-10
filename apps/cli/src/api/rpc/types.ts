@@ -16,6 +16,7 @@ import type {
     WorkspaceSyncSourceRoutingV1,
     WorkspaceSyncTargetRoutingV1,
     WorkspaceSyncSourceWriterTargetRoutingV1,
+    WorkspaceSyncSeedRoutingV1,
 } from '@happier-dev/protocol/socketRpc';
 
 /**
@@ -62,6 +63,10 @@ export type RpcHandlerContext = Readonly<{
     callerInputConstraints?: CallerInputConstraintsV1;
     /** Home transport proof bound before decryption; signed token is verified by downstream admission. */
     callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
+    /** Strict exact Project envelope, retained only after current Root admission. */
+    originalActionEnvelope?: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionRequestEnvelope;
+    /** Home-retained original installed chosen-child packet for closed Project SOURCE. */
+    workspaceSyncSourceExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
     /** Validated transport correlation; authenticated relays replace caller values before dispatch. */
     transportRequestId?: string;
     /**
@@ -77,6 +82,8 @@ export type RpcHandlerContext = Readonly<{
     workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
     /** Home-validated original SOURCE root and exact physical writer-to-target custody. */
     workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+    /** Home-validated installed seed request retaining the original SOURCE actor and Target prepare. */
+    workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
     /** Host-bound final admission check after preparation, never accepted from caller input. */
     verifyMachineAdmissionCurrent?: () => Promise<boolean>;
     localActionContext?: RpcLocalActionContext;
@@ -140,14 +147,18 @@ type RpcHandlerCommonConfig = {
         transportResponseEnvelopeVersion?: 1;
         machineAdmission?: SocketRpcMachineAdmissionContextV1;
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
+        workspaceSyncSourceExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
         workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
         workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+        workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
         /** Whole original SOURCE root, independently verified by Home before retention. */
         callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
         signal?: AbortSignal;
     }>) => RpcAuthorizationResult | Promise<RpcAuthorizationResult>;
     /** Installation-private custody, opened only after the Home transport admission above. */
     prepareRequesterAccountContext?: import('@/daemon/externalActions/executeExternalAction').PrepareExternalActionRequesterAccountContext;
+    /** The actual receiving Machine's incumbent V2 envelope key owner; never a relay's Account material. */
+    resolveExternalActionEncryption?: import('@/daemon/externalActions/executeExternalAction').ResolveExternalActionEncryption;
     projectTransportAcknowledgement?: (request: Readonly<{
         method: string;
         params: unknown;

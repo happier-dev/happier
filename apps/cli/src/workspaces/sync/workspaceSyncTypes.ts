@@ -1,6 +1,7 @@
 import { computeWorkspaceSyncPolicyDigest as computeCanonicalWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, ReadWorkspaceSyncFileResultV1, ReadWorkspaceSyncFileV1, WorkspaceContentPolicyV1, WorkspaceSyncConflictPageRequestV1, WorkspaceSyncConflictPageV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncCopyOnceV1, WorkspaceSyncRelationshipV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1, WorkspaceSyncStatusV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 import type { WorkspaceRootOwnershipHandle } from './workspaceSyncRootOwnership';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export type {
   ReadWorkspaceSyncFileResultV1,
@@ -82,5 +83,6 @@ export interface ManagedWorkspaceSync {
     operation: WorkspaceSyncRelationshipV1 | WorkspaceSyncCopyOnceV1,
     ownershipHandles: readonly WorkspaceRootOwnershipHandle[],
     action: () => Promise<T>,
+    acceptedTargetWorkspace?: WorkspaceRefV1,
   ): Promise<T>;
 }

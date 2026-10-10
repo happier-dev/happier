@@ -22,7 +22,7 @@ import { isWorkspaceSyncStatusClean } from './workspaceSyncPreparation';
 export type WorkspaceSyncMutagenCommandTransport = (command: MutagenControlCommandV1, signal?: AbortSignal) => Promise<unknown>;
 export type WorkspaceSyncMutagenAdapterOptions = Readonly<{
   send: WorkspaceSyncMutagenCommandTransport;
-  resolveWorkspaceRef(id: string): WorkspaceSyncResolvedRef | null | Promise<WorkspaceSyncResolvedRef | null>;
+  resolveWorkspaceRef(id: string, copyOperationId?: string): WorkspaceSyncResolvedRef | null | Promise<WorkspaceSyncResolvedRef | null>;
   createRequestId?: () => string;
   nowMs?: () => number;
 }>;
@@ -375,7 +375,8 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     const generic = this.acceptSession(value, definition);
     const operationId = 'relationshipId' in definition ? definition.relationshipId : definition.operationId;
     const [alpha, beta] = await Promise.all([
-      this.options.resolveWorkspaceRef(definition.alphaWorkspaceRefId), this.options.resolveWorkspaceRef(definition.betaWorkspaceRefId),
+      this.options.resolveWorkspaceRef(definition.alphaWorkspaceRefId, 'operationId' in definition ? operationId : undefined),
+      this.options.resolveWorkspaceRef(definition.betaWorkspaceRefId, 'operationId' in definition ? operationId : undefined),
     ]);
     if (completedFlush) signal?.throwIfAborted();
     if (!alpha || !beta) throw Object.assign(new Error('Workspace sync endpoint is unavailable'), { code: 'peer_unavailable' });

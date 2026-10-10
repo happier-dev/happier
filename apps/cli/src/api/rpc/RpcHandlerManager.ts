@@ -26,15 +26,19 @@ import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcEr
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/callerInputConstraintsV1';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionSocketRpcRequestDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { openExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { computeExternalActionSocketRpcRequestDigestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
-import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
+import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
+    WorkspaceSyncSeedRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting,
-    doesWorkspaceSyncTargetRoutingMatchWriterTarget } from '@/api/machine/machineRpcAuthorization';
+    doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
+    doesWorkspaceSyncSeedRootMatchRouting } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { isWorkspaceSyncTargetInstalledContent, openWorkspaceSyncTargetContent } from './workspaceSyncTargetContent';
 
@@ -65,6 +69,7 @@ export class RpcHandlerManager {
     private rpcContent: SocketRpcContent | null;
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
     private readonly prepareRequesterAccountContext: RpcHandlerConfig['prepareRequesterAccountContext'];
+    private readonly resolveExternalActionEncryption: RpcHandlerConfig['resolveExternalActionEncryption'];
     private readonly projectTransportAcknowledgement:
         RpcHandlerConfig['projectTransportAcknowledgement'];
     private readonly logger: (message: string, data?: any) => void;
@@ -100,6 +105,7 @@ export class RpcHandlerManager {
         this.rpcContent = this.createEncryptionContent(config);
         this.authorizeRequest = config.authorizeRequest;
         this.prepareRequesterAccountContext = config.prepareRequesterAccountContext;
+        this.resolveExternalActionEncryption = config.resolveExternalActionEncryption;
         this.projectTransportAcknowledgement =
             config.projectTransportAcknowledgement;
         this.logger = config.logger || ((msg, data) => defaultLogger.debug(msg, data));
@@ -198,15 +204,29 @@ export class RpcHandlerManager {
         }
         const workspaceSyncSourceRouting = request.workspaceSyncSourceRouting === undefined
             ? null : WorkspaceSyncSourceRoutingV1Schema.safeParse(request.workspaceSyncSourceRouting);
+        const workspaceSyncSourceExecution = request.workspaceSyncSourceExecution === undefined
+            ? null : WorkspaceSyncSourceExecutionV1Schema.safeParse(request.workspaceSyncSourceExecution);
+        const originalActionEnvelope = request.originalActionEnvelope === undefined
+            ? null : ExternalActionRequestEnvelopeSchema.safeParse(request.originalActionEnvelope);
+        const isProjectSource = this.readUnprefixedMethod(request.method) === RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN;
         const workspaceSyncTargetRouting = request.workspaceSyncTargetRouting === undefined
             ? null : WorkspaceSyncTargetRoutingV1Schema.safeParse(request.workspaceSyncTargetRouting);
         const workspaceSyncSourceWriterTargetRouting = request.workspaceSyncSourceWriterTargetRouting === undefined
             ? null : WorkspaceSyncSourceWriterTargetRoutingV1Schema.safeParse(request.workspaceSyncSourceWriterTargetRouting);
-        const isWorkspaceSourcePhase = this.readUnprefixedMethod(request.method) === RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE;
+        const workspaceSyncSeedRouting = request.workspaceSyncSeedRouting === undefined
+            ? null : WorkspaceSyncSeedRoutingV1Schema.safeParse(request.workspaceSyncSeedRouting);
+        const isWorkspaceSourcePhase = isProjectSource || this.readUnprefixedMethod(request.method) === RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE;
         const targetMethod = this.readUnprefixedMethod(request.method);
         const isWorkspaceTargetPhase = targetMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
             || targetMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
             || targetMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
+        if (workspaceSyncSeedRouting && (!workspaceSyncSeedRouting.success || !machineAdmission?.success
+            || !this.authorizeRequest || workspaceSyncSourceRouting || workspaceSyncTargetRouting || workspaceSyncSourceWriterTargetRouting
+            || request.method !== `${this.scopePrefix}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`
+            || workspaceSyncSeedRouting.data.sourceWriterTarget.sourceWriter.machineId !== this.scopePrefix
+            || !isWorkspaceSyncTargetInstalledContent(request.params))) {
+            return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        }
         if (workspaceSyncSourceWriterTargetRouting && (!workspaceSyncSourceWriterTargetRouting.success || !isWorkspaceTargetPhase
             || !machineAdmission?.success || !this.authorizeRequest || workspaceSyncSourceRouting
             || workspaceSyncTargetRouting && (!workspaceSyncTargetRouting.success
@@ -216,9 +236,12 @@ export class RpcHandlerManager {
         }
         if (isWorkspaceSyncTargetInstalledContent(request.params)) {
             const installation = readInstallationIdentityIfExistsSync();
-            const content = installation && workspaceSyncSourceWriterTargetRouting?.success && typeof request.params === 'string'
+            const installedRouting = workspaceSyncSeedRouting?.success ? workspaceSyncSeedRouting.data
+                : workspaceSyncSourceWriterTargetRouting?.success ? workspaceSyncSourceWriterTargetRouting.data
+                : isProjectSource && workspaceSyncSourceRouting?.success ? workspaceSyncSourceRouting.data : undefined;
+            const content = installation && installedRouting && typeof request.params === 'string'
                 ? openWorkspaceSyncTargetContent({ ciphertext: request.params, installation, machineId: this.scopePrefix,
-                    method: request.method, routing: workspaceSyncSourceWriterTargetRouting.data }) : null;
+                    method: request.method, routing: installedRouting }) : null;
             if (!content) return await respond(request, { error: 'Installed workspace target content is unavailable', errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
             rpcContent = content;
         }
@@ -229,11 +252,14 @@ export class RpcHandlerManager {
         }
         if ((isWorkspaceSourcePhase || workspaceSyncSourceRouting) && (!isWorkspaceSourcePhase
             || !workspaceSyncSourceRouting?.success || !machineAdmission?.success || !this.authorizeRequest
-            || request.method !== `${this.scopePrefix}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`)) {
+            || request.method !== `${this.scopePrefix}:${isProjectSource ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN
+                : RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`
+            || isProjectSource && (!workspaceSyncSourceExecution?.success || workspaceSyncSourceExecution.data.method !== request.method))) {
             return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
         }
         const workspaceContext = workspaceSyncSourceRouting?.success ? workspaceSyncSourceRouting.data.sourceContext
-            : workspaceSyncTargetRouting?.success ? workspaceSyncTargetRouting.data.targetContext : undefined;
+            : workspaceSyncTargetRouting?.success ? workspaceSyncTargetRouting.data.targetContext
+                : workspaceSyncSeedRouting?.success ? workspaceSyncSeedRouting.data.sourceWriterTarget.source.sourceContext : undefined;
         if (workspaceContext && (!isDeepStrictEqual(workspaceContext.machineAdmission, machineAdmission?.success ? machineAdmission.data : undefined)
             || workspaceContext.callerAuthority !== request.callerAuthority
             || !isDeepStrictEqual(workspaceContext.sessionActionOrigin, request.sessionActionOrigin)
@@ -242,6 +268,30 @@ export class RpcHandlerManager {
         }
         const parsedInputAuthorization = request.callerInputAuthorization === undefined
             ? null : ExternalActionExecutionAuthorizationV1Schema.safeParse(request.callerInputAuthorization);
+        const projectWriterTarget = workspaceSyncSourceWriterTargetRouting?.success
+            && parsedInputAuthorization?.success && parsedInputAuthorization.data.binding.actionId === 'projects.open';
+        const seedInputAuthorizationMatchesRequest = !!(workspaceSyncSeedRouting?.success && parsedInputAuthorization?.success
+            && workspaceSyncSourceExecution?.success && machineAdmission?.success && this.authorizeRequest
+            && doesWorkspaceSyncSeedRootMatchRouting(parsedInputAuthorization.data, workspaceSyncSeedRouting.data,
+                workspaceSyncSourceExecution.data));
+        if (workspaceSyncSeedRouting && !seedInputAuthorizationMatchesRequest) {
+            return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        }
+        if (projectWriterTarget && workspaceSyncSourceWriterTargetRouting?.success && parsedInputAuthorization?.success
+            && workspaceSyncSourceWriterTargetRouting.data.target.phase !== 'release'
+            && (!workspaceSyncSourceExecution?.success
+                || workspaceSyncSourceExecution.data.method !== `${workspaceSyncSourceWriterTargetRouting.data.sourceWriter.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`
+                || workspaceSyncSourceExecution.data.externalActionExecution.installationId !== parsedInputAuthorization.data.binding.installationId
+                || !isDeepStrictEqual(workspaceSyncSourceExecution.data.externalActionExecution.authorization, parsedInputAuthorization.data))) {
+            return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        }
+        if (workspaceSyncSourceExecution && ((!isProjectSource && !projectWriterTarget && !seedInputAuthorizationMatchesRequest) || !workspaceSyncSourceExecution.success)
+            || originalActionEnvelope && (!originalActionEnvelope.success || !parsedInputAuthorization?.success
+                || request.method !== `${this.scopePrefix}:${RPC_METHODS.PROJECTS_OPEN}`
+                || !isExternalActionAuthorizationBoundToEnvelope(parsedInputAuthorization.data.binding,
+                    { actionId: 'projects.open', machineId: this.scopePrefix, envelope: originalActionEnvelope.data }))) {
+            return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        }
         const writerTargetInputAuthorizationMatchesRequest = !!(parsedInputAuthorization?.success
             && workspaceSyncSourceWriterTargetRouting?.success && machineAdmission?.success && this.authorizeRequest
             && doesWorkspaceSyncSourceWriterTargetRootMatchRouting(parsedInputAuthorization.data,
@@ -278,7 +328,8 @@ export class RpcHandlerManager {
             || isWorkspaceTargetPhase && !workspaceSyncTargetRouting?.success
                 && (!machineAdmission?.success || machineAdmission.data.machineId !== this.scopePrefix || !this.authorizeRequest)
             || !machineInputAuthorizationMatchesRequest && !sourceInputAuthorizationMatchesRequest
-                && !writerTargetInputAuthorizationMatchesRequest && !isSessionActionRpcMethodV1(this.readUnprefixedMethod(request.method)))) {
+                && !writerTargetInputAuthorizationMatchesRequest && !seedInputAuthorizationMatchesRequest
+                && !isSessionActionRpcMethodV1(this.readUnprefixedMethod(request.method)))) {
             return await respond(request, { error: 'Invalid Session Action origin', errorCode: RPC_ERROR_CODES.FORBIDDEN });
         }
         const parsedTransferRouting = request.transferRouting === undefined
@@ -310,7 +361,8 @@ export class RpcHandlerManager {
             ? parsedRequestId.data
             : null;
         if (parsedInputAuthorization) {
-            let matchesRequest = machineInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest || writerTargetInputAuthorizationMatchesRequest;
+            let matchesRequest = machineInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest
+                || writerTargetInputAuthorizationMatchesRequest || seedInputAuthorizationMatchesRequest;
             if (!matchesRequest && parsedInputAuthorization.success && requestId) {
                 const binding = parsedInputAuthorization.data.binding;
                 try {
@@ -438,9 +490,11 @@ export class RpcHandlerManager {
                     transportResponseEnvelopeVersion: request.transportResponseEnvelopeVersion,
                     ...(machineAdmission?.success ? { machineAdmission: Object.freeze(machineAdmission.data) } : {}),
                     ...(workspaceSyncSourceRouting?.success ? { workspaceSyncSourceRouting: Object.freeze(workspaceSyncSourceRouting.data) } : {}),
+                    ...(workspaceSyncSourceExecution?.success ? { workspaceSyncSourceExecution: Object.freeze(workspaceSyncSourceExecution.data) } : {}),
                     ...(workspaceSyncTargetRouting?.success ? { workspaceSyncTargetRouting: Object.freeze(workspaceSyncTargetRouting.data) } : {}),
                     ...(workspaceSyncSourceWriterTargetRouting?.success ? { workspaceSyncSourceWriterTargetRouting: Object.freeze(workspaceSyncSourceWriterTargetRouting.data) } : {}),
-                    ...((sourceInputAuthorizationMatchesRequest || writerTargetInputAuthorizationMatchesRequest) && parsedInputAuthorization?.success
+                    ...(workspaceSyncSeedRouting?.success ? { workspaceSyncSeedRouting: Object.freeze(workspaceSyncSeedRouting.data) } : {}),
+                    ...((sourceInputAuthorizationMatchesRequest || writerTargetInputAuthorizationMatchesRequest || seedInputAuthorizationMatchesRequest) && parsedInputAuthorization?.success
                         ? { callerInputAuthorization: parsedInputAuthorization.data } : {}),
                     signal: controller.signal,
             });
@@ -451,6 +505,51 @@ export class RpcHandlerManager {
                         error: confidential ? 'confidential_continuation_failed' : authorization.error,
                         ...(confidential ? { errorCode: 'confidential_continuation_failed' } : authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
                     });
+                }
+            }
+
+            if (parsedInputAuthorization?.success && parsedInputAuthorization.data.binding.actionId === 'projects.open'
+                && parsedInputAuthorization.data.binding.machineId === this.scopePrefix
+                && (machineInputAuthorizationMatchesRequest && targetMethod === RPC_METHODS.PROJECTS_OPEN
+                    || writerTargetInputAuthorizationMatchesRequest && workspaceSyncSourceWriterTargetRouting?.success
+                        && workspaceSyncSourceWriterTargetRouting.data.target.phase !== 'release')) {
+                // Only D can open its original protected Project input. P1/P2
+                // retain the exact envelope and D's packet, never D's key.
+                const authorization = parsedInputAuthorization.data;
+                const binding = authorization.binding;
+                const source = workspaceSyncSourceWriterTargetRouting?.success
+                    ? workspaceSyncSourceWriterTargetRouting.data.source : undefined;
+                const retainedEnvelope = source?.originalActionEnvelope ?? (originalActionEnvelope?.success ? originalActionEnvelope.data : undefined);
+                const parsedEnvelope = ExternalActionRequestEnvelopeSchema.safeParse(retainedEnvelope ?? { v: 1,
+                    requestId: binding.requestId, target: binding.target, input: decryptedParams });
+                if (!parsedEnvelope.success) {
+                    return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+                }
+                const envelope = parsedEnvelope.data;
+                let originalInput: unknown = envelope.v === 1 ? envelope.input : undefined;
+                if (envelope.v === 2) {
+                    const encryption = await this.resolveExternalActionEncryption?.(controller.signal, authorization).catch(() => null);
+                    if (encryption?.serverIdentityId === binding.serverIdentityId) {
+                        originalInput = openExternalActionRequestV2({ envelope, material: encryption.material, binding: {
+                            serverIdentityId: binding.serverIdentityId, accountId: binding.accountId,
+                            actionId: binding.actionId, requestId: binding.requestId, target: binding.target,
+                            ...('authentication' in binding ? { authentication: {
+                                kind: binding.authentication.kind, tokenEpoch: binding.authentication.tokenEpoch,
+                            } } : { credentialId: binding.credentialId }),
+                        } })?.input;
+                    }
+                }
+                const opened = OpenProjectInputV1Schema.safeParse(originalInput);
+                const body = source ? undefined : OpenProjectInputV1Schema.safeParse(decryptedParams);
+                const matches = isExternalActionAuthorizationBoundToEnvelope(binding,
+                    { actionId: 'projects.open', machineId: this.scopePrefix, envelope }) && opened.success
+                    && (source && workspaceSyncSourceWriterTargetRouting?.success
+                        ? doesWorkspaceSyncProjectSourceRequestMatchRouting(opened.data, authorization, source)
+                            && opened.data.materialization.kind === 'sync'
+                            && opened.data.materialization.targetPath === workspaceSyncSourceWriterTargetRouting.data.target.targetRootPath
+                        : body?.success && isDeepStrictEqual(opened.data, body.data));
+                if (!matches || controller.signal.aborted) {
+                    return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
                 }
             }
 
@@ -472,9 +571,12 @@ export class RpcHandlerManager {
                 // at Home. Bind the decrypted chosen target before retaining the child's root.
                 const phase = WorkspaceSyncHandoffSourcePhaseRequestV1Schema.safeParse(decryptedParams);
                 const handoff = parsedInputAuthorization.data.binding.handoffAdmission;
-                if (!phase.success || !handoff || phase.data.input.targetMachineId !== handoff.targetMachineId
-                    || phase.data.input.sourceMachineId !== handoff.sourceMachineId
-                    || phase.data.input.sourceSessionId !== handoff.sessionId) {
+                const sourceBodyMatches = isProjectSource
+                    ? workspaceSyncSourceRouting?.success && doesWorkspaceSyncProjectSourceRequestMatchRouting(decryptedParams,
+                        parsedInputAuthorization.data, workspaceSyncSourceRouting.data)
+                    : phase.success && handoff && phase.data.input.targetMachineId === handoff.targetMachineId
+                        && phase.data.input.sourceMachineId === handoff.sourceMachineId && phase.data.input.sourceSessionId === handoff.sessionId;
+                if (!sourceBodyMatches) {
                     return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
                 }
             }
@@ -508,8 +610,12 @@ export class RpcHandlerManager {
                 callerAuthority: request.callerAuthority === 'present_user' ? request.callerAuthority : 'account_automation',
                 ...(sessionActionOrigin?.success ? { sessionActionOrigin: sessionActionOrigin.data } : {}),
                 ...(workspaceSyncSourceRouting?.success ? { workspaceSyncSourceRouting: workspaceSyncSourceRouting.data } : {}),
+                ...(workspaceSyncSourceExecution?.success ? { workspaceSyncSourceExecution: workspaceSyncSourceExecution.data } : {}),
+                ...(originalActionEnvelope?.success && machineInputAuthorizationMatchesRequest
+                    ? { originalActionEnvelope: originalActionEnvelope.data } : {}),
                 ...(admittedTargetRouting ? { workspaceSyncTargetRouting: admittedTargetRouting } : {}),
                 ...(workspaceSyncSourceWriterTargetRouting?.success ? { workspaceSyncSourceWriterTargetRouting: workspaceSyncSourceWriterTargetRouting.data } : {}),
+                ...(workspaceSyncSeedRouting?.success ? { workspaceSyncSeedRouting: workspaceSyncSeedRouting.data } : {}),
                 ...(callerInputAuthorization ? {
                     callerInputAuthorization,
                     ...('grant' in callerInputAuthorization.binding ? {

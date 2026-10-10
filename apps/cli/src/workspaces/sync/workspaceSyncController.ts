@@ -1,5 +1,6 @@
 import { areWorkspaceSyncEntryExpectationsEqual, areWorkspaceSyncRelationshipDefinitionsEqual, ReadWorkspaceSyncFileV1Schema, WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES, WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema, WorkspaceSyncCopyOnceV1Schema, WorkspaceSyncRelationshipsListRpcRequestV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceSyncConflictInspectEndpointV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, WorkspaceSyncConflictResolveActionInputV1, WorkspaceSyncEntryExpectationV1, WorkspaceSyncPathSelectionV1, WorkspaceSyncSelectionDiagnoseV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1 } from '@happier-dev/protocol';
 import { machineCarrierUnavailableError } from '@/daemon/peer/iroh/machineCarrier';
 import { deriveWorkspaceSyncConflictAsidePaths, deriveWorkspaceSyncConflictOperationId } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -372,6 +373,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   private readonly sourceSeedAuthorizations = new Map<string, Readonly<{
     operation: WorkspaceSyncRelationshipV1 | WorkspaceSyncCopyOnceV1;
     ownershipHandles: readonly WorkspaceRootOwnershipHandle[];
+    acceptedTargetWorkspace?: WorkspaceRefV1;
   }>>();
   private readonly queues = new Map<string, { task: Promise<unknown>; material: boolean }>();
   private readonly activityListeners = new Set<() => void>();
@@ -2269,7 +2271,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     }
     const [alpha, beta] = await Promise.all([
       this.resolveRef(operation.alphaWorkspaceRefId, 'operationId' in operation ? operation.operationId : undefined),
-      this.resolveRef(operation.betaWorkspaceRefId, 'operationId' in operation ? operation.operationId : undefined),
+      authorization.acceptedTargetWorkspace
+        ?? this.resolveRef(operation.betaWorkspaceRefId, 'operationId' in operation ? operation.operationId : undefined),
     ]);
     if (!alpha || !beta) {
       throw Object.assign(new Error('Workspace sync source seed endpoint is unavailable'), { code: 'peer_unavailable' });
@@ -2314,12 +2317,19 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     operation: WorkspaceSyncRelationshipV1 | WorkspaceSyncCopyOnceV1,
     ownershipHandles: readonly WorkspaceRootOwnershipHandle[],
     action: () => Promise<T>,
+    acceptedTargetWorkspace?: WorkspaceRefV1,
   ): Promise<T> {
     const operationId = 'relationshipId' in operation ? operation.relationshipId : operation.operationId;
     if (this.sourceSeedAuthorizations.has(operationId)) {
       throw Object.assign(new Error('Workspace sync source seed operation is already active'), { code: 'relationship_definition_conflict' });
     }
-    this.sourceSeedAuthorizations.set(operationId, { operation, ownershipHandles });
+    const target = acceptedTargetWorkspace ? WorkspaceRefV1Schema.parse(acceptedTargetWorkspace) : undefined;
+    if (target && (!('operationId' in operation) || target.id !== operation.betaWorkspaceRefId
+      || !this.localServerId || target.serverId !== this.localServerId)) {
+      throw Object.assign(new Error('Workspace sync source seed target does not match the active copy'), { code: 'target_unavailable' });
+    }
+    this.sourceSeedAuthorizations.set(operationId, { operation, ownershipHandles,
+      ...(target ? { acceptedTargetWorkspace: target } : {}) });
     this.notifyActivity();
     try {
       return await action();
