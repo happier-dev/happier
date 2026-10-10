@@ -7,7 +7,7 @@ export const NOTIFICATIONS_PUSH_SETTINGS = defineSettingsPage({
         status: {
             titleKey: 'settingsNotifications.pushTroubleshooting.status.title',
             settings: {
-                refresh: { titleKey: 'settingsNotifications.pushTroubleshooting.actions.refreshTitle', descriptionKey: 'settingsNotifications.pushTroubleshooting.actions.refreshSubtitle' },
+                refresh: {},
             },
         },
     },

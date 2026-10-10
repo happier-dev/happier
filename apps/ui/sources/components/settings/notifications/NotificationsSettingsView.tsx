@@ -21,7 +21,8 @@ import { schedulePushTokenReconciliation } from '@/sync/engine/account/syncAccou
 import { runPushNotificationPermissionPriming } from '@/activity/notifications/permission/pushNotificationPermissionPriming';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { AttentionDeliveryPolicyV1Schema, accountSettingsParse, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS, type LiveActivityRemoteUpdateCapabilityDiagnostics } from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
 import { PUSH_NOTIFICATION_SOUND_IDS, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
 import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID } from '@happier-dev/protocol/account/settings/notificationChannels';
@@ -55,7 +56,7 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
 import { settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';
 import { SettingSection } from '@/components/settings/shell/SettingRow';
-import { updateAccountNotificationPreference, updateNotificationDeviceSounds, updateNotificationDeviceQuietHours, type AccountNotificationPreference } from './notificationPreferences';
+import { updateAccountNotificationPreference, updateNotificationDeviceSounds, type AccountNotificationPreference } from './notificationPreferences';
 
 export const NotificationsSettingsView = React.memo(function NotificationsSettingsView() {
     const router = useRouter();
@@ -126,14 +127,19 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
         router.push('/settings/notifications/push');
     }, [router]);
 
-    const setAttentionPolicy = React.useCallback((next: Partial<AttentionDeliveryPolicyV1>) => {
-        applySettings({
-            attentionDeliveryPolicyV1: AttentionDeliveryPolicyV1Schema.parse({
-                ...attentionPolicy,
-                ...next,
-            }),
-        });
-    }, [applySettings, attentionPolicy]);
+    const setQuietHoursSetting = React.useCallback(async (anchor: string, value: unknown) => {
+        if (!actionReady) return;
+        try {
+            const result = await executeAction('settings.set', { anchor, value });
+            if (!result.ok) {
+                if (result.errorCode === 'action_account_scope_changed') return;
+                throw new Error(result.error);
+            }
+            SettingsDeclarationActionOutputSchemasV1['settings.set'].parse(result.result);
+        } catch (error) {
+            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
+        }
+    }, [actionReady, executeAction]);
 
     const updateBuiltin = React.useCallback(async (patch: NotificationChannelConfigurationPatch) =>
         executeMutation({ actionId: 'notifications.expoPush.update', input: { patch } }), [executeMutation]);
@@ -253,8 +259,8 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
             <NotificationQuietHoursSection
                 policy={attentionPolicy}
                 deviceOverride={localSettings.attentionDeviceOverridesV1.quietHoursOverride}
-                setAccountQuietHours={(quietHours) => setAttentionPolicy({ quietHours })}
-                setDeviceQuietHoursOverride={(quietHoursOverride) => setLocalSetting(updateNotificationDeviceQuietHours(localSettings, quietHoursOverride))}
+                setAccountQuietHours={(preset) => setQuietHoursSetting(NOTIFICATIONS_SETTINGS.settings.quietHoursAccount.anchor, preset)}
+                setDeviceQuietHoursOverride={(quietHoursOverride) => setQuietHoursSetting(NOTIFICATIONS_SETTINGS.settings.quietHoursDevice.anchor, quietHoursOverride)}
             />
             <SessionAutoFollowPreferencesSection key={activeServer.serverId} serverId={activeServer.serverId} />
             <SettingSection section={NOTIFICATIONS_SETTINGS.sectionRefs.remoteAlerts}>

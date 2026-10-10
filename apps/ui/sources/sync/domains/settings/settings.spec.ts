@@ -23,7 +23,6 @@ import {
     VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS,
     readLocalConversationVoiceSettings,
 } from './voiceSettings';
-import { readRetainedSecretBindingsByProfileId } from './secretBindings';
 import {
     mergeCurrentFavoriteModelSelectionsIntoRaw,
     mergeCurrentRememberedEngineSelectionsIntoRaw,
@@ -1369,9 +1368,9 @@ describe('settings', () => {
             expect(settingsDefaults.toolViewShowDebugByDefault).toBe(false);
             expect(settingsDefaults.terminalConnectLegacySecretExportEnabled).toBe(false);
             expect((settingsDefaults as any).connectedServicesDefaultProfileByServiceId).toEqual({});
-            expect((settingsDefaults as any).connectedServicesProfileLabelByKey).toEqual({});
+            expect(settingsDefaults).not.toHaveProperty('connectedServicesProfileLabelByKey');
             expect((settingsDefaults as any).connectedServicesQuotaPinnedMeterIdsByKey).toEqual({});
-            expect((settingsDefaults as any).connectedServicesCollapsedItemKeysV1).toEqual({});
+            expect(settingsDefaults).not.toHaveProperty('connectedServicesCollapsedItemKeysV1');
             expect((settingsDefaults as any).connectedServicesQuotaSummaryStrategyByKey).toEqual({});
             expect(settingsDefaults).not.toHaveProperty('pinnedSessionKeysV1');
             expect(settingsDefaults).not.toHaveProperty('sessionFoldersV1');
@@ -1391,31 +1390,13 @@ describe('settings', () => {
                 connectedServiceQuotaBlocked: true,
                 connectedServiceQuotaRecovered: true,
             });
-            expect((settingsDefaults as any).notificationChannelsV1).toEqual([
-                {
-                    v: 1,
-                    id: 'builtin:expo_push',
-                    kind: 'expo_push',
-                    enabled: true,
-                    topics: {
-                        ready: true,
-                        permissionRequest: true,
-                        userActionRequest: true,
-                        connectedServiceAccountSwitch: true,
-                        connectedServiceQuotaBlocked: true,
-                        connectedServiceQuotaRecovered: true,
-                    },
-                    readyIncludeMessageText: true,
-                    requestIncludeMessageText: true,
-                },
-            ]);
+            expect(settingsDefaults).not.toHaveProperty('notificationChannelsV1');
             expect((settingsDefaults as any).attentionDeliveryPolicyV1).toEqual(
                 deriveAttentionDeliveryPolicyFromLegacySettings({
                     notificationsSettings: settingsDefaults.notificationsSettingsV1,
-                    notificationChannels: settingsDefaults.notificationChannelsV1,
                 }),
             );
-            expect((settingsDefaults as any).attentionDeliveryPolicyV1.channels.webhook.enabled).toBe(false);
+            expect(settingsDefaults.attentionDeliveryPolicyV1.channels.webhook.enabled).toBe(true);
             expect((settingsDefaults as any).attachmentsUploadsUploadLocation).toBe('workspace');
             expect((settingsDefaults as any).attachmentsUploadsWorkspaceRelativeDir).toBe('.happier/uploads');
             expect((settingsDefaults as any).attachmentsUploadsVcsIgnoreStrategy).toBe('git_info_exclude');
@@ -1706,9 +1687,9 @@ describe('settings', () => {
     });
 
     describe('secretBindingsByProfileId', () => {
-        it('defaults to an empty object', () => {
+        it('is absent from the current preference facade', () => {
             const parsed = settingsParse({});
-            expect(readRetainedSecretBindingsByProfileId(parsed)).toEqual({});
+            expect(parsed).not.toHaveProperty('secretBindingsByProfileId');
         });
     });
 
@@ -1972,10 +1953,7 @@ describe('settings', () => {
                     createdAt: 1000,
                     updatedAt: 1000,
                 })],
-                dismissedCLIWarnings: {
-                    perMachine: { 'machine-1': { claude: true } },
-                    global: { codex: true }
-                }
+                connectedServicesQuotaPinnedMeterIdsByKey: { 'service/account-1': ['weekly', 'monthly'] }
             });
 
             const pendingChanges: Partial<Settings> = {
@@ -1986,10 +1964,7 @@ describe('settings', () => {
                     createdAt: 2000,
                     updatedAt: 2000,
                 })],
-                dismissedCLIWarnings: {
-                    perMachine: { 'machine-2': { claude: true } },
-                    global: {}
-                }
+                connectedServicesQuotaPinnedMeterIdsByKey: { 'service/account-2': ['weekly'] }
             };
 
             const merged = applySettings(serverSettings, pendingChanges);
@@ -1997,7 +1972,7 @@ describe('settings', () => {
             // Pending changes completely override (not deep merge)
             expect(merged.useEnhancedSessionWizard).toBe(true);
             expect(merged.profiles).toEqual(pendingChanges.profiles);
-            expect(merged.dismissedCLIWarnings).toEqual(pendingChanges.dismissedCLIWarnings);
+            expect(merged.connectedServicesQuotaPinnedMeterIdsByKey).toEqual(pendingChanges.connectedServicesQuotaPinnedMeterIdsByKey);
         });
     });
 });

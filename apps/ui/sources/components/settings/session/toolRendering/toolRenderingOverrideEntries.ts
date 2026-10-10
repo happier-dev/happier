@@ -60,5 +60,13 @@ export const TOOL_RENDERING_OVERRIDE_ENTRIES: ReadonlyArray<ToolRenderingOverrid
         });
     }
 
-    return entries;
+    // Transcript titles can collapse a tool family; overrides still configure each tool separately.
+    const titleCounts = new Map<string, number>();
+    for (const entry of entries) {
+        titleCounts.set(entry.title, (titleCounts.get(entry.title) ?? 0) + 1);
+    }
+    return entries.map((entry) => titleCounts.get(entry.title) === 1 ? entry : {
+        ...entry,
+        title: `${entry.title} (${humanizeToolName(entry.toolName)})`,
+    });
 })();

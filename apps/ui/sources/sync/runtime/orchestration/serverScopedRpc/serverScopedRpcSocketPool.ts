@@ -1,4 +1,6 @@
 import { createHappierSocket } from '@happier-dev/sync-client';
+import { createRpcCallError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     buildAccountStoredContentCompatibilitySocketAuthV1,
@@ -108,7 +110,7 @@ async function connectSocketWithTimeout(socket: SocketLike, timeoutMs: number): 
             if (settled) return;
             settled = true;
             cleanup();
-            reject(new Error('Scoped RPC socket connection timeout'));
+            reject(Object.assign(new Error('Scoped RPC socket connection timeout'), { code: MACHINE_RPC_TIMEOUT_ERROR_CODE }));
         }, Math.max(1, timeoutMs));
 
         const cleanup = () => {
@@ -128,7 +130,10 @@ async function connectSocketWithTimeout(socket: SocketLike, timeoutMs: number): 
             if (settled) return;
             settled = true;
             cleanup();
-            reject(error instanceof Error ? error : new Error('Scoped RPC socket connection failed'));
+            reject(readRpcErrorCode(error) || isTerminalAuthError(error) ? error : Object.assign(createRpcCallError({
+                error: error instanceof Error ? error.message : 'Scoped RPC socket connection failed',
+                errorCode: 'MACHINE_RPC_UNREACHABLE',
+            }), { cause: error }));
         };
 
         socket.on('connect', onConnect);

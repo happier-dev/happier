@@ -11,21 +11,8 @@ export type TerminalSpawnOptions = {
 
 export type TerminalHost = 'none' | 'tmux' | 'zellij' | 'herdr';
 
-type TerminalHostSettings = Pick<Settings, 'sessionTerminalHost' | 'sessionUseTmux' | 'sessionTmuxByMachineId' | 'sessionTerminalHostByMachineId'>;
-
-export function resolveTerminalHost(params: { settings: TerminalHostSettings; machineId: string | null }): TerminalHost {
-    const { settings, machineId } = params;
-    const override = machineId ? settings.sessionTmuxByMachineId?.[machineId] : undefined;
-    // A released UI can still select tmux on this machine. Its false projection
-    // also accompanies a non-tmux choice and cannot erase the additive host.
-    if (override?.useTmux) return 'tmux';
-    const host = machineId ? settings.sessionTerminalHostByMachineId?.[machineId] : undefined;
-    if (host) return host;
-    if (override) return 'none';
-    return settings.sessionTerminalHost === 'legacy'
-        ? (settings.sessionUseTmux ? 'tmux' : 'none')
-        : settings.sessionTerminalHost ?? 'none';
-}
+import { resolveTerminalHost } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
+export { resolveTerminalHost };
 
 export function buildMachineTerminalSettingsPatch(params: {
     settings: Settings;

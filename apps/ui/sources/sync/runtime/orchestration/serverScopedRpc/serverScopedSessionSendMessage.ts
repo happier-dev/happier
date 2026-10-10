@@ -1,6 +1,7 @@
 import { readIngressComposerAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import { areServerAccountScopesEqual, createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -39,6 +40,20 @@ type ScopedSessionEncryptionLike = Readonly<{
 export type ServerScopedSessionSendMessageResult =
   | Readonly<{ ok: true; ack?: unknown }>
   | Readonly<{ ok: false; errorCode: string; error: string }>;
+
+/** One Action projection of the Session sender's transport/admission receipt. */
+export function projectServerScopedSessionSendMessageResult(
+  delivery: ServerScopedSessionSendMessageResult,
+): SessionInputAdmissionResultV1 | Extract<ServerScopedSessionSendMessageResult, { ok: false }> {
+  if (!delivery.ok) return delivery;
+  const ack = delivery.ack && typeof delivery.ack === 'object' && !Array.isArray(delivery.ack)
+    ? delivery.ack as Readonly<Record<string, unknown>> : null;
+  const localId = typeof ack?.localId === 'string' ? ack.localId.trim() : '';
+  if (!localId) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+  return ack?.accepted === true
+    ? { status: 'accepted', localId }
+    : { status: 'outcomeUnknown', localId, code: 'session_input_pending' };
+}
 
 export type ServerScopedSessionSendMessageDeps = Readonly<{
   getSession: (sessionId: string) => Session | null;

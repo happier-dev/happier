@@ -17,8 +17,8 @@ import type {
     SessionContextUsageSnapshotV1,
     SessionViewerProjectionV1,
 } from "@happier-dev/protocol";
-import { CliUpdateFactsSchema } from '@happier-dev/protocol/machines/cliUpdateFacts';
-import { WindowsRemoteSessionLaunchModeSchema } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
+import type { SessionMessageAcceptedDeliveryFactsV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
+import { StoredMachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { Metadata, AgentState } from "@happier-dev/session-core/state";
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import type { ScmOperationState as ProtocolScmOperationState } from '@happier-dev/protocol/scm';
@@ -228,6 +228,7 @@ export interface DecryptedMessage {
     seq: number | null,
     localId: string | null,
     messageRole?: SessionMessageRole | null,
+    acceptedDelivery?: SessionMessageAcceptedDeliveryFactsV1,
     content: any,
     createdAt: number,
 }
@@ -236,36 +237,16 @@ export interface DecryptedMessage {
 // Machine states
 //
 
-export const MachineMetadataSchema = z.object({
-    host: z.string(),
-    platform: z.string(),
-    happyCliVersion: z.string(),
-    happyHomeDir: z.string(), // Directory for Happier auth, settings, logs (usually .happy/ or .happy-dev/)
-    homeDir: z.string(), // User's home directory (matches CLI field name)
-    // Optional fields that may be added in future versions
-    username: z.string().optional(),
-    arch: z.string().optional(),
-    displayName: z.string().optional(), // Custom display name for the machine
-    windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
-    windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
-    daemonTerminalSessionAttachSupported: z.boolean().optional(),
-    daemonSessionGoalControlsSupported: z.boolean().optional(),
-    // Daemon status fields
-    daemonLastKnownStatus: z.enum(['running', 'shutting-down']).optional(),
-    daemonLastKnownPid: z.number().optional(),
-    shutdownRequestedAt: z.number().optional(),
-    shutdownSource: z.enum(['happy-app', 'happy-cli', 'os-signal', 'unknown']).optional(),
-    // K5 — this machine's Happier CLI update facts. Absent from daemons that predate them; a
-    // malformed value degrades to absent rather than failing the whole metadata record.
-    cliUpdate: CliUpdateFactsSchema.optional().catch(undefined),
-});
+export const MachineMetadataSchema = StoredMachinePublishedMetadataV1Schema;
 
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>;
 
 export type MachineLockedReason =
     | 'encryption_material_unavailable'
     | 'decryption_failed'
-    | 'content_unreadable';
+    | 'content_unreadable'
+    | 'recipient_key_pending'
+    | 'recipient_access_refused';
 
 export type MachineAvailability =
     | Readonly<{ kind: 'available' }>
@@ -276,6 +257,9 @@ export type MachineAvailability =
 
 export interface Machine {
     id: string;
+    access?: import('@happier-dev/protocol/machines/machineAccessV1').AccessibleMachineAccessV1;
+    /** Inventory scope derived from the authenticated requester and projected custodian. */
+    isShared?: boolean;
     kind?: import('@happier-dev/protocol').MachineKind;
     seq: number;
     createdAt: number;
@@ -289,6 +273,8 @@ export interface Machine {
     replacementSource?: string | null;
     replacementActorUserId?: string | null;
     installationId?: string | null;
+    /** Existing authenticated Machine row field, in standard base64; never an Account key. */
+    installationPublicKey?: string | null;
     contentPublicKeyFingerprint?: string | null;
     operationProtocolCapabilities?: import('@happier-dev/protocol').MachineOperationProtocolCapabilitiesV1 | null;
     operationProtocolCapabilitiesRevision?: number | null;
@@ -297,6 +283,9 @@ export interface Machine {
     daemonState: any | null;  // Dynamic daemon state (runtime info)
     daemonStateVersion: number;
     storageMode?: 'plain' | 'e2ee';
+    /** Published owner envelope identity; shared callers may receive another opening envelope. */
+    keyBasis?: import('@happier-dev/protocol/machines/machineContentKeyTransitionV1').MachineKeyBasisV1;
+    dataEncryptionKey?: string | null;
     /**
      * Persisted rows that this client cannot read remain visible and carry an
      * explicit locked state instead of looking like ordinary empty Machines.

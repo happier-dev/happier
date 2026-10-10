@@ -1,5 +1,5 @@
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
-import { stripLegacyAuthoringMemorySettingsDelta, stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
+import { stripReadOnlyAccountSettingsDelta, stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 type NormalizeForPersistedStorage = (raw: Record<string, unknown>) => {
@@ -20,7 +20,7 @@ function toSafeRawRecord(raw: Record<string, unknown> | null): Record<string, un
 }
 
 function toSafePendingRecord(pendingSettings: Partial<Settings>): Record<string, unknown> {
-    const stripped = stripLegacyAuthoringMemorySettingsDelta(stripLocalOnlyAccountSettings(pendingSettings));
+    const stripped = stripReadOnlyAccountSettingsDelta(stripLocalOnlyAccountSettings(pendingSettings));
     const next: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(stripped)) {
         if (BLOCKED_RAW_KEYS.has(key)) continue;

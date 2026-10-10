@@ -72,6 +72,25 @@ describe('pending outbox persistence', () => {
         }, scope)).rejects.toMatchObject({ code: 'session_input_idempotency_conflict' });
     });
 
+    it('preserves ordinary Machine placement through cancellation and quarantines a malformed known target', async () => {
+        const request = { v: 1 as const, body: JSON.stringify({ localId: 'ordinary-target',
+            targetMachineId: 'selected-machine', content: { t: 'plain', v: { role: 'user' } }, messageRole: 'user' }) };
+        await savePendingOutboxMessage({ sessionId: 's1', localId: 'ordinary-target', createdAt: 1,
+            text: 'ordinary input', rawRecord: { role: 'user' }, request }, scope);
+        await markPendingOutboxMessageCancelRequested('s1', 'ordinary-target', scope);
+        expect(await loadPendingOutboxForSession('s1', scope)).toEqual([
+            expect.objectContaining({ operation: 'cancel', request }),
+        ]);
+        const [key, serialized] = [...store.entries()][0]!;
+        const persisted = JSON.parse(serialized) as Record<string, Array<{ request: { body: string } }>>;
+        persisted.s1![0]!.request.body = JSON.stringify({ localId: 'ordinary-target',
+            targetMachineId: ' ', content: { t: 'plain', v: {} }, messageRole: 'user' });
+        store.set(key, JSON.stringify(persisted));
+        expect(await loadPendingOutboxForSession('s1', scope)).toEqual([
+            expect.objectContaining({ operation: 'quarantined', quarantineReason: 'invalid_persisted_envelope' }),
+        ]);
+    });
+
     it('enumerates only the session ids with durable custody in the requested server-account scope', async () => {
         const otherScope = { serverId: scope.serverId, accountId: 'account-b' } as const;
         const save = async (sessionId: string, localId: string, outboxScope: ServerAccountScope) => {

@@ -305,6 +305,7 @@ describe('warmCachePersistence at-rest encryption', () => {
         const restoredRows: ReturnType<typeof persistence.loadSessionListWarmCacheEntries>[] = [];
         const run = runAppBootSequence({
             loadFonts: async () => {},
+            prepareTranslations: async () => {},
             sodiumReady: Promise.resolve(),
             resolveCredentials: async () => credentials,
             prepareWarmCache: persistence.prepareWarmCacheStorage,

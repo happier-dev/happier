@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { applySettings, settingsParse } from './settings';
-import { readRetainedSecretBindingsByProfileId } from './secretBindings';
+import { settingsParse } from './settings';
+import { mergePendingSettingsIntoRawBaseline } from '@/sync/engine/settings/writeback/accountSettingsRawDeltaMerge';
 
 describe('AI launch profile migration safety', () => {
     it('round-trips legacy, slim, malformed, and future rows with their bindings through unrelated writes', () => {
@@ -35,7 +35,7 @@ describe('AI launch profile migration safety', () => {
             'pending-custom': { COMPANY_API_KEY: 'secret-company' },
         } as const;
 
-        const parsed = settingsParse({
+        const raw = {
             profiles: rawProfiles,
             secrets: [
                 { id: 'secret-azure', name: 'Azure', kind: 'apiKey', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'YQ' } }, createdAt: 1, updatedAt: 1 },
@@ -55,13 +55,18 @@ describe('AI launch profile migration safety', () => {
                 experimentalBindingConfirmations: [], defaultsByAgentTargetKey: {},
                 migration: { v: 1, completedSources: [], pendingCustomProfileIds: ['pending-custom'] },
             },
-        });
-        const afterUnrelatedWrite = applySettings(parsed, { useProfiles: true });
+        };
+        const parsed = settingsParse(raw);
+        const afterUnrelatedWrite = mergePendingSettingsIntoRawBaseline({ rawBaseline: raw,
+            pendingSettings: { useProfiles: true }, normalizeForPersistedStorage: value => ({ value, changed: false }),
+        }).outgoingRaw;
 
         expect(afterUnrelatedWrite.profiles).toEqual(rawProfiles);
         expect(afterUnrelatedWrite.secrets).toEqual(parsed.secrets);
         expect(afterUnrelatedWrite.secrets).toHaveLength(257);
         expect(settingsParse(JSON.parse(JSON.stringify(afterUnrelatedWrite))).secrets).toEqual(parsed.secrets);
-        expect(readRetainedSecretBindingsByProfileId(afterUnrelatedWrite)).toEqual(rawBindings);
+        expect(afterUnrelatedWrite.secretBindingsByProfileId).toEqual(rawBindings);
+        expect(parsed).not.toHaveProperty('profiles');
+        expect(parsed).not.toHaveProperty('secretBindingsByProfileId');
     });
 });

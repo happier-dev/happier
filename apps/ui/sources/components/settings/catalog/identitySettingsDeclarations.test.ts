@@ -6,7 +6,10 @@ vi.mock('react-native', async () => {
 });
 
 import { SETTINGS_PAGE_DECLARATIONS } from './settingsPageDeclarations';
-import { buildSettingHref } from './settingDeclarations';
+import { buildSettingHref, defineSettingsPage } from './settingDeclarations';
+import { SERVER_CONFIG_REGISTRY_BASE } from '@happier-dev/protocol/serverConfig/registry';
+import { HOME_SERVER_SETTINGS } from '@/components/settings/home/governance/homeServerSettings';
+import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 
 function destination(anchor: string, pathname: string, params: Record<string, string | string[]>): string | null {
     const declaration = SETTINGS_PAGE_DECLARATIONS.find((page) => Object.values(page.settings).some((setting) => setting.anchor === anchor));
@@ -17,6 +20,31 @@ function destination(anchor: string, pathname: string, params: Record<string, st
 }
 
 describe('scoped identity setting destinations', () => {
+    it('does not create an unregistered built-in metadata owner in a UI page', () => {
+        expect(() => defineSettingsPage({ pageId: 'appearance', sections: {
+            display: { settings: { undeclaredPreference: { titleKey: 'common.enabled' } } },
+        } })).toThrow('Undeclared built-in setting');
+    });
+    it('projects every built-in page row from the shared portable declaration', () => {
+        for (const page of SETTINGS_PAGE_DECLARATIONS) for (const row of Object.values(page.settings)) {
+            const portable = readBuiltInSettingDeclarationV1(row.anchor);
+            expect(portable, row.anchor).not.toBeNull();
+            expect(row.titleKey, row.anchor).toBe(portable!.titleKey);
+            expect(row.descriptionKey, row.anchor).toBe(portable!.descriptionKey);
+            expect(row.storage?.scope, row.anchor).toBe(portable!.storage?.scope);
+            expect(row.storage?.access, row.anchor).toBe(portable!.storage?.access);
+        }
+    });
+    it('keeps secret Home registry fields discoverable without advertising public values', () => {
+        const declaredSecrets = Object.entries(SERVER_CONFIG_REGISTRY_BASE)
+            .filter(([key, entry]) => entry.sensitivity === 'secret' && HOME_SERVER_SETTINGS.settings[key]);
+        expect(declaredSecrets.length).toBeGreaterThan(0);
+        for (const [key] of declaredSecrets) {
+            expect(HOME_SERVER_SETTINGS.settings[key]?.sensitive, key).toBe(true);
+        }
+        expect(HOME_SERVER_SETTINGS.settings.PORT).toBeDefined();
+        expect(HOME_SERVER_SETTINGS.settings.PORT?.sensitive).not.toBe(true);
+    });
     it('opens the exact Home OIDC editor and rejects another route or ambiguous Home', () => {
         const path = '/settings/home/home-b/sign-in-providers/identity/provider-one/edit';
         const params = { serverId: 'home-b', providerId: 'provider-one' };
@@ -35,6 +63,28 @@ describe('scoped identity setting destinations', () => {
         expect(destination('teams.oidc.issuer', path, params)).toBe(`${path}?providerId=provider-one&setting=teams.oidc.issuer`);
         expect(destination('teams.oidc.issuer', path, { ...params, teamId: 'team-two' })).toBeNull();
         expect(destination('teams.oidc.issuer', '/settings/teams', params)).toBeNull();
+    });
+
+    it('keeps Home WorkOS detail and setup on the captured Home without Team-only settings', () => {
+        const detailPath = '/settings/home/home-b/sign-in-providers/connections/connection-one';
+        const params = { serverId: 'home-b', connectionId: 'connection-one' };
+        expect(destination('homeAdministration.identityConnection.test', detailPath, params)).toBe(`${detailPath}?setting=homeAdministration.identityConnection.test`);
+        expect(destination('homeAdministration.identityConnection.test', detailPath, { ...params, serverId: 'home-a' })).toBeNull();
+        expect(destination('homeAdministration.identityConnection.test', '/settings/home/home-b', params)).toBeNull();
+        const createPath = '/settings/home/home-b/sign-in-providers/connections/new';
+        expect(destination('homeAdministration.workosSetup.companyName', createPath, { serverId: 'home-b' })).toBe(`${createPath}?setting=homeAdministration.workosSetup.companyName`);
+        expect(destination('homeAdministration.workosSetup.companyName', detailPath, params)).toBeNull();
+        const page = SETTINGS_PAGE_DECLARATIONS.find((declaration) => declaration.settings.test?.anchor === 'homeAdministration.identityConnection.test');
+        expect(Object.keys(page!.settings)).not.toContain('workosSetupDirectory');
+        expect(Object.keys(page!.settings)).not.toContain('groupMappings');
+    });
+
+    it('only finds Team WorkOS draft fields on the named WorkOS creation route', () => {
+        const path = '/settings/teams/home-b/team-one/authentication/new';
+        const params = { serverId: 'home-b', teamId: 'team-one', kind: 'workos_sso' };
+        expect(destination('teams.workosSetup.companyName', path, params)).toBe(`${path}?kind=workos_sso&setting=teams.workosSetup.companyName`);
+        expect(destination('teams.workosSetup.companyName', path, { ...params, kind: 'oidc' })).toBeNull();
+        expect(destination('teams.workosSetup.companyName', path, { ...params, teamId: 'team-two' })).toBeNull();
     });
 
     it('keeps GitHub setup distinct from OIDC and detail distinct from editing', () => {

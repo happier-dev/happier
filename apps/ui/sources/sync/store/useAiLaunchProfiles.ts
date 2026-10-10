@@ -1,10 +1,14 @@
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { projectAiLaunchProfileForLegacyUi, readUiAiLaunchProfiles } from '@/sync/domains/profiles/aiLaunchProfileCollection';
+import { projectAiLaunchProfileForLegacyUi, readUiProfileCatalogSnapshot, readUiVisibleProfileCatalogSnapshot,
+    readUiSelectedProfileCatalogProfile } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { LaunchProfileArtifactReferenceV1Schema } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
-import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { loadAccountSettings, readAccountSettingsPersistenceMutationToken,
+    subscribeAccountSettingsPersistenceMutations } from '@/sync/domains/state/accountSettingsPersistence';
+import { loadAuthoringMemoryProjection } from '@/sync/domains/state/authoringMemoryPersistence';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { useProfileCatalog } from './useProfileCatalog';
 
 /** Profile consumers subscribe only to the existing Artifact store's profile documents. */
 export function useLaunchProfileArtifacts() {
@@ -12,52 +16,57 @@ export function useLaunchProfileArtifacts() {
         .filter(([, artifact]) => artifact.header?.kind === 'launch-profile.v1'))));
 }
 
-export function useAiLaunchProfiles(raw: unknown) {
+export function useAiLaunchProfiles(_retainedSource?: unknown) {
     const scope = getStorage()(useShallow((state) => state.settingsScope));
-    return useHomeAiLaunchProfiles(raw, scope);
+    return useHomeAiLaunchProfiles(scope);
 }
 
-export function useAiLaunchProfilesForLegacyUi(raw: unknown) {
-    const profiles = useAiLaunchProfiles(raw);
+export function useAiLaunchProfilesForLegacyUi(_retainedSource?: unknown) {
+    const profiles = useAiLaunchProfiles();
     return React.useMemo(() => profiles.map(projectAiLaunchProfileForLegacyUi), [profiles]);
 }
 
 /** Background-Home readers use the same captured mode-aware store, never the focused Account's rows. */
-export function useHomeAiLaunchProfiles(raw: unknown, scope: AccountSettingsScope | null) {
-    const artifacts = useLaunchProfileArtifacts();
-    const activeScope = getStorage()(useShallow((state) => state.settingsScope));
-    const focused = scope !== null && areAccountSettingsScopesEqual(activeScope, scope);
-    const needsHydration = focused && (Array.isArray(raw) ? raw : []).some((row) => {
-        const reference = LaunchProfileArtifactReferenceV1Schema.safeParse(row);
-        if (!reference.success) return false;
-        const artifact = artifacts[reference.data.artifactId];
-        return !artifact?.isDecrypted || artifact.body === undefined;
-    });
-    const hydrationBasis = needsHydration ? artifacts : null;
-    const [background, setBackground] = React.useState<Readonly<{
-        raw: unknown; scope: AccountSettingsScope; profiles: readonly AiLaunchProfile[]; basis: typeof hydrationBasis;
-    }> | null>(null);
-    React.useEffect(() => {
-        if ((focused && !needsHydration) || !scope) return;
-        const controller = new AbortController();
-        void (async () => {
-            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-            const context = await captureLazyActionAccountContext(scope.serverId, controller.signal);
-            try {
-                if (context.accountId !== scope.accountId) throw new Error('action_account_scope_changed');
-                const profiles = await context.readLaunchProfiles(raw);
-                context.assertCurrent();
-                if (!controller.signal.aborted) setBackground({ raw, scope, profiles, basis: hydrationBasis });
-            } finally { context.dispose(); }
-        })().catch(() => { if (!controller.signal.aborted) setBackground(null); });
-        return () => controller.abort();
-    }, [focused, hydrationBasis, needsHydration, raw, scope]);
-    return React.useMemo(() => {
-        const opened = focused ? readUiAiLaunchProfiles(raw, artifacts) : [];
-        const fetched = background && background.raw === raw && background.basis === hydrationBasis
-            && areAccountSettingsScopesEqual(background.scope, scope) ? background.profiles : [];
-        if (!focused) return fetched;
-        const openedIds = new Set(opened.map((profile) => profile.artifactId).filter(Boolean));
-        return [...opened, ...fetched.filter((profile) => profile.artifactId && !openedIds.has(profile.artifactId))];
-    }, [artifacts, background, focused, hydrationBasis, raw, scope]);
+export function useHomeAiLaunchProfiles(scope: AccountSettingsScope | null) {
+    return useHomeAiLaunchProfileCatalog(scope).profiles;
+}
+
+/** The same profile projection, with its owner's coverage retained for inherited Context readers. */
+export function useHomeAiLaunchProfileCatalog(scope: AccountSettingsScope | null, selectedProfileId?: string | null): Readonly<{
+    profiles: ReturnType<typeof readUiProfileCatalogSnapshot>['profiles'];
+    selectedProfile: ReturnType<typeof readUiSelectedProfileCatalogProfile>;
+    status: 'loading' | 'ready' | 'partial' | 'unavailable';
+    /** Complete readable rows, including retained answers while their owner refreshes. */
+    hasCompleteData: boolean;
+}> {
+    const snapshot = useProfileCatalog(scope);
+    const rows = snapshot?.data;
+    const artifactsById = snapshot?.artifactsById;
+    const source = snapshot?.source;
+    const legacyProfiles = snapshot?.legacyProfiles;
+    // Management lists keep their raw-row subscription. Only an addressed selection needs preference evidence.
+    const evidenceScope = selectedProfileId ? scope : null;
+    const liveEvidence = getStorage()(useShallow(state => evidenceScope && areAccountSettingsScopesEqual(state.settingsScope, evidenceScope)
+        ? [state.settings.favoriteProfiles, state.settings.profileEnabledById, state.authoringMemory.lastUsedProfile] as const : null));
+    const subscribeEvidence = React.useCallback((listener: () => void) => evidenceScope
+        ? subscribeAccountSettingsPersistenceMutations(changed => {
+            if (areAccountSettingsScopesEqual(changed, evidenceScope)) listener();
+        }) : () => {}, [evidenceScope?.serverId, evidenceScope?.accountId]);
+    const readEvidence = React.useCallback(() => evidenceScope ? readAccountSettingsPersistenceMutationToken(evidenceScope) : null,
+        [evidenceScope?.serverId, evidenceScope?.accountId]);
+    const persistedEvidence = React.useSyncExternalStore(subscribeEvidence, readEvidence, readEvidence);
+    const projection = React.useMemo(() => readUiProfileCatalogSnapshot({ catalog: { status: 'loading' },
+        data: rows, artifactsById: artifactsById ?? new Map(), source, legacyProfiles }),
+    [rows, artifactsById, source, legacyProfiles]);
+    const profiles = projection.profiles;
+    const status = !scope ? 'unavailable' as const : snapshot?.catalog.status ?? 'loading';
+    const hasCompleteData = snapshot?.dataComplete === true && projection.unreadableCount === 0;
+    const selectedProfile = React.useMemo(() => {
+        if (!evidenceScope || !snapshot || !hasCompleteData) return null;
+        const settings = liveEvidence ? { favoriteProfiles: liveEvidence[0], profileEnabledById: liveEvidence[1] }
+            : accountSettingsParse(loadAccountSettings(evidenceScope).settings);
+        const memory = { lastUsedProfile: liveEvidence ? liveEvidence[2] : loadAuthoringMemoryProjection(evidenceScope)?.lastUsedProfile ?? null };
+        return readUiSelectedProfileCatalogProfile(readUiVisibleProfileCatalogSnapshot(snapshot, settings, memory), settings, selectedProfileId);
+    }, [snapshot, evidenceScope?.serverId, evidenceScope?.accountId, liveEvidence, persistedEvidence, hasCompleteData, selectedProfileId]);
+    return React.useMemo(() => ({ profiles, selectedProfile, status, hasCompleteData }), [profiles, selectedProfile, status, hasCompleteData]);
 }

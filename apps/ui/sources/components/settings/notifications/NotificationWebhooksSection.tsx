@@ -25,7 +25,7 @@ import { NotificationConfigurationActionInputSchemas,
     type NotificationConfigurationActionId } from '@happier-dev/protocol/actions/notificationConfigurationActionFamily';
 import type { z } from 'zod';
 
-type MutationId = Exclude<NotificationConfigurationActionId, 'notifications.webhooks.list'>;
+type MutationId = Exclude<Extract<NotificationConfigurationActionId, `notifications.webhooks.${string}` | 'notifications.expoPush.update'>, 'notifications.webhooks.list'>;
 export type NotificationConfigurationMutation = {
     [Id in MutationId]: Readonly<{ actionId: Id; input: z.input<typeof NotificationConfigurationActionInputSchemas[Id]> }>;
 }[MutationId];

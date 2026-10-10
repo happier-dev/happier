@@ -9,8 +9,10 @@ import {
     type ChangeKind,
 } from '@happier-dev/protocol/changes';
 import { AuthoringMemoryChangeHintV1Schema } from '@happier-dev/protocol/account/authoringMemory';
+import { ProjectAccountRowChangeHintV1Schema, PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1, buildProjectAccountRowPhysicalKeyV1, parseProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { SessionDraftChangeHintV1Schema, type SessionDraftChangeHintV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { SessionDraftChangeHintV2Schema, canonicalSessionDraftAddressV2, type SessionDraftAddressV2, type SessionDraftChangeHintV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 
 export type PlannedKvAction =
     | { type: 'none' }
@@ -50,6 +52,7 @@ export type ChangeCheckpointDecision =
 
 export type ChangeCheckpointBlockedReason =
     | 'unsupported-kind'
+    | 'unsupported-hint'
     | 'partial-materialization'
     | 'pending-not-converged';
 
@@ -122,7 +125,22 @@ export type PlannedChangeActions = {
     kv: PlannedKvAction;
     sessionDraftAddresses?: SessionDraftAddressV2[];
     authoringMemoryKeys?: string[];
+    projectAccountRowKeys?: string[];
 };
+
+function claimsProjectAccountRow(change: ApiChangeEntry): boolean {
+    return change.kind === 'account' && (change.entityId.startsWith(PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1)
+        || (isRecord(change.hint) && 'projectAccountRow' in change.hint));
+}
+
+export function getChangeProjectAccountRowHint(change: ApiChangeEntry) {
+    if (change.kind !== 'account') return null;
+    const key = parseProjectAccountRowPhysicalKeyV1(change.entityId);
+    if (!key) return null;
+    const parsed = ProjectAccountRowChangeHintV1Schema.safeParse(change.hint);
+    return parsed.success && buildProjectAccountRowPhysicalKeyV1(parsed.data.key) === buildProjectAccountRowPhysicalKeyV1(key)
+        ? parsed.data : null;
+}
 
 export function getChangeAuthoringMemoryHint(change: ApiChangeEntry) {
     if (change.kind !== 'account') return null;
@@ -246,6 +264,18 @@ export function classifyChangeForCheckpoint(
     }
 
     const coverage = CHANGE_CHECKPOINT_COVERAGE[kind];
+    if (kind === 'account' && isProfileCatalogAccountChangeEntityIdV1(entityId)) {
+        return { kind, cursor, entityId, decision: 'critical', plannerOwner: 'profile-catalog',
+            snapshotDomain: 'profile-catalog', materializationProof: 'profile-catalog-wake' };
+    }
+
+    if (claimsProjectAccountRow(change)) {
+        return getChangeProjectAccountRowHint(change)
+            ? { kind, cursor, entityId, decision: 'critical', plannerOwner: 'project-account-rows',
+                snapshotDomain: 'project-account-rows', materializationProof: 'project-account-rows' }
+            : { kind, cursor, entityId, decision: 'unsupported', plannerOwner: 'project-account-rows',
+                snapshotDomain: null, materializationProof: null, blockedReason: 'unsupported-hint' };
+    }
 
     if (getChangeAuthoringMemoryHint(change)) {
         return { kind, cursor, entityId, decision: 'critical', plannerOwner: 'authoring-memory',
@@ -429,6 +459,7 @@ export function planSyncActionsFromChanges(
     const kvKeys = new Set<string>();
     const sessionDraftAddresses = new Map<string, SessionDraftAddressV2>();
     const authoringMemoryKeys = new Set<string>();
+    const projectAccountRowKeys = new Set<string>();
     const workflowRunIdsToRefresh = new Set<string>();
 
     for (const change of changes) {
@@ -439,6 +470,14 @@ export function planSyncActionsFromChanges(
                 kind: String(kind),
                 entityId: String(change.entityId ?? ''),
             });
+            continue;
+        }
+
+        // Reserved row hints are admitted before any generic Account refresh privilege.
+        if (kind === 'account' && isProfileCatalogAccountChangeEntityIdV1(change.entityId)) continue;
+        if (claimsProjectAccountRow(change)) {
+            if (getChangeProjectAccountRowHint(change)) projectAccountRowKeys.add(change.entityId);
+            else unsupportedChanges.push({ cursor: String(change.cursor), kind: String(kind), entityId: change.entityId });
             continue;
         }
 
@@ -691,6 +730,7 @@ export function planSyncActionsFromChanges(
         },
         kv,
         authoringMemoryKeys: [...authoringMemoryKeys].sort(),
+        projectAccountRowKeys: [...projectAccountRowKeys].sort(),
         sessionDraftAddresses: [...sessionDraftAddresses.values()].sort((left, right) => (
             canonicalSessionDraftAddressV2(left).localeCompare(canonicalSessionDraftAddressV2(right))
         )),
@@ -713,6 +753,12 @@ export function plannedChangesAffectSessionListQuery(
     // A row-level write leaves ordinary-answerable corpora as they are, but a
     // structural selection (Team, tag, attention, scope) may be decided by that row.
     return planned.sessionRowRefreshIds.length > 0 ? 'structural' : false;
+}
+
+/** The existing focused Home fanout consumes this decision, not copied key/hint classifiers. */
+export function plannedChangesAffectProfileCatalog(planned: PlannedChangeActions): boolean {
+    return planned.invalidate.settings || planned.invalidate.artifacts || planned.invalidate.savedSecretResources
+        || planned.changes.some(change => change.kind === 'account' && isProfileCatalogAccountChangeEntityIdV1(change.entityId));
 }
 
 function plannedChangesAffectEverySessionListQuery(planned: PlannedChangeActions): boolean {

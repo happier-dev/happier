@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
         runtimeFetchWithServerReachability: vi.fn(),
         persistenceValues: new Map<string, string>(),
         persistenceSet: vi.fn(),
+        transferControl: { status: 'absent' } as unknown,
         analyticsOptIn: vi.fn(),
         analyticsOptOut: vi.fn(),
         realSettingsState: null as (() => unknown) | null,
@@ -62,15 +63,9 @@ vi.mock('@/text', async () => {
 // Language application is a presentation side effect, not the Settings storage contract.
 vi.mock('@/text/i18n', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key, translateLoose: (key: string) => key });
+    return { ...createTextModuleMock({ translate: (key: string) => key, translateLoose: (key: string) => key }),
+        areTranslationsReadyForSettings: () => true, preloadTranslationsForSettings: async () => {} };
 });
-
-// The restore owner exercises Account Settings semantics only; generated
-// Voice manifest validation has its own producer tests and build lane.
-vi.mock('@/voice/registry/generatedBundledVoiceEntries', () => ({
-    BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS: Object.freeze([]),
-    BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS: Object.freeze([]),
-}));
 
 vi.mock('@/utils/errors/errors', () => ({
     HappyError: class HappyError extends Error {
@@ -203,11 +198,12 @@ vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: mocks.getRandomBytes,
 }));
 
-import { restoreAccountSettingsFromHistorySnapshot } from './accountSettingsHistoryRestore';
+import { normalizeAccountSettingsHistoryAfterTransfer, purgeAccountSettingsHistoryVersions, restoreAccountSettingsFromHistorySnapshot } from './accountSettingsHistoryRestore';
 import { createSettingsDomain } from '@/sync/store/domains/settings';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { loadAccountSettings, saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
+import { encodeBase64 } from '@/encryption/base64';
 
 const credentials: AuthCredentials = {
     token: 'token',
@@ -260,9 +256,12 @@ describe('classification-aware account settings history restore', () => {
         invalidateAccountEncryptionModeCache();
         mocks.serverFetch.mockReset();
         mocks.createServerFetchAtEndpoint.mockReset();
-        mocks.createServerFetchAtEndpoint.mockImplementation(() => async (path: string, init?: RequestInit) => (
-            await mocks.serverFetch(path, init)
-        ));
+        mocks.transferControl = { status: 'absent' };
+        mocks.createServerFetchAtEndpoint.mockImplementation(() => async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/entity-rows/profiles/transfer') return jsonResponse(mocks.transferControl);
+            if (path === '/v1/account/entity-rows/prompt-library') return jsonResponse({}, 404);
+            return await mocks.serverFetch(path, init);
+        });
         mocks.activeLifetime.scope = SETTINGS_SCOPE;
         mocks.activeLifetime.current = true;
         mocks.activeLifetime.retireCallback = null;
@@ -281,6 +280,196 @@ describe('classification-aware account settings history restore', () => {
         mocks.storageState.applySettings.mockClear();
         mocks.storageState.applySettingsForScope.mockClear();
         mocks.storageState.applySettingsLocal.mockClear();
+    });
+
+    it('normalizes transferred history roots without altering retained preferences or future fields', async () => {
+        mocks.transferControl = { status: 'present', revision: 2, content: { t: 'plain', v: {
+            v: 1, phase: 'active', sourceSettingsVersion: 6, migratedLogicalRevision: 1, inventory: [],
+        } } };
+        const historical = { t: 'plain', v: { profiles: [{ id: 'old' }], preferredLanguage: 'de', futureSetting: { keep: true } } };
+        mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'plain', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+            if (path === '/v2/account/settings/history') return jsonResponse({ snapshots: [{ version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 100 }] });
+            if (path === '/v2/account/settings/history/6') return jsonResponse({ content: historical, version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z' });
+            if (path === '/v2/account/settings/history/6/mutate' && init?.method === 'POST') return jsonResponse({ status: 'applied' });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        await expect(normalizeAccountSettingsHistoryAfterTransfer({ credentials, encryption: null, settingsScope: SETTINGS_SCOPE,
+            destinationAuthority: { activeTransferredRoots: ['profiles'] } })).resolves.toEqual({ status: 'complete' });
+        const post = mocks.serverFetch.mock.calls.find(([path]) => path === '/v2/account/settings/history/6/mutate');
+        expect(JSON.parse(String(post?.[1]?.body))).toEqual({ expectedSettingsVersion: 7,
+            expectedProfileTransferRevision: 2,
+            expectedEncryptionCurrentness: { mode: 'plain', signingKeyFingerprint: null, contentKeyFingerprint: null },
+            expectedContent: historical, operation: { kind: 'normalize', removedRoots: ['profiles', 'secretBindingsByProfileId'],
+                transferredProfileIds: [],
+                content: { t: 'plain', v: { preferredLanguage: 'de', futureSetting: { keep: true } } } } });
+    });
+
+    it('purges only the explicitly addressed version without opening unreadable history', async () => {
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'plain', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+            if (path === '/v2/account/settings/history/6/mutate') return jsonResponse({ status: 'applied' });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        expect(await purgeAccountSettingsHistoryVersions({ credentials, settingsScope: SETTINGS_SCOPE, versions: [6] }))
+            .toEqual({ status: 'complete' });
+        const post = mocks.serverFetch.mock.calls.find(([path]) => path === '/v2/account/settings/history/6/mutate');
+        expect(JSON.parse(String(post?.[1]?.body))).toEqual({ expectedSettingsVersion: 7, expectedProfileTransferRevision: 'absent',
+            expectedEncryptionCurrentness: { mode: 'plain', signingKeyFingerprint: null, contentKeyFingerprint: null },
+            operation: { kind: 'purge' } });
+    });
+
+    it('leaves the inventoried versions pending when the source-cleanup control changed before history normalization', async () => {
+        mocks.transferControl = { status: 'present', revision: 2, content: { t: 'plain', v: {
+            v: 1, phase: 'active', sourceSettingsVersion: 6, migratedLogicalRevision: 1, inventory: [],
+        } } };
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'plain', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+            if (path === '/v2/account/settings/history') return jsonResponse({ snapshots: [{ version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 100 }] });
+            if (path === '/v2/account/settings/history/6') return jsonResponse({ content: { t: 'plain', v: { profiles: [{ id: 'old' }] } },
+                version: 6, createdAt: '2026-01-01T00:00:00.000Z' });
+            if (path === '/v2/account/settings/history/6/mutate') return jsonResponse({ status: 'applied' });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        const params = { credentials, encryption: null, settingsScope: SETTINGS_SCOPE,
+            destinationAuthority: { activeTransferredRoots: ['profiles'] }, expectedProfileTransferRevision: 1 };
+        expect(await normalizeAccountSettingsHistoryAfterTransfer(params)).toEqual({ status: 'cleanup-pending', versions: [6] });
+        expect(mocks.serverFetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    });
+
+    it('leaves an unopenable exact encrypted version cleanup-pending without purging history', async () => {
+        mocks.transferControl = { status: 'present', revision: 2, content: { t: 'plain', v: {
+            v: 1, phase: 'active', sourceSettingsVersion: 6, migratedLogicalRevision: 1, inventory: [],
+        } } };
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'plain', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+            if (path === '/v2/account/settings/history') return jsonResponse({ snapshots: [{ version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'encrypted', byteLength: 100 }] });
+            if (path === '/v2/account/settings/history/6') return jsonResponse({ content: { t: 'encrypted', c: 'locked' }, version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z' });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        await expect(normalizeAccountSettingsHistoryAfterTransfer({ credentials, encryption: null, settingsScope: SETTINGS_SCOPE,
+            destinationAuthority: { activeTransferredRoots: ['profiles'] } })).resolves.toEqual({ status: 'cleanup-pending', versions: [6] });
+        expect(mocks.serverFetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    });
+
+    it('keeps an unknown credential entry byte-for-byte and reports its exact version pending after partial cleanup', async () => {
+        const migrated = { id: 'migrated', name: 'Old', kind: 'apiKey', encryptedValue: { _isSecretValue: true, value: 'old-fixture' }, createdAt: 1, updatedAt: 1 };
+        const unknown = { ...migrated, future: true };
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'plain', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+            if (path === '/v2/account/settings/history') return jsonResponse({ snapshots: [{ version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 100 }] });
+            if (path === '/v2/account/settings/history/6') return jsonResponse({ content: { t: 'plain', v: { secrets: [migrated, unknown] } },
+                version: 6, createdAt: '2026-01-01T00:00:00.000Z' });
+            if (path === '/v2/account/settings/history/6/mutate') return jsonResponse({ status: 'applied' });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        expect(await normalizeAccountSettingsHistoryAfterTransfer({ credentials, encryption: null, settingsScope: SETTINGS_SCOPE,
+            destinationAuthority: { activeTransferredRoots: [], savedSecretTransfers: [{ savedSecretId: 'migrated', resourceId: 'resource', expectedRevision: 1 }] } }))
+            .toEqual({ status: 'cleanup-pending', versions: [6] });
+        const post = mocks.serverFetch.mock.calls.find(([path]) => path === '/v2/account/settings/history/6/mutate');
+        expect(JSON.parse(String(post?.[1]?.body)).operation.content).toEqual({ t: 'plain', v: { secrets: [unknown] } });
+    });
+
+    it('reseals a readable recorded encrypted snapshot even after the Account became plain', async () => {
+        mocks.transferControl = { status: 'present', revision: 2, content: { t: 'plain', v: {
+            v: 1, phase: 'active', sourceSettingsVersion: 6, migratedLogicalRevision: 1, inventory: [],
+        } } };
+        const material = { type: 'dataKey' as const, machineKey: TEST_MACHINE_KEY };
+        const recorded = { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material,
+            payload: { profiles: [{ id: 'old' }], futureSetting: { keep: true } }, randomBytes: mocks.getRandomBytes }) };
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'plain', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+            if (path === '/v2/account/settings/history') return jsonResponse({ snapshots: [{ version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'encrypted', byteLength: 100 }] });
+            if (path === '/v2/account/settings/history/6') return jsonResponse({ content: recorded, version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z' });
+            if (path === '/v2/account/settings/history/6/mutate') return jsonResponse({ status: 'applied' });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        expect(await normalizeAccountSettingsHistoryAfterTransfer({ credentials, encryption: ENCRYPTION_STUB,
+            settingsScope: SETTINGS_SCOPE, destinationAuthority: { activeTransferredRoots: ['profiles'] } })).toEqual({ status: 'complete' });
+        const post = mocks.serverFetch.mock.calls.find(([path]) => path === '/v2/account/settings/history/6/mutate');
+        const body = JSON.parse(String(post?.[1]?.body));
+        expect(body.operation.content.t).toBe('encrypted');
+        expect(body.expectedContent).toEqual(recorded);
+        expect(openAccountScopedBlobCiphertext({ kind: 'account_settings', material, ciphertext: body.operation.content.c })?.value)
+            .toEqual({ futureSetting: { keep: true } });
+    });
+
+    it('reports a concurrently retained new version cleanup-pending without sweeping it', async () => {
+        let listReads = 0;
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'plain', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+            if (path === '/v2/account/settings/history') return jsonResponse({ snapshots: (++listReads === 1 ? [6] : [6, 7]).map(version => ({
+                version, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 10,
+            })) });
+            if (path === '/v2/account/settings/history/6') return jsonResponse({ content: { t: 'plain', v: { preferredLanguage: 'de' } },
+                version: 6, createdAt: '2026-01-01T00:00:00.000Z' });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        expect(await normalizeAccountSettingsHistoryAfterTransfer({ credentials, encryption: null,
+            settingsScope: SETTINGS_SCOPE, destinationAuthority: { activeTransferredRoots: [] } }))
+            .toEqual({ status: 'cleanup-pending', versions: [7] });
+        expect(mocks.serverFetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    });
+
+    it('normalizes recorded Plain Profile residue with an exact inherited identity from the client-opened current E2EE control', async () => {
+        const inheritedProfileId = `  retained-${'x'.repeat(260)}  `;
+        const encryptedCredentials: AuthCredentials = { token: credentials.token,
+            encryption: { publicKey: 'public', machineKey: encodeBase64(TEST_MACHINE_KEY) } };
+        await TokenStorage.setCredentialsForServerUrl('http://127.0.0.1:3009', { serverId: 'server-a' }, encryptedCredentials);
+        mocks.transferControl = { status: 'present', revision: 2, content: { t: 'encrypted',
+            c: sealAccountScopedBlobCiphertext({ kind: 'account_profile_transfer', material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+                payload: { v: 1, phase: 'active', sourceSettingsVersion: 6, migratedLogicalRevision: 1,
+                    inventory: [{ kind: 'account_row', id: inheritedProfileId, revision: 1 }] }, randomBytes: mocks.getRandomBytes }) } };
+        const recorded = { t: 'plain', v: { profiles: [{ id: inheritedProfileId }], profileEnabledById: { [inheritedProfileId]: false, anthropic: true },
+            promptStacksV1: { v: 1, surfaces: { profilesById: { [inheritedProfileId]: {} }, other: { keep: true } } } } };
+        mocks.serverFetch.mockImplementation(async (path: string) => {
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'e2ee', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: 'signing-key', contentKeyFingerprint: 'content-key', updatedAt: 1 });
+            if (path === '/v2/account/settings/history') return jsonResponse({ snapshots: [{ version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 100 }] });
+            if (path === '/v2/account/settings/history/6') return jsonResponse({ content: recorded, version: 6,
+                createdAt: '2026-01-01T00:00:00.000Z' });
+            if (path === '/v2/account/settings/history/6/mutate') return jsonResponse({ status: 'applied' });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        expect(await normalizeAccountSettingsHistoryAfterTransfer({ credentials: encryptedCredentials, encryption: ENCRYPTION_STUB,
+            settingsScope: SETTINGS_SCOPE, destinationAuthority: { activeTransferredRoots: ['profiles'] } })).toEqual({ status: 'complete' });
+        const post = mocks.serverFetch.mock.calls.find(([path]) => path === '/v2/account/settings/history/6/mutate');
+        expect(JSON.parse(String(post?.[1]?.body)).operation).toEqual({ kind: 'normalize',
+            removedRoots: ['profiles', 'secretBindingsByProfileId'], transferredProfileIds: [inheritedProfileId], content: { t: 'plain', v: {
+                profileEnabledById: { anthropic: true }, promptStacksV1: { v: 1, surfaces: { other: { keep: true } } },
+            } } });
+    });
+
+    it('refuses a restore whose captured transfer revision moved without replaying the old roots', async () => {
+        mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/encryption') return jsonResponse({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v2/account/settings/history/3') return jsonResponse({ content: { t: 'plain', v: HISTORY_SNAPSHOT },
+                version: 3, createdAt: '2026-01-01T00:00:00.000Z' });
+            if (path === '/v2/account/settings' && init?.method === 'POST') return jsonResponse({
+                success: false, error: 'profile-transfer-mismatch', currentProfileTransferRevision: 2,
+            });
+            if (path === '/v2/account/settings') return jsonResponse({ content: { t: 'plain', v: LATEST_BASELINE }, version: 7 });
+            throw new Error(`Unexpected request ${path}`);
+        });
+        expect(await restoreAccountSettingsFromHistorySnapshot({ credentials, encryption: null, settingsScope: SETTINGS_SCOPE,
+            historyVersion: 3, expectedSettingsVersion: 7 })).toEqual({ status: 'conflict', currentSettingsVersion: 7 });
+        expect(mocks.serverFetch.mock.calls.filter(([path, init]) => path === '/v2/account/settings' && init?.method === 'POST')).toHaveLength(1);
     });
 
     it('merges the recorded snapshot into the latest baseline under current classification and CASes it in plain mode', async () => {
@@ -320,7 +509,7 @@ describe('classification-aware account settings history restore', () => {
             content: { t: string; v: unknown };
             expectedVersion: number;
         };
-        expect(body).toEqual({ content: { t: 'plain', v: MERGED_BASELINE }, expectedVersion: 7 });
+        expect(body).toEqual({ content: { t: 'plain', v: MERGED_BASELINE }, expectedVersion: 7, expectedProfileTransferRevision: 'absent' });
         expect(mocks.storageState.applySettingsForScope).toHaveBeenCalledWith(
             SETTINGS_SCOPE,
             expect.objectContaining({
@@ -329,6 +518,32 @@ describe('classification-aware account settings history restore', () => {
             }),
             8,
         );
+    });
+
+    it('passes destination authority into restore so a latest source cannot be reseeded', async () => {
+        mocks.transferControl = { status: 'present', revision: 2, content: { t: 'plain', v: {
+            v: 1, phase: 'active', sourceSettingsVersion: 6, migratedLogicalRevision: 1, inventory: [],
+        } } };
+        mocks.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/encryption') return jsonResponse({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({ mode: 'plain', version: 2, settingsVersion: 7,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+            if (path === '/v2/account/settings' && init?.method === 'POST') return jsonResponse({ success: true, version: 8 });
+            if (path === '/v2/account/settings') return jsonResponse({ content: { t: 'plain', v: LATEST_BASELINE }, version: 7 });
+            if (path === '/v2/account/settings/history/3') return jsonResponse({
+                content: { t: 'plain', v: HISTORY_SNAPSHOT }, version: 3, createdAt: '2026-01-01T00:00:00.000Z',
+            });
+            throw new Error(`Unexpected request: ${path}`);
+        });
+        await restoreAccountSettingsFromHistorySnapshot({
+            credentials, encryption: null, settingsScope: SETTINGS_SCOPE,
+            historyVersion: 3, expectedSettingsVersion: 7,
+            destinationAuthority: { activeTransferredRoots: ['profiles'] },
+        });
+        const post = mocks.serverFetch.mock.calls.find(([path, init]) => path === '/v2/account/settings' && init?.method === 'POST');
+        expect(JSON.parse(String(post?.[1]?.body)).content.v).toEqual({
+            sessionTmuxSessionName: 'old-name', preferredLanguage: 'de', schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
+        });
     });
 
     it('skips the ordinary CAS write when the classification merge is unchanged', async () => {

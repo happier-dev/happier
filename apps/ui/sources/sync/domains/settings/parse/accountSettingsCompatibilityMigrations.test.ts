@@ -1,14 +1,119 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 
 import { applyAccountSettingsCompatibilityMigrations } from './accountSettingsCompatibilityMigrations';
 
 describe('applyAccountSettingsCompatibilityMigrations', () => {
+    it('avoids absent legacy boolean validation during sparse Account refreshes while retaining malformed-present validation', () => {
+        const sparseSettings = accountSettingsParse({});
+        // Instrument Zod's external error callback; the Settings owner and validators stay real.
+        const originalCustomError = z.config().customError;
+        let absentBooleanIssues = 0;
+        const malformedInputs = {
+            compactSessionView: 'invalid-compact',
+            compactSessionViewMinimal: 'invalid-minimal',
+            usePickerSearch: 'invalid-picker',
+            transcriptMessageTimestampsEnabled: 'invalid-timestamps',
+        };
+        const malformedBooleanInputs = new Set<unknown>();
+        z.config({ customError: (issue) => {
+            if (issue.code === 'invalid_type' && issue.expected === 'boolean') {
+                if (issue.input === undefined) absentBooleanIssues += 1;
+                malformedBooleanInputs.add(issue.input);
+            }
+            return originalCustomError?.(issue);
+        } });
+        try {
+            for (let refresh = 0; refresh < 100; refresh += 1) {
+                expect(applyAccountSettingsCompatibilityMigrations({
+                    input: {},
+                    settings: sparseSettings,
+                    inputSchemaVersion: sparseSettings.schemaVersion,
+                    supportedSchemaVersion: sparseSettings.schemaVersion,
+                })).toMatchObject({
+                    sessionListDensity: settingsDefaults.sessionListDensity,
+                    useMachinePickerSearch: settingsDefaults.useMachinePickerSearch,
+                    usePathPickerSearch: settingsDefaults.usePathPickerSearch,
+                    transcriptMessageTimestampDisplayMode: settingsDefaults.transcriptMessageTimestampDisplayMode,
+                });
+            }
+            expect(absentBooleanIssues).toBe(0);
+
+            expect(settingsParse(malformedInputs)).toMatchObject({
+                sessionListDensity: settingsDefaults.sessionListDensity,
+                useMachinePickerSearch: settingsDefaults.useMachinePickerSearch,
+                usePathPickerSearch: settingsDefaults.usePathPickerSearch,
+                transcriptMessageTimestampDisplayMode: settingsDefaults.transcriptMessageTimestampDisplayMode,
+            });
+            for (const malformed of Object.values(malformedInputs)) {
+                expect(malformedBooleanInputs.has(malformed)).toBe(true);
+            }
+            applyAccountSettingsCompatibilityMigrations({
+                input: { compactSessionViewMinimal: 'invalid-minimal-only' },
+                settings: sparseSettings,
+                inputSchemaVersion: sparseSettings.schemaVersion,
+                supportedSchemaVersion: sparseSettings.schemaVersion,
+            });
+            expect(malformedBooleanInputs.has('invalid-minimal-only')).toBe(true);
+            const issuesBeforePresentUndefined = absentBooleanIssues;
+            applyAccountSettingsCompatibilityMigrations({
+                input: {
+                    compactSessionView: undefined,
+                    compactSessionViewMinimal: undefined,
+                    usePickerSearch: undefined,
+                    transcriptMessageTimestampsEnabled: undefined,
+                },
+                settings: sparseSettings,
+                inputSchemaVersion: sparseSettings.schemaVersion,
+                supportedSchemaVersion: sparseSettings.schemaVersion,
+            });
+            expect(absentBooleanIssues - issuesBeforePresentUndefined).toBe(4);
+        } finally {
+            z.config({ customError: originalCustomError });
+        }
+    });
+
+    it('preserves false, compact/minimal precedence and current preferences for legacy boolean inputs', () => {
+        expect(settingsParse({
+            compactSessionView: false,
+            compactSessionViewMinimal: true,
+            usePickerSearch: false,
+            transcriptMessageTimestampsEnabled: false,
+        })).toMatchObject({
+            sessionListDensity: 'detailed',
+            useMachinePickerSearch: false,
+            usePathPickerSearch: false,
+            transcriptMessageTimestampDisplayMode: settingsDefaults.transcriptMessageTimestampDisplayMode,
+        });
+        expect(settingsParse({ compactSessionView: true })).toMatchObject({ sessionListDensity: 'cozy' });
+        expect(settingsParse({ compactSessionView: true, compactSessionViewMinimal: 'invalid' }))
+            .toMatchObject({ sessionListDensity: 'cozy' });
+        expect(settingsParse({ compactSessionViewMinimal: true }))
+            .toMatchObject({ sessionListDensity: settingsDefaults.sessionListDensity });
+        expect(settingsParse({
+            sessionListDensity: 'detailed',
+            compactSessionView: true,
+            compactSessionViewMinimal: true,
+            useMachinePickerSearch: false,
+            usePickerSearch: true,
+            transcriptMessageTimestampDisplayMode: 'never',
+            transcriptMessageTimestampsEnabled: true,
+        })).toMatchObject({
+            sessionListDensity: 'detailed',
+            useMachinePickerSearch: false,
+            usePathPickerSearch: settingsDefaults.usePathPickerSearch,
+            transcriptMessageTimestampDisplayMode: 'never',
+        });
+        expect(settingsParse({ transcriptMessageTimestampDisplayMode: 'invalid', transcriptMessageTimestampsEnabled: true }))
+            .toMatchObject({ transcriptMessageTimestampDisplayMode: settingsDefaults.transcriptMessageTimestampDisplayMode });
+    });
+
     it('migrates legacy language, picker search, compact view, and feature toggle compatibility in one pass', () => {
         const legacyFeatureToggles: Record<string, boolean> = {
             'inbox.friends': true,
@@ -34,14 +139,28 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
 
         expect(migrated.preferredLanguage).toBe('zh-Hans');
         expect(migrated.sessionListDensity).toBe('narrow');
-        expect(migrated.compactSessionView).toBe(true);
-        expect(migrated.compactSessionViewMinimal).toBe(true);
+        expect(migrated).not.toHaveProperty('compactSessionView');
+        expect(migrated).not.toHaveProperty('compactSessionViewMinimal');
         expect(migrated.useMachinePickerSearch).toBe(true);
         expect(migrated.usePathPickerSearch).toBe(true);
         expect(migrated.featureToggles?.['inbox.friends']).toBeUndefined();
         expect(migrated.featureToggles?.['social.friends']).toBe(true);
         expect(migrated.featureToggles?.['files.editor']).toBeUndefined();
         expect(migrated.schemaVersion).toBe(7);
+    });
+
+    it('reads the 0.2 compact and picker aliases without overriding explicit current preferences', () => {
+        // 0.2 account display registry: the two compact booleans and usePickerSearch.
+        const predecessor = { compactSessionView: true, compactSessionViewMinimal: false, usePickerSearch: true };
+        const migrated = applyAccountSettingsCompatibilityMigrations({ input: predecessor,
+            settings: accountSettingsParse(predecessor), inputSchemaVersion: 8, supportedSchemaVersion: 8 });
+        expect(migrated).toMatchObject({ sessionListDensity: 'cozy', useMachinePickerSearch: true, usePathPickerSearch: true });
+        expect(migrated).not.toHaveProperty('compactSessionView');
+        expect(migrated).not.toHaveProperty('compactSessionViewMinimal');
+        const input = { ...predecessor, sessionListDensity: 'detailed', useMachinePickerSearch: false, usePathPickerSearch: false };
+        const current = applyAccountSettingsCompatibilityMigrations({ input,
+            settings: accountSettingsParse(input), inputSchemaVersion: 8, supportedSchemaVersion: 8 });
+        expect(current).toMatchObject({ sessionListDensity: 'detailed', useMachinePickerSearch: false, usePathPickerSearch: false });
     });
 
     it('carries the legacy tab-bar blur preference into the generalized glass surface keys', () => {

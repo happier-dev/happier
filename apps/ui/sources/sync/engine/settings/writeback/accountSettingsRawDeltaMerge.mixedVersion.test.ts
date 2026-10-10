@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeCurrentSecretBindingsIntoRawBindings } from '@/sync/domains/settings/secretBindings';
 import { mergePendingSettingsIntoRawBaseline } from './accountSettingsRawDeltaMerge';
 
 describe('account settings raw delta merge mixed-version preservation', () => {
+    it('refuses recovered pending entity and retired-alias writers while preserving original raw sources', () => {
+        const rawBaseline = { profiles: [{ id: 'original' }], secretBindingsByProfileId: { original: { TOKEN: 'source' } },
+            inferenceOpenAIKey: 'untransferred-source', remoteHostsV1: [{ id: 'original-host' }] };
+        const merged = mergePendingSettingsIntoRawBaseline({ rawBaseline,
+            // JSON ingress represents recovered state or a JavaScript caller, not a typed editor.
+            pendingSettings: JSON.parse(JSON.stringify({ profiles: [], secretBindingsByProfileId: {},
+                promptStacksV1: {}, rolesV1: {}, promptFoldersV1: {}, promptInvocationsV1: {},
+                promptExternalLinksV1: {}, promptRegistrySourcesV1: {}, contextSelectionsV1: {},
+                executionRunsGuidanceEntries: [], remoteHostsV1: [], notificationChannelsV1: [],
+                connectedServicesProfileLabelByKey: {}, connectedServicesCollapsedItemKeysV1: [],
+                connectedServicesDefaultAuthPoolAdoptionDismissedByKey: {}, dismissedCLIWarnings: [],
+                compactSessionView: false, usePickerSearch: false, inferenceOpenAIKey: 'replacement', showLineNumbers: false })),
+            normalizeForPersistedStorage: raw => ({ value: raw, changed: false }),
+        });
+        expect(merged.pendingRaw).toEqual({ showLineNumbers: false });
+        expect(merged.outgoingRaw).toEqual({ ...rawBaseline, showLineNumbers: false });
+    });
     it('does not materialize the Happier run instructions default when the raw key is absent', () => {
         const merged = mergePendingSettingsIntoRawBaseline({
             rawBaseline: { schemaVersion: 7 },
@@ -120,40 +136,24 @@ describe('account settings raw delta merge mixed-version preservation', () => {
             .toBe(connectedAccountPurposeBindingsV1);
     });
 
-    it('writes the retained secret-binding carrier without leaking its derived runtime projection', () => {
+    it('preserves the original retained secret-binding carrier without leaking its derived runtime projection', () => {
         const opaqueCarrier = {
             OPENAI_API_KEY: 'secret-opaque',
             futureBindingRevision: 2,
         };
-        const secretBindingsByProfileId = mergeCurrentSecretBindingsIntoRawBindings({
-            rawBindings: {
-                'opaque-profile': opaqueCarrier,
-                'current-profile': { OPENAI_API_KEY: 'secret-current' },
-            },
-            currentBindings: {
-                'current-profile': { OPENAI_API_KEY: 'secret-current' },
-            },
-            nextBindings: {
-                'current-profile': { OPENAI_API_KEY: 'secret-current' },
-            },
-        });
+        const secretBindingsByProfileId = { 'opaque-profile': opaqueCarrier,
+            'current-profile': { OPENAI_API_KEY: 'secret-current' } };
         const merged = mergePendingSettingsIntoRawBaseline({
-            rawBaseline: { schemaVersion: 7 },
+            rawBaseline: { schemaVersion: 7, secretBindingsByProfileId },
             pendingSettings: JSON.parse(JSON.stringify({
                 currentSecretBindingsByProfileId: {
                     'current-profile': { OPENAI_API_KEY: 'secret-current' },
                 },
-                secretBindingsByProfileId,
             })),
             normalizeForPersistedStorage: (raw) => ({ value: raw, changed: false }),
         });
 
-        expect(merged.pendingRaw).toEqual({
-            secretBindingsByProfileId: {
-                'opaque-profile': opaqueCarrier,
-                'current-profile': { OPENAI_API_KEY: 'secret-current' },
-            },
-        });
+        expect(merged.pendingRaw).toEqual({});
         expect(merged.outgoingRaw).toEqual({
             schemaVersion: 7,
             secretBindingsByProfileId: {

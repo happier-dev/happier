@@ -3,11 +3,15 @@ import * as React from 'react';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
+import { router } from 'expo-router';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 import { useTauriNotificationPermissionDiagnostics } from './useTauriNotificationPermissionDiagnostics';
 
 export function NotificationDesktopPermissionSection(): React.ReactElement {
     const permission = useTauriNotificationPermissionDiagnostics(true);
+    const scope = useActiveServerAccountScope();
 
     const permissionSubtitle = React.useMemo(() => {
         switch (permission.status) {
@@ -28,6 +32,8 @@ export function NotificationDesktopPermissionSection(): React.ReactElement {
             title={t('settingsNotifications.desktop.title')}
             description={t('settingsNotifications.desktop.footer')}
         >
+            {permission.approval.approvalPending && permission.approval.approvalId && scope ? <ActionApprovalPendingNotice
+                message={t('approvals.title')} onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(permission.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
             <Item
                 testID="settings-notifications-desktop-permission"
                 title={t('settingsNotifications.desktop.permission.title')}

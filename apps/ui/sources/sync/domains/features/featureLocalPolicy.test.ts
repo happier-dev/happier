@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveLocalFeaturePolicyEnabled } from './featureLocalPolicy';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { resolveLocalFeaturePolicyEnabled, type FeatureLocalPolicySettings } from './featureLocalPolicy';
 import type { FeatureId } from '@happier-dev/protocol';
+
+const settingsDefaults = { experiments: false, featureToggles: {} } satisfies FeatureLocalPolicySettings;
 
 describe('featureLocalPolicy', () => {
     it('keeps the paused onboarding tour disabled even when the legacy rollout env is enabled', () => {
@@ -75,11 +76,29 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
     });
 
-    it('disables memory.search by default when experiments are on', () => {
+    it('enables keyless memory.search by default independently of experiments', () => {
         expect(resolveLocalFeaturePolicyEnabled('memory.search', {
             ...settingsDefaults,
             experiments: true,
             featureToggles: {},
+        })).toBe(true);
+        expect(resolveLocalFeaturePolicyEnabled('memory.search', {
+            ...settingsDefaults,
+            experiments: false,
+            featureToggles: {},
+        })).toBe(true);
+    });
+
+    it('respects an explicit memory.search opt-out without requiring experiments', () => {
+        expect(resolveLocalFeaturePolicyEnabled('memory.search', {
+            ...settingsDefaults,
+            experiments: true,
+            featureToggles: { 'memory.search': false },
+        })).toBe(false);
+        expect(resolveLocalFeaturePolicyEnabled('memory.search', {
+            ...settingsDefaults,
+            experiments: false,
+            featureToggles: { 'memory.search': false },
         })).toBe(false);
     });
 

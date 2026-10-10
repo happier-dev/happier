@@ -45,9 +45,14 @@ describe('machineRpcWithServerScope signal', () => {
         serverId = profile.id;
         boundary = createSocketIoBoundaryStub();
         ioSpy.mockReturnValue(boundary.socket);
-        runtimeFetchSpy.mockImplementation(async () => new Response(JSON.stringify({
-            machine: { id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        runtimeFetchSpy.mockImplementation(async (input: unknown) => {
+            if (new URL(String(input)).pathname === '/v1/account/encryption') {
+                return Response.json({ mode: 'plain', updatedAt: 1 });
+            }
+            return Response.json({
+                machine: { id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER },
+            });
+        });
     });
 
     afterEach(async () => {

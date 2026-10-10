@@ -7,4 +7,6 @@ export {
     resolveUiFeatureToggleServerVisibilityScope,
     resolveUiFeatureToggleEnabled,
     buildUiFeatureToggleDefaults,
+    buildUiFeatureToggleChange,
+    buildUiFeatureExperimentsChange,
 } from './registry/uiFeatureToggles';

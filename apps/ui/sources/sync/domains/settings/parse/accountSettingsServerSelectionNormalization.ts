@@ -10,6 +10,8 @@ type MutableServerSelectionSettingsLike = {
 export function normalizeAccountSettingsServerSelection<
     TSettings extends Record<string, unknown> & ServerSelectionSettingsLike,
 >(settings: TSettings): TSettings {
+    if (!Object.hasOwn(settings, 'serverSelectionActiveTargetKind')
+        && !Object.hasOwn(settings, 'serverSelectionActiveTargetId')) return settings;
     const next: Record<string, unknown> & MutableServerSelectionSettingsLike = { ...settings };
     const kind = next.serverSelectionActiveTargetKind;
     const id = next.serverSelectionActiveTargetId;

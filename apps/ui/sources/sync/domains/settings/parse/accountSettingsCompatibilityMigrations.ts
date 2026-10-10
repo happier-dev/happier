@@ -1,4 +1,7 @@
-import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
+import {
+    classifyLegacyVoiceCredentialCandidateV1,
+    listLegacyVoiceCredentialMigrationCandidatesV1,
+} from '@happier-dev/protocol/voice/realtime/providerSettings';
 import { SessionTmuxMachineOverrideSchema, TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES } from '@happier-dev/protocol/account/settings/accountSettings';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { z } from 'zod';
@@ -15,6 +18,7 @@ import { PredecessorVoiceCredentialBindingV1Schema } from '../voiceCredentialBin
 import { VOICE_LEGACY_CREDENTIAL_RECOVERY_MARKER } from '../voiceSettings';
 import { migrateAccountFeatureToggles } from './accountSettingsFeatureToggleMigration';
 import { normalizeAccountSettingsServerSelection } from './accountSettingsServerSelectionNormalization';
+import { areAccountSettingsJsonValuesEqual } from '../accountSettingsStructuralEquality';
 
 function ownRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -41,16 +45,6 @@ function canonicalizeBackendTargetKeyedSettings(value: unknown): Record<string, 
     // Prefer an explicitly persisted canonical entry when both it and an older
     // spelling address the same Agent.
     return Object.fromEntries([...aliases, ...canonical]);
-}
-
-function readPath(root: unknown, path: readonly string[]): unknown {
-    let current: unknown = root;
-    for (const segment of path) {
-        const record = ownRecord(current);
-        if (!record || !Object.prototype.hasOwnProperty.call(record, segment)) return undefined;
-        current = record[segment];
-    }
-    return current;
 }
 
 function writePath(root: Record<string, unknown>, path: readonly string[], value: unknown): void {
@@ -82,26 +76,7 @@ function migrateLegacyVoiceSavedSecrets(input: Record<string, unknown>, next: Re
     const adapters = ownRecord(rawVoice.adapters);
     if (!adapters) return;
 
-    const selectedSpeechAdapter = rawVoice.providerId === 'local_direct'
-        || rawVoice.providerId === 'local_conversation'
-        ? rawVoice.providerId
-        : null;
-    const speechAdapterIds = selectedSpeechAdapter === null
-        ? ['local_direct', 'local_conversation'] as const
-        : [
-            selectedSpeechAdapter,
-            selectedSpeechAdapter === 'local_direct' ? 'local_conversation' : 'local_direct',
-        ] as const;
-    const candidates = [
-        { providerId: 'realtime_elevenlabs', slotId: 'api_key', path: ['realtime_elevenlabs', 'byo', 'apiKey'], canonicalPath: ['providers', 'happier.voice.elevenlabs/realtime-elevenlabs', 'config', 'byo', 'apiKey'] },
-        { providerId: 'google_gemini', slotId: 'api_key', path: ['local_direct', 'stt', 'googleGemini', 'apiKey'] },
-        { providerId: 'google_cloud', slotId: 'api_key', path: ['local_direct', 'tts', 'googleCloud', 'apiKey'] },
-        ...speechAdapterIds.flatMap((adapterId) => [
-            { providerId: 'happier.voice.openai-compat/stt', slotId: 'api_key', path: [adapterId, 'stt', 'openaiCompat', 'apiKey'] },
-            { providerId: 'happier.voice.openai-compat/tts', slotId: 'api_key', path: [adapterId, 'tts', 'openaiCompat', 'apiKey'] },
-        ]),
-        { providerId: 'openai_compat', slotId: 'chat_api_key', path: ['local_conversation', 'agent', 'openaiCompat', 'chatApiKey'], canonicalPath: ['providers', 'local_conversation', 'config', 'agent', 'openaiCompat', 'chatApiKey'] },
-    ] as const;
+    const candidates = listLegacyVoiceCredentialMigrationCandidatesV1(rawVoice.providerId);
     const secrets = Array.isArray(next.secrets) ? [...next.secrets] : [];
     const rawPredecessorBindings = Array.isArray(rawVoice.credentialBindings)
         ? rawVoice.credentialBindings.flatMap((candidate) => {
@@ -117,50 +92,33 @@ function migrateLegacyVoiceSavedSecrets(input: Record<string, unknown>, next: Re
     const preservedAdapters: Record<string, unknown> = {};
 
     for (const candidate of candidates) {
-        const rawSecret = readPath(adapters, candidate.path);
-        if (rawSecret == null) continue;
-        const existingBindingIndex = bindings.findIndex((entry) => {
-            const parsed = PredecessorVoiceCredentialBindingV1Schema.safeParse(entry);
-            return parsed.success && parsed.data.providerId === candidate.providerId;
-        });
-        const existingBinding = existingBindingIndex < 0
-            ? null
-            : PredecessorVoiceCredentialBindingV1Schema.safeParse(bindings[existingBindingIndex]);
-        const parsedSecret = SecretStringV1Schema.safeParse(rawSecret);
-        if (!parsedSecret.success) {
-            writePath(preservedAdapters, candidate.path, rawSecret);
-            if ('canonicalPath' in candidate) deletePath(voice, candidate.canonicalPath);
+        const classified = classifyLegacyVoiceCredentialCandidateV1({ candidate, rawAdapters: adapters,
+            personalSources: secrets, credentialBindings: rawVoice.credentialBindings === undefined
+                ? bindings : rawVoice.credentialBindings });
+        if (classified.kind === 'absent') continue;
+        if (classified.kind === 'unsupported' || classified.kind === 'existing-resource-reference') {
+            // Structural Shared provenance cannot retire an inline credential.
+            writePath(preservedAdapters, candidate.path, classified.rawSecret);
+            if (candidate.canonicalPath) deletePath(voice, candidate.canonicalPath);
             continue;
         }
-        const boundSecretId = existingBinding?.success
-            ? existingBinding.data.credentialBindings.account?.[candidate.slotId]
-            : undefined;
-        if (boundSecretId) {
-            const boundSecret = secrets.find((entry) => ownRecord(entry)?.id === boundSecretId);
-            if (JSON.stringify(ownRecord(boundSecret)?.encryptedValue) !== JSON.stringify(parsedSecret.data)) {
-                writePath(preservedAdapters, candidate.path, rawSecret);
-            }
-            if ('canonicalPath' in candidate) deletePath(voice, candidate.canonicalPath);
+        if (classified.binding?.credentialBindings.account?.[candidate.slotId]) {
+            if (candidate.canonicalPath) deletePath(voice, candidate.canonicalPath);
             continue;
         }
-        const secretId = `voice:${candidate.providerId}:${candidate.slotId}`;
-        const colliding = secrets.find((entry) => ownRecord(entry)?.id === secretId);
-        if (colliding && JSON.stringify(ownRecord(colliding)?.encryptedValue) !== JSON.stringify(parsedSecret.data)) {
-            writePath(preservedAdapters, candidate.path, rawSecret);
-            if ('canonicalPath' in candidate) deletePath(voice, candidate.canonicalPath);
-            continue;
-        }
-        if (!colliding) {
+        const secretId = classified.secretId;
+        if (classified.kind === 'inline-personal-alias') {
             secrets.push({
                 id: secretId,
                 name: `Voice: ${candidate.providerId}`,
                 kind: 'apiKey',
-                encryptedValue: parsedSecret.data,
+                encryptedValue: classified.parsedSecret,
                 createdAt: 0,
                 updatedAt: 0,
             });
         }
-        const current = existingBinding?.success ? existingBinding.data : null;
+        const existingBindingIndex = bindings.findIndex(entry => ownRecord(entry)?.providerId === candidate.providerId);
+        const current = classified.binding;
         const replacement = {
             providerId: candidate.providerId,
             credentialBindings: {
@@ -173,7 +131,7 @@ function migrateLegacyVoiceSavedSecrets(input: Record<string, unknown>, next: Re
         };
         if (existingBindingIndex >= 0) bindings[existingBindingIndex] = replacement;
         else bindings.push(replacement);
-        if ('canonicalPath' in candidate) deletePath(voice, candidate.canonicalPath);
+        if (candidate.canonicalPath) deletePath(voice, candidate.canonicalPath);
     }
 
     next.secrets = secrets;
@@ -225,11 +183,15 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
     }
 
     if (!('sessionListDensity' in input)) {
-        const legacyCompact = z.boolean().safeParse(input.compactSessionView);
-        const legacyMinimal = z.boolean().safeParse(input.compactSessionViewMinimal);
-        if (legacyCompact.success) {
+        const legacyCompact = 'compactSessionView' in input
+            ? z.boolean().safeParse(input.compactSessionView)
+            : null;
+        const legacyMinimal = 'compactSessionViewMinimal' in input
+            ? z.boolean().safeParse(input.compactSessionViewMinimal)
+            : null;
+        if (legacyCompact?.success) {
             next.sessionListDensity = legacyCompact.data
-                ? (legacyMinimal.success && legacyMinimal.data ? 'narrow' : 'cozy')
+                ? (legacyMinimal?.success && legacyMinimal.data ? 'narrow' : 'cozy')
                 : 'detailed';
         }
     }
@@ -238,14 +200,11 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         next.sessionListIdentityDisplay = 'avatar';
     }
 
-    next.compactSessionView = next.sessionListDensity === 'cozy' || next.sessionListDensity === 'narrow';
-    next.compactSessionViewMinimal = next.sessionListDensity === 'narrow';
-
     Object.assign(next, normalizeAccountSettingsServerSelection(next));
 
     const hasMachineSearch = 'useMachinePickerSearch' in input;
     const hasPathSearch = 'usePathPickerSearch' in input;
-    if (!hasMachineSearch && !hasPathSearch) {
+    if (!hasMachineSearch && !hasPathSearch && 'usePickerSearch' in input) {
         const legacy = z.boolean().safeParse(input.usePickerSearch);
         if (legacy.success && legacy.data === true) {
             next.useMachinePickerSearch = true;
@@ -283,8 +242,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
     }
 
     if (!Object.prototype.hasOwnProperty.call(input, 'transcriptMessageTimestampDisplayMode')) {
-        const legacyTimestampsEnabled = z.boolean().safeParse(input.transcriptMessageTimestampsEnabled);
-        if (legacyTimestampsEnabled.success && legacyTimestampsEnabled.data === true) {
+        const legacyTimestampsEnabled = 'transcriptMessageTimestampsEnabled' in input
+            ? z.boolean().safeParse(input.transcriptMessageTimestampsEnabled)
+            : null;
+        if (legacyTimestampsEnabled?.success && legacyTimestampsEnabled.data === true) {
             next.transcriptMessageTimestampDisplayMode = 'always';
         }
     } else if (!(TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES as readonly unknown[]).includes(next.transcriptMessageTimestampDisplayMode)) {
@@ -375,5 +336,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         next.schemaVersion = supportedSchemaVersion;
     }
 
-    return next as TSettings;
+    // Legacy Voice ingress mutates nested compatibility carriers. It must still
+    // pass the canonical parser even when the original nested reference survives.
+    const hasLegacyVoiceAdapters = ownRecord(ownRecord(input.voice)?.adapters) !== null;
+    return !hasLegacyVoiceAdapters && areAccountSettingsJsonValuesEqual(next, params.settings)
+        ? params.settings
+        : next as TSettings;
 }

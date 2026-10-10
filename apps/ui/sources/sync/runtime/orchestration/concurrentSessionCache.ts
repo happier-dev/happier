@@ -1,5 +1,6 @@
 import { attachManagedSessionHumanPresenceSocket } from '@/sync/domains/session/humanPresence/attachManagedSessionHumanPresenceSocket';
 import { publishHomeAccountChange } from './homeAccountChange';
+import { EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
 import { notifyExecutionRunActivityFromUpdate, notifyExecutionRunActivityReconnect } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import {
     TokenStorage,
@@ -1286,6 +1287,11 @@ async function connectManagedServer(
             });
             socket.on('ephemeral', (raw: unknown) => {
                 if (!isManagedServerActive(entry)) return;
+                const usage = EphemeralUpdateSchema.safeParse(raw);
+                if (usage.success && usage.data.type === 'usage') {
+                    publishHomeAccountChange(entry.id);
+                    return;
+                }
                 statusDemandTransport.observeEphemeral(raw);
                 if (raw && typeof raw === 'object' && 'type' in raw && raw.type === 'execution-run-updated') {
                     notifyExecutionRunActivityFromUpdate(entry.id, raw);
@@ -1328,7 +1334,7 @@ async function connectManagedServer(
                     // cursor. Connecting may have missed writes since a reader's
                     // initial snapshot (including before the first connect), so
                     // invalidate this Home's reconstructible Account projections.
-                    publishHomeAccountChange(entry.id);
+                    publishHomeAccountChange(entry.id, undefined, { source: 'connected' });
                     queueRefresh(entry);
                 }),
                 transport.onDisconnected((event: TransportDisconnectEvent) => {

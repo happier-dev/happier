@@ -17,6 +17,8 @@ import {
     plannedChangesAffectSessionListQuery,
 } from './changesPlanner';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
+import { buildProfilePhysicalKey, PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, PROFILE_TRANSFER_ACCOUNT_KV_KEY } from '@happier-dev/protocol/profiles/profileRecordV1';
+import * as changePlanner from './changesPlanner';
 
 const TEST_FILE_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(TEST_FILE_DIRECTORY, '..', '..', '..', '..', '..', '..');
@@ -171,6 +173,21 @@ function buildChange(params: {
 }
 
 describe('planSyncActionsFromChanges', () => {
+    it('routes private Profile rows and controls only to their demanded catalog wake', () => {
+        for (const entityId of [buildProfilePhysicalKey('profile-a'), PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, PROFILE_TRANSFER_ACCOUNT_KV_KEY]) {
+            const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'account', entityId, hint: { profiles: true } })]);
+            expect(planned.invalidate.settings).toBe(false);
+            expect(planned.invalidate.profile).toBe(false);
+            expect(classifyChangeForCheckpoint(planned.changes[0]!, { isSessionMessagesLoaded: () => false }))
+                .toMatchObject({ plannerOwner: 'profile-catalog', materializationProof: 'profile-catalog-wake' });
+            const affects = 'plannedChangesAffectProfileCatalog' in changePlanner ? changePlanner.plannedChangesAffectProfileCatalog : undefined;
+            if (typeof affects !== 'function') throw new Error('missing_profile_catalog_projection');
+            expect(affects(planned)).toBe(true);
+            expect(affects(planSyncActionsFromChanges([buildChange({ cursor: 2, kind: 'session', entityId: 'session-a' })]))).toBe(false);
+            expect(affects(planSyncActionsFromChanges([buildChange({ cursor: 3, kind: 'artifact', entityId: 'new-granted-artifact' })]))).toBe(true);
+            expect(affects(planSyncActionsFromChanges([buildChange({ cursor: 4, kind: 'account', entityId: 'self', hint: { settingsVersion: 7 } })]))).toBe(true);
+        }
+    });
     it('retains exact tag deletions separately from ordinary tag invalidations', () => {
         const planned = planSyncActionsFromChanges([
             buildChange({

@@ -71,6 +71,24 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
 }): RealtimeDomain {
   const setSyncError = (error: SyncError) => set((state) =>
     state.syncError === error ? state : { ...state, syncError: error });
+  const setEndpointConnectivity = (snapshot: EndpointConnectivitySnapshot) => set((state) => {
+    if (state.endpointStatus === snapshot.status
+      && state.endpointReason === snapshot.reason
+      && state.endpointAttempt === snapshot.attempt
+      && state.endpointNextRetryAt === snapshot.nextRetryAt
+      && state.endpointLastConnectedAt === snapshot.lastConnectedAt
+      && state.endpointLastDisconnectedAt === snapshot.lastDisconnectedAt
+      && state.endpointLastErrorMessage === snapshot.lastErrorMessage) return state;
+    return { ...state,
+      endpointStatus: snapshot.status,
+      endpointReason: snapshot.reason,
+      endpointAttempt: snapshot.attempt,
+      endpointNextRetryAt: snapshot.nextRetryAt,
+      endpointLastConnectedAt: snapshot.lastConnectedAt,
+      endpointLastDisconnectedAt: snapshot.lastDisconnectedAt,
+      endpointLastErrorMessage: snapshot.lastErrorMessage,
+    };
+  });
   return {
     socketStatus: 'disconnected',
     socketLastConnectedAt: null,
@@ -95,6 +113,8 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
       })),
     setSocketStatus: (status) =>
       set((state) => {
+        if (state.socketStatus === status
+          && (status !== 'connected' || (state.socketLastError === null && state.socketLastErrorAt === null))) return state;
         const now = Date.now();
         const updates: Partial<RealtimeDomain> = { socketStatus: status };
 
@@ -132,25 +152,10 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
     setAccountSettingsSyncStatus: (status) => set((state) => ({ ...state, accountSettingsSyncStatus: status })),
     resetAccountSettingsSyncStatus: () => set((state) => ({ ...state, accountSettingsSyncStatus: createAccountSettingsIdleStatus() })),
     setLastSyncAt: (ts) => set((state) => ({ ...state, lastSyncAt: ts })),
-    setEndpointConnectivity: (snapshot) => set((state) => ({
-      ...state,
-      endpointStatus: snapshot.status,
-      endpointReason: snapshot.reason,
-      endpointAttempt: snapshot.attempt,
-      endpointNextRetryAt: snapshot.nextRetryAt,
-      endpointLastConnectedAt: snapshot.lastConnectedAt,
-      endpointLastDisconnectedAt: snapshot.lastDisconnectedAt,
-      endpointLastErrorMessage: snapshot.lastErrorMessage,
-    })),
-    resetEndpointConnectivity: () => set((state) => ({
-      ...state,
-      endpointStatus: 'idle',
-      endpointReason: null,
-      endpointAttempt: 0,
-      endpointNextRetryAt: null,
-      endpointLastConnectedAt: null,
-      endpointLastDisconnectedAt: null,
-      endpointLastErrorMessage: null,
-    })),
+    setEndpointConnectivity,
+    resetEndpointConnectivity: () => setEndpointConnectivity({
+      status: 'idle', reason: null, attempt: 0, nextRetryAt: null,
+      lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: null,
+    }),
   };
 }

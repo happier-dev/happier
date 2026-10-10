@@ -7,10 +7,10 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { AttentionDeviceOverridesV1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { t } from '@/text';
-import { PUSH_NOTIFICATION_SOUND_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import type { AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
+import { readNotificationSoundPreset } from './notificationPreferences';
 
 /** `custom` is a sound set the presets do not describe; it is shown, never offered. */
 type SoundPresetChoice = 'happier' | 'system' | 'silent' | 'custom';
@@ -32,23 +32,7 @@ export function NotificationSoundsSection({
     setDeviceSoundsEnabled,
     previewSound,
 }: NotificationSoundsSectionProps): React.ReactElement {
-    const accountSoundId = policy.sounds.defaultSoundId;
-    const permissionRequestSoundId =
-        policy.sounds.eventSoundIds.permission_request
-        ?? (accountSoundId === PUSH_NOTIFICATION_SOUND_IDS.soft ? PUSH_NOTIFICATION_SOUND_IDS.urgent : undefined);
-    const userActionRequestSoundId =
-        policy.sounds.eventSoundIds.user_action_request
-        ?? (accountSoundId === PUSH_NOTIFICATION_SOUND_IDS.soft ? PUSH_NOTIFICATION_SOUND_IDS.urgent : undefined);
-    const usesHappierSounds =
-        accountSoundId === PUSH_NOTIFICATION_SOUND_IDS.soft
-        && permissionRequestSoundId === PUSH_NOTIFICATION_SOUND_IDS.urgent
-        && userActionRequestSoundId === PUSH_NOTIFICATION_SOUND_IDS.urgent;
-
-    const preset: SoundPresetChoice = usesHappierSounds
-        ? 'happier'
-        : accountSoundId === PUSH_NOTIFICATION_SOUND_IDS.systemDefault
-            ? 'system'
-            : accountSoundId === PUSH_NOTIFICATION_SOUND_IDS.none ? 'silent' : 'custom';
+    const preset = readNotificationSoundPreset(policy);
 
     return (
         <ItemGroup

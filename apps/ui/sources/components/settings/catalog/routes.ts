@@ -53,6 +53,7 @@ export const SETTINGS_ROUTES = {
     voiceAdvanced: '/settings/voice/advanced',
     voiceHistory: '/settings/voice-history',
     memory: '/settings/memory',
+    search: '/settings/search',
     session: '/settings/session',
     externalSessions: '/settings/external-sessions',
     actions: '/settings/actions',

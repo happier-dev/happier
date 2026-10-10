@@ -123,6 +123,58 @@ function patchSessionListRows(domain: any, patches: unknown[]): void {
 }
 
 describe('sessions domain: renderable patches', () => {
+    it.each(['replacement', 'patch'] as const)('retains newer completion and pending facts through an older scoped %s', async (mode) => {
+        mockSessionsDomainBoundaries();
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+        const completed: SessionListRenderableSession = {
+            id: 's_lifecycle', seq: 2, createdAt: 1, updatedAt: 200,
+            active: true, activeAt: 200, thinking: false, thinkingAt: 200,
+            metadata: null, metadataVersion: 0, agentStateVersion: 0, presence: 'online',
+            latestTurnId: 'turn-1', latestTurnStatus: 'completed', latestTurnStatusObservedAt: 200,
+            latestReadyEventSeq: 2, latestReadyEventAt: 200,
+            hasPendingPermissionRequests: false, hasPendingUserActionRequests: false, pendingRequestObservedAt: 200,
+        };
+        replaceSessionListRows(domain, [completed]);
+        const older = { ...completed, seq: 1, updatedAt: 100,
+            latestTurnStatus: 'in_progress' as const, latestTurnStatusObservedAt: 100,
+            latestReadyEventSeq: 1, latestReadyEventAt: 100,
+            hasPendingPermissionRequests: true, pendingRequestObservedAt: 100 };
+        if (mode === 'replacement') replaceSessionListRows(domain, [older]);
+        else patchSessionListRows(domain, [{ sessionId: completed.id, patch: older }]);
+        expect(get().sessionListRowsByServerId.server_1[completed.id]).toMatchObject({
+            latestTurnStatus: 'completed', latestTurnStatusObservedAt: 200,
+            latestReadyEventSeq: 2, latestReadyEventAt: 200,
+            hasPendingPermissionRequests: false, pendingRequestObservedAt: 200,
+        });
+    });
+
+    it('reconciles first hydration against its own Home rather than an active same-ID row', async () => {
+        mockSessionsDomainBoundaries();
+        const { buildSessionListRenderableFromSession } = await import('../../domains/session/listing/sessionListRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+        const activeSession: Session = {
+            id: 'same-id', serverId: 'server_1', seq: 9, createdAt: 1, updatedAt: 900,
+            active: true, activeAt: 900, thinking: false, thinkingAt: 900,
+            metadata: null, metadataVersion: 0, agentState: null, agentStateVersion: 0, presence: 'online',
+            latestTurnId: 'active-turn', latestTurnStatus: 'completed', latestTurnStatusObservedAt: 900,
+            latestReadyEventSeq: 9, latestReadyEventAt: 900,
+        };
+        replaceSessionListRows(domain, [buildSessionListRenderableFromSession(activeSession)]);
+        const activeRow = get().sessionListRowsByServerId.server_1[activeSession.id];
+        const otherSession: Session = { ...activeSession, serverId: 'server_2', seq: 1, updatedAt: 100,
+            latestTurnId: 'other-turn', latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: 100,
+            latestReadyEventSeq: 1, latestReadyEventAt: 100 };
+        domain.applySessions([otherSession]);
+        expect(get().sessions[otherSession.id]).toMatchObject({
+            serverId: 'server_2', latestTurnId: 'other-turn', latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 100, latestReadyEventSeq: 1,
+        });
+        expect(get().sessionListRowsByServerId.server_2[otherSession.id].latestTurnStatus).toBe('in_progress');
+        expect(get().sessionListRowsByServerId.server_1[activeSession.id]).toBe(activeRow);
+    });
+
     it('publishes active-Home warm-cache and row deltas for scoped merge, reconcile, and clear', async () => {
         mockSessionsDomainBoundaries();
 

@@ -1,7 +1,7 @@
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { EncryptionGenerationScopeAuthority, EncryptionScopeInput } from '@/sync/encryption/encryption';
+import type { Encryption, EncryptionGenerationScopeAuthority, EncryptionScopeInput } from '@/sync/encryption/encryption';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import type { Metadata } from '@happier-dev/session-core/state';
 
@@ -19,6 +19,8 @@ export type ServerScopedMachineRpcParams<A> = Readonly<{
     machineId: string;
     method: string;
     payload: A;
+    /** Original admitted invocation identity, consumed by the existing RPC owner. */
+    requestId?: string;
     serverId?: string | null;
     /** When present, scoped credentials must resolve to this exact Account. */
     accountId?: string | null;
@@ -26,6 +28,8 @@ export type ServerScopedMachineRpcParams<A> = Readonly<{
     /** Caller cancellation owns the admitted operation; connection setup remains bounded. */
     operationTimeoutMs?: null;
     preferScoped?: boolean;
+    /** Account key material requires Machine encryption or the private installed-key sealed carrier. */
+    requireEncryptedPayload?: true;
     skipTransferPolicyEvaluation?: boolean;
     authorization?: SocketRpcAuthorizationContext;
     signal?: AbortSignal;
@@ -64,8 +68,11 @@ export type ResolvedServerRpcContext = ActiveServerRpcContext | ScopedServerRpcC
 
 export type ScopedRpcEncryptionContext = Readonly<{
     decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
-    initializeMachines: (keys: Map<string, Uint8Array | null>, unavailableMachineIds?: ReadonlySet<string>) => Promise<void>;
+    initializeMachines: Encryption['initializeMachines'];
     getMachineEncryption: (machineId: string) => ScopedMachineEncryption | null | undefined;
+    captureMachineEncryptionContext: Encryption['captureMachineEncryptionContext'];
+    getMachineEncryptionContext: Encryption['getMachineEncryptionContext'];
+    removeMachineEncryption: Encryption['removeMachineEncryption'];
 }>;
 
 /**

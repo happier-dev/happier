@@ -14,9 +14,16 @@ const UI_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
         permissionMode: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
         acpSessionMode: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
         acpConfigOption: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+        context: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+        memoryEnabled: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+        voicePreference: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     },
     display: {
         title: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+        bot: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    },
+    view: {
+        transcriptToolCalls: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     },
 };
 

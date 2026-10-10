@@ -1,6 +1,7 @@
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage, type AuthCredentials, type HomeCredentialMutationEvent } from '@/auth/storage/tokenStorage';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import {
     captureActiveServerRuntimeTarget,
     getActiveServerHomeCarrier,
@@ -19,6 +20,7 @@ import {
 import { startNativeLoopbackTunnelRuntimeAppStateLifecycle } from '@/sync/runtime/nativeLoopbackTunnels/runtime';
 import type { IrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/types';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import {
     getAppliedActiveServerId,
@@ -45,24 +47,42 @@ let activeSwitchPromise: Promise<AuthCredentials | null> | null = null;
 // still pending; those wait here instead of racing a second bootstrap.
 let coldRestorePromise: Promise<void> | null = null;
 
+/** Persist this device's carrier choice and ask the existing connection owner to apply it. */
+export function commitHomeApplicationCarrierEligibility(
+    value: LocalSettings['homeApplicationCarrierEligibility'],
+    write: (value: LocalSettings['homeApplicationCarrierEligibility']) => void,
+): void {
+    write(value);
+    fireAndForget(retryActiveServerConnection(), {
+        tag: 'connectionManager.homeApplicationCarrierEligibility',
+    });
+}
+
 async function awaitColdRestore(): Promise<void> {
     if (coldRestorePromise) await coldRestorePromise.catch(() => undefined);
 }
 let lastAppliedGeneration = -1;
-// The bearer the singleton Sync runtime was last applied with (`null` = signed
-// out). Signing in or out keeps the same Home and generation, so the applied
-// runtime is reusable only while it still holds the credential now stored for
-// that Home; otherwise a sign-in inside a running tab never starts Sync and a
-// sign-out leaves the previous Account's socket running.
-let appliedCredentialToken: string | null = null;
+// The private credential identity the singleton Sync runtime was applied with
+// (`null` = signed out). A same-bearer content-key replacement is a new authority
+// just as a sign-in is; neither can reuse the old runtime's encryption material.
+let appliedCredentialScopeKey: string | null = null;
 let requestedGeneration = -1;
 let activeRecoveryPromise: Promise<void> | null = null;
 let recoveryRuntime: IrohHomeTunnelRuntime | null = null;
 let recoveryUnsubscribe: (() => void) | null = null;
 
-function readCredentialToken(credentials: AuthCredentials | null): string | null {
-    const token = credentials?.token?.trim() ?? '';
-    return token || null;
+function readCredentialScopeKey(credentials: AuthCredentials | null): string | null {
+    return credentials ? resolveAuthCredentialsScopeKey(credentials) : null;
+}
+
+/** Retire changed applied authority before the existing Auth owner starts its async refresh. */
+export function retireAppliedActiveServerCredentialAuthorityIfChanged(event: HomeCredentialMutationEvent): boolean {
+    if (!areServerProfileIdentifiersEquivalent(event.serverId, getAppliedActiveServerSnapshot().serverId)) return false;
+    const credentials = event.kind === 'credentials_set' ? event.credentials : null;
+    if (credentials !== undefined && readCredentialScopeKey(credentials) === appliedCredentialScopeKey) return false;
+    publishAppliedActiveServerRuntimeAvailability(false);
+    abortServerFetches();
+    return true;
 }
 
 function startActiveIrohRecoveryLifecycle(runtime: IrohHomeTunnelRuntime): void {
@@ -324,7 +344,7 @@ async function applyPendingServerSwitches(): Promise<AuthCredentials | null> {
             && getAppliedActiveServerSnapshot().serverId === snapshot.serverId
             && getAppliedActiveServerSnapshot().serverUrl === snapshot.serverUrl
             && getAppliedActiveServerSnapshot().generation === targetGeneration
-            && appliedCredentialToken === readCredentialToken(credentials)
+            && appliedCredentialScopeKey === readCredentialScopeKey(credentials)
         );
         if (canReuseAppliedRuntime) {
             return credentials;
@@ -352,7 +372,7 @@ async function applyPendingServerSwitches(): Promise<AuthCredentials | null> {
             throw error;
         }
         lastAppliedGeneration = targetGeneration;
-        appliedCredentialToken = readCredentialToken(credentials);
+        appliedCredentialScopeKey = readCredentialScopeKey(credentials);
         publishAppliedActiveServerSnapshot(syncTarget);
     }
 }
@@ -390,7 +410,7 @@ export async function disconnectActiveServerConnection(): Promise<void> {
     await ensureIrohHomeTunnelForActiveSwitch(snapshot, null, publicationTarget, 'initial_selection');
     await syncSwitchServer(null);
     lastAppliedGeneration = Math.max(lastAppliedGeneration, snapshot.generation);
-    appliedCredentialToken = null;
+    appliedCredentialScopeKey = null;
     publishAppliedActiveServerSnapshot(snapshot, false);
 }
 
@@ -455,6 +475,6 @@ async function restoreTransportToActiveServer(
     publishApplyingActiveServerId(syncTarget.serverId, syncTarget.generation);
     await syncRestore(credentials, syncTarget);
     lastAppliedGeneration = Math.max(lastAppliedGeneration, snapshot.generation);
-    appliedCredentialToken = readCredentialToken(credentials);
+    appliedCredentialScopeKey = readCredentialScopeKey(credentials);
     publishAppliedActiveServerSnapshot(syncTarget);
 }

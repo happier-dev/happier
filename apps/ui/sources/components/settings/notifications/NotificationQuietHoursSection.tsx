@@ -11,9 +11,9 @@ import {
     isNightlyQuietHoursWindowSet,
     NIGHTLY_QUIET_HOURS_WINDOW,
 } from '@/activity/delivery/resolveQuietHoursState';
+import { resolveNotificationQuietHoursTimezone } from './notificationPreferences';
 
 type QuietHoursOverride = AttentionDeviceOverridesV1['quietHoursOverride'];
-type QuietHoursPolicy = AttentionDeliveryPolicyV1['quietHours'];
 /** `custom` is a schedule the presets do not describe; it is shown, never offered. */
 type AccountQuietHoursChoice = 'off' | 'nightly' | 'custom';
 type DeviceQuietHoursChoice = 'account' | 'disabled' | 'nightly' | 'custom';
@@ -21,7 +21,7 @@ type DeviceQuietHoursChoice = 'account' | 'disabled' | 'nightly' | 'custom';
 type NotificationQuietHoursSectionProps = Readonly<{
     policy: AttentionDeliveryPolicyV1;
     deviceOverride: QuietHoursOverride;
-    setAccountQuietHours: (quietHours: QuietHoursPolicy) => void;
+    setAccountQuietHours: (preset: 'off' | 'nightly') => void;
     setDeviceQuietHoursOverride: (override: QuietHoursOverride) => void;
 }>;
 
@@ -31,15 +31,6 @@ function readDeviceTimezone(): string {
     } catch {
         return '';
     }
-}
-
-function resolveDefaultTimezone(policy: AttentionDeliveryPolicyV1): string {
-    const configured = policy.quietHours.timezone.trim();
-    if (configured.length > 0 && configured !== 'UTC') {
-        return configured;
-    }
-
-    return readDeviceTimezone() || configured || 'UTC';
 }
 
 /**
@@ -71,30 +62,10 @@ export function NotificationQuietHoursSection({
         ? foreignScheduleTimezone(deviceOverride.timezone)
         : undefined;
 
-    const setAccountOff = React.useCallback(() => {
-        setAccountQuietHours({
-            enabled: false,
-            timezone: resolveDefaultTimezone(policy),
-            windows: [],
-        });
-    }, [policy, setAccountQuietHours]);
-
-    const setAccountNightly = React.useCallback(() => {
-        setAccountQuietHours({
-            enabled: true,
-            timezone: resolveDefaultTimezone(policy),
-            windows: [
-                {
-                    ...NIGHTLY_QUIET_HOURS_WINDOW,
-                },
-            ],
-        });
-    }, [policy, setAccountQuietHours]);
-
     const setDeviceCustomNightly = React.useCallback(() => {
         setDeviceQuietHoursOverride({
             mode: 'custom',
-            timezone: resolveDefaultTimezone(policy),
+            timezone: resolveNotificationQuietHoursTimezone(policy),
             windows: [
                 {
                     ...NIGHTLY_QUIET_HOURS_WINDOW,
@@ -128,8 +99,7 @@ export function NotificationQuietHoursSection({
                     subtitleLines={0}
                     value={accountChoice}
                     onChange={(next) => {
-                        if (next === 'off') setAccountOff();
-                        else if (next === 'nightly') setAccountNightly();
+                        if (next === 'off' || next === 'nightly') setAccountQuietHours(next);
                     }}
                     options={[
                         { id: 'off', label: t('settingsNotifications.quietHours.offShort'), description: t('settingsNotifications.quietHours.accountOffSubtitle') },

@@ -53,6 +53,11 @@ function countCalls(match: string): number {
     return runtimeFetchMock.mock.calls.filter(([input]) => String(input).includes(match)).length;
 }
 
+function expectMachineDataKey(transport: Awaited<ReturnType<typeof resolveScopedMachineTransport>>, bytes: readonly number[]) {
+    expect(transport?.mode).toBe('e2ee');
+    expect(transport?.mode === 'e2ee' ? transport.dataKey : null).toEqual(new Uint8Array(bytes));
+}
+
 describe('scoped data-key resolution coalesces concurrent callers', () => {
     afterEach(async () => {
         runtimeFetchMock.mockReset();
@@ -84,7 +89,7 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
         })));
 
         for (const result of results) {
-            expect(result).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([1, 2, 3]) });
+            expectMachineDataKey(result, [1, 2, 3]);
         }
         expect(decrypt).toHaveBeenCalledTimes(1);
         expect(countCalls('/v1/machines/machine-1')).toBe(1);
@@ -120,10 +125,10 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
             request('machine-2'),
         ]);
 
-        expect(a).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([1]) });
-        expect(c).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([1]) });
-        expect(b).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([2]) });
-        expect(d).toEqual({ mode: 'e2ee', dataKey: new Uint8Array([2]) });
+        expectMachineDataKey(a, [1]);
+        expectMachineDataKey(c, [1]);
+        expectMachineDataKey(b, [2]);
+        expectMachineDataKey(d, [2]);
         expect(decrypt).toHaveBeenCalledTimes(2);
     });
 
@@ -154,7 +159,7 @@ describe('scoped data-key resolution coalesces concurrent callers', () => {
         expect(machineCalls).toBe(1);
 
         // ...and a failure is never retained, so the next caller retries for real.
-        await expect(request()).resolves.toEqual({ mode: 'e2ee', dataKey: new Uint8Array([7]) });
+        expectMachineDataKey(await request(), [7]);
         expect(machineCalls).toBe(2);
     });
 

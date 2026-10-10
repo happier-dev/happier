@@ -351,8 +351,17 @@ export function useResolvedSettingsPageCatalog(): ResolvedSettingsPageCatalog {
         if (!q) return [];
 
         // Pages stay first without hiding matching rows behind a shared result cap.
-        const pages = fuses.pages.search(q);
-        const settings = fuses.settings.search(q);
+        const pageMatches = fuses.pages.search(q);
+        const settingMatches = fuses.settings.search(q);
+        // Prefer the words the person typed over edit-distance matches ("model" versus "mode").
+        // Keep typo recovery when no label, alias, description or location contains the query.
+        const containsQuery = (doc: SettingsPageSearchDoc) => [doc.title, ...doc.keywords, doc.subtitle, ...doc.pathTokens]
+            .some(value => value.toLowerCase().includes(q));
+        const literalPages = pageMatches.filter(result => containsQuery(result.item));
+        const literalSettings = settingMatches.filter(result => containsQuery(result.item));
+        const hasLiteralMatch = literalPages.length > 0 || literalSettings.length > 0;
+        const pages = hasLiteralMatch ? literalPages : pageMatches;
+        const settings = hasLiteralMatch ? literalSettings : settingMatches;
         return [
             ...pages.map((result) => ({ id: result.item.id, route: result.item.route })),
             ...settings.map((result) => ({ id: result.item.id, route: result.item.route, setting: result.item.setting! })),

@@ -6,7 +6,11 @@ import {
     areResponsibleAccountSummariesEqual,
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
-import { areSessionListRenderableExternalSessionIdentitiesEqual } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
+import {
+    areSessionListRenderableExternalSessionIdentitiesEqual,
+    MANAGED_SESSION_DIRECTORY_MARKER,
+} from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
@@ -150,6 +154,7 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.flavor === previousEntry.flavor
         && areExternalSessionCacheEntriesEqual(nextEntry.externalSessionV1, previousEntry.externalSessionV1)
         && nextEntry.hiddenSystemSession === previousEntry.hiddenSystemSession
+        && nextEntry.managedSessionDirectory === previousEntry.managedSessionDirectory
         && nextEntry.keepVisibleWhenInactive === previousEntry.keepVisibleWhenInactive
         && nextEntry.hasPendingPermissionRequests === previousEntry.hasPendingPermissionRequests
         && nextEntry.hasPendingUserActionRequests === previousEntry.hasPendingUserActionRequests
@@ -212,6 +217,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
             flavor: entry.flavor ?? null,
             externalSessionV1: entry.externalSessionV1 ?? null,
             hiddenSystemSession: entry.hiddenSystemSession === true,
+            sessionDirectoryV1: entry.managedSessionDirectory === true ? MANAGED_SESSION_DIRECTORY_MARKER : null,
         } : null,
         thinking: false,
         thinkingAt: 0,
@@ -368,6 +374,9 @@ export function buildSessionListCacheEntryFromRenderable(
         hiddenSystemSession: preserveMetadata
             ? previousEntry.hiddenSystemSession === true
             : projectedMetadata?.hiddenSystemSession === true,
+        managedSessionDirectory: preserveMetadata
+            ? previousEntry.managedSessionDirectory === true
+            : readSessionDirectoryKind(projectedMetadata) === 'managed',
         keepVisibleWhenInactive: session.keepVisibleWhenInactive === true,
         // Verbatim, not `=== true`: coercing an absent flag to `false` would claim
         // "no pending requests" for a row that is simply not hydrated yet, and it makes the

@@ -14,6 +14,7 @@ export async function callGuardedMachineRpcWithPolicy<R, A>(params: Readonly<{
     method: string;
     payload: A;
     timeoutMs?: number;
+    operationTimeoutMs?: null;
     signal?: AbortSignal;
     preferScoped?: boolean;
 }>): Promise<R> {
@@ -31,6 +32,7 @@ export async function callGuardedMachineRpcWithPolicy<R, A>(params: Readonly<{
         method: params.method,
         payload: params.payload,
         timeoutMs: params.timeoutMs,
+        ...(params.operationTimeoutMs === null ? { operationTimeoutMs: null } : {}),
         signal: params.signal,
         skipTransferPolicyEvaluation: guarded,
         ...(preferScoped ? { preferScoped: true } : null),

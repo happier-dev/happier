@@ -94,8 +94,23 @@ export function createMachinePoolsDomain<S extends MachinePoolsDomain>({ set }: 
                     if (!baseline || local.pool.revision > baseline.pool.revision) next.push(local);
                 }
             }
-            const stable = Array.isArray(current) && current.length === next.length && current.every((item, index) => samePoolView(item, next[index]!));
-            return { machinePoolListByServerId: stable ? state.machinePoolListByServerId : { ...state.machinePoolListByServerId, [serverId]: next }, machinePoolListStatusByServerId: { ...state.machinePoolListStatusByServerId, [serverId]: 'idle' } } as Partial<S>;
+            if (current) {
+                const currentById = new Map(current.map((item) => [item.pool.id, item]));
+                next = next.map((item) => {
+                    const previous = currentById.get(item.pool.id);
+                    return previous && samePoolView(previous, item) ? previous : item;
+                });
+            }
+            const stable = Array.isArray(current) && current.length === next.length && current.every((item, index) => item === next[index]);
+            const machinePoolListByServerId = stable
+                ? state.machinePoolListByServerId
+                : { ...state.machinePoolListByServerId, [serverId]: next };
+            const machinePoolListStatusByServerId = state.machinePoolListStatusByServerId[serverId] === 'idle'
+                ? state.machinePoolListStatusByServerId
+                : { ...state.machinePoolListStatusByServerId, [serverId]: 'idle' as const };
+            if (machinePoolListByServerId === state.machinePoolListByServerId
+                && machinePoolListStatusByServerId === state.machinePoolListStatusByServerId) return state;
+            return { machinePoolListByServerId, machinePoolListStatusByServerId } as Partial<S>;
         }),
         patchMachinePool: (incoming, scope) => set((state) => {
             const serverId = normalizeServerId(scope.sourceServerId);

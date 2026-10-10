@@ -1,3 +1,4 @@
+import { PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readProviderCatalog } from '@/sync/api/account/apiProviderCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
@@ -26,6 +27,8 @@ const loader = createScopedSnapshotLoader<Target>({
     shouldLoadOnObserve: ({ scope }) => getProviderCatalogSnapshot(scope)?.status !== 'ready',
     invalidateServer: invalidateProviderCatalogsForServer,
     invalidateTarget: ({ scope }) => beginProviderCatalogLoad(scope),
+    matchesWake: event => event.entityIds === undefined || event.entityIds.some(id =>
+        id === 'self' || id === PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1),
     onCredentialMutation: (_event, { scope }) => {
         applyProviderCatalogSnapshot(scope, { status: 'unavailable', reason: 'unauthorized' }, true); return true;
     },

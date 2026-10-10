@@ -29,6 +29,7 @@ import type { MachineDisplayRenderable } from '../domains/machines/machineDispla
 import type { CustomerInfo } from '../domains/purchases/types';
 import type { ApplyMachinesOptions } from './domains/machines';
 import type { MachinePoolsDomain } from './domains/machinePools';
+import type { ProjectAccountRowsDomain } from './domains/projectAccountRows';
 import type { MessagesDomain, SessionMessages } from './domains/messages';
 import type { SessionPending } from './domains/pending';
 import type {
@@ -459,6 +460,7 @@ export type StorageState = SettingsDomainSlice
     & SessionOrganizationDomain
     & MachinesDomainSlice
     & MachinePoolsDomain
+    & ProjectAccountRowsDomain
     & MessagesDomainSlice
     & PendingDomainSlice
     & TranscriptLoadingDomainSlice

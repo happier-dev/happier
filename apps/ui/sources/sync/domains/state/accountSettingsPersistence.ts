@@ -6,7 +6,7 @@ import { stripMigratedSessionOrganizationSettings } from '@/sync/domains/setting
 import {
     pickLocalOnlyAccountSettings,
     stripLocalOnlyAccountSettings,
-    stripLegacyAuthoringMemorySettingsDelta,
+    stripReadOnlyAccountSettingsDelta,
 } from '@/sync/domains/settings/localOnlyAccountSettings';
 import {
     isServerIssuedIdentityId,
@@ -448,7 +448,7 @@ export function savePendingAccountSettings(scope: AccountSettingsScope, settings
     const key = pendingAccountSettingsKey(scope);
     assertNoUnsealedSettingsSecretValues(settings);
     const sanitizedSettings =
-        stripLegacyAuthoringMemorySettingsDelta(stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>)) as Partial<Settings>;
+        stripReadOnlyAccountSettingsDelta(stripMigratedSessionOrganizationSettings(settings as Record<string, unknown>)) as Partial<Settings>;
     if (Object.keys(sanitizedSettings).length === 0) {
         getPersistenceStorage().delete(key);
         return;

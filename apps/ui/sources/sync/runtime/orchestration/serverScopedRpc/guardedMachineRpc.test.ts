@@ -50,6 +50,9 @@ describe('guardedMachineRpc', () => {
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)).toBe(true);
+        expect(isGuardedMachineRpcMethod('daemon.filesystem.upload')).toBe(true);
+        expect(isGuardedMachineRpcMethod('daemon.filesystem.download')).toBe(true);
+        expect(isGuardedMachineRpcMethod('daemon.filesystem.transfer.cancel')).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT)).toBe(true);
         expect(isGuardedMachineRpcMethod(RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ)).toBe(true);

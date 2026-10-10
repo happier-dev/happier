@@ -543,6 +543,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
             method: effectiveParams.method,
             payload: effectiveParams.payload,
             timeoutMs: effectiveParams.timeoutMs,
+            operationTimeoutMs: effectiveParams.operationTimeoutMs,
             authorization: effectiveParams.authorization,
             signal: effectiveParams.signal,
             onDispatched: effectiveParams.onDispatched,

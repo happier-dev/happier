@@ -15,6 +15,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { prepareLegacyNotificationChannelCatalogV1 } from '@happier-dev/protocol/account/settings/notificationChannelCatalogV1';
+import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { loadNotificationsSettingsActionExecutorForTests, restoreNotificationsSettingsCatalog } from './notificationsSettingsCatalogTestHarness';
 import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import type { LiveActivityRemoteUpdateCapabilityDiagnostics } from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
@@ -286,6 +287,7 @@ let fixture: Awaited<ReturnType<typeof restoreNotificationsSettingsCatalog>> | u
 let rawBeforeControl: Readonly<Record<string, unknown>> = {};
 let localBeforeControl: ReturnType<typeof storage.getState>['localSettings'];
 let disposeScreen: (() => Promise<void>) | undefined;
+let declaredSettingActionsDisabled = false;
 const defaultLocalSettings = structuredClone(localSettingsState);
 beforeAll(async () => {
     storage = (await import('@/sync/domains/state/storage')).storage;
@@ -308,7 +310,9 @@ async function openNotificationsScreen() {
     if (source.status !== 'ready') throw new Error('Expected the genuine unsigned predecessor source');
     fixture = await restoreNotificationsSettingsCatalog({
         accountId: 'notification-adjacent', serverUrl: 'https://notification-adjacent.example.test', homeName: 'Studio Home',
-        rawSettings: settingsState, localSettings: localSettingsState,
+        rawSettings: { ...settingsState, ...(declaredSettingActionsDisabled ? { actionsSettingsV1: {
+            v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } },
+        } } : {}) }, localSettings: localSettingsState,
         catalog: { status: 'present', record: source.record },
         features: createRootLayoutFeaturesResponse({
             features: { sessions: { following: { enabled: followingFeatureState.enabled } } },
@@ -327,6 +331,7 @@ async function openNotificationsScreen() {
 
 describe('NotificationsSettingsView', () => {
     beforeEach(() => {
+        declaredSettingActionsDisabled = false;
         clearActiveUnsavedChangesGuard();
         Object.assign(localSettingsState, structuredClone(defaultLocalSettings));
         settingsState.experiments = false;
@@ -392,6 +397,18 @@ describe('NotificationsSettingsView', () => {
             },
             capabilities: liveActivityRemoteDiagnosticsState.value.capabilities,
         };
+    });
+
+    it.each(['account', 'local'] as const)('honors disabled settings Actions for the %s notification switch', async (owner) => {
+        declaredSettingActionsDisabled = true;
+        const screen = await openNotificationsScreen();
+        const row = requireRow(screen, owner === 'account'
+            ? 'settings-notifications-mute-phone-focused-computer' : 'settings-notifications-local-enabled');
+        await act(async () => row.props.rightElement.props.onValueChange(owner === 'account'));
+        expect(storage.getState().settings.attentionDeliveryPolicyV1).toEqual(rawBeforeControl.attentionDeliveryPolicyV1);
+        expect(storage.getState().localSettings.attentionDeviceOverridesV1).toEqual(localBeforeControl.attentionDeviceOverridesV1);
+        await vi.waitFor(() => expect(modalAlertMock).toHaveBeenCalledWith(expect.any(String), 'action_disabled'));
+        expect(fixture!.settingsWrites).toEqual([]);
     });
 
     it('navigates to push notification troubleshooting', async () => {
@@ -886,27 +903,58 @@ describe('NotificationsSettingsView', () => {
         }
     });
 
-    it('writes account quiet-hours presets through the canonical policy', async () => {
-
+    it.each([
+        ['account', 'off'], ['account', 'nightly'],
+        ['device', 'account'], ['device', 'disabled'], ['device', 'nightly'],
+    ] as const)('honors disabled settings Actions for quiet-hours %s/%s', async (owner, choice) => {
+        declaredSettingActionsDisabled = true;
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1,
+            quietHours: { ...settingsState.attentionDeliveryPolicyV1.quietHours, enabled: choice === 'off' },
+        };
+        localSettingsState.attentionDeviceOverridesV1 = {
+            ...localSettingsState.attentionDeviceOverridesV1,
+            quietHoursOverride: { mode: choice === 'account' ? 'disabled' : 'account' },
+        };
         const screen = await openNotificationsScreen();
-        await act(async () => {
-            screen.pressRow('settings-notifications-quiet-hours-account:nightly');
-        });
+        await act(async () => screen.pressRow(`settings-notifications-quiet-hours-${owner}:${choice}`));
+        await vi.waitFor(() => expect(modalAlertMock).toHaveBeenCalledWith(expect.any(String), 'action_disabled'));
+        expect(storage.getState().settings.attentionDeliveryPolicyV1).toEqual(rawBeforeControl.attentionDeliveryPolicyV1);
+        expect(storage.getState().localSettings.attentionDeviceOverridesV1).toEqual(localBeforeControl.attentionDeviceOverridesV1);
+        expect(fixture!.readRaw().attentionDeliveryPolicyV1).toEqual(rawBeforeControl.attentionDeliveryPolicyV1);
+        // Catalog restoration can retire predecessor fields; no request may change the denied policy.
+        for (const write of fixture!.settingsWrites) {
+            const content = AccountSettingsV2UpdateRequestSchema.parse(write).content;
+            expect(content?.t).toBe('plain');
+            if (content?.t === 'plain') expect(content.v.attentionDeliveryPolicyV1).toEqual(rawBeforeControl.attentionDeliveryPolicyV1);
+        }
+    });
 
-        expect(storage.getState().settings).toMatchObject(expect.objectContaining({
-            attentionDeliveryPolicyV1: expect.objectContaining({
-                quietHours: {
-                    enabled: true,
-                    timezone: expect.any(String),
-                    windows: [
-                        {
-                            startLocalTime: '22:00',
-                            endLocalTime: '07:00',
-                        },
-                    ],
-                },
-            }),
-        }));
+    it.each(['off', 'nightly'] as const)('writes account quiet-hours %s through the canonical policy', async (choice) => {
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1,
+            quietHours: {
+                enabled: choice === 'off',
+                timezone: 'Europe/Amsterdam',
+                windows: [{ startLocalTime: '12:00', endLocalTime: '13:00' }],
+            },
+        };
+        const screen = await openNotificationsScreen();
+        const expectedPolicy = {
+            ...storage.getState().settings.attentionDeliveryPolicyV1,
+            quietHours: {
+                enabled: choice === 'nightly',
+                timezone: 'Europe/Amsterdam',
+                windows: choice === 'nightly' ? [{ startLocalTime: '22:00', endLocalTime: '07:00' }] : [],
+            },
+        };
+        await act(async () => {
+            screen.pressRow(`settings-notifications-quiet-hours-account:${choice}`);
+        });
+        await vi.waitFor(() => expect(fixture!.readRaw().attentionDeliveryPolicyV1).toEqual(expectedPolicy));
+        expect(storage.getState().settings.attentionDeliveryPolicyV1).toEqual(expectedPolicy);
+        expect(storage.getState().localSettings.attentionDeviceOverridesV1).toEqual(localBeforeControl.attentionDeviceOverridesV1);
+        expect(modalAlertMock).not.toHaveBeenCalled();
     });
 
     it('shows a quiet-hours schedule the presets do not describe without selecting a preset', async () => {
@@ -928,20 +976,21 @@ describe('NotificationsSettingsView', () => {
         expect(accountSchedule.props.subtitle).toBe('settingsNotifications.quietHours.customSubtitle');
     });
 
-    it('writes device quiet-hours overrides through canonical local settings', async () => {
-
+    it.each(['account', 'disabled'] as const)('writes device quiet-hours %s through canonical local settings', async (choice) => {
+        localSettingsState.attentionDeviceOverridesV1 = {
+            ...localSettingsState.attentionDeviceOverridesV1,
+            quietHoursOverride: { mode: choice === 'account' ? 'disabled' : 'account' },
+        };
         const screen = await openNotificationsScreen();
         await act(async () => {
-            screen.pressRow('settings-notifications-quiet-hours-device:disabled');
+            screen.pressRow(`settings-notifications-quiet-hours-device:${choice}`);
         });
-
-        expect(storage.getState().localSettings).toMatchObject(expect.objectContaining({
-            attentionDeviceOverridesV1: expect.objectContaining({
-                quietHoursOverride: {
-                    mode: 'disabled',
-                },
-            }),
+        await vi.waitFor(() => expect(storage.getState().localSettings.attentionDeviceOverridesV1).toEqual({
+            ...localBeforeControl.attentionDeviceOverridesV1,
+            quietHoursOverride: { mode: choice },
         }));
+        expect(fixture!.readRaw()).toEqual(rawBeforeControl);
+        expect(modalAlertMock).not.toHaveBeenCalled();
     });
 
     it('writes custom device quiet-hours overrides through canonical local settings', async () => {
@@ -951,20 +1000,16 @@ describe('NotificationsSettingsView', () => {
             screen.pressRow('settings-notifications-quiet-hours-device:nightly');
         });
 
-        expect(storage.getState().localSettings).toMatchObject(expect.objectContaining({
-            attentionDeviceOverridesV1: expect.objectContaining({
-                quietHoursOverride: {
-                    mode: 'custom',
-                    timezone: expect.any(String),
-                    windows: [
-                        {
-                            startLocalTime: '22:00',
-                            endLocalTime: '07:00',
-                        },
-                    ],
-                },
-            }),
+        await vi.waitFor(() => expect(storage.getState().localSettings.attentionDeviceOverridesV1).toEqual({
+            ...localBeforeControl.attentionDeviceOverridesV1,
+            quietHoursOverride: {
+                mode: 'custom',
+                timezone: expect.any(String),
+                windows: [{ startLocalTime: '22:00', endLocalTime: '07:00' }],
+            },
         }));
+        expect(fixture!.readRaw()).toEqual(rawBeforeControl);
+        expect(modalAlertMock).not.toHaveBeenCalled();
     });
 
     it('defaults focus muting off and writes only the canonical policy without changing other choices', async () => {

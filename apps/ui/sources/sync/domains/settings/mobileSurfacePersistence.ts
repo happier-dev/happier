@@ -1,4 +1,6 @@
 import { type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import {
     buildRealmQualifiedSessionLocalPreferenceKey,
     normalizeSessionLocalPreferenceIdentityPart,
@@ -39,6 +41,22 @@ export function buildRealmQualifiedMobileSurfaceStorageKey(
         scope,
         ownerId,
     });
+}
+
+/** A selected Project must be registered on the Home the applied Account realm proves. */
+export function resolveProjectMobileSurfaceStorageKey(input: Readonly<{
+    workspaceRefs: readonly WorkspaceRefV1[];
+    workspaceRefId: string;
+    activeScope: ServerAccountScope | null | undefined;
+    activeServerId: string | null | undefined;
+    targetServerId?: string | null;
+}>): string | null {
+    const workspaceRefId = normalizeSessionLocalPreferenceIdentityPart(input.workspaceRefId);
+    if (!workspaceRefId || !input.activeScope) return null;
+    const selected = resolveWorkspaceRefById(input.workspaceRefs, workspaceRefId, input.targetServerId ?? undefined);
+    if (selected.kind !== 'resolved') return null;
+    const scope = resolveMobileSurfacePersistenceScope({ ...input, targetServerId: selected.ref.serverId });
+    return scope ? buildRealmQualifiedMobileSurfaceStorageKey('project', scope, workspaceRefId) : null;
 }
 
 /**

@@ -1,42 +1,5 @@
 import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
-function buildExecutionRunsGuidanceSummaryProperties(value: unknown): Record<string, number> {
-    const entries = Array.isArray(value) ? value : [];
-
-    let enabledCount = 0;
-    let withSuggestedBackendCount = 0;
-    let withSuggestedModelCount = 0;
-    let delegateCount = 0;
-    let reviewCount = 0;
-    let planCount = 0;
-
-    for (const entry of entries) {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
-        const record = entry as Record<string, unknown>;
-
-        if (record.enabled === true) enabledCount += 1;
-        if (record.suggestedBackendTarget && typeof record.suggestedBackendTarget === 'object' && !Array.isArray(record.suggestedBackendTarget)) {
-            withSuggestedBackendCount += 1;
-        }
-        if (typeof record.suggestedModelId === 'string' && record.suggestedModelId.length > 0) {
-            withSuggestedModelCount += 1;
-        }
-        if (record.suggestedIntent === 'delegate') delegateCount += 1;
-        if (record.suggestedIntent === 'review') reviewCount += 1;
-        if (record.suggestedIntent === 'plan') planCount += 1;
-    }
-
-    return {
-        totalCount: entries.length,
-        enabledCount,
-        withSuggestedBackendCount,
-        withSuggestedModelCount,
-        delegateCount,
-        reviewCount,
-        planCount,
-    };
-}
-
 function buildSessionTmuxOverrideSummaryProperties(value: unknown): Record<string, number> {
     const entries = value && typeof value === 'object' && !Array.isArray(value)
         ? Object.values(value as Record<string, unknown>)
@@ -158,14 +121,6 @@ export const ACCOUNT_RUNTIME_SETTING_ANALYTICS = defineAccountSettingAnalytics({
         privacy: 'presence_only',
         identityScope: 'person',
         serializeCurrent: (value) => value !== null,
-    },
-    executionRunsGuidanceEntries: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'count',
-        privacy: 'count_only',
-        identityScope: 'person',
-        serializeCurrentProperties: buildExecutionRunsGuidanceSummaryProperties,
     },
     peerMediationPreferencesV1: {
         trackCurrentState: true,

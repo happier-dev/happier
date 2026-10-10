@@ -55,6 +55,7 @@ export const SETTINGS_PAGE_IDS = {
     voicePrivacy: 'voicePrivacy',
     voiceAdvanced: 'voiceAdvanced',
     memory: 'memory',
+    search: 'search',
 
     session: 'session',
     externalSessions: 'externalSessions',

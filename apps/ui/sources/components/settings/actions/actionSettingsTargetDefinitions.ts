@@ -4,6 +4,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import type { ActionSettingsActionId, ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import type { ActionSurfaces } from '@happier-dev/protocol/actions/metadata';
 import type { ActionUiPlacement } from '@happier-dev/protocol/actions/actionUiPlacements';
+import type { PluginActionPresentUserGatePolicy } from '@happier-dev/protocol/plugins/actions/invocation';
 
 import type { TranslationKey } from '@/text';
 
@@ -25,6 +26,7 @@ export type ActionSettingsTargetSource = Readonly<{
     placements: readonly ActionUiPlacement[];
     slash?: unknown;
     requiredAuthority?: ActionSpec['requiredAuthority'];
+    contributedAction?: Pick<PluginActionPresentUserGatePolicy, 'dangerLevel' | 'confirmation'>;
 }>;
 
 type ActionSettingsTargetBase = Readonly<{
@@ -33,6 +35,7 @@ type ActionSettingsTargetBase = Readonly<{
     subtitleKey: Extract<TranslationKey, `settingsActions.targets.${string}.subtitle`>;
     icon: string;
     category: ActionSettingsTargetCategory;
+    contributedAction?: ActionSettingsTargetSource['contributedAction'];
 }>;
 
 type ActionSettingsPlacementTargetDefinition = ActionSettingsTargetBase & Readonly<{
@@ -255,7 +258,10 @@ export function listActionSettingsTargetDefinitions(spec: ActionSettingsTargetSo
         syntheticTargets.push(syntheticSlashCommandTarget);
     }
 
-    return [...placementTargets, ...surfaceTargets, ...syntheticTargets];
+    const targets = [...placementTargets, ...surfaceTargets, ...syntheticTargets];
+    return spec.contributedAction
+        ? targets.map((target) => ({ ...target, contributedAction: spec.contributedAction }))
+        : targets;
 }
 
 export function getActionSettingsTargetDefinition(actionId: ActionId, targetId: ActionSettingsTargetId): ActionSettingsTargetDefinition {

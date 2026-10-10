@@ -1,4 +1,3 @@
-import { NotificationChannelsV1Schema } from '@happier-dev/protocol/account/settings/notificationChannels';
 import { AttentionDeliveryPolicyV1Schema, NotificationsSettingsV1Schema } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ExternalSessionsSettingsV1Schema } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
 import { z } from 'zod';
@@ -42,17 +41,6 @@ export const ACCOUNT_WORKFLOW_SETTING_ANALYTICS = defineAccountSettingAnalytics(
             permissionRequest: value.permissionRequest,
             userActionRequest: value.userActionRequest,
             foregroundBehavior: value.foregroundBehavior,
-        }),
-    },
-    notificationChannelsV1: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'enum',
-        privacy: 'safe',
-        identityScope: 'person',
-        serializeCurrentProperties: (value: z.infer<typeof NotificationChannelsV1Schema>) => ({
-            channelCount: value.length,
-            kinds: value.map((channel) => channel.kind).join(','),
         }),
     },
     attentionDeliveryPolicyV1: {

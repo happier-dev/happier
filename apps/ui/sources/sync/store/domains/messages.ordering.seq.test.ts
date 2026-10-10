@@ -1,21 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStore } from 'zustand/vanilla';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { createMessagesDomain } from './messages';
 
-vi.mock('../../domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'server-active', serverUrl: 'https://example.com', generation: 1 }),
-}));
+let activeServerId = '';
 
 function withSessionListRows(rows: Record<string, unknown>) {
     return {
-        sessionListRowsByServerId: { 'server-active': rows },
-        ordinarySessionListMembershipByServerId: { 'server-active': Object.keys(rows) },
+        sessionListRowsByServerId: { [activeServerId]: rows },
+        ordinarySessionListMembershipByServerId: { [activeServerId]: Object.keys(rows) },
     };
 }
 
 function createHarness(initial: any) {
-    let state: any = {
+    const state: any = {
         sessions: {},
         sessionPending: {},
         sessionMessages: {},
@@ -32,13 +33,10 @@ function createHarness(initial: any) {
         ...initial,
     };
 
-    const get = () => state;
-    const set = (updater: any) => {
-        const next = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...next };
-    };
-
-    const domain = createMessagesDomain({ get, set } as any);
+    const store = createStore<typeof state>(() => state);
+    const get = store.getState;
+    const domain = createMessagesDomain({ get, set: store.setState });
+    store.setState({ ...domain, ...initial });
     return { get, domain };
 }
 
@@ -55,11 +53,33 @@ function buildStreamSegmentMeta(updatedAtMs: number) {
     };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://example.com', name: 'Message Home' });
+    activeServerId = getActiveServerSnapshot().serverId;
     syncPerformanceTelemetry.configure({ enabled: false });
 });
 
 describe('messages domain: ordering', () => {
+    it('projects deferred completed questions when paging reaches the beginning, even with no final rows', () => {
+        const session = createSessionFixture({
+            id: 's1', agentStateVersion: 1,
+            agentState: { completedRequests: { question: {
+                tool: 'AskUserQuestion', arguments: { questions: [] }, createdAt: 100,
+                completedAt: 200, status: 'approved', answers: { choice: 'yes' },
+            } } },
+        });
+        const { get, domain } = createHarness({ sessions: { s1: session } });
+        domain.applyMessages('s1', []);
+        expect(get().sessionMessages.s1.messageIdsOldestFirst).toEqual([]);
+        domain.markSessionMessagesHistoryStartLoaded('s1');
+        const entry = get().sessionMessages.s1;
+        expect(entry.messageIdsOldestFirst).toHaveLength(1);
+        expect(entry.messagesById[entry.messageIdsOldestFirst[0]]).toMatchObject({ tool: { result: { answers: { choice: 'yes' } } } });
+        const previous = get();
+        domain.markSessionMessagesHistoryStartLoaded('s1');
+        expect(get()).toBe(previous);
+    });
+
     it('keeps an already-loaded transcript entry referentially stable when marked loaded again', () => {
         const { get, domain } = createHarness({});
 
@@ -129,14 +149,14 @@ describe('messages domain: ordering', () => {
         ]);
 
         expect(get().sessions.s1.seq).toBe(3);
-        expect((get().sessionListRowsByServerId['server-active'] ?? {}).s1.seq).toBe(3);
-        expect((get().sessionListRowsByServerId['server-active'] ?? {}).s1.hasUnreadMessages).toBe(true);
+        expect((get().sessionListRowsByServerId[activeServerId] ?? {}).s1.seq).toBe(3);
+        expect((get().sessionListRowsByServerId[activeServerId] ?? {}).s1.hasUnreadMessages).toBe(true);
     });
 
     it('persists ready-event metadata from filtered ready events into active-server row projections', () => {
         const session = {
             id: 's1',
-            serverId: 'server-active',
+            serverId: activeServerId,
             seq: 1,
             createdAt: 1,
             updatedAt: 1,
@@ -173,13 +193,13 @@ describe('messages domain: ordering', () => {
             sessions: { s1: session },
             ...withSessionListRows({ s1: renderable
             }),
-            sessionListRowsByServerId: { 'server-active': { s1: renderable } },
+            sessionListRowsByServerId: { [activeServerId]: { s1: renderable } },
             sessionListIndexByServerId: {
-                'server-active': [
+                [activeServerId]: [
                     {
                         type: 'session',
                         sessionId: 's1',
-                        serverId: 'server-active',
+                        serverId: activeServerId,
                         groupKey: 'active',
                         groupKind: 'active',
                         variant: 'default',
@@ -188,7 +208,7 @@ describe('messages domain: ordering', () => {
             },
         });
 
-        const initialIndex = get().sessionListIndexByServerId['server-active'];
+        const initialIndex = get().sessionListIndexByServerId[activeServerId];
         const result = domain.applyMessages('s1', [
             {
                 id: 'ready-1',
@@ -211,12 +231,12 @@ describe('messages domain: ordering', () => {
         expect(get().sessionMessages.s1.latestReadyEventAt).toBe(9000);
         expect(get().sessions.s1.latestReadyEventSeq).toBe(9);
         expect(get().sessions.s1.latestReadyEventAt).toBe(9000);
-        expect((get().sessionListRowsByServerId['server-active'] ?? {}).s1.latestReadyEventSeq).toBe(9);
-        expect((get().sessionListRowsByServerId['server-active'] ?? {}).s1.latestReadyEventAt).toBe(9000);
-        expect(get().sessionListRowsByServerId['server-active'].s1.latestReadyEventSeq).toBe(9);
-        expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+        expect((get().sessionListRowsByServerId[activeServerId] ?? {}).s1.latestReadyEventSeq).toBe(9);
+        expect((get().sessionListRowsByServerId[activeServerId] ?? {}).s1.latestReadyEventAt).toBe(9000);
+        expect(get().sessionListRowsByServerId[activeServerId].s1.latestReadyEventSeq).toBe(9);
+        expect(get().sessionListIndexByServerId[activeServerId]).toBe(initialIndex);
 
-        const nextIndex = get().sessionListIndexByServerId['server-active'];
+        const nextIndex = get().sessionListIndexByServerId[activeServerId];
         const duplicateResult = domain.applyMessages('s1', [
             {
                 id: 'ready-1',
@@ -230,7 +250,7 @@ describe('messages domain: ordering', () => {
         ]);
 
         expect(duplicateResult).toEqual({ changed: [], hasReadyEvent: false });
-        expect(get().sessionListIndexByServerId['server-active']).toBe(nextIndex);
+        expect(get().sessionListIndexByServerId[activeServerId]).toBe(nextIndex);
     });
 
     it('orders committed transcript messages by seq when available (oldest first)', () => {
@@ -725,7 +745,7 @@ describe('messages domain: ordering', () => {
             expect(event?.fields.messages).toBe(2);
             expect(event?.fields.processed).toBe(2);
             expect(event?.fields.changed).toBe(2);
-            expect(event?.fields.uniqueInsertedOrMoved).toBe(2);
+            expect(event?.fields.idsChanged).toBe(1);
             expect(event?.fields.stateChanged).toBe(1);
 
             const reducerEvent = syncPerformanceTelemetry
@@ -740,13 +760,12 @@ describe('messages domain: ordering', () => {
                 .events.find((candidate) => candidate.name === 'sync.store.messages.index');
             expect(indexEvent?.count).toBe(1);
             expect(indexEvent?.fields.processed).toBe(2);
-            expect(indexEvent?.fields.uniqueInsertedOrMoved).toBe(2);
         } finally {
             syncPerformanceTelemetry.configure({ enabled: false });
         }
     });
 
-    it('uses append-only index work for higher-seq streaming messages', () => {
+    it('appends higher-seq streaming messages without changing the previously published transcript', () => {
         const messageCount = 1_000;
         const existingIds = Array.from({ length: messageCount }, (_, index) => `m${index + 1}`);
         const messagesById = Object.fromEntries(existingIds.map((id, index) => [
@@ -818,34 +837,26 @@ describe('messages domain: ordering', () => {
             }),
         });
 
-        syncPerformanceTelemetry.configure({
-            enabled: true,
-            slowThresholdMs: 1_000_000,
-            flushIntervalMs: 60_000,
-        });
-        syncPerformanceTelemetry.reset();
+        domain.applyMessages('s1', [
+            {
+                id: 'm1001',
+                seq: messageCount + 1,
+                localId: null,
+                createdAt: messageCount + 1,
+                isSidechain: false,
+                role: 'agent',
+                content: [{ type: 'text', text: 'next' }],
+            },
+        ]);
 
-        try {
-            domain.applyMessages('s1', [
-                {
-                    id: 'm1001',
-                    seq: messageCount + 1,
-                    localId: null,
-                    createdAt: messageCount + 1,
-                    isSidechain: false,
-                    role: 'agent',
-                    content: [{ type: 'text', text: 'next' }],
-                } as any,
-            ]);
-
-            expect(get().sessionMessages.s1.messageIdsOldestFirst).toHaveLength(messageCount + 1);
-            const indexEvent = syncPerformanceTelemetry
-                .snapshot()
-                .events.find((candidate) => candidate.name === 'sync.store.messages.index');
-            expect(indexEvent?.fields.appendOnly).toBe(1);
-        } finally {
-            syncPerformanceTelemetry.configure({ enabled: false });
-        }
+        const transcript = get().sessionMessages.s1;
+        expect(transcript.messageIdsOldestFirst).toHaveLength(messageCount + 1);
+        expect(transcript.messageIdsOldestFirst.slice(0, messageCount)).toEqual(existingIds);
+        const appendedId = transcript.messageIdsOldestFirst[messageCount];
+        expect(transcript.messagesById[appendedId]).toMatchObject({ kind: 'agent-text', seq: messageCount + 1, text: 'next' });
+        expect(existingIds).toHaveLength(messageCount);
+        expect(messagesById).not.toHaveProperty(appendedId);
+        for (const id of existingIds) expect(transcript.messagesById[id]).toBe(messagesById[id]);
     });
 
     it('keeps transcript store references stable for empty message updates without agent state', () => {

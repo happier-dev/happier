@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
-import { buildRealmQualifiedMobileSurfaceStorageKey } from './mobileSurfacePersistence';
+import { buildRealmQualifiedMobileSurfaceStorageKey, resolveProjectMobileSurfaceStorageKey } from './mobileSurfacePersistence';
 import {
     buildRealmQualifiedSessionLocalPreferenceKey,
     resolveSessionLocalPreferenceRealm,
@@ -11,6 +11,16 @@ import {
 const scope: ServerAccountScope = { serverId: 'https://home.one', accountId: 'account-1' };
 
 describe('sessionLocalPreferenceKey', () => {
+    it('binds Project page preference lookup to the selected registered Home and the applied Account realm', () => {
+        const first = { id: 'project', serverId: scope.serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const other = { ...first, serverId: 'https://home.two' };
+        const input = { workspaceRefs: [first, other], workspaceRefId: first.id, activeScope: scope, activeServerId: scope.serverId };
+        expect(resolveProjectMobileSurfaceStorageKey({ ...input, targetServerId: first.serverId })).toBe(
+            buildRealmQualifiedMobileSurfaceStorageKey('project', scope, first.id));
+        expect(resolveProjectMobileSurfaceStorageKey(input)).toBeNull();
+        expect(resolveProjectMobileSurfaceStorageKey({ ...input, targetServerId: other.serverId })).toBeNull();
+        expect(resolveProjectMobileSurfaceStorageKey({ ...input, workspaceRefs: [first, first], targetServerId: first.serverId })).toBeNull();
+    });
     it('keeps the mobile surface key bytes it was extracted from', () => {
         expect(buildRealmQualifiedMobileSurfaceStorageKey('session', scope, 'session-1')).toBe(
             buildRealmQualifiedSessionLocalPreferenceKey({

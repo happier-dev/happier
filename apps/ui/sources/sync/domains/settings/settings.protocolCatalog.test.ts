@@ -3,7 +3,8 @@ import {
     ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
     accountSettingsParse,
 } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { AccountSettingsSchema } from '@happier-dev/protocol/account/settings/accountSettings';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ACCOUNT_SETTING_ARTIFACTS } from './registry/account/accountSettingArtifacts';
 import { SUPPORTED_SCHEMA_VERSION, settingsParse } from './settings';
@@ -128,6 +129,20 @@ const PREVIOUSLY_UI_ONLY_ACCOUNT_KEYS = [
 ] as const;
 
 describe('Protocol-owned Account Settings catalog', () => {
+    it('validates each current settings input once while accepting changes and recovering malformed values', () => {
+        // Measure the canonical schema boundary without replacing its validation.
+        const parse = vi.spyOn(AccountSettingsSchema, 'parse');
+        try {
+            for (let index = 0; index < 40; index += 1) settingsParse({ filesEditorAutoSave: false });
+            expect(parse).toHaveBeenCalledTimes(40);
+            expect(settingsParse({ filesEditorAutoSave: true }).filesEditorAutoSave).toBe(true);
+            expect(settingsParse({ filesEditorAutoSave: 'invalid' }).filesEditorAutoSave)
+                .toBe(PROTOCOL_ACCOUNT_SETTING_ARTIFACTS.defaults.filesEditorAutoSave);
+            expect(parse).toHaveBeenCalledTimes(42);
+        } finally {
+            parse.mockRestore();
+        }
+    });
     it('owns every formerly UI-only Account key and its canonical defaults', () => {
         for (const key of PREVIOUSLY_UI_ONLY_ACCOUNT_KEYS) {
             expect(PROTOCOL_ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty(key);

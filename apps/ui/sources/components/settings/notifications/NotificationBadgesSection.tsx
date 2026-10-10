@@ -6,6 +6,7 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { t } from '@/text';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
+import { updateNotificationBadge } from './notificationPreferences';
 
 type NotificationBadgesSectionProps = Readonly<{
     localSettings: LocalSettings;
@@ -20,16 +21,8 @@ export function NotificationBadgesSection({
     const badge = deviceOverrides.badge;
     const disabled = badge.enabled === false;
     const setBadge = React.useCallback((next: Partial<typeof badge>) => {
-        setLocalSetting({
-            attentionDeviceOverridesV1: {
-                ...deviceOverrides,
-                badge: {
-                    ...badge,
-                    ...next,
-                },
-            },
-        });
-    }, [badge, deviceOverrides, setLocalSetting]);
+        setLocalSetting(updateNotificationBadge(localSettings, next));
+    }, [localSettings, setLocalSetting]);
 
     return (
         <ItemGroup

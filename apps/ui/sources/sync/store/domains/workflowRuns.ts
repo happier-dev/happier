@@ -1,4 +1,4 @@
-import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, mergeWorkflowNotificationConditionV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, type WorkflowNotificationConditionV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowRunPrivateMetadataV1, WorkflowRunGetResultV1, WorkflowInvocationGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -77,6 +77,8 @@ export type WorkflowRunsDomain = {
         runId: string;
         window?: WorkflowRunInvocationWindowId;
         invocations: readonly WorkflowRunInvocationIndexV1[];
+        /** Same-page opened observations land with their indices in one publication. */
+        invocationDetails?: readonly WorkflowInvocationGetResultV1['invocation'][];
         nextCursor: string | null;
         parentRevision: number;
         mode: WorkflowLoadedSpanMode;
@@ -113,7 +115,7 @@ export type WorkflowRunsDomain = {
  */
 export type WorkflowLoadedSpanMode = 'replace' | 'append' | 'refresh';
 
-export type WorkflowRunListWindowId = 'all' | 'active' | 'attention' | 'automationAttention';
+export type WorkflowRunListWindowId = 'all' | 'active' | 'attention' | 'automationAttention' | `automation:${string}` | `destination:${string}`;
 export type WorkflowRunListWindow = Readonly<{
     runIds: readonly string[];
     nextCursor: string | null;
@@ -123,6 +125,12 @@ export type WorkflowRunListWindow = Readonly<{
 export type WorkflowRunInvocationWindowId = 'history' | 'attention';
 
 export type WorkflowRunInvocationFact = WorkflowRunInvocationIndexV1 & Readonly<{
+    /** Authored display number from the frozen definition, not the sibling ordinal or event sequence. */
+    stepOrdinal?: string;
+    /** Actual Notify me condition on this physical result; absence is unknown, not quiet. */
+    notificationCondition?: WorkflowNotificationConditionV1;
+    /** This exact private display sidecar was opened, including when no condition has evaluated yet. */
+    provenanceLoaded?: true;
     /** The private observation retains its own index token; a newer index cannot arm it. */
     opened?: WorkflowInvocationGetResultV1['invocation'];
 }>;
@@ -163,10 +171,30 @@ function mergeInvocationFacts(
     let next: Record<string, WorkflowRunInvocationFact> | null = null;
     for (const invocation of incoming) {
         const known = (next ?? factsById)[invocation.id];
-        if (known === invocation || (known && isWorkflowInvocationFactOlder(invocation, known))) continue;
-        const candidate = known?.opened && !invocation.opened
+        if (known === invocation) continue;
+        const older = known && isWorkflowInvocationFactOlder(invocation, known);
+        // Numbering is immutable in the accepted definition. A late display-only read can
+        // fill it while retaining every newer lifecycle/content token and opened observation.
+        let candidate = older && known ? known : known?.opened && !invocation.opened
             ? { ...invocation, opened: known.opened }
             : invocation;
+        if (known?.stepOrdinal && !candidate.stepOrdinal) candidate = { ...candidate, stepOrdinal: known.stepOrdinal };
+        if (!candidate.stepOrdinal && invocation.stepOrdinal) candidate = { ...candidate, stepOrdinal: invocation.stepOrdinal };
+        // The source row stays immutable; the root's evaluated conditions are monotone
+        // across consumers. Do not erase them with a lean source index or a late response.
+        const notificationCondition = mergeWorkflowNotificationConditionV1(known?.notificationCondition, invocation.notificationCondition);
+        if (notificationCondition && candidate.notificationCondition !== notificationCondition) candidate = { ...candidate, notificationCondition };
+        if ((known?.provenanceLoaded || invocation.provenanceLoaded) && !candidate.provenanceLoaded) candidate = { ...candidate, provenanceLoaded: true };
+        // A content-only page is not a new recovery decision. Keep the exact
+        // read's projection only while both its row and parent tokens match.
+        if (invocation.opened && known?.opened?.recoveryAvailability !== undefined
+            && invocation.opened.recoveryAvailability === undefined
+            && invocation.opened.index.id === known.opened.index.id
+            && invocation.opened.index.contentRevision === known.opened.index.contentRevision
+            && invocation.opened.parentRevision === known.opened.parentRevision) {
+            candidate = { ...candidate, opened: { ...invocation.opened,
+                recoveryAvailability: known.opened.recoveryAvailability } };
+        }
         if (known && sameStrictJsonValue(known, candidate)) continue;
         next ??= { ...factsById };
         next[invocation.id] = candidate;
@@ -182,6 +210,25 @@ function appendUniqueInvocationIds(existing: readonly string[], incoming: readon
         return true;
     });
     return added.length === 0 ? existing : [...existing, ...added];
+}
+
+/** Accepted row observations use the same freshness rule for actionable membership. */
+function mergeInvocationAttention(
+    previous: WorkflowRunInvocationWindow,
+    factsById: WorkflowRunInvocations['factsById'],
+    incoming: readonly WorkflowRunInvocationFact[],
+): WorkflowRunInvocationWindow {
+    if (!previous.loaded) return previous;
+    let invocationIds = previous.invocationIds;
+    for (const invocation of incoming) {
+        const current = factsById[invocation.id];
+        // Only an accepted (not older) fact may change actionable membership.
+        if (!current || isWorkflowInvocationFactOlder(invocation, current)) continue;
+        const needsYou = WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1.some((lifecycle) => lifecycle === invocation.lifecycle);
+        if (needsYou) invocationIds = appendUniqueInvocationIds(invocationIds, [invocation.id]);
+        else if (invocationIds.includes(invocation.id)) invocationIds = invocationIds.filter((id) => id !== invocation.id);
+    }
+    return invocationIds === previous.invocationIds ? previous : { ...previous, invocationIds };
 }
 
 function factsFor(factsById: WorkflowRunInvocations['factsById'], ids: readonly string[]): WorkflowRunInvocationIndexV1[] {
@@ -708,10 +755,11 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                         : { ...state.workflowRunListWindows, [windowId]: window },
                 };
             }),
-        applyWorkflowRunInvocationPage: ({ runId, window: windowId = 'history', invocations, nextCursor, parentRevision, mode }) =>
+        applyWorkflowRunInvocationPage: ({ runId, window: windowId = 'history', invocations, invocationDetails = [], nextCursor, parentRevision, mode }) =>
             set((state) => {
                 const previous = state.workflowRunInvocationsByRunId[runId] ?? EMPTY_RUN_INVOCATIONS;
-                const factsById = mergeInvocationFacts(previous.factsById, invocations);
+                const openedFacts = invocationDetails.map(opened => ({ ...opened.index, opened }));
+                const factsById = mergeInvocationFacts(previous.factsById, [...invocations, ...openedFacts]);
                 const previousWindow = previous[windowId];
                 const pageIds = invocations.map((entry) => entry.id);
                 const byOrder = (ids: Iterable<string>) => [...ids].flatMap((id) => {
@@ -743,14 +791,16 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                     parentRevision: Math.max(previousWindow.parentRevision ?? 0, parentRevision),
                 };
                 const nextWindow = sameStrictJsonValue(previousWindow, candidateWindow) ? previousWindow : candidateWindow;
-                if (factsById === previous.factsById && nextWindow === previousWindow) return state;
+                const history = windowId === 'history' ? nextWindow : previous.history;
+                const attention = mergeInvocationAttention(
+                    windowId === 'attention' ? nextWindow : previous.attention, factsById, openedFacts,
+                );
+                if (factsById === previous.factsById && history === previous.history && attention === previous.attention) return state;
                 return {
                     ...state,
                     workflowRunInvocationsByRunId: {
                         ...state.workflowRunInvocationsByRunId,
-                        [runId]: windowId === 'history'
-                            ? { ...previous, factsById, history: nextWindow }
-                            : { ...previous, factsById, attention: nextWindow },
+                        [runId]: { ...previous, factsById, history, attention },
                     },
                 };
             }),
@@ -764,17 +814,7 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                     parentRevision: Math.max(previous.history.parentRevision ?? 0, parentRevision),
                 };
                 const history = sameStrictJsonValue(previous.history, candidateHistory) ? previous.history : candidateHistory;
-                // Only an accepted (not older) fact may change actionable membership.
-                const accepted = !isWorkflowInvocationFactOlder(invocation, factsById[invocation.id]!);
-                const needsYou = WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1.some((lifecycle) => lifecycle === invocation.lifecycle);
-                const attentionIds = previous.attention.invocationIds;
-                const candidateAttention: WorkflowRunInvocationWindow = !accepted || !previous.attention.loaded
-                    ? previous.attention
-                    : needsYou
-                        ? { ...previous.attention, invocationIds: appendUniqueInvocationIds(attentionIds, [invocation.id]) }
-                        : attentionIds.includes(invocation.id)
-                            ? { ...previous.attention, invocationIds: attentionIds.filter((id) => id !== invocation.id) }
-                            : previous.attention;
+                const candidateAttention = mergeInvocationAttention(previous.attention, factsById, [invocation]);
                 const attention = sameStrictJsonValue(previous.attention, candidateAttention) ? previous.attention : candidateAttention;
                 if (factsById === previous.factsById && history === previous.history && attention === previous.attention) return state;
                 return {

@@ -1,8 +1,87 @@
 import { describe, expect, it } from 'vitest';
 
-import { ActionsSettingsV1Schema, DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, DEFAULT_ACTIONS_SETTINGS_V1, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 
 describe('buildActionSettingsEntries', () => {
+    it('preserves GitHub mutation approval defaults through projection, waiver and reset', async () => {
+        const { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
+        const { buildActionSettingsContributedActions, buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+        const { resolveActionSettingsEntryStatusSummary } = await import('./resolveActionSettingsEntryStatusSummary');
+        const { applyActionSettingsTargetControlState, resolveActionSettingsTargetControlState } = await import('./actionSettingsTargets');
+        const pluginId = 'happier.scm.forge.github';
+        for (const [localId, dangerLevel] of [
+            ['github/pull-request/merge', 'destructive'],
+            ['github/pull-request/close', 'writesRemote'],
+            ['github/pull-request/mark-ready', 'externalSideEffect'],
+        ] as const) {
+            const projection = PluginProjectionV2Schema.parse({
+                v: 2, generation: 1,
+                installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'GitHub', enabled: true,
+                    source: { kind: 'bundled', locator: '@happier-dev/plugin-scm-github' } } },
+                actionsById: { [`${pluginId}/${localId}`]: {
+                    id: localId, pluginId, occurrenceId: 'github-occurrence', title: localId,
+                    scopes: ['settings'], surfaces: ['ui', 'agent', 'mcp', 'cli'],
+                    execution: { target: 'daemon' }, placementBindings: ['detailsPanel'], dangerLevel,
+                    confirmation: { title: 'Confirm GitHub mutation', body: 'Changes GitHub state.' },
+                } },
+            });
+            const inputs = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
+            const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {} });
+            const actionId = `${pluginId}/actions/${localId}` as const;
+            const entries = buildActionSettingsEntries({ query: '', settings, contributedActions:
+                buildActionSettingsContributedActions(inputs.pluginProjectionById), availability: {
+                    executionRunsEnabled: true, memorySearchEnabled: true, voiceEnabled: true,
+                    sessionHandoffEnabled: true, mcpServersEnabled: true, voiceShareDeviceInventory: true,
+                } });
+            const entry = entries.find((candidate) => candidate.actionId === actionId);
+            if (!entry) throw new Error('GitHub Action was not projected');
+            expect(resolveActionSettingsEntryStatusSummary({ settings, actionId, targets: entry.targets })).toEqual({
+                allowedCount: 1, askFirstCount: 5, offCount: 0, unavailableCount: 0,
+            });
+            for (const target of entry.targets) {
+                const input = { actionId, targetId: target.id, target: target.definition };
+                const required = target.id !== 'plugin';
+                expect(resolveActionSettingsTargetControlState({ ...input, settings })).toMatchObject({
+                    kind: 'approval', value: 'default', approvalRequiredByPolicy: required,
+                });
+                const waived = applyActionSettingsTargetControlState({ ...input, settings, value: 'allowed' });
+                expect(resolveActionSettingsTargetControlState({ ...input, settings: waived })).toMatchObject({
+                    value: 'allowed', approvalRequiredByPolicy: false,
+                });
+                const reset = applyActionSettingsTargetControlState({ ...input, settings: waived, value: 'default' });
+                expect(resolveActionSettingsTargetControlState({ ...input, settings: reset })).toMatchObject({
+                    value: 'default', approvalRequiredByPolicy: required,
+                });
+            }
+        }
+    });
+
+    it('describes a built-in Action in the words its form shows people, not its agent instructions', async () => {
+        const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
+        const entries = buildActionSettingsEntries({
+            query: '',
+            settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: {
+                executionRunsEnabled: true,
+                memorySearchEnabled: true,
+                voiceEnabled: true,
+                sessionHandoffEnabled: true,
+                mcpServersEnabled: true,
+                voiceShareDeviceInventory: true,
+            },
+        });
+        const byId = new Map(entries.map((entry) => [entry.actionId, entry]));
+
+        const createSession = byId.get('session.spawn_new');
+        expect(createSession?.description).toBeTruthy();
+        expect(createSession?.description).not.toContain('{kind:');
+        for (const spec of listActionSpecs()) {
+            const personFacing = spec.inputHints?.description;
+            if (personFacing && byId.has(spec.id)) expect(byId.get(spec.id)?.description).toBe(personFacing);
+        }
+    });
+
     it('marks inventory voice surfaces unavailable when device inventory sharing is disabled', async () => {
         const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
 

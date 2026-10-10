@@ -15,6 +15,10 @@ const GUARDED_MACHINE_RPC_METHODS = new Set<string>([
     RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
     RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT,
     RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+    // Filesystem Actions replace workspace prepared-transfer admission, not its policy.
+    'daemon.filesystem.upload',
+    'daemon.filesystem.download',
+    'daemon.filesystem.transfer.cancel',
     // Canonical bulk transfer control-plane methods must follow transfer policy.
     RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
     RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,

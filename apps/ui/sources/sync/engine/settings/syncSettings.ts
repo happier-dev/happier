@@ -10,7 +10,7 @@ import { summarizeSettings, summarizeSettingsDelta, dbgSettings, isSettingsSyncD
 import {
     stripDerivedAccountSettingsProjections,
     stripLocalOnlyAccountSettings,
-    stripLegacyAuthoringMemorySettingsDelta,
+    stripReadOnlyAccountSettingsDelta,
 } from '@/sync/domains/settings/localOnlyAccountSettings';
 import {
     MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS,
@@ -53,7 +53,6 @@ import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/clien
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { applyAccountSettingMutationV1, type AccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
-import { assertAccountWorkspaceSettingsTransition } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -81,6 +80,14 @@ import {
 } from './writeback/accountSettingsRawDeltaMerge';
 import { areAccountSettingsRawObjectsEqual } from './writeback/accountSettingsRawEquality';
 import { assertUiAccountEncryptionModeAllowed } from '@/sync/domains/settings/clientEncryptionRequirement';
+import { getProviderCatalogSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
+import { composeProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+
+function readAdmittedVoiceProviderSettings(scope: AccountSettingsScope | null | undefined) {
+    const snapshot = getProviderCatalogSnapshot(scope);
+    return snapshot?.status === 'ready' && !snapshot.stale && snapshot.data
+        ? composeProviderSettingsV1(snapshot.data, {}) : null;
+}
 
 function legacySessionOrganizationImportMarkerKey(scope: AccountSettingsScope): string {
     return `session-organization:legacy-import:v1:${accountSettingsScopeKeySuffix(scope)}`;
@@ -109,6 +116,8 @@ export type OneShotAccountSettingsMutationResult<T> =
         status: 'applied';
         settingsVersion: number;
         value: T;
+        /** Requested owner projection of the exact raw document transition. */
+        captured?: unknown;
     }>
     | Readonly<{
         status: 'conflict';
@@ -127,6 +136,12 @@ export type OneShotAccountSettingsPreparedCommitResult =
     | Readonly<{ status: 'conflict' }>
     | Readonly<{ status: 'outcomeUnknown' }>
     | Readonly<{ status: 'rejected'; error: Error }>;
+
+export type AccountSettingsMutationCapture = Readonly<{
+    before: Readonly<Record<string, unknown>>;
+    applied: Readonly<Record<string, unknown>>;
+    beforeVersion: number;
+}>;
 
 export function requireOneShotAccountSettingsMutationApplied<T>(
     result: OneShotAccountSettingsMutationResult<T>,
@@ -173,8 +188,11 @@ export type SyncSettingsParams<TOneShotMutationValue = never> = {
      */
     oneShotServerSettingsMutation?: Readonly<{
         expectedSettingsVersion: number;
+        expectedProfileTransferRevision?: number | 'absent';
         /** Replay a deterministic field-level intent against the latest CAS winner. */
         rebaseOnConflict?: boolean;
+        /** Runs before issuance, after canonical normalization, at each CAS candidate. */
+        capture?: (transition: AccountSettingsMutationCapture) => unknown;
         mutate: (
             raw: Readonly<Record<string, unknown>>,
         ) => Readonly<{
@@ -193,6 +211,7 @@ export type SyncSettingsParams<TOneShotMutationValue = never> = {
             content: AccountSettingsStoredContentEnvelope;
             expectedSettingsVersion: number;
             accountMode: 'plain' | 'e2ee';
+            remoteAlertPolicy?: ReturnType<typeof deriveAccountRemoteAlertPolicyV1>;
         }>) => Promise<OneShotAccountSettingsPreparedCommitResult>;
     }>;
 };
@@ -347,7 +366,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
     const maxRetries = 3;
     let retryCount = 0;
     let lastVersionMismatch: { expectedVersion: number; currentVersion: number; pendingKeys: string[] } | null = null;
-    const pendingAccountSettings = stripLegacyAuthoringMemorySettingsDelta(stripLocalOnlyAccountSettings(pendingSettings)) as Record<string, unknown>;
+    const pendingAccountSettings = stripReadOnlyAccountSettingsDelta(stripLocalOnlyAccountSettings(pendingSettings)) as Record<string, unknown>;
     const pendingLegacySessionOrganizationSettings = pickMigratedSessionOrganizationSettings(pendingAccountSettings);
     const pendingServerSettings = stripMigratedSessionOrganizationSettings(pendingAccountSettings) as Partial<Settings>;
     let legacySessionOrganizationImportCompletedThisRun = false;
@@ -428,6 +447,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
         serverIdentityKeysChanged: boolean;
     };
 
+    const expectedProfileTransferRevision = params.oneShotServerSettingsMutation?.expectedProfileTransferRevision;
     async function updateSettingsV2(params: { content: unknown; expectedVersion: number; raw: Readonly<Record<string, unknown>> }): Promise<unknown> {
         const remotePolicy = await supportsRemoteProjection()
             ? { remoteAlertPolicy: deriveAccountRemoteAlertPolicyV1(params.raw) }
@@ -437,6 +457,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
             body: JSON.stringify({
                 content: params.content,
                 expectedVersion: params.expectedVersion,
+                ...(expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision }),
                 ...remotePolicy,
             }),
             headers: {
@@ -581,6 +602,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
     function normalizeSettingsForServerStorageResult(params: {
         raw: Settings | Record<string, unknown>;
         mode: 'plain' | 'e2ee';
+        current?: Readonly<Record<string, unknown>>;
     }): { value: Record<string, unknown>; changed: boolean } {
         const strippedLocalOnly = stripLocalOnlyAccountSettings(params.raw) as Record<string, unknown>;
         const stripped = stripMigratedSessionOrganizationSettingsForImportedScope(strippedLocalOnly);
@@ -591,7 +613,8 @@ export async function syncSettings<TOneShotMutationValue = never>(
         // Enforce Voice persistence compatibility at the final write boundary.
         // This also covers crash-recovered pending deltas created by an older
         // build and every CAS conflict retry baseline.
-        const voiceNormalized = normalizeVoiceSettingsServerDelta(stripped);
+        const providerSettings = readAdmittedVoiceProviderSettings(settingsScope);
+        const voiceNormalized = normalizeVoiceSettingsServerDelta(stripped, params.current, providerSettings);
         const voiceChanged = !areAccountSettingsRawObjectsEqual(
             stripped,
             voiceNormalized as Record<string, unknown>,
@@ -604,6 +627,8 @@ export async function syncSettings<TOneShotMutationValue = never>(
             normalizeServerRaw: (raw) =>
                 normalizeVoiceSettingsServerDelta(
                     stripMigratedSessionOrganizationSettingsForImportedScope(raw),
+                    params.current,
+                    providerSettings,
                 ) as Record<string, unknown>,
         });
         return {
@@ -836,13 +861,16 @@ export async function syncSettings<TOneShotMutationValue = never>(
             const merged = mergePendingSettingsIntoRawBaseline({
                 rawBaseline: mutationBaseline,
                 pendingSettings: pendingServerSettings,
-                normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode }),
+                normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode, current: baseline.raw ?? {} }),
             });
-            assertAccountWorkspaceSettingsTransition(baseline.raw ?? {}, merged.outgoingRaw);
             const normalizedUnmutatedBaseline = normalizeSettingsForServerStorageResult({
                 raw: baseline.raw ?? {},
                 mode: accountMode,
+                current: baseline.raw ?? {},
             }).value;
+            const captured = params.oneShotServerSettingsMutation?.capture?.({
+                before: baseline.raw ?? {}, applied: merged.outgoingRaw, beforeVersion: version,
+            });
             const serverMutationChanged = !areAccountSettingsRawObjectsEqual(
                 normalizedUnmutatedBaseline,
                 merged.comparisonRaw,
@@ -851,7 +879,8 @@ export async function syncSettings<TOneShotMutationValue = never>(
                 || (remoteAlertPolicyReconciliationStatus === 'disabled'
                     && deriveAccountRemoteAlertPolicyV1(merged.outgoingRaw) !== null);
 
-            if (!shouldRepublishRemoteAlertPolicy
+            if (!params.oneShotServerSettingsMutation?.commitPrepared
+                && !shouldRepublishRemoteAlertPolicy
                 && !baseline.serverIdentityKeysChanged
                 && !serverMutationChanged
                 && !merged.comparisonChanged
@@ -875,6 +904,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
                         status: 'applied',
                         settingsVersion: version,
                         value: oneShotMutation.value,
+                        ...(captured === undefined ? {} : { captured }),
                     })
                     : undefined;
             }
@@ -902,6 +932,9 @@ export async function syncSettings<TOneShotMutationValue = never>(
                         content,
                         expectedSettingsVersion: version,
                         accountMode,
+                        ...(await supportsRemoteProjection()
+                            ? { remoteAlertPolicy: deriveAccountRemoteAlertPolicyV1(merged.outgoingRaw) }
+                            : {}),
                     });
                     data = preparedCommitResult.status === 'applied'
                         ? { success: true, version: preparedCommitResult.settingsVersion }
@@ -954,8 +987,17 @@ export async function syncSettings<TOneShotMutationValue = never>(
                         status: 'applied',
                         settingsVersion: data.version,
                         value: oneShotMutation.value,
+                        ...(captured === undefined ? {} : { captured }),
                     })
                     : undefined;
+            }
+
+            if (data.error === 'profile-transfer-mismatch' && params.oneShotServerSettingsMutation) {
+                // A transfer changed authority without changing the source Settings
+                // version. Never replay the old opened control or its root claims.
+                const current = await fetchAccountSettingsBaseline();
+                applyRawSettingsProjection({ raw: current.raw, version: current.version, remainingPendingSettings: {} });
+                return Object.freeze({ status: 'conflict', currentSettingsVersion: current.version });
             }
 
             if (data.error === 'version-mismatch') {
@@ -1075,6 +1117,7 @@ export async function syncSettings<TOneShotMutationValue = never>(
             const migratedServerSettings = normalizeSettingsForServerStorageResult({
                 raw: decryptedSettings as Record<string, unknown>,
                 mode: accountMode,
+                current: decryptedSettings as Record<string, unknown>,
             });
             const nonCanonicalFormat = accountMode === 'e2ee'
                 && fetched.content?.t === 'encrypted'
@@ -1202,6 +1245,9 @@ export function applySettingsLocalDelta(params: {
     }
 
     const nextSettings = applySettings(currentSettings, delta);
+    const deltaForServer = stripLocalOnlyAccountSettings(
+        normalizeVoiceSettingsServerDelta(delta, currentSettings, readAdmittedVoiceProviderSettings(currentScope)) as Partial<Settings>,
+    );
     emitAccountSettingChangedEvents({
         previousSettings: currentSettings,
         nextSettings,
@@ -1209,9 +1255,6 @@ export function applySettingsLocalDelta(params: {
     });
     storage.getState().applySettingsLocal(delta);
 
-    const deltaForServer = stripLocalOnlyAccountSettings(
-        normalizeVoiceSettingsServerDelta(delta, nextSettings) as Partial<Settings>,
-    );
     if (Object.keys(deltaForServer).length === 0) {
         dbgSettings('applySettings: local-only delta (no pending sync)', {
             delta: summarizeSettingsDelta(delta),

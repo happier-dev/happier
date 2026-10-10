@@ -9,19 +9,16 @@ export const SESSION_RESUME_SETTINGS = defineSettingsPage({
         replay: {
             titleKey: 'settingsSession.replayResume.title',
             settings: {
-                replayEnabled: { storage: { scope: 'account', key: 'sessionReplayEnabled', access: 'read_write' }, titleKey: 'settingsSession.replayResume.enabledTitle' },
-                replayStrategy: { storage: { scope: 'account', key: 'sessionReplayStrategy', access: 'read_write' },
-                    titleKey: 'settingsSession.replayResume.strategyTitle',
-                    keywordKeys: ['settingsSessionPages.resume.strategyRecent', 'settingsSessionPages.resume.strategySummary'],
-                },
-                maxSeedChars: { storage: { scope: 'account', key: 'sessionReplayMaxSeedChars', access: 'read_write' }, titleKey: 'settingsSessionPages.resume.maxSeedCharsTitle' },
-                summaryModel: { titleKey: 'settingsSessionPages.resume.summaryModelSection' },
+                replayEnabled: {},
+                replayStrategy: {},
+                maxSeedChars: {},
+                summaryModel: {},
             },
         },
         handoff: {
             titleKey: 'settingsSessionPages.resume.handoffSection',
             settings: {
-                handoff: { titleKey: 'settingsSession.handoff.title', descriptionKey: 'settingsSessionPages.resume.handoffLinkDescription' },
+                handoff: {},
             },
         },
     },

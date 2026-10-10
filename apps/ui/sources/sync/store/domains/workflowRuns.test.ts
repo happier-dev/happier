@@ -69,6 +69,30 @@ function summary(input: Readonly<{
 }
 
 describe('workflow run body store', () => {
+    it('retains result condition provenance through lean index updates and late suppressed observations', () => {
+        const harness = createHarness();
+        const index = createWorkflowInvocationIndexFixture({ id: 'report', runId: 'run-1', contentRevision: '3', lifecycle: 'completed' });
+        const put = (invocation: Parameters<ReturnType<typeof harness.get>['upsertWorkflowRunInvocation']>[0]['invocation']) =>
+            harness.get().upsertWorkflowRunInvocation({ runId: index.runId, invocation, parentRevision: 3 });
+        put({ ...index, notificationCondition: 'suppressed', provenanceLoaded: true });
+        put(index);
+        expect(harness.get().workflowRunInvocationsByRunId[index.runId]?.factsById[index.id]).toMatchObject({ notificationCondition: 'suppressed' });
+        put({ ...index, notificationCondition: 'matched', provenanceLoaded: true });
+        put({ ...index, contentRevision: '1', notificationCondition: 'suppressed', provenanceLoaded: true });
+        expect(harness.get().workflowRunInvocationsByRunId[index.runId]?.factsById[index.id]).toMatchObject({ contentRevision: '3', notificationCondition: 'matched' });
+    });
+    it('hydrates an immutable authored ordinal without rolling back a newer invocation fact', () => {
+        const harness = createHarness();
+        const latest = createWorkflowInvocationIndexFixture({ id: 'step', runId: 'run-1', contentRevision: '3', lifecycle: 'completed' });
+        harness.get().upsertWorkflowRunInvocation({ runId: latest.runId, invocation: latest, parentRevision: 3 });
+        harness.get().upsertWorkflowRunInvocation({ runId: latest.runId,
+            invocation: { ...latest, contentRevision: '1', lifecycle: 'running', stepOrdinal: '3' }, parentRevision: 1 });
+        expect(harness.get().workflowRunInvocationsByRunId[latest.runId]?.factsById[latest.id])
+            .toMatchObject({ contentRevision: '3', lifecycle: 'completed', stepOrdinal: '3' });
+        harness.get().upsertWorkflowRunInvocation({ runId: latest.runId,
+            invocation: { ...latest, contentRevision: '4' }, parentRevision: 4 });
+        expect(harness.get().workflowRunInvocationsByRunId[latest.runId]?.factsById[latest.id]?.stepOrdinal).toBe('3');
+    });
     it('keeps an unrelated list window stable when another Run is removed', () => {
         const harness = createHarness();
         const removed = createWorkflowRunSummaryFixture({ id: 'removed' });
@@ -114,6 +138,87 @@ describe('workflow run body store', () => {
         expect(selectWorkflowRunWindowInvocations(harness.get().workflowRunInvocationsByRunId['run-1'], 'attention')).toBe(before);
         harness.get().upsertWorkflowRunInvocation({ runId: 'run-1', invocation: { ...held, contentRevision: '2', lifecycle: 'completed' }, parentRevision: 4 });
         expect(selectWorkflowRunWindowInvocations(harness.get().workflowRunInvocationsByRunId['run-1'], 'attention')).toEqual([]);
+    });
+
+    it('publishes an invocation page and all opened details atomically and suppresses unchanged echoes', () => {
+        const store = createStore<State>((set, get) => createWorkflowRunsDomain({ set, get }));
+        const invocations = ['first', 'second', 'third'].map((id, ordinal) => createWorkflowInvocationIndexFixture({
+            id, sequence: String(ordinal), contentRevision: '4', lifecycle: 'completed',
+        }));
+        const invocationDetails = invocations.map(index => ({ index, parentRevision: 4,
+            progress: { kind: 'happier.workflow-progress.v1' as const, blockKind: 'step' as const,
+                invocationPath: { blockId: 'analyze', scope: [] }, attempt: index.attempt,
+                logicalInvocationRecordId: index.id, result: { output: index.id } },
+        }));
+        const page = { runId: 'run-1', invocations, invocationDetails,
+            nextCursor: 'next-page', parentRevision: 4, mode: 'replace' as const };
+        const publications: State[] = [];
+        const unsubscribe = store.subscribe(state => { publications.push(state); });
+        store.getState().applyWorkflowRunInvocationPage(page);
+        expect(publications).toHaveLength(1);
+        const published = publications[0]!.workflowRunInvocationsByRunId['run-1']!;
+        expect(published.history.invocationIds).toEqual(invocations.map(index => index.id));
+        expect(invocations.map(index => published.factsById[index.id]?.opened)).toEqual(invocationDetails);
+        const current = store.getState();
+        store.getState().applyWorkflowRunInvocationPage(structuredClone(page));
+        expect(publications).toHaveLength(1);
+        expect(store.getState()).toBe(current);
+        unsubscribe();
+    });
+
+    it('keeps fresher invocation content when a page carries stale opened details', () => {
+        const store = createStore<State>((set, get) => createWorkflowRunsDomain({ set, get }));
+        const index = createWorkflowInvocationIndexFixture({ contentRevision: '9007199254740993', lifecycle: 'completed' });
+        const opened = { index, parentRevision: 4, progress: { kind: 'happier.workflow-progress.v1' as const,
+            blockKind: 'step' as const, invocationPath: { blockId: 'analyze', scope: [] }, attempt: index.attempt,
+            logicalInvocationRecordId: index.id, result: { output: 'fresh' } } };
+        store.getState().applyWorkflowRunInvocationPage({ runId: 'run-1', window: 'attention',
+            invocations: [{ ...index, contentRevision: '9007199254740992', lifecycle: 'waiting_for_approval' }],
+            nextCursor: null, parentRevision: 4, mode: 'replace' });
+        store.getState().applyWorkflowRunInvocationPage({ runId: 'run-1', invocations: [index], invocationDetails: [opened],
+            nextCursor: null, parentRevision: 4, mode: 'replace' });
+        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.attention.invocationIds).toEqual([]);
+        const known = store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id];
+        const stale = { index: { ...index, contentRevision: '9007199254740992', lifecycle: 'running' as const },
+            parentRevision: 4, progress: { ...opened.progress, result: { output: 'stale' } } };
+        // The public page may already carry a newer index while its private
+        // observation is delayed; content follows the observation's own token.
+        store.getState().applyWorkflowRunInvocationPage({ runId: 'run-1', invocations: [{ ...index, contentRevision: '9007199254740994' }],
+            invocationDetails: [stale], nextCursor: null, parentRevision: 4, mode: 'refresh' });
+        const fact = store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id];
+        expect(known?.opened).toEqual(opened);
+        expect(fact?.contentRevision).toBe('9007199254740994');
+        expect(fact?.lifecycle).toBe('completed');
+        expect(fact?.opened).toBe(known?.opened);
+    });
+
+    it('preserves exact recovery evidence on a same-token content page but not a changed parent revision', () => {
+        const store = createStore<State>((set, get) => createWorkflowRunsDomain({ set, get }));
+        const index = createWorkflowInvocationIndexFixture({ contentRevision: '4', lifecycle: 'failed' });
+        const unavailable = { kind: 'unavailable' as const, reason: 'workspace_unavailable' as const };
+        const recoveryAvailability = { reattach: unavailable, retry: unavailable,
+            continueSameConversation: { kind: 'available' as const }, continueFreshAgent: unavailable, restoreWorkspace: unavailable };
+        const contentOnly = { index, parentRevision: 4, progress: { kind: 'happier.workflow-progress.v1' as const,
+            blockKind: 'step' as const, invocationPath: { blockId: 'analyze', scope: [] }, attempt: index.attempt,
+            logicalInvocationRecordId: index.id, result: { output: 'failed output' } } };
+        store.getState().upsertWorkflowRunInvocation({ runId: 'run-1',
+            invocation: { ...index, opened: { ...contentOnly, recoveryAvailability } }, parentRevision: 4 });
+        const page = { runId: 'run-1', invocations: [index], invocationDetails: [contentOnly],
+            nextCursor: null, parentRevision: 4, mode: 'replace' as const };
+        store.getState().applyWorkflowRunInvocationPage(page);
+        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id]?.opened?.recoveryAvailability)
+            .toEqual(recoveryAvailability);
+        store.getState().applyWorkflowRunInvocationPage({ ...page, parentRevision: 5,
+            invocationDetails: [{ ...contentOnly, parentRevision: 5 }] });
+        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id]?.opened?.recoveryAvailability)
+            .toBeUndefined();
+        store.getState().upsertWorkflowRunInvocation({ runId: 'run-1',
+            invocation: { ...index, opened: { ...contentOnly, parentRevision: 5, recoveryAvailability } }, parentRevision: 5 });
+        const nextIndex = { ...index, contentRevision: '5' };
+        store.getState().applyWorkflowRunInvocationPage({ ...page, invocations: [nextIndex], parentRevision: 5,
+            invocationDetails: [{ ...contentOnly, index: nextIndex, parentRevision: 5 }] });
+        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id]?.opened?.recoveryAvailability)
+            .toBeUndefined();
     });
 
     it('holds Automation attention in the shared row owner and removes it on a complete refresh', () => {
@@ -376,7 +481,7 @@ describe('workflow run body store', () => {
         harness.get().applyWorkflowRunListPage({
             windowId: 'all',
             runs: [delayed],
-            metadataByRunId: { 'run-1': { kind: 'unavailable' } },
+            metadataByRunId: { 'run-1': { kind: 'unavailable', reason: 'content_unavailable' } },
             nextCursor: null,
             mode: 'replace',
         });
@@ -392,7 +497,7 @@ describe('workflow run body store', () => {
         const available = { kind: 'available' as const, value: { title: 'Frozen exact title' } };
 
         harness.get().upsertWorkflowRuns([
-            workflowRunRowFromSummary(listed, { kind: 'unavailable' }),
+            workflowRunRowFromSummary(listed, { kind: 'unavailable', reason: 'content_unavailable' }),
         ]);
         harness.get().upsertWorkflowRuns([workflowRunRowFromSummary(exact, available)]);
 

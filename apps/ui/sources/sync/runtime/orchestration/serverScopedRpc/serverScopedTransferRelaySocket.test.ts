@@ -58,7 +58,7 @@ describe('resolveServerScopedTransferRelaySocket (real scoped network)', () => {
         client.sendEnvelope(payload);
         expect(network.socket.emit).toHaveBeenCalledWith(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
         network.trigger(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
-        expect(listener).toHaveBeenCalledWith(payload);
+        expect(listener).toHaveBeenCalledWith(payload, { serverId: activeHome.id });
         unsubscribe();
         listener.mockClear();
         network.trigger(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);

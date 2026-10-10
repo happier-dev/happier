@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { createStore } from 'zustand/vanilla';
 
-import { createMachinePoolsDomain } from './machinePools';
+import { createMachinePoolsDomain, type MachinePoolsDomain } from './machinePools';
 
 const POOL_ID = '00000000-0000-4000-8000-000000000001';
 const scope = (serverId: string, accountId = 'account-a') => ({ sourceServerId: serverId, sourceAccountId: accountId });
@@ -23,17 +24,48 @@ const viewWithMemberState = (state: 'connected' | 'offline') => ({
 });
 
 function harness() {
-    let state: any = {};
-    const set = (updater: any) => {
-        const patch = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...patch };
-    };
-    const domain = createMachinePoolsDomain<any>({ set, get: () => state });
-    state = { ...state, ...domain };
-    return { domain, get: () => state };
+    const store = createStore<MachinePoolsDomain>()((set, get) => createMachinePoolsDomain({ set, get }));
+    return { domain: store.getState(), get: store.getState, subscribe: store.subscribe };
 }
 
 describe('machine pool store domain', () => {
+    it('does not notify subscribers for identical ready snapshots, including an empty list', () => {
+        for (const pools of [[], [view('A', 1)]]) {
+            const { domain, get, subscribe } = harness();
+            domain.beginMachinePoolAccountScope('home-a', 'account-a');
+            domain.replaceMachinePools(pools, scope('home-a'));
+            const before = get();
+            let notifications = 0;
+            const unsubscribe = subscribe(() => notifications++);
+
+            domain.replaceMachinePools(structuredClone(pools), { ...scope('home-a'), baseline: before.machinePoolListByServerId['home-a']! });
+            domain.replaceMachinePools(structuredClone(pools), scope('home-a'));
+
+            unsubscribe();
+            expect(notifications).toBe(0);
+            expect(get()).toBe(before);
+        }
+    });
+
+    it('retains unchanged pool rows while settling a refresh with changed availability', () => {
+        const { domain, get, subscribe } = harness();
+        domain.beginMachinePoolAccountScope('home-a', 'account-a');
+        const unchanged = { ...view('B', 1), pool: { ...view('B', 1).pool, id: 'pool-b' } };
+        domain.replaceMachinePools([viewWithMemberState('connected'), unchanged], scope('home-a'));
+        const before = get();
+        domain.setMachinePoolListStatus('home-a', 'loading');
+        let notifications = 0;
+        const unsubscribe = subscribe(() => notifications++);
+
+        domain.replaceMachinePools([viewWithMemberState('offline'), structuredClone(unchanged)], scope('home-a'));
+
+        unsubscribe();
+        expect(notifications).toBe(1);
+        expect(get().machinePoolListStatusByServerId['home-a']).toBe('idle');
+        expect(get().machinePoolListByServerId['home-a']?.[0]?.pool.members[0]?.state).toBe('offline');
+        expect(get().machinePoolListByServerId['home-a']?.[1]).toBe(before.machinePoolListByServerId['home-a']?.[1]);
+    });
+
     it('retires rows when the same Home begins serving a different Account', () => {
         const { domain, get } = harness();
         const scoped = domain as typeof domain & {
@@ -74,8 +106,8 @@ describe('machine pool store domain', () => {
 
         domain.patchMachinePool(view('A2', 2), scope('home-a'));
         domain.replaceMachinePools([view('B', 1)], scope('home-b'));
-        expect(get().machinePoolListByServerId['home-a'][0].pool.name).toBe('A2');
-        expect(get().machinePoolListByServerId['home-b'][0].pool.name).toBe('B');
+        expect(get().machinePoolListByServerId['home-a']?.[0]?.pool.name).toBe('A2');
+        expect(get().machinePoolListByServerId['home-b']?.[0]?.pool.name).toBe('B');
     });
 
     it('ignores an older revision and removes by Home-qualified identity', () => {
@@ -83,7 +115,7 @@ describe('machine pool store domain', () => {
         domain.beginMachinePoolAccountScope('home-a', 'account-a');
         domain.replaceMachinePools([view('New', 3)], scope('home-a'));
         domain.patchMachinePool(view('Old', 2), scope('home-a'));
-        expect(get().machinePoolListByServerId['home-a'][0].pool.name).toBe('New');
+        expect(get().machinePoolListByServerId['home-a']?.[0]?.pool.name).toBe('New');
         domain.removeMachinePool(POOL_ID, scope('home-a'));
         expect(get().machinePoolListByServerId['home-a']).toEqual([]);
     });
@@ -94,7 +126,7 @@ describe('machine pool store domain', () => {
         domain.replaceMachinePools([viewWithMemberState('connected')], scope('home-a'));
         domain.replaceMachinePools([viewWithMemberState('offline')], scope('home-a'));
 
-        expect(get().machinePoolListByServerId['home-a'][0].pool.members[0].state).toBe('offline');
+        expect(get().machinePoolListByServerId['home-a']?.[0]?.pool.members[0]?.state).toBe('offline');
     });
 
     it('does not let a list response started before a local update replace the newer revision', () => {
@@ -106,7 +138,7 @@ describe('machine pool store domain', () => {
 
         domain.replaceMachinePools([view('Before', 1)], { ...scope('home-a'), baseline });
 
-        expect(get().machinePoolListByServerId['home-a'][0].pool.name).toBe('After');
+        expect(get().machinePoolListByServerId['home-a']?.[0]?.pool.name).toBe('After');
     });
 
     it('preserves a local create and delete across an older in-flight list response', () => {
@@ -133,7 +165,7 @@ describe('machine pool store domain', () => {
             pool: { id, name, description: null, revision, createdAt: 1, updatedAt: revision, members: [] },
             availability: { state: 'known' as const, connectedCount: 0, enabledCount: 0 },
         });
-        const ids = () => get().machinePoolListByServerId['home-a'].map((item: any) => item.pool.id);
+        const ids = () => get().machinePoolListByServerId['home-a']?.map((item) => item.pool.id);
         const zulu = named('id-1', 'Zulu');
         const alpha = named('id-2', 'Alpha');
 
@@ -166,6 +198,6 @@ describe('machine pool store domain', () => {
 
         expect(get().machinePoolListByServerId['home-a']).toBeUndefined();
         expect(get().machinePoolListStatusByServerId['home-a']).toBeUndefined();
-        expect(get().machinePoolListByServerId['home-b'][0].pool.name).toBe('B');
+        expect(get().machinePoolListByServerId['home-b']?.[0]?.pool.name).toBe('B');
     });
 });

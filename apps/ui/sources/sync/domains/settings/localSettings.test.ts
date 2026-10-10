@@ -5,6 +5,11 @@ import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './registry/local/loc
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it('retains canonical Project page preferences and every predecessor companion value in the existing map', () => {
+        const values = { overview: 'overview', code: 'code', changes: 'changes', scripts: 'scripts', services: 'services', context: 'context',
+            browse: 'browse', git: 'git', tabs: 'tabs', terminal: 'terminal', browser: 'browser' };
+        expect(localSettingsParse({ projectLastMobileSurfaceByWorkspaceRefId: values }).projectLastMobileSurfaceByWorkspaceRefId).toEqual(values);
+    });
     it('keeps connected-account identity privacy device-local and opt-in across old persisted settings', () => {
         expect(localSettingsParse({}).hideConnectedAccountIdentities).toBe(false);
         expect(localSettingsParse({ hideConnectedAccountIdentities: true }).hideConnectedAccountIdentities).toBe(true);

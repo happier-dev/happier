@@ -2,8 +2,10 @@ import * as React from 'react';
 
 import {
     isPermissionGranted,
-    requestPermission,
 } from '@/activity/notifications/channels/tauriNotificationPlugin';
+import { NotificationConfigurationActionOutputSchemas } from '@happier-dev/protocol/actions/notificationConfigurationActionFamily';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
 export type TauriNotificationPermissionDiagnosticsStatus =
     | 'checking'
@@ -14,24 +16,12 @@ export type TauriNotificationPermissionDiagnosticsStatus =
 export function useTauriNotificationPermissionDiagnostics(enabled: boolean): Readonly<{
     status: TauriNotificationPermissionDiagnosticsStatus;
     requestPermission: () => Promise<void>;
+    approval: ReturnType<typeof useMountedActionExecution>['approval'];
 }> {
+    const execution = useMountedActionExecution(useActiveServerAccountScope());
     const [status, setStatus] = React.useState<TauriNotificationPermissionDiagnosticsStatus>(
         enabled ? 'checking' : 'notGranted',
     );
-
-    const refresh = React.useCallback(async () => {
-        if (!enabled) {
-            setStatus('notGranted');
-            return;
-        }
-
-        setStatus('checking');
-        try {
-            setStatus((await isPermissionGranted()) ? 'granted' : 'notGranted');
-        } catch {
-            setStatus('error');
-        }
-    }, [enabled]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -70,18 +60,19 @@ export function useTauriNotificationPermissionDiagnostics(enabled: boolean): Rea
 
         setStatus('checking');
         try {
-            const next = await requestPermission();
-            setStatus(next === 'granted' ? 'granted' : 'notGranted');
+            const result = await execution.execute('notifications.desktop.permission.request', {});
+            if (!result.ok) throw new Error(result.errorCode);
+            if (execution.isCurrent()) setStatus(NotificationConfigurationActionOutputSchemas['notifications.desktop.permission.request'].parse(result.result).status);
         } catch {
             setStatus('error');
             return;
         }
 
-        await refresh();
-    }, [enabled, refresh]);
+    }, [enabled, execution.execute, execution.isCurrent]);
 
     return {
         status,
         requestPermission: requestDesktopPermission,
+        approval: execution.approval,
     };
 }

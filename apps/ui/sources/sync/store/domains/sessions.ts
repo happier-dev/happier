@@ -1,3 +1,4 @@
+import { normalizeSessionOrderingNumber, reconcileSessionLifecycleProjection } from '../../domains/session/sessionLifecycleProjection';
 import type {
     ScmCommitSelectionPatch,
     ScmStatus,
@@ -520,50 +521,18 @@ function createActionDraftId(nowMs: number): string {
 
 type IncomingSessionApply = Omit<Session, 'presence'> & { presence?: 'online' | number };
 
-function normalizeSessionOrderingNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value)
-        ? Math.trunc(value)
-        : null;
-}
-
 function isIncomingOrderingTimestampOlder(incoming: unknown, previous: unknown): boolean {
     const incomingNumber = normalizeSessionOrderingNumber(incoming);
     const previousNumber = normalizeSessionOrderingNumber(previous);
     return incomingNumber !== null && previousNumber !== null && incomingNumber < previousNumber;
 }
 
-function resolveNonRegressingNumber<T>(incoming: T, previous: unknown): T | number {
-    const incomingNumber = normalizeSessionOrderingNumber(incoming);
-    const previousNumber = normalizeSessionOrderingNumber(previous);
-    if (previousNumber === null) return incoming;
-    if (incomingNumber === null || incomingNumber < previousNumber) return previousNumber;
-    return incoming;
-}
-
-function shouldPreservePreviousTurnProjection(
-    previousSession: Session,
-    incomingSession: IncomingSessionApply,
-): boolean {
-    const incomingObservedAt = normalizeSessionOrderingNumber(incomingSession.latestTurnStatusObservedAt);
-    const incomingOrderingAt = incomingObservedAt ?? normalizeSessionOrderingNumber(incomingSession.updatedAt);
-    const previousObservedAt = normalizeSessionOrderingNumber(previousSession.latestTurnStatusObservedAt);
-    if (incomingOrderingAt !== null && previousObservedAt !== null && incomingOrderingAt < previousObservedAt) {
-        return true;
-    }
-    return incomingOrderingAt !== null
-        && previousObservedAt !== null
-        && incomingOrderingAt === previousObservedAt
-        && hasTerminalPrimaryTurnStatus(previousSession.latestTurnStatus)
-        && incomingSession.latestTurnStatus === 'in_progress';
-}
-
 function resolveOrderedSessionApply(
     previousSession: Session | undefined,
     incomingSession: IncomingSessionApply,
 ): IncomingSessionApply {
-    if (!previousSession) return incomingSession;
-
-    let nextSession: IncomingSessionApply = incomingSession;
+    let nextSession: IncomingSessionApply = reconcileSessionLifecycleProjection(previousSession, incomingSession);
+    if (!previousSession) return nextSession;
     const applyPatch = (patch: Partial<IncomingSessionApply>): void => {
         nextSession = { ...nextSession, ...patch };
     };
@@ -597,60 +566,12 @@ function resolveOrderedSessionApply(
         });
     }
 
-    const mergedSeq = resolveNonRegressingNumber(incomingSession.seq, previousSession.seq);
-    if (mergedSeq !== incomingSession.seq) {
-        applyPatch({ seq: mergedSeq as number });
-    }
-
-    const mergedUpdatedAt = resolveNonRegressingNumber(incomingSession.updatedAt, previousSession.updatedAt);
-    if (mergedUpdatedAt !== incomingSession.updatedAt) {
-        applyPatch({ updatedAt: mergedUpdatedAt as number });
-    }
-
     // Additive-optional presentation projection: an omitted value carries no
     // information (older producer or partial writer), so it preserves the last
     // known server decision instead of asserting a solo Session. An explicit
     // boolean, including `false`, always replaces it.
     if (incomingSession.hasOtherNamedCollaborator === undefined && previousSession.hasOtherNamedCollaborator !== undefined) {
         applyPatch({ hasOtherNamedCollaborator: previousSession.hasOtherNamedCollaborator });
-    }
-
-    const mergedMeaningfulActivityAt = resolveNonRegressingNumber(
-        incomingSession.meaningfulActivityAt,
-        previousSession.meaningfulActivityAt,
-    );
-    if (mergedMeaningfulActivityAt !== incomingSession.meaningfulActivityAt) {
-        applyPatch({ meaningfulActivityAt: mergedMeaningfulActivityAt as Session['meaningfulActivityAt'] });
-    }
-
-    const mergedLastTurnCompletedAt = resolveNonRegressingNumber(
-        incomingSession.lastTurnCompletedAt,
-        previousSession.lastTurnCompletedAt,
-    );
-    if (mergedLastTurnCompletedAt !== incomingSession.lastTurnCompletedAt) {
-        applyPatch({ lastTurnCompletedAt: mergedLastTurnCompletedAt as Session['lastTurnCompletedAt'] });
-    }
-
-    if (isIncomingOrderingTimestampOlder(incomingSession.activeAt, previousSession.activeAt)) {
-        applyPatch({
-            active: previousSession.active,
-            activeAt: previousSession.activeAt,
-        });
-    }
-
-    if (isIncomingOrderingTimestampOlder(incomingSession.thinkingAt, previousSession.thinkingAt)) {
-        applyPatch({
-            thinking: previousSession.thinking,
-            thinkingAt: previousSession.thinkingAt,
-        });
-    }
-
-    if (shouldPreservePreviousTurnProjection(previousSession, incomingSession)) {
-        applyPatch({
-            latestTurnId: previousSession.latestTurnId,
-            latestTurnStatus: previousSession.latestTurnStatus,
-            latestTurnStatusObservedAt: previousSession.latestTurnStatusObservedAt,
-        });
     }
 
     if (isIncomingOrderingTimestampOlder(incomingSession.pendingRequestObservedAt, previousSession.pendingRequestObservedAt)) {
@@ -1240,7 +1161,15 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // orthogonal and must not be promoted into online/offline reachability.
             sessions.forEach(incomingSession => {
                 const previousSession = state.sessions[incomingSession.id];
-                const session = resolveOrderedSessionApply(previousSession, incomingSession);
+                const orderedSession = resolveOrderedSessionApply(previousSession, incomingSession);
+                const declaredOwnerServerId = normalizeTrimmedString(orderedSession.serverId);
+                const ownerServerId = declaredOwnerServerId && activeServerId
+                    && areServerProfileIdentifiersEquivalent(declaredOwnerServerId, activeServerId)
+                    ? activeServerId
+                    : declaredOwnerServerId ?? activeServerId;
+                const ownerRows = ownerServerId ? mergedRowsByServerId[ownerServerId] ?? {} : {};
+                const previousRenderable = ownerRows[incomingSession.id];
+                const session = reconcileSessionLifecycleProjection(previousRenderable, orderedSession);
                 // Use centralized resolver for consistent state management
                 const presence = session.presence;
 
@@ -1273,15 +1202,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     && Number.isFinite(session.lastTurnCompletedAt)
                     ? session.lastTurnCompletedAt
                     : null;
-                const incomingLatestReadyEventSeq = typeof session.latestReadyEventSeq === 'number'
-                    && Number.isFinite(session.latestReadyEventSeq)
-                    ? Math.max(0, Math.trunc(session.latestReadyEventSeq))
-                    : null;
-                const incomingLatestReadyEventAt = typeof session.latestReadyEventAt === 'number'
-                    && Number.isFinite(session.latestReadyEventAt)
-                    ? session.latestReadyEventAt
-                    : null;
-
                 const {
                     permissionMode: mergedPermissionMode,
                     permissionModeUpdatedAt: mergedPermissionModeUpdatedAt,
@@ -1349,7 +1269,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const activityAdvanced =
                     (session.latestTurnStatusObservedAt ?? 0) > (previousSession?.latestTurnStatusObservedAt ?? 0)
                     || (session.meaningfulActivityAt ?? 0) > (previousSession?.meaningfulActivityAt ?? 0)
-                    || (incomingLatestReadyEventAt ?? 0) > (previousSession?.latestReadyEventAt ?? 0);
+                    || (session.latestReadyEventAt ?? 0) > (previousSession?.latestReadyEventAt ?? 0);
                 const preserveOptimisticWakeAcrossPassiveReconnect =
                     existingResumingAt !== null
                     && existingOptimisticThinkingAt !== null
@@ -1391,8 +1311,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     thinking: runtimePresence.thinking,
                     thinkingAt: runtimePresence.thinkingAt,
                     presence,
-                    latestReadyEventSeq: incomingLatestReadyEventSeq ?? previousSession?.latestReadyEventSeq ?? null,
-                    latestReadyEventAt: incomingLatestReadyEventAt ?? previousSession?.latestReadyEventAt ?? null,
                     optimisticThinkingAt: mergedOptimisticThinkingAt,
                     resumingAt: mergedResumingAt,
                     thinkingGraceUntil: mergedThinkingGraceUntil,
@@ -1414,13 +1332,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     mergedSessions[session.id] = mergedSession;
                 }
 
-                const declaredOwnerServerId = normalizeTrimmedString(mergedSessions[session.id]?.serverId);
-                const ownerServerId = declaredOwnerServerId && activeServerId
-                    && areServerProfileIdentifiersEquivalent(declaredOwnerServerId, activeServerId)
-                    ? activeServerId
-                    : declaredOwnerServerId ?? activeServerId;
-                const ownerRows = ownerServerId ? mergedRowsByServerId[ownerServerId] ?? {} : {};
-                const previousRenderable = ownerRows[session.id];
                 const mergedTranscriptAggregate = readReusableRenderableAggregate(
                     state.sessionMessages[session.id],
                     mergedSessions[session.id]!,
@@ -1433,11 +1344,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         : readLoadedStoredSessionMessagesForRenderable(state.sessionMessages[session.id]),
                     mergedTranscriptAggregate,
                 );
+                const currentRenderable = preserveSessionListRenderableStaleFields(previousRenderable, nextRenderableBase);
                 const nextRenderable = previousRenderable
-                    ? preserveSessionListRenderableTransientState(previousRenderable, nextRenderableBase, {
+                    ? preserveSessionListRenderableTransientState(previousRenderable, currentRenderable, {
                         preserveResumingAt: false,
                     })
-                    : nextRenderableBase;
+                    : currentRenderable;
                 const mergedRenderable = areSessionListRenderablesEqual(previousRenderable, nextRenderable)
                     ? previousRenderable
                     : nextRenderable;
@@ -1623,6 +1535,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     const updated = applyAgentStateUpdateToSessionMessages({
                         existing: existingSessionMessages,
                         agentState: newSession.agentState,
+                        mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[session.id] === true,
                     });
                     if (updated.sessionMessages !== existingSessionMessages) {
                         reconciledSessionMessageCount += 1;

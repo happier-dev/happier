@@ -7,6 +7,7 @@ import { createFeedDomain } from '../../store/domains/feed';
 import { createFriendsDomain } from '../../store/domains/friends';
 import { createMachinesDomain } from '../../store/domains/machines';
 import { createMachinePoolsDomain } from '../../store/domains/machinePools';
+import { createProjectAccountRowsDomain } from '../../store/domains/projectAccountRows';
 import { createMessagesDomain } from '../../store/domains/messages';
 import { createPendingDomain } from '../../store/domains/pending';
 import { createPetsDomain } from '../../store/domains/pets';
@@ -31,6 +32,7 @@ export const storage = create<StorageState>()((set, get) => {
     const todosDomain = createTodosDomain<StorageState>({ set, get });
     const machinesDomain = createMachinesDomain<StorageState>({ set, get });
     const machinePoolsDomain = createMachinePoolsDomain<StorageState>({ set, get });
+    const projectAccountRowsDomain = createProjectAccountRowsDomain<StorageState>({ set, get });
     const sessionsDomain = createSessionsDomain<StorageState>({ set, get });
     const sessionOrganizationDomain = createSessionOrganizationDomain<StorageState>({ set, get });
     const pendingDomain = createPendingDomain<StorageState>({ set, get });
@@ -52,6 +54,7 @@ export const storage = create<StorageState>()((set, get) => {
         ...sessionOrganizationDomain,
         ...machinesDomain,
         ...machinePoolsDomain,
+        ...projectAccountRowsDomain,
         ...artifactsDomain,
         ...workflowRunsDomain,
         ...automationsDomain,

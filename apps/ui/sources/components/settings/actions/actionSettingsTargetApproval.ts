@@ -1,4 +1,5 @@
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
 import { setActionApprovalOverride, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { normalizeActionsSettings } from './normalizeActionsSettings';
@@ -69,6 +70,10 @@ export function getActionTargetApprovalPolicy(params: Readonly<{
         surface,
         ...(surface === 'ui' ? { authority: 'present_user' as const } : {}),
     };
+    // The same manifest default used by the daemon's contributed Action gate.
+    const contributedApprovalDefault = params.target?.contributedAction
+        ? pluginActionRequiresPresentUserIntent(params.target.contributedAction, surface)
+        : undefined;
     const waivedSettings = setActionApprovalOverride({
         settings: normalizedSettings,
         actionId: params.actionId,
@@ -76,8 +81,8 @@ export function getActionTargetApprovalPolicy(params: Readonly<{
         approvalRequired: false,
     });
     return {
-        approvalRequiredByPolicy: isApprovalRequiredByActionsSettings(params.actionId, normalizedSettings, context),
-        approvalWaivable: !isApprovalRequiredByActionsSettings(params.actionId, waivedSettings, context),
+        approvalRequiredByPolicy: isApprovalRequiredByActionsSettings(params.actionId, normalizedSettings, context, undefined, contributedApprovalDefault),
+        approvalWaivable: !isApprovalRequiredByActionsSettings(params.actionId, waivedSettings, context, undefined, contributedApprovalDefault),
     };
 }
 

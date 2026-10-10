@@ -1259,7 +1259,7 @@ describe('concurrent session cache supervised sockets', () => {
         stopConcurrentSessionCacheSync();
     });
 
-    it('schedules push reconciliation without refreshing projections when a secondary account update arrives', async () => {
+    it.each(['session', null])('observes secondary Account and committed usage wakes without refreshing unrelated projections (Session id %s)', async sessionId => {
         runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: new Headers() }));
         const fakeSocket = createSocketStub();
         ioSpy.mockReturnValue(fakeSocket);
@@ -1305,6 +1305,11 @@ describe('concurrent session cache supervised sockets', () => {
         // The wake is observable per exact Home, and stays content-free.
         expect(accountChangeObserver).toHaveBeenCalledTimes(1);
         expect(accountChangeObserver).toHaveBeenCalledWith({ serverId: 'server-b' });
+        fakeSocket.emitServerEvent('ephemeral', {
+            type: 'usage', id: sessionId, key: 'codex:model', tokens: { total: 1 }, cost: { total: 0 }, timestamp: 1000,
+        });
+        expect(accountChangeObserver).toHaveBeenCalledTimes(2);
+        expect(accountChangeObserver).toHaveBeenLastCalledWith({ serverId: 'server-b' });
         await new Promise<void>((resolve) => setTimeout(resolve, 700));
         expect(fetchAndApplySessionsSpy).toHaveBeenCalledTimes(sessionRefreshCount);
         expect(fetchAndApplyMachinesSpy).toHaveBeenCalledTimes(machineRefreshCount);
@@ -1316,7 +1321,7 @@ describe('concurrent session cache supervised sockets', () => {
             createdAt: 12,
             body: { t: 'update-account' },
         });
-        expect(accountChangeObserver).toHaveBeenCalledTimes(1);
+        expect(accountChangeObserver).toHaveBeenCalledTimes(2);
 
         stopConcurrentSessionCacheSync();
     });
@@ -1382,14 +1387,14 @@ describe('concurrent session cache supervised sockets', () => {
         await vi.waitFor(() => expect(fakeSocket.connect).toHaveBeenCalledTimes(1));
         // Initial connection can miss writes after a reader's first snapshot too.
         expect(accountChangeObserver).toHaveBeenCalledTimes(1);
-        expect(accountChangeObserver).toHaveBeenLastCalledWith({ serverId: 'server-b' });
+        expect(accountChangeObserver).toHaveBeenLastCalledWith({ serverId: 'server-b', source: 'connected' });
 
         // A reconnect may have missed any number of content-free Account wakes.
         // The existing projection owners therefore receive one conservative
         // invalidation for this captured secondary Home, never the focused Home.
         fakeSocket.emitServerEvent('connect', undefined);
         expect(accountChangeObserver).toHaveBeenCalledTimes(2);
-        expect(accountChangeObserver).toHaveBeenLastCalledWith({ serverId: 'server-b' });
+        expect(accountChangeObserver).toHaveBeenLastCalledWith({ serverId: 'server-b', source: 'connected' });
 
         disposeObserver();
         stopConcurrentSessionCacheSync();

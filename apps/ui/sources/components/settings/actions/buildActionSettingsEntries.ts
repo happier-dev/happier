@@ -46,6 +46,7 @@ export type ActionSettingsContributedAction = Readonly<{
     surfaces: readonly string[];
     placementBindings?: readonly string[];
     slash?: unknown;
+    contributedAction?: ActionSettingsTargetSource['contributedAction'];
 }>;
 
 export type ActionSettingsTargetState = 'on' | 'off' | 'unavailable';
@@ -239,7 +240,7 @@ function contributionTargetSource(action: ActionSettingsContributedAction): Acti
         if (parsed.success) placements.push(parsed.data);
     }
 
-    return { surfaces, placements, slash: action.slash };
+    return { surfaces, placements, slash: action.slash, contributedAction: action.contributedAction };
 }
 
 /**
@@ -258,6 +259,10 @@ export function buildActionSettingsContributedActions(
         surfaces: action.surfaces,
         placementBindings: action.placementBindings,
         slash: action.slash,
+        contributedAction: {
+            dangerLevel: action.dangerLevel,
+            ...(action.confirmation ? { confirmation: action.confirmation } : {}),
+        },
     })));
 }
 
@@ -266,7 +271,9 @@ function buildHostDescriptors(): readonly ActionSettingsDescriptor[] {
         kind: 'host' as const,
         actionId: spec.id,
         title: spec.title,
-        description: spec.description ?? spec.inputHints?.description ?? null,
+        // A spec's `description` instructs the agents that call it; the form's description is what a
+        // person reads (`ActionInputFormModal` shows the same text), so it leads here too.
+        description: spec.inputHints?.description ?? spec.description ?? null,
         source: spec,
     }));
 }

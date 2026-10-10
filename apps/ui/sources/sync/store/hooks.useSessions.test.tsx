@@ -1,7 +1,7 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, createProjectAccountRowsFixture, applyProjectAccountRowsFixture, renderHook, standardCleanup } from '@/dev/testkit';
 
 import {
     buildSessionListReachabilityRenderableKey,
@@ -722,15 +722,34 @@ describe('mobile cockpit surface local-setting selectors', () => {
         }
     });
 
+    it('does not read or overwrite an active Home page for an explicit different Home with the same Project id', async () => {
+        const refs = ['active-server', 'other-server'].map(serverId => ({ id: 'same', serverId,
+            machineId: 'machine', rootPath: '/repo', createdAtMs: 1 }));
+        const activeKey = 'mobile-surface-selection:v2:project:13:active-server9:account-a:4:same';
+        const values = { [activeKey]: 'git' as const, same: 'browser' as const };
+        storage.setState(state => ({ ...state, profileScope: { serverId: 'active-server', accountId: 'account-a' },
+            localSettings: { ...state.localSettings, projectLastMobileSurfaceByWorkspaceRefId: values } }));
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: refs });
+        const hook = await renderHook(() => ({ foreign: useProjectLastMobileSurface('same', 'other-server'),
+            active: useProjectLastMobileSurface('same', 'active-server'), persist: usePersistProjectLastMobileSurface() }));
+        expect(hook.getCurrent().active).toBe('git');
+        expect(hook.getCurrent().foreign).toBeNull();
+        await act(async () => { hook.getCurrent().persist('same', 'context', 'other-server'); });
+        expect(storage.getState().localSettings.projectLastMobileSurfaceByWorkspaceRefId).toEqual(values);
+        await act(async () => { hook.getCurrent().persist('same', 'context', 'active-server'); });
+        expect(hook.getCurrent().active).toBe('context');
+        expect(storage.getState().localSettings.projectLastMobileSurfaceByWorkspaceRefId.same).toBe('browser');
+        await hook.unmount();
+    });
+
     it('selects and persists project mobile surfaces within the active Account realm', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
                 ...state,
                 profileScope: { serverId: 'active-server', accountId: 'account-a' },
-                settings: {
-                    ...state.settings,
-                    workspaceRefsV1: [
+                projectAccountRows: createProjectAccountRowsFixture({ serverId: 'active-server', accountId: 'account-a' }, {
+                    workspaceRefs: [
                         {
                             // Workspace-reference ids are only realm-qualified in
                             // persistence; a same-id record from another server must
@@ -771,7 +790,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
                             lastOpenedAtMs: null,
                         },
                     ],
-                },
+                }),
                 localSettings: {
                     ...state.localSettings,
                     projectLastMobileSurfaceByWorkspaceRefId: {
@@ -783,7 +802,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
                 },
             }));
 
-            const selectedHook = await renderHook(() => useProjectLastMobileSurface('wr_1'), {
+            const selectedHook = await renderHook(() => useProjectLastMobileSurface('wr_1', 'active-server'), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
             expect(selectedHook.getCurrent()).toBe('git');

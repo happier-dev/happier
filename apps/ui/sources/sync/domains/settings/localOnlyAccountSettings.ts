@@ -1,5 +1,5 @@
 import type { Settings } from '@/sync/domains/settings/settings';
-import { LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+import { isAccountSettingsReadOnlySourceKeyV1, isRetiredAccountSettingsRootKey } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import {
     NewSessionOrdinaryEntryDraftIdSchema,
@@ -60,10 +60,11 @@ export function stripDerivedAccountSettingsProjections(
 }
 
 /** Only sparse pending/input deltas use this; authoritative raw roots survive until import commits. */
-export function stripLegacyAuthoringMemorySettingsDelta<T extends object>(delta: T): T {
+export function stripReadOnlyAccountSettingsDelta<T extends object>(delta: T): T {
     const next = { ...delta } as T & Record<string, unknown>;
-    for (const key of [...LEGACY_AUTHORING_MEMORY_SETTINGS_KEYS, 'currentRememberedEngineSelectionsByScopeV1']) {
-        delete next[key];
+    for (const key of Object.keys(next)) {
+        if (isAccountSettingsReadOnlySourceKeyV1(key) || isRetiredAccountSettingsRootKey(key)
+            || key === 'currentRememberedEngineSelectionsByScopeV1') delete next[key];
     }
     return next;
 }

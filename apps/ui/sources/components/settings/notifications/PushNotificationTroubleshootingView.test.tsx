@@ -1,21 +1,45 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermissionStatus } from 'expo-modules-core';
 
-import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
-import { flushHookEffects } from '@/dev/testkit';
+import { renderSettingsView as renderSettingsViewBoundary } from '@/dev/testkit/harness/settingsViewHarness';
+import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const deletePushTokenMock = vi.fn();
-const fetchPushTokensMock = vi.fn();
 const modalConfirmMock = vi.fn();
 const modalAlertMock = vi.fn();
 let settingsValue: Record<string, unknown> = {
     notificationsSettingsV1: { v: 1, pushEnabled: true },
 };
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+afterEach(standardCleanup);
+let home: string;
+let deleteDisabled = false;
+const answerPushTokens = (tokens: unknown[]) => harness.answer(home, '/v1/push-tokens', { body: { tokens } });
+async function renderSettingsView(node: React.ReactElement) {
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl, { serverId: home });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const settings = settingsParse({ ...storage.getState().settings, ...settingsValue, attentionDeliveryPolicyV1: undefined,
+        actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, ...(deleteDisabled
+            ? { actions: { 'notifications.push.tokens.remove': { disabledSurfaces: ['ui'] } } }
+            : { approvalWaivedSurfaces: {
+            'notifications.push.tokens.remove': ['ui'], 'notifications.push.register': ['ui'],
+        } }) }) });
+    storage.setState({ settings, settingsVersion: 1 });
+    harness.answer(home, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: settings } } });
+    return renderSettingsViewBoundary(<InjectedAuthProvider credentials={credentials}>{node}</InjectedAuthProvider>);
+}
 
 function createPassthroughComponentMock(tag: string) {
     return (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -54,24 +78,12 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/auth/context/AuthContext', () => {
-    const credentials = { token: 't', secret: 's' };
-    return { useAuth: () => ({ credentials }) };
+// Metro's deferred module loader is a boundary; Action admission and writers stay real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
 });
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'https://api.happier.dev', generation: 1 }),
-    subscribeActiveServer: () => () => {},
-}));
-
-vi.mock('@/sync/api/session/apiPush', () => ({
-    fetchPushTokens: (...args: unknown[]) => fetchPushTokensMock(...args),
-    deletePushToken: (...args: unknown[]) => deletePushTokenMock(...args),
-}));
-
-vi.mock('@/sync/engine/account/syncAccount', () => ({
-    registerPushTokenIfAvailable: vi.fn(async () => {}),
-}));
 
 installSettingsViewCommonModuleMocks({
     reactNative: async () => {
@@ -94,12 +106,7 @@ installSettingsViewCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key: string) => key });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSettingsSelector: <T,>(selector: (settings: typeof settingsValue) => T) => selector(settingsValue),
-        });
-    },
+    storage: 'real',
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock();
@@ -123,11 +130,16 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
 }));
 
 describe('PushNotificationTroubleshootingView', () => {
-    beforeEach(() => {
-        deletePushTokenMock.mockReset();
-        fetchPushTokensMock.mockReset();
+    beforeEach(async () => {
+        await harness.reset();
+        await loadSyncSingletonForTests();
+        const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+        resetScopedHomeActionExecutorsForTests();
+        home = await harness.addHome({ name: 'Push', serverUrl: 'https://push-troubleshooting.example', serverIdentityId: 'srv_push',
+            accountId: 'push-owner', currentAccount: true });
         modalConfirmMock.mockReset();
         modalAlertMock.mockReset();
+        deleteDisabled = false;
         settingsValue = {
             notificationsSettingsV1: { v: 1, pushEnabled: true },
         };
@@ -148,7 +160,7 @@ describe('PushNotificationTroubleshootingView', () => {
             type: 'expo',
             data: 'ExponentPushToken[current]',
         } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
-        fetchPushTokensMock.mockResolvedValue([]);
+        answerPushTokens([]);
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
@@ -173,7 +185,7 @@ describe('PushNotificationTroubleshootingView', () => {
             data: 'ExponentPushToken[current]',
         } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
 
-        fetchPushTokensMock.mockResolvedValue([
+        answerPushTokens([
             { id: 't1', token: 'ExponentPushToken[current]', createdAt: 1, updatedAt: 2, clientServerUrl: null },
             { id: 't2', token: 'ExponentPushToken[stale]', createdAt: 1, updatedAt: 2, clientServerUrl: null },
         ]);
@@ -186,7 +198,8 @@ describe('PushNotificationTroubleshootingView', () => {
         expect(row?.props?.detail).toBe('settingsNotifications.pushTroubleshooting.devices.thisDevice');
     });
 
-    it('deletes a stale token after confirmation', async () => {
+    it.each([false, true])('removes a stale registration only through enabled Action admission (disabled=%s)', async disabled => {
+        deleteDisabled = disabled;
         const Notifications = await import('expo-notifications');
         vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
             status: PermissionStatus.GRANTED,
@@ -199,12 +212,12 @@ describe('PushNotificationTroubleshootingView', () => {
             data: 'ExponentPushToken[current]',
         } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
 
-        fetchPushTokensMock.mockResolvedValue([
+        answerPushTokens([
             { id: 't1', token: 'ExponentPushToken[current]', createdAt: 1, updatedAt: 2, clientServerUrl: null },
             { id: 't2', token: 'ExponentPushToken[stale]', createdAt: 1, updatedAt: 2, clientServerUrl: null },
         ]);
         modalConfirmMock.mockResolvedValue(true);
-        deletePushTokenMock.mockResolvedValue(undefined);
+        harness.answer(home, `DELETE /v1/push-tokens/${encodeURIComponent('ExponentPushToken[stale]')}`, { body: { success: true } });
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
@@ -217,7 +230,12 @@ describe('PushNotificationTroubleshootingView', () => {
             screen.pressByTestId('settings-notifications-push-troubleshooting-device-t2-remove');
         });
 
-        expect(deletePushTokenMock).toHaveBeenCalledWith({ token: 't', secret: 's' }, 'ExponentPushToken[stale]');
+        if (disabled) {
+            await waitForHomeGovernance(() => expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'settingsNotifications.pushTroubleshooting.remove.error'));
+            expect(harness.requestsFor(`/v1/push-tokens/${encodeURIComponent('ExponentPushToken[stale]')}`)).toEqual([]);
+        } else {
+            await waitForHomeGovernance(() => expect(harness.requestsFor(`/v1/push-tokens/${encodeURIComponent('ExponentPushToken[stale]')}`)).toHaveLength(1));
+        }
     });
 
     it('routes a blocked permission to system settings and alerts when that fails', async () => {
@@ -234,7 +252,7 @@ describe('PushNotificationTroubleshootingView', () => {
             type: 'expo',
             data: 'ExponentPushToken[current]',
         } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
-        fetchPushTokensMock.mockResolvedValue([]);
+        answerPushTokens([]);
         vi.mocked(Linking.openSettings).mockRejectedValueOnce(new Error('nope'));
         // The OS refuses further prompts, so the primed flow offers a trip to system settings.
         modalConfirmMock.mockResolvedValue(true);
@@ -264,7 +282,7 @@ describe('PushNotificationTroubleshootingView', () => {
         const Notifications = await import('expo-notifications');
         vi.mocked(Notifications.getPermissionsAsync).mockRejectedValue(new Error('native module unavailable'));
         vi.mocked(Notifications.getExpoPushTokenAsync).mockRejectedValue(new Error('native module unavailable'));
-        fetchPushTokensMock.mockResolvedValue([]);
+        answerPushTokens([]);
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
@@ -282,9 +300,8 @@ describe('PushNotificationTroubleshootingView', () => {
         expect(refreshRow?.props.loading).toBeFalsy();
     });
 
-    it('alerts when re-registering fails', async () => {
+    it('alerts when registration recovery cannot reload the token list', async () => {
         const Notifications = await import('expo-notifications');
-        const account = await import('@/sync/engine/account/syncAccount');
 
         vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
             status: PermissionStatus.GRANTED,
@@ -296,8 +313,7 @@ describe('PushNotificationTroubleshootingView', () => {
             type: 'expo',
             data: 'ExponentPushToken[current]',
         } satisfies Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>);
-        fetchPushTokensMock.mockResolvedValue([]);
-        vi.mocked(account.registerPushTokenIfAvailable).mockRejectedValueOnce(new Error('nope'));
+        answerPushTokens([]);
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
@@ -306,10 +322,13 @@ describe('PushNotificationTroubleshootingView', () => {
         // Nothing to ask for once the permission is granted.
         expect(screen.findByTestId('settings-notifications-push-troubleshooting-request-permission')).toBeNull();
 
+        harness.answer(home, 'POST /v1/push-tokens', { status: 400, body: { error: 'registration rejected' } });
+        harness.answer(home, '/v1/push-tokens', { status: 503, body: { error: 'token list unavailable' } });
+
         await act(async () => {
             screen.pressByTestId('settings-notifications-push-troubleshooting-reregister');
         });
 
-        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'settingsNotifications.pushTroubleshooting.loadError');
+        await waitForHomeGovernance(() => expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'settingsNotifications.pushTroubleshooting.loadError'));
     });
 });

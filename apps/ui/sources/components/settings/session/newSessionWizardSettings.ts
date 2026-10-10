@@ -1,6 +1,8 @@
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
 
+import { presentationStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
+
 const PRESENTATION_KEYWORDS = [
     'settingsSession.sessionCreation.wizardPresentationAutoTitle',
     'settingsSession.sessionCreation.wizardPresentationListTitle',
@@ -15,18 +17,18 @@ export const NEW_SESSION_WIZARD_SETTINGS = defineSettingsPage({
         wideScreens: {
             titleKey: 'settingsSessionPages.wizard.wideScreensSection',
             settings: {
-                columns: { storage: { scope: 'account', key: 'newSessionWizardColumnsEnabled', access: 'read_write' }, titleKey: 'settingsSession.sessionCreation.wizardColumnsTitle' },
+                columns: {},
             },
         },
         steps: {
             titleKey: 'settingsSessionPages.wizard.stepsSection',
             settings: {
-                profiles: { titleKey: 'settingsSessionPages.wizard.steps.profiles', keywordKeys: PRESENTATION_KEYWORDS },
-                backends: { titleKey: 'settingsSessionPages.wizard.steps.backends', keywordKeys: PRESENTATION_KEYWORDS },
-                models: { titleKey: 'settingsSessionPages.wizard.steps.models', keywordKeys: PRESENTATION_KEYWORDS },
-                machines: { titleKey: 'settingsSessionPages.wizard.steps.machines', keywordKeys: PRESENTATION_KEYWORDS },
-                paths: { titleKey: 'settingsSessionPages.wizard.steps.paths', keywordKeys: PRESENTATION_KEYWORDS },
-                permissions: { titleKey: 'settingsSessionPages.wizard.steps.permissions', keywordKeys: PRESENTATION_KEYWORDS },
+                profiles: { storage: presentationStorage('profiles') },
+                backends: { storage: presentationStorage('backends') },
+                models: { storage: presentationStorage('models') },
+                machines: { storage: presentationStorage('machines') },
+                paths: { storage: presentationStorage('paths') },
+                permissions: { storage: presentationStorage('permissions') },
             },
         },
     },

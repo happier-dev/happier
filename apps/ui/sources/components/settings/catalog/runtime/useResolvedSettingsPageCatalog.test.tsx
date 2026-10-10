@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
@@ -91,7 +92,7 @@ function CatalogProjectionProvider({ children }: React.PropsWithChildren) {
         serverId: null,
         platform: 'web',
         reloadConnectedAccountProjection() {},
-        clientExecutableActivation: { status: 'ready' },
+        accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
         reloadClientExecutables() {},
     }}>{children}</AppShellPluginUiProjectionValueProvider>;
 }
@@ -261,11 +262,10 @@ describe('useResolvedSettingsPageCatalog', () => {
             await vi.waitFor(() => expect(hook.getCurrent().admission.admitted).toBe(false));
             expect(flattenIds(hook.getCurrent().catalog.tree)).not.toContain('teams');
             expect(hook.getCurrent().catalog.search('teams').some((result) => result.id === 'teams')).toBe(false);
-            // No visible catalog row remains selected. The exact-Home route
-            // still belongs to TeamSection/useTeamBinding, independently of
-            // the selected Home set and this navigation/search projection.
+            // Hiding the navigation/search row does not retire a mounted
+            // exact-Home route's identity, owned by TeamSection/useTeamBinding.
             expect(pathnameState.value).toBe(`/settings/teams/${homeB.id}/team-one`);
-            expect(hook.getCurrent().catalog.activePageId).toBeNull();
+            expect(hook.getCurrent().catalog.activePageId).toBe('teams');
         } finally {
             await hook.unmount();
             if (priorView) await profiles.saveHomeViewState(priorView);
@@ -642,6 +642,60 @@ describe('useResolvedSettingsPageCatalog', () => {
         expect(results.some((result: any) => result.id === 'notifications')).toBe(true);
 
         await hook.unmount();
+    });
+
+    it('offers exact words and aliases before typo matches without losing neighboring settings', async () => {
+        const { en } = await import('@/text/translations/en');
+        const { SETTINGS_PAGE_DECLARATIONS } = await import('../settingsPageDeclarations');
+        const { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } = await import('../pageCatalog');
+        const translate = (key: string): string => {
+            let value: unknown = en;
+            for (const part of key.split('.')) {
+                if (!value || typeof value !== 'object') return key;
+                value = (value as Record<string, unknown>)[part];
+            }
+            return typeof value === 'string' ? value : key;
+        };
+        for (const node of flattenSettingsPageCatalog(SETTINGS_PAGE_CATALOG)) {
+            for (const key of [node.titleKey, node.subtitleKey, node.keywordsKey]) {
+                if (key) searchWordsState.overrides[key] = translate(key);
+            }
+        }
+        for (const page of SETTINGS_PAGE_DECLARATIONS) {
+            for (const ref of Object.values(page.settings)) {
+                for (const key of [ref.titleKey, ref.descriptionKey, ref.sectionTitleKey, ...(ref.keywordKeys ?? [])]) {
+                    if (key) searchWordsState.overrides[key] = translate(key);
+                }
+            }
+        }
+        try {
+            const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+            const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+            try {
+                const search = hook.getCurrent().search;
+                for (const query of ['ollama', 'model']) {
+                    const results = search(query);
+                    expect(results[0]?.id).toBe('providers');
+                    if (query === 'ollama') expect(results.every(result => result.id === 'providers')).toBe(true);
+                    if (query === 'model') expect(results.some(result => result.setting?.anchor === 'appearance.themeMode')).toBe(false);
+                }
+                for (const [query, anchor] of [
+                    ['density', 'appearance.density'],
+                    ['avatar', 'appearance.avatarStyle'],
+                    ['text size', 'appearance.textSize'],
+                    ['tmux', 'session.runtime.sessionName'],
+                    ['permission mode', 'permissions.defaultPermissions'],
+                    ['badge', 'appearance.tabBarBadges'],
+                ] as const) {
+                    const results = search(query);
+                    expect(results.some(result => result.setting?.anchor === anchor)).toBe(true);
+                }
+            } finally {
+                await hook.unmount();
+            }
+        } finally {
+            searchWordsState.overrides = {};
+        }
     });
 
     it('exposes Remote Hosts only on Tauri desktop when remoteHosts.management is enabled', async () => {

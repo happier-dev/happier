@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
@@ -17,8 +17,9 @@ beforeAll(loadSyncSingletonForTests);
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let testProfiles: typeof import('@/sync/domains/server/serverProfiles');
+let testConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
-async function publishTestHomeProfiles(): Promise<void> {
+async function publishTestHomeProfiles(options: { restoreAccount?: boolean } = {}): Promise<void> {
     testProfiles = await import('@/sync/domains/server/serverProfiles');
     for (const serverId of ['srv_server-a', 'srv_server-b']) {
         const serverUrl = `https://${serverId}.example.test`;
@@ -36,6 +37,20 @@ async function publishTestHomeProfiles(): Promise<void> {
     }
     await testProfiles.setActiveServerId('srv_server-a');
     expect(testProfiles.getActiveServerSnapshot()).toMatchObject({ serverId: 'srv_server-a', serverUrl: 'https://srv_server-a.example.test' });
+    if (options.restoreAccount) {
+        testConnection = await restoreServerAccountForTest({
+            serverUrl: 'https://srv_server-a.example.test',
+            serverIdentityId: 'srv_server-a',
+            request: async (url) => isHealthFetchUrl(url)
+                ? Response.json({ status: 'ok' })
+                : new Response('{}', { status: 404 }),
+        });
+        expect(testProfiles.getActiveServerSnapshot()).toMatchObject({
+            serverId: 'srv_server-a',
+            runtimeOrigin: 'https://srv_server-a.example.test',
+            carrier: 'https',
+        });
+    }
 }
 
 function createFeaturesPayload(params: { voiceEnabled: boolean }) {
@@ -57,8 +72,11 @@ function createFeaturesPayload(params: { voiceEnabled: boolean }) {
 }
 
 async function activateTestHome(serverId: string): Promise<void> {
-    // Profile activation publishes the real runtime generation and transport state.
     await testProfiles.setActiveServerId(serverId);
+    if (testConnection) {
+        const { switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await switchConnectionToActiveServer();
+    }
 }
 
 function readFetchUrl(url: unknown): string {
@@ -100,10 +118,17 @@ function countFeaturesFetchCalls(fetchMock: { mock: { calls: Array<readonly unkn
 }
 
 describe('featureDecisionRuntime', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        // Retire mounted retry observers before disconnecting their Account;
+        // keep the credential and socket boundaries installed for real teardown.
         standardCleanup();
-        vi.unstubAllGlobals();
-        vi.restoreAllMocks();
+        try {
+            await testConnection?.dispose();
+        } finally {
+            testConnection = undefined;
+            vi.unstubAllGlobals();
+            vi.restoreAllMocks();
+        }
     });
 
     it('reprojects a mounted runtime snapshot when the same server cache entry changes', async () => {
@@ -441,7 +466,7 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('refetches the server feature snapshot when active server changes', async () => {
-        await publishTestHomeProfiles();
+        await publishTestHomeProfiles({ restoreAccount: true });
 
         const { resetRuntimeFetch, setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         const fetchMock = vi.fn(async (url: any) => {
@@ -499,7 +524,7 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('refreshes the runtime server feature snapshot after the cache TTL expires', async () => {
-        await publishTestHomeProfiles();
+        await publishTestHomeProfiles({ restoreAccount: true });
 
         const { resetRuntimeFetch, setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         let now = 0;
@@ -568,7 +593,7 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('does not refetch explicit serverId snapshots on remount while cache is fresh', async () => {
-        await publishTestHomeProfiles();
+        await publishTestHomeProfiles({ restoreAccount: true });
 
         let now = 0;
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -622,7 +647,7 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('refetches a transient main-selection feature error after its cache TTL expires and the consumer remounts', async () => {
-        await publishTestHomeProfiles();
+        await publishTestHomeProfiles({ restoreAccount: true });
 
         let now = 0;
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -686,7 +711,7 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('recovers a still-mounted main-selection feature consumer after the transient-error backoff', async () => {
-        await publishTestHomeProfiles();
+        await publishTestHomeProfiles({ restoreAccount: true });
 
         let now = 0;
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -833,7 +858,7 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('discards an already-dequeued runtime retry after the active server changes', async () => {
-        await publishTestHomeProfiles();
+        await publishTestHomeProfiles({ restoreAccount: true });
         let now = 0;
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
         const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
@@ -910,7 +935,7 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('schedules a successor retry when a mounted runtime retry also fails', async () => {
-        await publishTestHomeProfiles();
+        await publishTestHomeProfiles({ restoreAccount: true });
         let now = 0;
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
         const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);

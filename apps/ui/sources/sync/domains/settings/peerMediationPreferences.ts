@@ -1,8 +1,5 @@
 import {
-    PeerMediationFlowKindV1Schema,
-    type PeerDirectPreferenceV1,
     type PeerMediationFlowKindV1,
-    type PeerMediationPreferencesV1,
 } from '@happier-dev/protocol/account/settings/peerMediationPreferencesV1';
 
 import { readAccountSettingsForScope } from '@/sync/domains/state/accountSettingsPersistence';
@@ -37,51 +34,5 @@ export function resolvePeerMediationDirectPreferencesForScope(input: Readonly<{
  * decide whether their devices may connect directly, not per transport; the flow granularity stays
  * the fold owner's (`resolveEffectivePeerDirectRoutePolicy`).
  */
-export type MachineDirectConnectionChoice = 'default' | 'direct' | 'relay';
-
-const DIRECT_FLOW_KINDS = PeerMediationFlowKindV1Schema.options;
-
-type FlowPreferences = PeerMediationPreferencesV1['flows'];
-
-function flowsWith(direct: PeerDirectPreferenceV1): FlowPreferences {
-    return Object.fromEntries(DIRECT_FLOW_KINDS.map((flow) => [flow, { direct }])) as FlowPreferences;
-}
-
-/** On unless a flow is turned off: untouched flows follow the product default, which connects directly. */
-export function readDirectConnectionsEnabled(preferences: PeerMediationPreferencesV1): boolean {
-    return DIRECT_FLOW_KINDS.every((flow) => preferences.flows[flow]?.direct !== 'disabled');
-}
-
-/** Off writes `disabled` for every flow; on returns every flow to the product default. */
-export function withDirectConnectionsEnabled(
-    preferences: PeerMediationPreferencesV1,
-    enabled: boolean,
-): PeerMediationPreferencesV1 {
-    return { ...preferences, flows: enabled ? {} : flowsWith('disabled') };
-}
-
-export function readMachineDirectConnectionChoice(
-    preferences: PeerMediationPreferencesV1,
-    machineId: string,
-): MachineDirectConnectionChoice {
-    const flows = preferences.byMachineId[machineId]?.flows;
-    if (!flows) return 'default';
-    const values = DIRECT_FLOW_KINDS.map((flow) => flows[flow]?.direct ?? 'inherit');
-    // Written only as a whole; a hand-edited mix reads as the stricter answer.
-    if (values.includes('disabled')) return 'relay';
-    if (values.includes('enabled')) return 'direct';
-    return 'default';
-}
-
-export function withMachineDirectConnectionChoice(
-    preferences: PeerMediationPreferencesV1,
-    machineId: string,
-    choice: MachineDirectConnectionChoice,
-): PeerMediationPreferencesV1 {
-    const { [machineId]: _previous, ...others } = preferences.byMachineId;
-    if (choice === 'default') return { ...preferences, byMachineId: others };
-    return {
-        ...preferences,
-        byMachineId: { ...others, [machineId]: { flows: flowsWith(choice === 'direct' ? 'enabled' : 'disabled') } },
-    };
-}
+export { readDirectConnectionsEnabled, withDirectConnectionsEnabled, readMachineDirectConnectionChoice, withMachineDirectConnectionChoice } from '@happier-dev/protocol/account/settings/peerMediationPreferencesV1';
+export type { MachineDirectConnectionChoice } from '@happier-dev/protocol/account/settings/peerMediationPreferencesV1';

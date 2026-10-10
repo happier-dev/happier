@@ -3,10 +3,12 @@ import { defineSettingDefinitions } from '@happier-dev/protocol/settings/registr
 import {
     buildUiSurfaceExecutableApprovalKeyStringV1,
     createUiSurfaceRequestedCapabilitiesDigestV1,
+    UiSurfaceExecutableApprovalKeyV1Schema,
+} from '@happier-dev/protocol/plugins/contributions/ui/executableSurfaceApprovalV1';
+import {
     normalizeUiSurfaceCapabilityRequestV1,
     UiSurfaceCapabilityRequestV1Schema,
-    UiSurfaceExecutableApprovalKeyV1Schema,
-} from '@happier-dev/protocol/plugins/ui';
+} from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import {
     DEFAULT_HAPPIER_SPINNER_PAUSE_ID,
     DEFAULT_HAPPIER_SPINNER_SPEED_ID,
@@ -23,7 +25,7 @@ import {
     DEFAULT_THEME_PROFILES_LOCAL_STATE,
     ThemeProfilesLocalStateSchema,
 } from '@/theme/profiles/themeProfilePersistence';
-import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders';
+import { SessionListFocusedFolderV1Schema } from '@/sync/domains/session/folders/types';
 
 const SessionMruOrderSchema = z.array(z.unknown())
     .transform((values) => values
@@ -96,10 +98,10 @@ const localSettingInputs = {
         storageScope: 'local',
     },
     artifactsBrowserViewV1: {
-        // Grid or List for the Artifacts browser on this device; unset follows the device (phones list, else grid).
-        schema: z.object({ presentation: z.enum(['grid', 'list']).optional() }).catch({}),
+        // Grid, List or Folders for the Artifacts browser on this device; unset follows the device (phones list, else grid).
+        schema: z.object({ presentation: z.enum(['grid', 'list', 'folders']).optional() }).catch({}),
         default: {},
-        description: 'Whether the Artifacts browser shows cards or a list on this device',
+        description: 'Whether the Artifacts browser shows cards, a list or the folder tree on this device',
         storageScope: 'local',
     },
     pluginsCollectionViewV1: {

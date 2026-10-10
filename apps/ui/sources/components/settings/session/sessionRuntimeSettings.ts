@@ -1,6 +1,8 @@
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
 
+import { terminalHostStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
+
 /** The searchable settings of Sessions › Runtime (a sub-page linked from Sessions). */
 export const SESSION_RUNTIME_SETTINGS = defineSettingsPage({
     pageId: 'session',
@@ -9,10 +11,10 @@ export const SESSION_RUNTIME_SETTINGS = defineSettingsPage({
         terminal: {
             titleKey: 'settingsSessionPages.runtime.terminalSection',
             settings: {
-                host: { titleKey: 'settingsSessionPages.runtime.terminalHostTitle' },
-                sessionName: { titleKey: 'profiles.tmuxSession' },
-                isolated: { titleKey: 'profiles.tmux.isolatedServerTitle' },
-                tmpDir: { titleKey: 'profiles.tmuxTempDir' },
+                host: { storage: terminalHostStorage },
+                sessionName: {},
+                isolated: {},
+                tmpDir: {},
             },
         },
     },

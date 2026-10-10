@@ -11,6 +11,7 @@ import {
     SESSION_LIST_WARM_CACHE_MAX_ENTRIES,
 } from './warmCacheAdapters';
 import { SessionListCacheEntryV1Schema, type SessionListCacheEntryV1 } from './warmCachePersistence';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 function makeWindowRenderable(id: string, meaningfulActivityAt: number): SessionListRenderableSession {
@@ -591,6 +592,45 @@ describe('warmCacheAdapters', () => {
             host: 'mbp',
             homeDir: '/home/u',
         }));
+    });
+
+    it('keeps a no-folder session marked across a cold restore, so its private folder is never read as a workspace', () => {
+        const entry = buildSessionListCacheEntryFromRenderable({
+            id: 's1',
+            seq: 1,
+            createdAt: 5,
+            updatedAt: 20,
+            active: false,
+            activeAt: 20,
+            archivedAt: null,
+            pendingCount: 0,
+            pendingVersion: 0,
+            metadataVersion: 2,
+            agentStateVersion: 4,
+            metadata: {
+                name: 'Chat',
+                path: '/home/u/.happier/session-directories/0684bb134966dab76169d5471c632881143b317dc0f3dd4162c9910bd949e116',
+                homeDir: '/home/u',
+                host: 'mbp',
+                machineId: 'm1',
+                flavor: 'codex',
+                externalSessionV1: null,
+                hiddenSystemSession: false,
+                sessionDirectoryV1: { v: 1, kind: 'managed' },
+            },
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'offline',
+        } as any);
+
+        const restored = buildSessionListRenderableFromCacheEntry(SessionListCacheEntryV1Schema.parse(entry));
+        expect(readSessionDirectoryKind(restored.metadata)).toBe('managed');
+        // A session in a folder stays a session in a folder.
+        const inFolder = buildSessionListCacheEntryFromRenderable({
+            ...buildSessionListRenderableFromCacheEntry(entry),
+            metadata: { ...restored.metadata!, sessionDirectoryV1: null },
+        } as any);
+        expect(readSessionDirectoryKind(buildSessionListRenderableFromCacheEntry(inFolder).metadata)).toBe('path');
     });
 
     it('roundtrips keepVisibleWhenInactive through cache entries', () => {

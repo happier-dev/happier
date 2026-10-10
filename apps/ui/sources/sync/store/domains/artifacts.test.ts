@@ -8,7 +8,8 @@ import { createArtifactsDomain, type ArtifactsDomain } from './artifacts';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { encodeBase64 } from '@/encryption/base64';
-import { decryptArtifactListItem, decryptArtifactWithBody } from '@/sync/engine/artifacts/syncArtifacts';
+import { decryptArtifactListItem, decryptArtifactWithBody, decryptSocketNewArtifactUpdate } from '@/sync/engine/artifacts/syncArtifacts';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 
 function createHarness() {
@@ -23,6 +24,30 @@ function artifact(id: number): Extract<DecryptedArtifact, { isDecrypted: true }>
 }
 
 describe('createArtifactsDomain', () => {
+    it('retains HTTP access and ownership across content-only socket creation and revision echoes without granting initial events', async () => {
+        const store = createHarness();
+        const decode = (version: number) => decryptSocketNewArtifactUpdate({
+            artifactId: 'socket-artifact', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: 'markdown', title: 'Socket document' }),
+            body: encodePlainArtifactStoredContent({ body: 'Revision content' }),
+            headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version,
+            encryption: null, artifactDataKeys: new Map(),
+        });
+        const initial = await decode(1);
+        if (!initial) throw new Error('Expected readable socket Artifact');
+        store.getState().addArtifact(initial);
+        expect(store.getState().artifacts[initial.id]?.access).toBeUndefined();
+        expect(store.getState().artifacts[initial.id]?.ownerAccountId).toBeUndefined();
+        store.getState().applyArtifacts([{ ...initial, access: 'owner', ownerAccountId: 'owner' }]);
+        store.getState().addArtifact(initial);
+        expect(store.getState().artifacts[initial.id]).toMatchObject({ access: 'owner', ownerAccountId: 'owner' });
+        const revised = await decode(2);
+        if (!revised) throw new Error('Expected readable revised Artifact');
+        store.getState().addArtifact(revised);
+        expect(store.getState().artifacts[initial.id]).toMatchObject({ access: 'owner', ownerAccountId: 'owner', bodyVersion: 2 });
+        store.getState().applyArtifacts([{ ...revised, access: 'view', ownerAccountId: 'different-owner' }]);
+        expect(store.getState().artifacts[initial.id]).toMatchObject({ access: 'view', ownerAccountId: 'different-owner' });
+    });
     it('retains decoded E2EE content only while revision and exact key custody remain unchanged', async () => {
         const store = createHarness();
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));

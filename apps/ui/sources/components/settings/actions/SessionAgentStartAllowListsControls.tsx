@@ -6,8 +6,7 @@ import {
     type SessionAgentStartAllowListsV1,
 } from '@happier-dev/protocol/account/settings/sessionAgentStartAllowListsV1';
 
-import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { getEnabledAgentIds } from '@/agents/catalog/enabled';
+import { useRoleEngineCatalog } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -15,7 +14,7 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { withItemGroupDividers } from '@/components/ui/lists/ItemGroup';
-import { useSetting } from '@/sync/domains/state/storage';
+import { refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
 import { t } from '@/text';
 
 import { ACTIONS_CREATE_SESSION_SETTINGS } from './actionsSettings';
@@ -84,15 +83,16 @@ function RoleAllowListMenu(props: MenuProps) {
 }
 
 function AgentAllowListMenu(props: MenuProps) {
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
-    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }), acpCatalogSettingsV1, backendEnabledByTargetKey });
+    const { snapshot, ready, entries } = useRoleEngineCatalog();
     return <AllowListMenu {...props} choices={entries.map((entry) => ({ id: entry.backendTargetKey, title: entry.title,
         icon: <AgentCatalogIdentityIcon entry={entry.agentCatalogEntry} machineId={null} serverId={null} current={false} />,
-    }))} />;
+    }))}
+        emptyLabel={ready ? null : !snapshot || snapshot.catalog.status === 'loading' ? t('common.loading') : t('common.unavailable')}
+        onRetry={snapshot && snapshot.catalog.status !== 'ready' && snapshot.catalog.status !== 'loading'
+            ? () => { void refreshAcpCatalog(snapshot.scope); } : undefined} />;
 }
 
-function AllowListMenu(props: MenuProps & Readonly<{ choices: readonly Choice[]; emptyLabel?: string | null; onRetry?: () => void }>) {
+function AllowListMenu(props: MenuProps & Readonly<{ choices: readonly Choice[]; emptyLabel?: string | null; onRetry?: () => void; disabled?: boolean }>) {
     const items: DropdownMenuItem[] = [
         { id: 'all', title: t('common.all'), checked: props.selected === null },
         { id: 'none', title: t('settingsActions.spawnPolicy.allowLists.none'), checked: props.selected?.length === 0 },
@@ -102,10 +102,12 @@ function AllowListMenu(props: MenuProps & Readonly<{ choices: readonly Choice[];
         ...(props.emptyLabel ? [{ id: 'status', title: props.emptyLabel, disabled: true }] : []),
         ...(props.onRetry ? [{ id: 'retry', title: t('common.retry') }] : []),
     ];
-    return <DropdownMenu open testID={props.testID} popoverAnchorRef={props.anchorRef} items={items}
+    const availableItems = props.disabled ? items.map(item => item.id === 'retry' || item.id === 'status' ? item : { ...item, disabled: true }) : items;
+    return <DropdownMenu open testID={props.testID} popoverAnchorRef={props.anchorRef} items={availableItems}
         closeOnSelect={false} search showCategoryTitles={false} onOpenChange={(next) => { if (!next) props.onClose(); }}
         onSelect={(id) => {
             if (id === 'retry') { props.onRetry?.(); return; }
+            if (props.disabled) return;
             if (id === 'status') return;
             if (id === 'all' || id === 'none') { props.onChange(id === 'all' ? null : []); return; }
             if (!id.startsWith('choice:')) return;

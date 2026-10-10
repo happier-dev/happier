@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { SessionCompanionPreferencesV1Schema } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { normalizeSessionMobileSurface, type SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import { normalizeProjectMobileSurface, type ProjectMobileSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { StoredNavigationSurfacePlacementsV1Schema } from '../../mobileSurfacePinning';
 
 import {
@@ -13,6 +14,9 @@ import {
 
 const sessionMobileSurfaceSchema = z.custom<SessionMobileSurface>((value) => (
     typeof value === 'string' && normalizeSessionMobileSurface(value) === value
+));
+const projectMobileSurfaceSchema = z.custom<ProjectMobileSurface>((value) => (
+    typeof value === 'string' && normalizeProjectMobileSurface(value) === value
 ));
 
 const TERMINAL_ARROW_PAD_PLACEMENT_SCHEMA = z.object({
@@ -28,6 +32,20 @@ const compactAppDestinationPreferencesSchema = z.object({
 }).strict();
 
 export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
+    uiSurfaceFinish: {
+        schema: z.enum(['flat', 'soft']).catch('soft'), default: 'soft',
+        description: 'Surface finish on this device', storageScope: 'local',
+    },
+    uiSurfaceFinishOverrides: {
+        schema: z.object({
+            card: z.enum(['flat', 'soft']).optional().catch(undefined),
+            floating: z.enum(['flat', 'soft']).optional().catch(undefined),
+            composer: z.enum(['flat', 'soft']).optional().catch(undefined),
+            primaryButton: z.enum(['flat', 'soft']).optional().catch(undefined),
+            secondaryButton: z.enum(['flat', 'soft']).optional().catch(undefined),
+        }).catch({}), default: {},
+        description: 'Per-role surface finish overrides on this device; absent roles inherit', storageScope: 'local',
+    },
     widgetFrameStyleHome: {
         schema: z.enum(['card', 'plain']).catch('card'), default: 'card',
         description: 'Default Home widget frame style on this device', storageScope: 'local',
@@ -214,7 +232,7 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         },
     },
     projectLastMobileSurfaceByWorkspaceRefId: {
-        schema: z.record(z.string(), z.enum(['overview', 'browse', 'git', 'tabs', 'terminal', 'browser', 'services'])).default({}),
+        schema: z.record(z.string(), projectMobileSurfaceSchema).default({}),
         default: {},
         description: 'Last active mobile project surface by realm-qualified workspace key',
         storageScope: 'local',
@@ -230,7 +248,7 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     projectLastActiveRootPathByWorkspaceRefId: {
         schema: z.record(z.string(), z.string()).default({}),
         default: {},
-        description: 'Last active project root path by workspace ref id',
+        description: 'Last active project root path by Home-qualified workspace ref key',
         storageScope: 'local',
         analytics: {
             trackCurrentState: true,
@@ -244,7 +262,7 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     projectLastActiveWorktreeIdByWorkspaceRefId: {
         schema: z.record(z.string(), z.string()).default({}),
         default: {},
-        description: 'Last active project worktree id by workspace ref id',
+        description: 'Last active project worktree id by Home-qualified workspace ref key',
         storageScope: 'local',
         analytics: {
             trackCurrentState: true,

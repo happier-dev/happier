@@ -44,8 +44,10 @@ function isValidPendingEnqueueBody(body: string, localId: string): boolean {
         const parsed = JSON.parse(body) as unknown;
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
         const record = parsed as Record<string, unknown>;
-        // A target-bearing body is never a released/main request, even when its content parses.
-        if ('recipient' in record || 'targetExecutionRunId' in record || 'targetMachineId' in record || 'v' in record) return false;
+        // Execution-run routing belongs to its strict recipient envelope, not main input.
+        if ('recipient' in record || 'targetExecutionRunId' in record || 'v' in record) return false;
+        if ('targetMachineId' in record
+            && (typeof record.targetMachineId !== 'string' || record.targetMachineId.trim().length === 0)) return false;
         if (record.localId !== localId || record.messageRole !== 'user') return false;
         const hasCiphertextField = Object.prototype.hasOwnProperty.call(record, 'ciphertext');
         const hasContentField = Object.prototype.hasOwnProperty.call(record, 'content');

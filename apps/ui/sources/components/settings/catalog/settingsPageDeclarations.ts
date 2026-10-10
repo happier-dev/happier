@@ -30,7 +30,7 @@ import { PROMPTS_SETTINGS } from '@/components/settings/prompts/promptsSettings'
 import { PROMPTS_CONTEXT_SETTINGS } from '@/components/settings/prompts/context/promptsContextSettings';
 import { MEMORY_SETTINGS } from '@/components/settings/memory/memorySettings';
 import { SEARCH_SETTINGS } from '@/components/settings/search/searchSettings';
-import { ACTIONS_CREATE_SESSION_SETTINGS } from '@/components/settings/actions/actionsSettings';
+import { ACTIONS_CREATE_SESSION_SETTINGS, ACTIONS_PROMPT_DOCUMENT_SETTINGS } from '@/components/settings/actions/actionsSettings';
 import { EXTERNAL_SESSIONS_SETTINGS } from '@/components/settings/externalSessions/externalSessionsSettings';
 import { TRANSCRIPT_SETTINGS } from '@/components/settings/session/transcriptSettings';
 import { PERMISSIONS_SETTINGS } from '@/components/settings/session/permissionsSettings';
@@ -56,7 +56,7 @@ import {
     TEAM_MANAGED_OIDC_SETTINGS,
 } from '@/components/settings/identity/identitySettings';
 import { CONNECTED_SERVICES_SETTINGS, CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS } from '@/components/settings/connectedServices/connectedServicesSettings';
-import { TEAM_AUTHENTICATION_SETTINGS, TEAM_IDENTITY_CONNECTION_SETTINGS } from '@/components/settings/teams/identity/teamAuthenticationSettings';
+import { TEAM_AUTHENTICATION_SETTINGS, TEAM_IDENTITY_CONNECTION_SETTINGS, HOME_IDENTITY_CONNECTION_SETTINGS, TEAM_WORKOS_SETUP_SETTINGS, HOME_WORKOS_SETUP_SETTINGS } from '@/components/settings/teams/identity/teamAuthenticationSettings';
 import { DIRECTORY_SETTINGS, DIRECTORY_SOURCE_SETTINGS } from '@/components/settings/teams/identity/directorySettings';
 import { HOME_AUTHENTICATION_SETTINGS } from '@/components/settings/home/governance/homeAuthenticationSettings';
 import { HOME_DATA_SETTINGS } from '@/components/settings/home/governance/homeDataSettings';
@@ -108,6 +108,9 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     TEAM_IDENTITY_CONNECTION_SETTINGS,
     DIRECTORY_SETTINGS,
     DIRECTORY_SOURCE_SETTINGS,
+    HOME_IDENTITY_CONNECTION_SETTINGS,
+    TEAM_WORKOS_SETUP_SETTINGS,
+    HOME_WORKOS_SETUP_SETTINGS,
     ACCOUNT_SETTINGS,
     ACCOUNT_SECURITY_SETTINGS,
     API_TOKEN_SETTINGS,
@@ -140,6 +143,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     MEMORY_SETTINGS,
     SEARCH_SETTINGS,
     ACTIONS_CREATE_SESSION_SETTINGS,
+    ACTIONS_PROMPT_DOCUMENT_SETTINGS,
     EXTERNAL_SESSIONS_SETTINGS,
     PROMPTS_SETTINGS,
     PROMPTS_CONTEXT_SETTINGS,

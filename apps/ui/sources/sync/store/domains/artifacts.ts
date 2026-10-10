@@ -25,7 +25,18 @@ function reconcileArtifacts(
   let storageChanged = false;
   for (const incomingArtifact of incoming) {
     const before = next[incomingArtifact.id];
-    const artifact = retainOpenedContent(before, incomingArtifact);
+    // Content-only socket events have no grant projection. Only HTTP/grant
+    // producers can replace known access; content must neither erase nor grant it.
+    const missingKnownAccess = before && (
+      (incomingArtifact.access === undefined && before.access !== undefined)
+      || (incomingArtifact.ownerAccountId === undefined && before.ownerAccountId !== undefined)
+    );
+    const withKnownAccess = missingKnownAccess ? {
+      ...incomingArtifact,
+      ...(before.access !== undefined ? { access: incomingArtifact.access ?? before.access } : {}),
+      ...(before.ownerAccountId !== undefined ? { ownerAccountId: incomingArtifact.ownerAccountId ?? before.ownerAccountId } : {}),
+    } : incomingArtifact;
+    const artifact = retainOpenedContent(before, withKnownAccess);
     if (sameStrictJsonValue(before, artifact)) continue;
     if (!before || before.headerVersion !== artifact.headerVersion || before.bodyVersion !== artifact.bodyVersion
       || before.storageMode !== artifact.storageMode) storageChanged = true;

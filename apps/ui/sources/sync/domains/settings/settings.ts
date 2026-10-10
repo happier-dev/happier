@@ -16,7 +16,6 @@ import {
     parseLocalAccountSettings,
     type LocalAccountSettings,
 } from './registry/local/localAccountSettingDefinitions';
-import { pruneSecretBindings } from './secretBindings';
 import {
     isCurrentWriterPredecessorVoiceProjection,
     projectVoiceSettingsIntoRuntimeSettings,
@@ -66,12 +65,10 @@ export type Settings = KnownSettings;
 
 /**
  * Runtime projections may be readable through Settings without being valid
- * Account Settings mutations. The current binding map is derived from the
- * retained Protocol carrier, so only its dedicated writer may update it.
+ * Account Settings mutations.
  */
 export type WritableSettingsKey = Exclude<
     keyof Settings,
-    | 'currentSecretBindingsByProfileId'
     | 'currentFavoriteModelSelectionsV1'
 >;
 
@@ -79,13 +76,11 @@ export type WritableSettingsKey = Exclude<
 export type SettingsWriteDelta = Partial<Pick<Settings, WritableSettingsKey>>;
 
 /**
- * Internal Account Settings write shape. The retained secret-binding carrier
- * is intentionally absent from the public Settings facade, but its dedicated
- * adapter must pass the canonical Protocol root through the common writer.
+ * Internal Account Settings write shape for the retained favorite carrier.
+ * Entity bindings mutate through Profile operations, never through Settings.
  */
 export type AccountSettingsWriteDelta = SettingsWriteDelta & Partial<Pick<
     AccountSettingsDefaults,
-    | 'secretBindingsByProfileId'
     | 'favoriteModelSelectionsV1'
 >>;
 
@@ -120,7 +115,7 @@ function asSettingsRecord(value: unknown): Record<string, unknown> {
 
 /**
  * Protocol parses every server-synced key and preserves forward-compatible unknown keys. UI
- * migrations only translate predecessor shapes before a final Protocol parse; device-local
+ * migrations translate predecessor shapes and reparse changed migration inputs; device-local
  * fields are projected separately and are never part of the Protocol persistence contract.
  */
 export function settingsParse(settings: unknown): Settings {
@@ -131,38 +126,42 @@ export function settingsParse(settings: unknown): Settings {
     const initial = parseProtocolAccountSettings(raw);
     const migrated = applyAccountSettingsCompatibilityMigrations({
         input: raw,
-        settings: { ...initial },
+        settings: initial,
         inputSchemaVersion,
         supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
     });
-    const canonical = parseProtocolAccountSettings(migrated);
+    const canonical = migrated === initial ? initial : parseProtocolAccountSettings(migrated);
+    const local = parseLocalAccountSettings(raw);
     const merged = {
         ...canonical,
-        ...parseLocalAccountSettings(raw),
+        ...local,
     };
-    const pruned = pruneSecretBindings(merged);
     const projected = projectVoiceSettingsIntoRuntimeSettings({
-        parsed: pruned,
+        parsed: merged,
         raw,
     });
 
-    // The Provider-owned legacy Chat migration needs the canonical Local
+    // Legacy Chat ingress needs the canonical Local
     // Conversation envelope created by the sole Voice projection owner. It
     // therefore runs after that projection, then re-enters the ordinary
-    // Protocol/Voice parse path so its provider connection and typed state
-    // are persisted through the same canonical reader as every other value.
+    // Protocol/Voice parse path for a truthful pending-import state. The
+    // asynchronous Provider owner alone can publish the destination catalog.
     const migrationInput = { ...projected } as Record<string, unknown>;
-    if (!isCurrentWriterPredecessorVoiceProjection(raw.voice)) {
-        migrateLegacyVoiceOpenAiChatProvider(raw, migrationInput);
+    const migratedLegacyChat = !isCurrentWriterPredecessorVoiceProjection(raw.voice)
+        && migrateLegacyVoiceOpenAiChatProvider(raw, migrationInput);
+    // Compatibility ingress can retain nested Voice credential recovery
+    // carriers that need the existing Protocol/Voice round trip. Only the
+    // unchanged current-input path can reuse its already validated projection.
+    if (migrated === initial && !migratedLegacyChat) {
+        return projectRuntimeAccountSettings(projected) as Settings;
     }
     const migratedCanonical = parseProtocolAccountSettings(migrationInput);
     const migratedMerged = {
         ...migratedCanonical,
-        ...parseLocalAccountSettings(raw),
+        ...local,
     };
-    const migratedPruned = pruneSecretBindings(migratedMerged);
     return projectRuntimeAccountSettings(projectVoiceSettingsIntoRuntimeSettings({
-        parsed: migratedPruned,
+        parsed: migratedMerged,
         raw,
     })) as Settings;
 }

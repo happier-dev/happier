@@ -10,19 +10,13 @@ export const TOOL_RENDERING_SETTINGS = defineSettingsPage({
         collapsed: {
             titleKey: 'settingsSession.toolDetailOverrides.title',
             settings: {
-                collapsedOverrides: {
-                    titleKey: 'settingsSession.toolDetailOverrides.title',
-                    descriptionKey: 'settingsSessionPages.toolRendering.collapsedDescription',
-                },
+                collapsedOverrides: {},
             },
         },
         expanded: {
             titleKey: 'settingsSession.toolDetailOverrides.expandedTitle',
             settings: {
-                expandedOverrides: {
-                    titleKey: 'settingsSession.toolDetailOverrides.expandedTitle',
-                    descriptionKey: 'settingsSession.toolDetailOverrides.expandedFooter',
-                },
+                expandedOverrides: {},
             },
         },
     },

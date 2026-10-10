@@ -42,6 +42,7 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_ANALYTICS = defineAccountSettingAna
         serializeCurrentProperties: buildOverrideCountSummaryProperties,
     },
     transcriptGroupingMode: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    transcriptShowToolCalls: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptGroupToolCalls: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     transcriptTurnToolCallsGroupStrategy: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     transcriptToolCallsCollapsedPreviewCount: {

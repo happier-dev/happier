@@ -64,11 +64,6 @@ describe('settings registry completeness', () => {
         expect(ACCOUNT_SETTING_ARTIFACTS.defaults).not.toHaveProperty('lastEngineSelectionsByScopeV1');
     });
 
-    it('owns remoteHostsV1 in canonical account settings artifacts', async () => {
-        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
-        expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('remoteHostsV1');
-        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('remoteHostsV1', []);
-    });
 
     it('owns mobileWorkspaceExperienceV1 as an account-synced setting instead of a local-only setting', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');

@@ -1,4 +1,5 @@
 import { ProviderUsageGaugeSettingsGroup } from '@/components/settings/connectedServices/ProviderUsageGaugeSettingsGroup';
+import { UsageCapacityAlertsSettingsGroup } from './UsageCapacityAlertsSettingsGroup';
 import * as React from 'react';
 
 import { Switch } from '@/components/ui/forms/Switch';
@@ -92,7 +93,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                         />
                     </SettingAnchor>
                     {usageLimitRecoveryResumePromptMode === 'custom' ? (
-                        <Item
+                        <SettingAnchor setting={SESSION_PROVIDER_LIMITS_SETTINGS.settings.customResumePrompt}><Item
                             testID="settings-session-usageLimitRecovery-customResumePrompt"
                             title={t('settingsSession.usageLimitRecovery.customResumePromptTitle')}
                             accessoryLayout="stacked"
@@ -111,11 +112,12 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                                     minLines={2}
                                 />
                             )}
-                        />
+                        /></SettingAnchor>
                     ) : null}
                 </ItemGroup>
             ) : null}
             <ProviderUsageGaugeSettingsGroup />
+            <UsageCapacityAlertsSettingsGroup />
             {!usageLimitRecoveryEnabled && !connectedServiceQuotasEnabled ? (
                 <ItemGroup>
                     <Item

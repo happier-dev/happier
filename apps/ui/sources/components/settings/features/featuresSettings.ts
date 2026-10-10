@@ -1,3 +1,4 @@
+import { featureToggleStorage, experimentalFeaturesStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
 import type { FeatureId } from '@happier-dev/protocol';
 
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -11,9 +12,9 @@ function declareToggles(experimental: boolean): Readonly<Record<string, SettingD
         .filter((definition) => definition.isExperimental === experimental)
         .filter((definition) => getFeatureBuildPolicyDecision(definition.featureId) !== 'deny')
         .map((definition) => [definition.featureId, {
-            titleKey: definition.titleKey,
-            descriptionKey: definition.subtitleKey,
-        }]));
+
+            storage: featureToggleStorage(definition.featureId),
+        } satisfies SettingDeclaration]));
 }
 
 /** The searchable settings of the `features` page. Rows render their labels from these declarations. */
@@ -23,28 +24,28 @@ export const FEATURES_SETTINGS = defineSettingsPage({
         general: {
             titleKey: 'settingsFeatures.generalTitle',
             settings: {
-                machinePickerSearch: { storage: { scope: 'account', key: 'useMachinePickerSearch', access: 'read_write' }, titleKey: 'settingsFeatures.machinePickerSearch', descriptionKey: 'settingsFeatures.machinePickerSearchSubtitle' },
-                pathPickerSearch: { storage: { scope: 'account', key: 'usePathPickerSearch', access: 'read_write' }, titleKey: 'settingsFeatures.pathPickerSearch', descriptionKey: 'settingsFeatures.pathPickerSearchSubtitle' },
-                profiles: { storage: { scope: 'account', key: 'useProfiles', access: 'read_write' }, titleKey: 'settingsFeatures.profiles' },
+                machinePickerSearch: {},
+                pathPickerSearch: {},
+                profiles: {},
             },
         },
         optionalFeatures: {
             titleKey: 'settingsFeatures.localTogglesTitle',
             settings: Object.assign({}, declareToggles(false), {
-                terminalRenderer: { storage: { scope: 'local', key: 'terminalRendererPreference', access: 'read_write' }, titleKey: 'terminalEmbedded.settings.rendererTitle', host: settingsHosts.notWeb },
+                terminalRenderer: { host: settingsHosts.notWeb },
             } satisfies Readonly<Record<string, SettingDeclaration>>),
         },
         webFeatures: {
             titleKey: 'settingsFeatures.webFeatures',
             host: settingsHosts.web,
             settings: {
-                commandPalette: { storage: { scope: 'account', key: 'commandPaletteEnabled', access: 'read_write' }, titleKey: 'settingsFeatures.commandPalette' },
+                commandPalette: {},
             },
         },
         experiments: {
             titleKey: 'settingsFeatures.experiments',
             settings: Object.assign({
-                experimentalFeatures: { titleKey: 'settingsFeatures.experimentalFeatures' },
+                experimentalFeatures: { storage: experimentalFeaturesStorage },
             } satisfies Readonly<Record<string, SettingDeclaration>>, declareToggles(true)),
         },
     },

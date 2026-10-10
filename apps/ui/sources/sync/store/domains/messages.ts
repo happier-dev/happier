@@ -149,7 +149,9 @@ function mergeLatestNumber(existing: number | null | undefined, incoming: number
 }
 
 function coerceSessionMessages(input: unknown): SessionMessages {
-    const raw = input as any;
+    const raw = typeof input === 'object' && input !== null && !Array.isArray(input)
+        ? input as Record<string, unknown>
+        : {};
     const reducerState: ReducerState = raw?.reducerState ? (raw.reducerState as ReducerState) : createReducer();
 
     const messagesById: Record<string, Message> =
@@ -210,7 +212,7 @@ function coerceSessionMessages(input: unknown): SessionMessages {
 
     const isLoaded = raw?.isLoaded === true;
 
-    return {
+    const normalized: SessionMessages = {
         messageIdsOldestFirst,
         messagesById,
         messageRevisionsById,
@@ -226,6 +228,11 @@ function coerceSessionMessages(input: unknown): SessionMessages {
         lastAppliedAgentStateVersion,
         isLoaded,
     };
+    // Already-normalized transcripts retain their subscription identity when
+    // a refreshed Session snapshot has no message or reducer changes.
+    return Object.entries(normalized).every(([key, value]) => raw[key] === value)
+        ? input as SessionMessages
+        : normalized;
 }
 
 function inferLatestUserPermissionModeFromChangedMessages(
@@ -299,13 +306,16 @@ function buildPinRouteHydrationFacts(messages: ReadonlyArray<Message>): readonly
 export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
     existing: SessionMessages;
     agentState: Session['agentState'] | null;
+    mainHistoryStartLoaded?: boolean;
 }>): {
     sessionMessages: SessionMessages;
     sessionLatestUsage?: Session['latestUsage'];
     sessionTodos?: Session['todos'];
 } {
     const existing = coerceSessionMessages(params.existing);
-    const reducerResult = reducer(existing.reducerState, [], params.agentState);
+    const reducerResult = reducer(existing.reducerState, [], params.agentState, undefined, {
+        mainHistoryStartLoaded: params.mainHistoryStartLoaded,
+    });
     const processedMessages = reducerResult.messages;
 
     const messageRevisionsById = existing.messageRevisionsById ?? {};
@@ -430,11 +440,25 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
     return {
         sessionMessages: {},
         sessionMessagesHistoryStartLoaded: {},
-        markSessionMessagesHistoryStartLoaded: (sessionId) => set((state) => {
-            const previous = state.sessionMessagesHistoryStartLoaded ?? {};
-            if (previous[sessionId] === true) return state;
-            return { ...state, sessionMessagesHistoryStartLoaded: { ...previous, [sessionId]: true as const } };
-        }),
+        markSessionMessagesHistoryStartLoaded: (sessionId) => {
+            let didChange = false;
+            set((state) => {
+                const previous = state.sessionMessagesHistoryStartLoaded ?? {};
+                if (previous[sessionId] === true) return state;
+                didChange = true;
+                const existing = state.sessionMessages[sessionId];
+                return {
+                    ...state,
+                    sessionMessagesHistoryStartLoaded: { ...previous, [sessionId]: true as const },
+                    // Coverage changed the permission projection even if AgentState did not.
+                    sessionMessages: existing ? {
+                        ...state.sessionMessages,
+                        [sessionId]: { ...existing, lastAppliedAgentStateVersion: null },
+                    } : state.sessionMessages,
+                };
+            });
+            if (didChange && get().sessions[sessionId]?.agentState) get().applyMessages(sessionId, []);
+        },
         isMutableToolCall: (sessionId: string, callId: string) => {
             const rawSessionMessages = get().sessionMessages[sessionId];
             if (!rawSessionMessages) {
@@ -524,6 +548,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         normalizedMessages,
                         shouldApplyAgentState ? agentState : null,
                         options?.metadataUpdates,
+                        { mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[sessionId] === true },
                     ),
                 );
                 const processedMessages = reducerResult.messages;
@@ -973,7 +998,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
 
                 if (agentState) {
                     // Process AgentState through reducer to get initial permission messages
-                    const reducerResult = reducer(reducerState, [], agentState);
+                    const reducerResult = reducer(reducerState, [], agentState, undefined, {
+                        mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[sessionId] === true,
+                    });
                     const processedMessages = reducerResult.messages;
 
                     for (const message of processedMessages) {

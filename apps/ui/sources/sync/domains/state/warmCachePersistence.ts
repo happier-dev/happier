@@ -295,6 +295,9 @@ export const SessionListCacheEntryV1Schema = z.object({
         }).passthrough(),
     ).nullable().optional(),
     hiddenSystemSession: z.boolean().optional(),
+    // The no-folder marker (`sessionDirectoryV1.kind === 'managed'`), flattened like the fields above.
+    // Without it a cold-restored row reads its private folder as a workspace to show.
+    managedSessionDirectory: z.boolean().optional(),
     keepVisibleWhenInactive: z.boolean().optional(),
     hasPendingPermissionRequests: z.boolean().optional(),
     hasPendingUserActionRequests: z.boolean().optional(),

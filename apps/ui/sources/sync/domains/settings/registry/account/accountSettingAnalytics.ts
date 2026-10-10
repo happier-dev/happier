@@ -12,13 +12,10 @@ import { ACCOUNT_CORE_SETTING_ANALYTICS } from './accountCoreSettingDefinitions'
 import { ACCOUNT_DISPLAY_SETTING_ANALYTICS } from './accountDisplaySettingDefinitions';
 import { ACCOUNT_KEYBOARD_SHORTCUT_SETTING_ANALYTICS } from './accountKeyboardShortcutSettingDefinitions';
 import { ACCOUNT_MACHINE_ADMINISTRATION_SETTING_ANALYTICS } from './accountMachineAdministrationSettingDefinitions';
-import { ACCOUNT_MCP_SETTING_ANALYTICS } from './accountMcpSettingDefinitions';
 import { ACCOUNT_PERMISSION_SETTING_ANALYTICS } from './accountPermissionSettingDefinitions';
 import { ACCOUNT_PET_SETTING_ANALYTICS } from './accountPetSettingDefinitions';
 import { ACCOUNT_PROFILES_SETTING_ANALYTICS } from './accountProfilesSettingDefinitions';
-import { ACCOUNT_PROMPT_LIBRARY_SETTING_ANALYTICS } from './accountPromptLibrarySettingDefinitions';
 import { ACCOUNT_PROVIDER_SETTING_ANALYTICS } from './accountProviderSettingDefinitions';
-import { ACCOUNT_REMOTE_HOSTS_SETTING_ANALYTICS } from './accountRemoteHostsSettingDefinitions';
 import { ACCOUNT_RUNTIME_SETTING_ANALYTICS } from './accountRuntimeSettingDefinitions';
 import { ACCOUNT_SCM_FILES_SETTING_ANALYTICS } from './accountScmFilesSettingDefinitions';
 import { mergeAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
@@ -41,13 +38,10 @@ export const ACCOUNT_SETTING_ANALYTICS: ReturnType<typeof mergeAccountSettingAna
     ACCOUNT_DISPLAY_SETTING_ANALYTICS,
     ACCOUNT_KEYBOARD_SHORTCUT_SETTING_ANALYTICS,
     ACCOUNT_MACHINE_ADMINISTRATION_SETTING_ANALYTICS,
-    ACCOUNT_MCP_SETTING_ANALYTICS,
     ACCOUNT_PERMISSION_SETTING_ANALYTICS,
     ACCOUNT_PET_SETTING_ANALYTICS,
     ACCOUNT_PROFILES_SETTING_ANALYTICS,
-    ACCOUNT_PROMPT_LIBRARY_SETTING_ANALYTICS,
     ACCOUNT_PROVIDER_SETTING_ANALYTICS,
-    ACCOUNT_REMOTE_HOSTS_SETTING_ANALYTICS,
     ACCOUNT_RUNTIME_SETTING_ANALYTICS,
     ACCOUNT_SCM_FILES_SETTING_ANALYTICS,
     ACCOUNT_TRANSCRIPT_TOOL_SETTING_ANALYTICS,

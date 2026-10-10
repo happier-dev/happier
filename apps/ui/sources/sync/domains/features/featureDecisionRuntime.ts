@@ -57,7 +57,7 @@ export function useServerFeaturesRuntimeSnapshot(options?: Readonly<{ enabled?: 
             if (!cancelled && token === requestToken && generation === requestGeneration) {
                 setSnapshot(next);
                 const retryDelayMs = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot: next });
-                if (retryDelayMs !== null) {
+                if (retryDelayMs !== null && !retryTimer) {
                     retryTimer = setTimeout(() => {
                         if (cancelled || generation !== requestGeneration) return;
                         retryTimer = null;
@@ -186,7 +186,7 @@ export function useServerFeaturesSnapshotForServerId(
             if (!cancelled && token === requestToken) {
                 setSnapshot(next);
                 const retryDelayMs = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot: next });
-                if (retryDelayMs !== null) {
+                if (retryDelayMs !== null && !retryTimer) {
                     retryTimer = setTimeout(() => {
                         if (cancelled) return;
                         retryTimer = null;
@@ -278,13 +278,26 @@ export function useServerFeaturesMainSelectionSnapshot(
     });
 
     React.useEffect(() => {
+        const publishState = (next: ServerFeaturesMainSelectionSnapshot) => {
+            setState((current) => {
+                if (
+                    current.status === next.status
+                    && current.serverIds.length === next.serverIds.length
+                    && current.serverIds.every((id, index) => id === next.serverIds[index])
+                    && next.serverIds.every((id) => current.snapshotsByServerId[id] === next.snapshotsByServerId[id])
+                ) {
+                    return current;
+                }
+                return next;
+            });
+        };
         if (!enabled) {
-            setState({ status: 'ready', serverIds, snapshotsByServerId: {} });
+            publishState({ status: 'ready', serverIds, snapshotsByServerId: {} });
             return;
         }
 
         if (serverIds.length === 0) {
-            setState({ status: 'ready', serverIds, snapshotsByServerId: {} });
+            publishState({ status: 'ready', serverIds, snapshotsByServerId: {} });
             return;
         }
 
@@ -298,19 +311,8 @@ export function useServerFeaturesMainSelectionSnapshot(
                 const cached = getCachedServerFeaturesSnapshot({ serverId });
                 if (cached) snapshotsByServerId[serverId] = cached;
             }
-            setState((current) => {
-                const ready = Object.keys(snapshotsByServerId).length === serverIds.length;
-                const nextStatus = ready ? 'ready' as const : 'loading' as const;
-                if (
-                    current.status === nextStatus
-                    && current.serverIds.length === serverIds.length
-                    && current.serverIds.every((id, index) => id === serverIds[index])
-                    && serverIds.every((id) => current.snapshotsByServerId[id] === snapshotsByServerId[id])
-                ) {
-                    return current;
-                }
-                return { status: nextStatus, serverIds, snapshotsByServerId };
-            });
+            const ready = Object.keys(snapshotsByServerId).length === serverIds.length;
+            publishState({ status: ready ? 'ready' : 'loading', serverIds, snapshotsByServerId });
         });
 
         const cleanup = () => {
@@ -333,7 +335,7 @@ export function useServerFeaturesMainSelectionSnapshot(
             for (const [id, snapshot] of results) {
                 snapshotsByServerId[id] = snapshot;
             }
-            setState({ status: 'ready', serverIds, snapshotsByServerId });
+            publishState({ status: 'ready', serverIds, snapshotsByServerId });
             const retryDelayMs = results.reduce<number | null>((current, [serverId, snapshot]) => {
                 const next = getServerFeaturesSnapshotRetryDelayMs({ serverId, snapshot });
                 if (next === null) return current;
@@ -359,7 +361,7 @@ export function useServerFeaturesMainSelectionSnapshot(
         }
 
         if (missing.length === 0) {
-            setState({ status: 'ready', serverIds, snapshotsByServerId });
+            publishState({ status: 'ready', serverIds, snapshotsByServerId });
             if (serverIds.some((serverId) => getServerFeaturesSnapshotRetryDelayMs({
                 serverId,
                 snapshot: snapshotsByServerId[serverId]!,
@@ -369,7 +371,7 @@ export function useServerFeaturesMainSelectionSnapshot(
             return cleanup;
         }
 
-        setState({ status: 'loading', serverIds, snapshotsByServerId });
+        publishState({ status: 'loading', serverIds, snapshotsByServerId });
         fireAndForget(load(serverIds), { tag: 'useServerFeaturesMainSelectionSnapshot.initialLoad' });
 
         return cleanup;

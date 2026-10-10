@@ -544,6 +544,46 @@ describe('machineRpcWithServerScope', () => {
         } finally { vi.useRealTimers(); }
     });
 
+    it.each(['reactNative', 'hostedWeb'] as const)('keeps an admitted %s Artifact byte read pending until its bytes arrive', async (family) => {
+        const { createPluginArtifactDaemonSource } = await import('@/sync/domains/plugins/availability/artifactDaemonSource');
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1,
+        });
+        getReadyServerFeaturesSpy.mockResolvedValue(createRootLayoutFeaturesResponse({
+            features: { machines: { transfer: {
+                enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: true },
+            } } },
+        }));
+        vi.useFakeTimers();
+        try {
+            const digest = `sha256:${'a'.repeat(64)}` as const;
+            let complete!: (value: unknown) => void;
+            machineRpcSpy.mockImplementation(async (_machineId, _method, _params, options) => {
+                options?.onIssued?.();
+                return await new Promise(resolve => { complete = resolve; });
+            });
+            const source = createPluginArtifactDaemonSource({
+                transport: { machineId: 'machine-1', serverId: 'server-a' }, family,
+            });
+            const result = source.fetch({ artifact: {
+                pluginId: 'acme.preview', contributionId: 'preview', artifactId: 'preview',
+                tier: family, platform: 'web', digest, hostUiApiRange: '^1.0.0', releaseVersion: '1.0.0',
+            } });
+            const settled = vi.fn();
+            void result.then(settled, settled);
+            await vi.advanceTimersByTimeAsync(31_000);
+            expect(settled).not.toHaveBeenCalled();
+            complete({
+                ok: true, artifactFamily: family, cacheIdentity: { artifactDigest: digest },
+                artifact: family === 'reactNative'
+                    ? { artifactKind: 'reactNativeBundle', digest, format: 'plainJs', byteSize: 2 }
+                    : { artifactKind: 'hostedWebAsset', digest, byteSize: 2 },
+                files: [{ relativePath: 'entry.js', digest, byteSize: 2, bytesBase64: 'aGk=' }],
+            });
+            await expect(result).resolves.toEqual(new Map([['entry.js', new Uint8Array([104, 105])]]));
+        } finally { vi.useRealTimers(); }
+    });
+
     it.each(['daemon.filesystem.upload', 'daemon.filesystem.download'] as const)('keeps concrete transfer custody mounted while blocking approval is pending (%s)', async (actionId) => {
         vi.useFakeTimers();
         try {
@@ -1039,6 +1079,29 @@ describe('machineRpcWithServerScope', () => {
             requireEncryptedPayload: true,
         })).rejects.toMatchObject({ rpcErrorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
         expect(emitWithAck).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns explicitly requested native source metadata through the admitted keyless plain Account transport', async () => {
+        getActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', kind: 'custom', generation: 1 });
+        listServerProfilesSpy.mockReturnValue([{ id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' }]);
+        getCredentialsSpy.mockResolvedValue({ token: TOKEN_B });
+        mockScopedMachineFetch({ id: 'machine-plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }, 'plain');
+        const source = { serverId: 'server-b', machineId: 'machine-plain', sourceId: 'opaque-root',
+            agent: { pluginId: 'happier.agent.pi', localId: 'pi' }, root: { kind: 'default', path: '/private/pi' },
+            consent: 'disabled', status: 'found', coverage: 'unknown', pendingCount: 0, asOfMs: null };
+        // Keep the real mediation/policy owner; only HTTP/socket and credential storage are simulated.
+        const mediation = await vi.importActual<typeof import('@/sync/domains/machines/peer/mediation/rpc/client')>('@/sync/domains/machines/peer/mediation/rpc/client');
+        machineRpcWithPeerMediationRouteSpy.mockImplementation(mediation.machineRpcWithPeerMediationRoute);
+        createEphemeralSocketSpy.mockResolvedValue({ timeout: () => ({ emitWithAck: async () => ({ ok: true, result: { sources: [source] } }) }),
+            emit() {}, disconnect() {} });
+        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+        await expect(machineRpcWithServerScope({ serverId: 'server-b', accountId: 'account-b', machineId: 'machine-plain',
+            method: 'usage.sources.discover', payload: { serverId: 'server-b', machineId: 'machine-plain' }, preferScoped: true }))
+            .resolves.toEqual({ sources: [source] });
+        const { createUiUsageSourceActionPort } = await import('@/sync/ops/actions/usageSourceActionDeps');
+        const port = createUiUsageSourceActionPort({ serverId: 'server-b', accountId: 'account-b', assertCurrent() {} });
+        await expect(port({ actionId: 'usage.sources.discover', input: { serverId: 'server-b', machineId: 'machine-plain' } },
+            { surface: 'ui', serverId: 'server-b' })).resolves.toEqual({ sources: [source] });
     });
 
     it.each(['e2ee', 'plain'] as const)('keeps %s requester Account material installation-sealed on the existing Plain Machine carrier', async accountMode => {

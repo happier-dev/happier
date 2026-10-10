@@ -9,7 +9,17 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings, WritableSettingsKey } from '@/sync/domains/settings/settings';
 import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { z } from 'zod';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { SettingsDeclarationTargetKindV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import type { TeamSettingBindingV1, SettingsOwnerActionExecuteV1 } from '@happier-dev/protocol/actions';
+import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1, readPortableDomainSettingBindingV1,
+    readPortablePlatformAccountSettingBindingV1,
+    parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1, buildBuiltInAccountSettingMutationV1,
+    type PortableSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
+import { BUILT_IN_SETTINGS_METADATA_V1 } from '@happier-dev/protocol/actions/settings/builtInSettingsMetadata';
 
 export type SettingValue = z.infer<typeof SettingsDeclarationValueV1Schema>;
 export type SettingScalarValue = Extract<SettingValue, string | number | boolean | null>;
@@ -22,12 +32,15 @@ export function parseSettingScalarValue(value: unknown) {
 /** An unavailable owner value is not an unset preference; never serialize this sentinel. */
 export const SETTING_VALUE_UNAVAILABLE = Symbol('setting_value_unavailable');
 export type SettingOwnerMutation = (settings: Settings) => SettingsWriteDelta | null;
+/** Domain-owned Settings consumers use the captured canonical Action executor. */
+export type SettingsOwnerActionExecute = SettingsOwnerActionExecuteV1;
 export type SettingOperationContext = Readonly<{
     signal?: AbortSignal;
     input?: SettingsDeclarationOperationInputV1;
     isCurrent(): boolean;
     readSettings(): Promise<Settings>;
     mutateSettings(mutate: SettingOwnerMutation): Promise<void>;
+    services?: SettingsMutationServices;
 }>;
 export type SettingOperationResult = Readonly<{
     status: 'completed' | 'cancelled' | 'unavailable';
@@ -35,6 +48,10 @@ export type SettingOperationResult = Readonly<{
     value?: z.infer<typeof StrictJsonValueSchema>;
 }>;
 export type SettingsMutationServices = Readonly<{
+    readConnectedAccountPurposes?: (signal?: AbortSignal) => Promise<import('@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1').ConnectedPurposeCatalogV1 | null>;
+    executeSettingsOwnerAction?: SettingsOwnerActionExecute;
+    purgeAccountSettingsHistory?: (versions: readonly number[], signal?: AbortSignal) => Promise<
+        Readonly<{ status: 'complete' }> | Readonly<{ status: 'cleanup-pending'; versions: readonly number[] }>>;
     readScmDiffSummaryCatalog?: (settings: Settings, storedValue: string) => Promise<Readonly<{
         profiles: readonly import('@/settings/scmDiffSummary/settings').ScmDiffSummaryCatalogProfile[];
         isCurrent: (settings: Settings) => boolean;
@@ -46,7 +63,6 @@ export type SettingsMutationServices = Readonly<{
 }>;
 
 type ScalarSettingKeys<T> = { [K in keyof T]: T[K] extends string | number | boolean | null | undefined ? K : never }[keyof T] & string;
-
 /** Explicitly admitted preference; declarations never infer a writer from a row id. */
 export type SettingStorageBinding = Readonly<{
     access: 'read_write' | 'read_only' | 'sensitive';
@@ -55,7 +71,10 @@ export type SettingStorageBinding = Readonly<{
     /** The row's positive boolean answer is stored as an opt-out preference. */
     invertBoolean?: boolean;
 }> & (
-    | Readonly<{ scope: 'account'; key: ScalarSettingKeys<Pick<Settings, AccountSettingKey & WritableSettingsKey>> }>
+    | Readonly<{ scope: 'home'; kind: 'homeSettings'; key: string }>
+    | Readonly<{ scope: 'home'; kind: 'sessionAutoFollowPreferences'; field: 'assigned' | 'direct' | 'team' | 'group' }>
+    | TeamSettingBindingV1
+    | Readonly<{ scope: 'account'; key: AccountSettingKey & WritableSettingsKey }>
     | Readonly<{ scope: 'local'; key: ScalarSettingKeys<LocalSettings> }>
     | Readonly<{
         scope: 'account';
@@ -86,12 +105,19 @@ export type SettingStorageBinding = Readonly<{
     }>
 );
 
+/** Accepted addresses derive from the declaration's actual domain owner, never a parallel catalog. */
+export function settingTargetKinds(binding: SettingStorageBinding | undefined): readonly SettingsDeclarationTargetKindV1[] {
+    if (binding?.scope === 'home') return ['home'];
+    if (binding?.scope === 'team') return [binding.kind === 'teamIdentityConnection' ? 'team_identity_connection' : 'team'];
+    return [];
+}
+
 /**
  * Settings declared by a page so search can find them individually.
  *
- * A page declares each setting once — its id and the translation keys of its label — and renders its
- * row from that declaration (`SettingRow`). The label on screen and the label search matches are
- * therefore the same value by construction, and every declared setting has a stable anchor
+ * The portable registry owns each built-in id, label and placement. A page attaches host callbacks
+ * and renders its projected declaration (`SettingRow`). The label on screen and the label search
+ * matches are therefore the same value by construction, and every setting has a stable anchor
  * (`<pageId>.<settingId>`, or `<pageId>.<subpageId>.<settingId>` on a sub-page) that search can
  * navigate to.
  *
@@ -133,7 +159,8 @@ export function resolveSettingsHost(): SettingsHost {
 }
 
 export type SettingDeclaration = Readonly<{
-    titleKey: TranslationKeyNoParams;
+    /** Built-in labels are projected by defineSettingsPage from the portable registry. */
+    titleKey?: TranslationKeyNoParams;
     descriptionKey?: TranslationKeyNoParams;
     /** Resolved author-owned label for contribution fields; never a host translation-key cast. */
     title?: string;
@@ -167,7 +194,8 @@ export type SettingsSectionDeclaration = Readonly<{
     settings: Readonly<Record<string, SettingDeclaration>>;
 }>;
 
-export type SettingRef = Omit<SettingDeclaration, 'host'> & Readonly<{
+export type SettingRef = Omit<SettingDeclaration, 'host' | 'titleKey'> & Readonly<{
+    titleKey: TranslationKeyNoParams;
     /** `<pageId>.<settingId>`: the row anchor and the search result identity. */
     anchor: string;
     /** The enclosing section's id (`SettingsSectionRef.id`), revealed when the row is not rendered. */
@@ -228,6 +256,97 @@ function combineHostPredicates(
     return (host) => section(host) && setting(host);
 }
 
+// The app validates shared translation keys while the portable owner stays independent of UI.
+const portableUiLabels: readonly Readonly<{
+    anchor: string; titleKey: TranslationKeyNoParams; descriptionKey?: TranslationKeyNoParams;
+    keywordKeys?: readonly TranslationKeyNoParams[]; sectionTitleKey?: TranslationKeyNoParams;
+    featureId?: FeatureId;
+    labelVariants?: Readonly<Record<string, Readonly<{
+        titleKey: TranslationKeyNoParams; descriptionKey?: TranslationKeyNoParams; keywordKeys?: readonly TranslationKeyNoParams[];
+    }>>>;
+}>[] = BUILT_IN_SETTINGS_METADATA_V1;
+const portableLabelsByAnchor = new Map(portableUiLabels.map(declaration => [declaration.anchor, declaration]));
+
+/** Pages whose rows have no host callbacks take their structure directly from the shared owner. */
+export function builtInSettingsPageSections(anchorPrefix: string): Record<string, SettingsSectionDeclaration> {
+    const sections: Record<string, SettingsSectionDeclaration> = {};
+    for (const declaration of BUILT_IN_SETTINGS_DECLARATIONS_V1) {
+        if (!declaration.sectionId.startsWith(`${anchorPrefix}.`)) continue;
+        const sectionId = declaration.sectionId.slice(anchorPrefix.length + 1);
+        if (sectionId.includes('.')) continue;
+        const labels = portableLabelsByAnchor.get(declaration.anchor);
+        const section = sections[sectionId] ?? { titleKey: labels?.sectionTitleKey, settings: {} };
+        const id = declaration.anchor.slice(anchorPrefix.length + 1);
+        sections[sectionId] = { ...section, settings: { ...section.settings, [id]: {} } };
+    }
+    return sections;
+}
+
+function portableStorageBinding(declaration: PortableSettingDeclarationV1): SettingStorageBinding | undefined {
+    const binding = declaration.storage;
+    if (!binding) return undefined;
+    const platformBinding = readPortablePlatformAccountSettingBindingV1(declaration, Platform.OS === 'web' ? 'web' : 'native');
+    if (platformBinding) return platformBinding;
+    const domain = readPortableDomainSettingBindingV1(declaration);
+    if (domain) return domain;
+    if (binding.scope === 'account' && binding.kind === 'automationSettings'
+        && (binding.field === 'maxActiveRunsPerMachine' || binding.field === 'runRetention')) return {
+        scope: 'account', kind: 'automationSettings', field: binding.field, access: binding.access,
+        allowedValues: binding.allowedValues,
+    };
+    if (binding.scope === 'account' && (!binding.kind || binding.kind === 'field') && binding.key) {
+        if (binding.kind === 'field') return {
+            scope: 'account', kind: 'owner', access: binding.access, allowedValues: binding.allowedValues,
+            read: settings => readBuiltInAccountSettingValueV1(declaration, settings),
+            parse: value => parseBuiltInAccountSettingValueV1(declaration, value),
+            mutate: (settings, value) => buildBuiltInAccountSettingMutationV1(declaration, settings, value) as SettingsWriteDelta | null,
+        };
+        if (!Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, binding.key)) throw new Error(`Unknown Account setting: ${declaration.anchor}`);
+        return { scope: 'account', key: binding.key as AccountSettingKey & WritableSettingsKey,
+            access: binding.access, allowedValues: binding.allowedValues, invertBoolean: binding.invertBoolean };
+    }
+    if (binding.scope === 'local' && !binding.kind && binding.key) return {
+        scope: 'local', key: binding.key as ScalarSettingKeys<LocalSettings>, access: binding.access,
+        allowedValues: binding.allowedValues, invertBoolean: binding.invertBoolean,
+    };
+    return undefined;
+}
+
+function projectPortableDeclaration(anchor: string, adapter: SettingDeclaration, labelVariant?: string): SettingDeclaration & { titleKey: TranslationKeyNoParams } {
+    const portable = readBuiltInSettingDeclarationV1(anchor);
+    const baseLabels = portableLabelsByAnchor.get(anchor);
+    const labels = labelVariant ? baseLabels?.labelVariants?.[labelVariant] ?? baseLabels : baseLabels;
+    if (!portable || !labels) {
+        // Plugin contributions retain their activation-owned projection, not a second built-in list.
+        if (adapter.contribution && adapter.titleKey) return { ...adapter, titleKey: adapter.titleKey };
+        throw new Error(`Undeclared built-in setting: ${anchor}`);
+    }
+    const callbackStorage = adapter.storage && 'kind' in adapter.storage
+        && (adapter.storage.kind === 'owner' || adapter.storage.kind === 'localOwner')
+        ? adapter.storage : undefined;
+    if (callbackStorage && (!portable.storage || callbackStorage.scope !== portable.storage.scope)) {
+        throw new Error(`Setting adapter placement differs from its shared declaration: ${anchor}`);
+    }
+    const storage = callbackStorage && portable.storage
+        ? { ...callbackStorage, access: portable.storage.access, allowedValues: portable.storage.allowedValues ?? callbackStorage.allowedValues }
+        : portableStorageBinding(portable);
+    const operation = adapter.operation && portable.operation
+        ? portable.operation.kind === 'interaction'
+            ? { kind: 'interaction' as const, requiresHumanInteraction: true as const }
+            : adapter.operation.kind === 'invoke'
+                ? { ...adapter.operation, ...portable.operation, kind: 'invoke' as const }
+                : undefined
+        : adapter.operation;
+    return {
+        ...adapter, titleKey: labels.titleKey, descriptionKey: labels.descriptionKey, keywordKeys: labels.keywordKeys,
+        sensitive: portable.sensitive, storage, operation,
+    };
+}
+
+export function builtInSettingUiDeclaration(anchor: string, labelVariant?: string): SettingDeclaration & { titleKey: TranslationKeyNoParams } {
+    return projectPortableDeclaration(anchor, {}, labelVariant);
+}
+
 export function defineSettingsPage<const Sections extends Record<string, SettingsSectionDeclaration>>(input: Readonly<{
     pageId: SettingsPageId;
     subpage?: SettingsSubpageDeclaration;
@@ -235,24 +354,34 @@ export function defineSettingsPage<const Sections extends Record<string, Setting
 }>): SettingsPageDeclaration<Sections> {
     const settings: Record<string, SettingRef> = {};
     const sectionRefs: Record<string, SettingsSectionRef> = {};
+    const sections: Record<string, SettingsSectionDeclaration> = {};
     const anchorPrefix = input.subpage ? `${input.pageId}.${input.subpage.id}` : input.pageId;
     for (const [sectionKey, section] of Object.entries(input.sections)) {
         const sectionId = `${anchorPrefix}.${sectionKey}`;
+        const firstSettingId = Object.keys(section.settings)[0];
+        const sharedSection = firstSettingId ? portableLabelsByAnchor.get(`${anchorPrefix}.${firstSettingId}`) : undefined;
+        const sectionTitleKey = sharedSection ? sharedSection.sectionTitleKey : section.titleKey;
+        const featureId = sharedSection ? sharedSection.featureId : section.featureId;
+        sections[sectionKey] = { ...section, titleKey: sectionTitleKey, featureId };
         const settingAnchors: string[] = [];
         for (const [settingId, declaration] of Object.entries(section.settings)) {
             if (settings[settingId]) {
                 throw new Error(`Duplicate setting id "${settingId}" on settings page "${input.pageId}"`);
             }
-            const { host, ...label } = declaration;
-            const combinedHost = combineHostPredicates(section.host, host);
             const anchor = `${anchorPrefix}.${settingId}`;
+            const portable = readBuiltInSettingDeclarationV1(anchor);
+            if (portable && portable.sectionId !== sectionId) {
+                throw new Error(`Setting adapter section differs from its shared declaration: ${anchor}`);
+            }
+            const { host, ...label } = projectPortableDeclaration(anchor, declaration);
+            const combinedHost = combineHostPredicates(section.host, host);
             settingAnchors.push(anchor);
             settings[settingId] = {
                 ...label,
                 anchor,
                 sectionId,
-                sectionTitleKey: section.titleKey,
-                ...(section.featureId ? { featureId: section.featureId } : {}),
+                sectionTitleKey,
+                ...(featureId ? { featureId } : {}),
                 ...(combinedHost ? { host: combinedHost } : {}),
             };
         }
@@ -261,7 +390,7 @@ export function defineSettingsPage<const Sections extends Record<string, Setting
     return {
         pageId: input.pageId,
         subpage: input.subpage,
-        sections: input.sections,
+        sections: sections as Sections,
         sectionRefs: sectionRefs as SettingsPageDeclaration<Sections>['sectionRefs'],
         settings: settings as SettingsPageDeclaration<Sections>['settings'],
     };

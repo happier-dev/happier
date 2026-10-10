@@ -497,6 +497,9 @@ describe('useAllMachines', () => {
             storage.setState((state) => ({
                 ...state,
                 isDataReady: false,
+                // The real machine-list writer marks a successful empty read idle,
+                // independently of the containing Account bootstrap state.
+                machineListStatusByServerId: { [activeServerId]: 'idle' },
                 machines: {
                     'm-stale-global': {
                         id: 'm-stale-global',
@@ -831,6 +834,7 @@ describe('useAllMachines', () => {
             storage.setState((state) => ({
                 ...state,
                 isDataReady: true,
+                machineListStatusByServerId: { [activeServerId]: 'idle' },
                 machines: {
                     'm-active': {
                         id: 'm-active',

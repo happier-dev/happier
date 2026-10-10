@@ -23,6 +23,7 @@ import {
 import type { AuthoringMemory } from './domains/authoringMemory';
 import type { AuthoringMemoryDelta } from '@/sync/engine/authoringMemory/authoringMemorySync';
 import { createUiProfileOperations } from '@/sync/ops/profiles/createUiProfileOperations';
+import { PROFILE_ACTION_OUTPUT_SCHEMAS_V1, type ProfileActionRequestV1 } from '@happier-dev/protocol/profiles/profileActionsV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
   applySessionReminderPresetIntentToAccountSettings,
@@ -162,10 +163,28 @@ export function useApplyProfileSave(): (input: Readonly<{
   legacyCloneSource?: ProfileLegacyCloneSourceV1;
   builtinNames?: readonly string[];
 }>) => Promise<ProfileOperationResult> {
+  const execute = useProfileActionExecute();
+  return React.useCallback(async input => PROFILE_ACTION_OUTPUT_SCHEMAS_V1['launch_profiles.save'].parse(
+    await execute({ actionId: 'launch_profiles.save', input: { id: input.profile.id, profile: input.profile,
+      expectedRevision: input.expectedRevision ?? input.profile.profileRecordRevision ?? 'absent',
+      ...(input.secretBindings ? { secretBindings: { ...input.secretBindings } } : {}),
+      ...(input.legacyCloneSource ? { legacyCloneSource: input.legacyCloneSource } : {}),
+      ...(input.profile.revision ? { expectedArtifactRevision: input.profile.revision } : {}),
+    } })), [execute]);
+}
+
+/** One thin mounted ingress; Profile decisions remain in the admitted domain owner. */
+export function useProfileActionExecute() {
   const options = useProfileOperationOptions();
-  return React.useCallback(async input => options
-    ? createUiProfileOperations({ ...options, builtinNames: input.builtinNames }).save(input)
-    : { status: 'unavailable', reason: 'profile_account_unavailable' }, [options]);
+  return React.useCallback(async (request: ProfileActionRequestV1): Promise<unknown> => {
+    if (!options || !options.isCurrent()) throw new Error('Profile Account is unavailable');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const result = await createDefaultActionExecutor().execute(request.actionId, request.input, {
+      surface: 'ui', serverId: options.scope.serverId, expectedAccountId: options.scope.accountId,
+    });
+    if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode, result });
+    return result.result;
+  }, [options]);
 }
 
 export function useDeleteAiLaunchProfile(): (profileId: string, expectedRevision?: number) => Promise<ProfileRemovalResult> {

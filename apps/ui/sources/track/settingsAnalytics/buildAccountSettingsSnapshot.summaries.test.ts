@@ -429,7 +429,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties).not.toHaveProperty('acct_setting__lastUsedProfile');
         expect(snapshot.properties.acct_setting__secrets).toBe(2);
         expect(snapshot.properties.acct_setting__secretBindingsByProfileId__boundProfileCount).toBe(2);
-        expect(snapshot.properties.acct_setting__secretBindingsByProfileId__totalBindingCount).toBe(2);
+        expect(snapshot.properties.acct_setting__secretBindingsByProfileId__totalBindingCount).toBe(3);
         expect(snapshot.properties.acct_setting__mcpServersSettingsV1__strictMode).toBe(true);
         expect(snapshot.properties.acct_setting__mcpServersSettingsV1__serverCount).toBe(2);
         expect(snapshot.properties.acct_setting__mcpServersSettingsV1__stdioCount).toBe(1);

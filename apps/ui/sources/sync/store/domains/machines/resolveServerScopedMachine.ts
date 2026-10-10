@@ -16,24 +16,16 @@ export function resolveServerScopedMachine(
     const normalizedMachineId = typeof machineId === 'string' ? machineId.trim() : '';
     if (!normalizedMachineId) return null;
 
-    const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
+    const activeServerId = getActiveServerSnapshot().serverId;
+    const normalizedServerId = (typeof serverId === 'string' ? serverId.trim() : '') || activeServerId;
     if (normalizedServerId.length > 0) {
-        const scopedMachines = state.machineListByServerId?.[normalizedServerId];
-        if (Array.isArray(scopedMachines)) {
-            const scopedMachine = scopedMachines.find(
-                (candidate) => candidate.id === normalizedMachineId,
-            ) ?? null;
-            if (scopedMachine) return scopedMachine;
-            if (state.machineListStatusByServerId?.[normalizedServerId] === 'idle') {
-                return null;
-            }
-        }
         return resolveExactServerScopedMachine({
             serverId: normalizedServerId,
             machineId: normalizedMachineId,
-            activeServerId: getActiveServerSnapshot().serverId,
+            activeServerId,
             activeMachines: Object.values(state.machines).filter((machine): machine is Machine => Boolean(machine)),
             machineListByServerId: state.machineListByServerId ?? {},
+            machineListStatusByServerId: state.machineListStatusByServerId,
         });
     }
 

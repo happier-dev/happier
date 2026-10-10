@@ -72,6 +72,7 @@ function makeMachine(overrides?: Partial<Machine>): Machine {
 }
 
 async function createHarness() {
+    await loadMachineDomainAfterBoot();
     const profiles = await import('@/sync/domains/server/serverProfiles');
     const active = await profiles.upsertServerProfile({ serverUrl: 'http://server-a.local' });
     await profiles.setServerProfileIdentityForUrl(active.serverUrl, 'srv_server_a');
