@@ -1437,7 +1437,7 @@ describe('createStablePluginExecService', () => {
         }
     });
 
-    it('discovers a loopback WebSocket endpoint through the spawned child handshake', async () => {
+    it('discovers a loopback WebSocket endpoint after the former handshake and listener readiness deadlines', async () => {
         const service = createService();
         const fixtureSource = String.raw`
 const { createHash } = require('node:crypto');
@@ -1496,7 +1496,12 @@ function start() {
   server.listen(0, '127.0.0.1', () => {
     const port = server.address().port;
     const response = Buffer.from(JSON.stringify({ port }), 'utf8');
-    process.stdout.write(encodeHandshake(response));
+    server.close(() => {
+      setTimeout(() => {
+        process.stdout.write(encodeHandshake(response));
+        setTimeout(() => server.listen(port, '127.0.0.1'), 1_200);
+      }, 5_200);
+    });
   });
   process.stdin.on('end', () => server.close(() => process.exit(0)));
 }
@@ -1540,5 +1545,44 @@ process.stdin.on('data', (chunk) => {
         await expect.poll(() => messages).toEqual([{ echo: { value: 11 } }]);
         await handle.dispose();
         expect((await handle.wait()).termination.requestedBy).toEqual({ kind: 'dispose', reason: 'caller' });
+    });
+
+    it.each(['handshake', 'connection'] as const)('settles a loopback client when its child exits before %s readiness', async (phase) => {
+        const service = createService();
+        await expect(service.clients.spawn({
+            kind: 'loopbackWebSocketJson',
+            launch: { executable, args: ['-e', 'process.exit(42)'] },
+            ...(phase === 'handshake' ? {
+                handshake: {
+                    framing: 'lengthPrefix' as const,
+                    byteOrder: 'little-endian' as const,
+                    requestFrames: [],
+                    decodeResponse: () => ({ host: '127.0.0.1' as const, port: 12_345 }),
+                },
+            } : { endpoint: { host: '127.0.0.1' as const, port: 12_345 } }),
+            maxFrameBytes: 4096,
+        })).rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_EXITED' });
+    });
+
+    it.each(['handshake', 'connection'] as const)('cancels a loopback client during %s readiness', async (phase) => {
+        const controller = new AbortController();
+        const service = createService();
+        const pending = service.clients.spawn({
+            kind: 'loopbackWebSocketJson',
+            launch: { executable, args: ['-e', 'setInterval(() => {}, 1000)'] },
+            ...(phase === 'handshake' ? {
+                handshake: {
+                    framing: 'lengthPrefix' as const,
+                    byteOrder: 'little-endian' as const,
+                    requestFrames: [],
+                    decodeResponse: () => ({ host: '127.0.0.1' as const, port: 12_345 }),
+                },
+            } : { endpoint: { host: '127.0.0.1' as const, port: 12_345 } }),
+            maxFrameBytes: 4096,
+        }, { signal: controller.signal });
+        const rejected = expect(pending).rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_ABORTED' });
+        await new Promise<void>(resolve => setTimeout(resolve, 100));
+        controller.abort();
+        await rejected;
     });
 });
