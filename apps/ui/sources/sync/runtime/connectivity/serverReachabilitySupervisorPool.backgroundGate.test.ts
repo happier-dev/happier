@@ -56,13 +56,15 @@ describe('serverReachabilitySupervisorPool (background gating)', () => {
         setRuntimeFetch(runtimeFetchSpy);
         setServerReachabilityNetworkAllowed(false);
 
+        let settled = false;
         const waitPromise = waitForServerReachable({
             serverUrl: 'https://example.test',
             token: null,
-            timeoutMs: 5000,
-        });
+        }).finally(() => { settled = true; });
+        void waitPromise.catch(() => {});
 
-        await vi.advanceTimersByTimeAsync(2000);
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(settled).toBe(false);
         expect(runtimeFetchSpy).not.toHaveBeenCalled();
 
         setServerReachabilityNetworkAllowed(true);

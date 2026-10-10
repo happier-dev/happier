@@ -1,39 +1,29 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+beforeEach(async () => {
+    vi.stubEnv('EXPO_PUBLIC_DEBUG', '1');
+    await upsertAndActivateServer({ serverUrl: 'http://localhost:53288', name: 'Debug Home' });
+});
 
 afterEach(async () => {
-    const { resetRuntimeFetch } = await import('./client');
     resetRuntimeFetch();
     vi.unstubAllGlobals();
-    vi.resetModules();
-    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
 });
 
 describe('serverFetch debug logging', () => {
     it('logs request URL context when EXPO_PUBLIC_DEBUG=1 and runtime fetch fails', async () => {
-        const previousDebug = process.env.EXPO_PUBLIC_DEBUG;
-        process.env.EXPO_PUBLIC_DEBUG = '1';
-
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'http://localhost:53288',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-
         const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         const client = await import('./client');
-        (client as unknown as { setRuntimeFetch: (fn: typeof fetch) => void }).setRuntimeFetch(async (request) => {
+        setRuntimeFetch(async (request) => {
             throw new TypeError(`Network request failed for ${String(request)}`);
         });
 
-        await expect((client as unknown as { serverFetch: typeof import('./client').serverFetch }).serverFetch(
+        await expect(client.serverFetch(
             '/v1/health',
             undefined,
             { includeAuth: false, retry: 'none' },
@@ -43,30 +33,13 @@ describe('serverFetch debug logging', () => {
         const combined = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
         expect(combined).toContain('serverFetch');
         expect(combined).toContain('http://localhost:53288/v1/health');
-
-        if (previousDebug === undefined) delete process.env.EXPO_PUBLIC_DEBUG;
-        else process.env.EXPO_PUBLIC_DEBUG = previousDebug;
     });
 
     it('templates public-share capabilities when debug request logging is enabled', async () => {
-        process.env.EXPO_PUBLIC_DEBUG = '1';
         const secret = 'SENTINEL_PUBLIC_SHARE_CAPABILITY';
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'http://localhost:53288',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
         const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         const client = await import('./client');
-        (client as unknown as { setRuntimeFetch: (fn: typeof fetch) => void }).setRuntimeFetch(async (request) => {
+        setRuntimeFetch(async (request) => {
             throw new TypeError(`Network request failed for ${String(request)}`);
         });
 

@@ -179,18 +179,13 @@ const NewHomeGroupPage = React.memo(function NewHomeGroupPage() {
                 title={name.trim() || t('addFlows.newGroup')}
                 description={t('server.addServerGroupSubtitle')}
                 leading={<HomeMark glyph="stack" size="page" />}
-                actions={(
-                    <View style={styles.headerActions}>
-                        <RoundButton testID="settings.homes.groupDraft.discard" size="small" display="inverted" title={t('addFlows.discard')} onPress={leave} />
-                        <RoundButton
-                            testID="settings.homes.groupDraft.save"
-                            size="small"
-                            title={saving ? t('common.loading') : t('server.saveServerGroup')}
-                            disabled={!canSave}
-                            onPress={() => { void save(); }}
-                        />
-                    </View>
-                )}
+                cancelAction={{ testID: 'settings.homes.groupDraft.discard', title: t('addFlows.discard'), onPress: leave }}
+                primaryAction={{
+                    testID: 'settings.homes.groupDraft.save',
+                    title: saving ? t('common.loading') : t('server.saveServerGroup'),
+                    disabled: !canSave,
+                    onPress: save,
+                }}
             />
             <ItemGroup>
                 <View style={styles.fields}>

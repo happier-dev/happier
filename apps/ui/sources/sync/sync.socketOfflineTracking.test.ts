@@ -2016,6 +2016,85 @@ describe('sync socket offline tracking', () => {
     expect(requestedUrls.some((url) => url.includes('/v2/sessions'))).toBe(true);
   });
 
+  it('reports a failed Machine refresh to its retry owner and accepts the next authoritative inventory', async () => {
+    upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+    // Configure the same immutable target that the real socket preparation supplies.
+    Reflect.set(sync, 'appliedServerTarget', getActiveServerSnapshot());
+    apiSocketPreparedRequestMock.mockReturnValue(apiSocketRequestMock);
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    const failure = new Error('Machine inventory temporarily unavailable');
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([]), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }));
+    routeApiSocketRequestsThroughFetch(fetchMock);
+    apiSocketRequestMock.mockRejectedValueOnce(failure);
+    const { Encryption } = await import('@/sync/encryption/encryption');
+    const { encodeBase64 } = await import('@/encryption/base64');
+    const secret = new Uint8Array(32).fill(17);
+    const runtime = sync as unknown as { credentials: import('@/auth/storage/tokenStorage').AuthCredentials; encryption: import('@/sync/encryption/encryption').Encryption };
+    runtime.credentials = { token: 'hdr.eyJzdWIiOiJhY2NvdW50LWMifQ.sig', secret: encodeBase64(secret, 'base64url') };
+    runtime.encryption = await Encryption.create(secret);
+
+    await expect(sync.refreshMachines()).rejects.toBe(failure);
+    expect(storage.getState().machineListStatusByServerId[activeServerId]).toBe('error');
+    await expect(sync.refreshMachines()).resolves.toBeUndefined();
+    expect(storage.getState().machineListByServerId[activeServerId]).toEqual([]);
+  }, 60_000);
+
+  it.each(['transport', 'http'] as const)('reports a failed native update %s read to its retry owner and preserves the last known status', async (kind) => {
+    const { default: Constants } = await import('expo-constants');
+    const previousConfig = Constants.expoConfig;
+    Constants.expoConfig = { ...previousConfig, name: 'test', slug: 'test', version: '1.0.0', ios: { bundleIdentifier: 'test.app' } };
+    platformOS.current = 'ios';
+    onTestFinished(() => { Constants.expoConfig = previousConfig; });
+    storage.getState().applyNativeUpdateStatus({ available: true, updateUrl: 'https://example.test/update' });
+    const failure = new TypeError('Failed to fetch');
+    apiSocketRequestMock.mockImplementationOnce(async () => {
+      if (kind === 'transport') throw failure;
+      return new Response('', { status: 503 });
+    });
+    const runtime = sync as unknown as { fetchNativeUpdate: () => Promise<void> };
+
+    await expect(runtime.fetchNativeUpdate()).rejects.toThrow();
+    expect(storage.getState().nativeUpdateStatus).toEqual({ available: true, updateUrl: 'https://example.test/update' });
+    apiSocketRequestMock.mockResolvedValueOnce(new Response(JSON.stringify({ update_required: false }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }));
+    await expect(runtime.fetchNativeUpdate()).resolves.toBeUndefined();
+    expect(storage.getState().nativeUpdateStatus).toEqual({ available: false });
+  }, 60_000);
+
+  it.each([false, true])('reports a failed organization snapshot to the Session retry owner (cached=%s)', async (cached) => {
+    upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+    Reflect.set(sync, 'appliedServerTarget', getActiveServerSnapshot());
+    apiSocketPreparedRequestMock.mockReturnValue(apiSocketRequestMock);
+    const serverId = getActiveServerSnapshot().serverId;
+    const fetchMock = stubSnapshotRefreshFetch();
+    const failure = new TypeError('Failed to fetch');
+    let failed = false;
+    apiSocketRequestMock.mockImplementation(async (path, init) => {
+      if (path.includes('/v2/session-organization') && !failed) {
+        failed = true;
+        throw failure;
+      }
+      return fetchMock(path, init);
+    });
+    const runtime = sync as unknown as {
+      credentials: import('@/auth/storage/tokenStorage').AuthCredentials;
+      encryption: import('@/sync/encryption/encryption').Encryption | null;
+      fetchSessions: () => Promise<unknown>;
+    };
+    runtime.credentials = { token: 'hdr.eyJzdWIiOiJhY2NvdW50LWMifQ.sig', secret: 'secret' };
+    const { Encryption } = await import('@/sync/encryption/encryption');
+    runtime.encryption = await Encryption.create(new Uint8Array(32).fill(17));
+    if (cached) storage.setState({ sessionOrganizationSnapshotVersionByServerId: { [serverId]: 0 } });
+
+    await expect(runtime.fetchSessions()).rejects.toBe(failure);
+    expect(storage.getState().sessionOrganizationErrorByServerId[serverId]).toBeTruthy();
+    await expect(runtime.fetchSessions()).resolves.toBeDefined();
+    expect(storage.getState().sessionOrganizationErrorByServerId[serverId]).toBeNull();
+  }, 60_000);
+
   it('replaces the active machine snapshot so an empty account list clears stale machines', async () => {
     upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();

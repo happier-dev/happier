@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
@@ -81,6 +82,23 @@ describe('endpointSupervisorPool', () => {
         await resetEndpointSupervisorPoolForTests();
     });
 
+    it('retains canonical Home demand and projects out-of-band authentication failure', async () => {
+        vi.useFakeTimers();
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token-1', secret: 'secret' });
+        runtimeFetchMock.mockResolvedValue(okResponse());
+        const { acquireEndpointSupervisorForServer } = await import('./endpointSupervisorPool');
+        const { peekServerReachabilityState, peekServerReachabilityScope, reportServerAuthFailed } = await import('./serverReachabilitySupervisorPool');
+        const lease = await acquireEndpointSupervisorForServer({ serverId: 'server-a', serverUrl: 'https://a.example.test' });
+        const canonicalWasRetained = peekServerReachabilityState('https://a.example.test', 'token-1')?.phase === 'online';
+        const scope = peekServerReachabilityScope('https://a.example.test', 'token-1');
+        if (scope) reportServerAuthFailed('https://a.example.test', 401, scope, 'token-1');
+        await vi.advanceTimersByTimeAsync(0);
+        const projectedPhase = lease.supervisor.getState().phase;
+        await lease.release({ immediate: true });
+        expect(canonicalWasRetained).toBe(true);
+        expect(projectedPhase).toBe('auth_failed');
+    });
+
     it('does not re-start (re-probe) the supervisor on every acquire when it is already started but offline', async () => {
         vi.useFakeTimers();
         getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token-1', secret: 'secret' });
@@ -98,6 +116,33 @@ describe('endpointSupervisorPool', () => {
         await first.release({ immediate: true });
         await second.release({ immediate: true });
         await resetEndpointSupervisorPoolForTests();
+    });
+
+    it('keeps a late response bound to its captured credentials after token replacement', async () => {
+        vi.useFakeTimers();
+        getCredentialsForServerUrlMock
+            .mockResolvedValueOnce({ token: 'token-1', secret: 'secret' })
+            .mockResolvedValue({ token: 'token-2', secret: 'secret' });
+        runtimeFetchMock.mockResolvedValue(okResponse());
+        const { acquireEndpointSupervisorForServer } = await import('./endpointSupervisorPool');
+        const { acquireServerReachabilitySupervisor, peekServerReachabilityScope, peekServerReachabilityState } = await import('./serverReachabilitySupervisorPool');
+        const oldHome = await acquireServerReachabilitySupervisor({ serverUrl: 'https://a.example.test', token: 'token-1' });
+        const endpoint = await acquireEndpointSupervisorForServer({ serverId: 'server-a', serverUrl: 'https://a.example.test' });
+        const oldScope = endpoint.supervisor.captureProbeReportScope?.();
+        if (!oldScope || !endpoint.supervisor.reportProbeResult) throw new Error('Missing scoped endpoint report API');
+        endpoint.supervisor.invalidate();
+        await vi.advanceTimersByTimeAsync(0);
+        const replacementScope = peekServerReachabilityScope('https://a.example.test', 'token-2');
+        expect(replacementScope?.generation).toBe(oldScope.generation);
+
+        endpoint.supervisor.reportProbeResult({ status: 'auth_failed', statusCode: 401 }, oldScope);
+        await vi.advanceTimersByTimeAsync(0);
+        const currentPhase = peekServerReachabilityState('https://a.example.test', 'token-2')?.phase;
+        const endpointPhase = endpoint.supervisor.getState().phase;
+        await endpoint.release({ immediate: true });
+        await oldHome.release();
+        expect(currentPhase).toBe('online');
+        expect(endpointPhase).toBe('online');
     });
 
     it('uses the latest token when invalidating the endpoint supervisor', async () => {
@@ -142,6 +187,32 @@ describe('endpointSupervisorPool', () => {
         await resetEndpointSupervisorPoolForTests();
     });
 
+    it('refreshes replacement credentials while the initial credential probe is still pending', async () => {
+        vi.useFakeTimers();
+        getCredentialsForServerUrlMock
+            .mockResolvedValueOnce({ token: 'token-1', secret: 'secret' })
+            .mockResolvedValue({ token: 'token-2', secret: 'secret' });
+        const oldProbe = createDeferred<Response>();
+        runtimeFetchMock.mockImplementation((_url: unknown, init?: RequestInit) => {
+            return new Headers(init?.headers).get('Authorization') === 'Bearer token-1'
+                ? oldProbe.promise
+                : Promise.resolve(okResponse());
+        });
+        const { acquireEndpointSupervisorForServer, getEndpointSupervisorForServer } = await import('./endpointSupervisorPool');
+        const { peekServerReachabilityState } = await import('./serverReachabilitySupervisorPool');
+        const acquisition = acquireEndpointSupervisorForServer({ serverId: 'server-a', serverUrl: 'https://a.example.test' });
+        await vi.advanceTimersByTimeAsync(0);
+        const supervisor = getEndpointSupervisorForServer({ serverId: 'server-a', serverUrl: 'https://a.example.test' });
+        if (!supervisor) throw new Error('Missing acquiring endpoint supervisor');
+        supervisor.invalidate();
+        await vi.advanceTimersByTimeAsync(0);
+        const replacementPhaseBeforeOldCompletion = peekServerReachabilityState('https://a.example.test', 'token-2')?.phase;
+        oldProbe.resolve(okResponse());
+        const endpoint = await acquisition;
+        await endpoint.release({ immediate: true });
+        expect(replacementPhaseBeforeOldCompletion).toBe('online');
+    });
+
     it('prefers explicit tokenOverride over TokenStorage token when probing auth', async () => {
         getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token-storage', secret: 'secret' });
 
@@ -179,6 +250,40 @@ describe('endpointSupervisorPool', () => {
 
         await lease.release({ immediate: true });
         await resetEndpointSupervisorPoolForTests();
+    });
+
+    it('acquires replacement credentials while a forced canonical reprobe remains pending', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'token-1', secret: 'secret' });
+        const oldReprobe = createDeferred<Response>();
+        const reprobeStarted = createDeferred<void>();
+        let initialProbeCompleted = false;
+        runtimeFetchMock.mockImplementation((_url: unknown, init?: RequestInit) => {
+            if (new Headers(init?.headers).get('Authorization') === 'Bearer token-1') {
+                if (initialProbeCompleted) {
+                    reprobeStarted.resolve();
+                    return oldReprobe.promise;
+                }
+                initialProbeCompleted = true;
+            }
+            return Promise.resolve(okResponse());
+        });
+        const { acquireEndpointSupervisorForServer } = await import('./endpointSupervisorPool');
+        const { peekServerReachabilityState } = await import('./serverReachabilitySupervisorPool');
+        const key = { serverId: 'server-a', serverUrl: 'https://a.example.test' };
+        const first = await acquireEndpointSupervisorForServer({ ...key, tokenOverride: 'token-1' });
+        first.supervisor.invalidate();
+        await vi.advanceTimersByTimeAsync(0);
+        await reprobeStarted.promise;
+        const replacement = acquireEndpointSupervisorForServer({ ...key, tokenOverride: 'token-2' });
+        await vi.advanceTimersByTimeAsync(0);
+        const replacementBeforeOldCompletion = peekServerReachabilityState('https://a.example.test', 'token-2')?.phase;
+        oldReprobe.resolve(okResponse());
+        const second = await replacement;
+        await first.release({ immediate: true });
+        await second.release({ immediate: true });
+        expect(replacementBeforeOldCompletion).toBe('online');
     });
 
     it('invalidates supervisors when the runtime emits an online event (web)', async () => {

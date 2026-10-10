@@ -1,17 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import React from 'react';
+import 'fake-indexeddb/auto';
 import type { Socket } from 'socket.io-client';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+    AUTHORING_MEMORY_ROUTE_V1,
+    AuthoringMemoryListResponseV1Schema,
     projectLegacySessionAccessCapabilitiesV1,
     type NormalizedPluginCollectionUiQueryDescriptorV1,
     type PluginCollectionUiQueryRequestV1,
 } from '@happier-dev/protocol';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { SESSION_DRAFT_V2_ROUTE_LIST, SessionDraftListResponseV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityIntentReadActionOutputV1Schema,
@@ -20,6 +27,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ChangesCursorScope } from '@/sync/domains/state/persistence';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { FeedResponseSchema } from '@/sync/domains/social/feedTypes';
 
 import {
     installLocalStorageMock,
@@ -41,33 +49,12 @@ type SyncAccountChangeCatchUpHarness = {
     changesCursor: string | null;
     getChangesCursorScope(): ChangesCursorScope | null;
     resumeViaChanges(options: { accountId: string; shouldContinue?: () => boolean }): Promise<unknown>;
-    pluginAvailabilitySync: {
-        awaitQueue(options?: { timeoutMs?: number }): Promise<void>;
-    };
     disconnectServer(): void;
 };
 
-type ResumeSyncUnit = {
-    invalidateCoalesced(): void;
-    awaitQueue(options?: { timeoutMs?: number }): Promise<void>;
-};
-
-type AwaitedInvalidationSyncUnit = {
-    invalidateAndAwait(): Promise<void>;
-};
-
 type SyncAccountChangeWakeSchedulingHarness = SyncAccountChangeCatchUpHarness & {
-    isForeground: boolean;
     resumeInFlight: Promise<void> | null;
-    purchasesSync: ResumeSyncUnit;
-    nativeUpdateSync: ResumeSyncUnit;
-    sessionsSync: ResumeSyncUnit;
-    machinesSync: ResumeSyncUnit;
-    settingsSync: AwaitedInvalidationSyncUnit;
-    profileSync: AwaitedInvalidationSyncUnit;
-    rearmPendingOutboxForActiveScope(): Promise<void>;
     resumeViaChanges(options: { accountId: string; shouldContinue?: () => boolean }): Promise<unknown>;
-    catchUpLoadedExternalSessionsOnResume(): Promise<void>;
     resumeSync(reason: 'app-foreground' | 'socket-reconnect' | 'changes-catch-up' | 'manual' | 'server-reachable'): Promise<void>;
     handleUpdate(update: unknown): Promise<void>;
 };
@@ -141,11 +128,15 @@ const sockets: Socket[] = [];
 installDisconnectedServerSocketBoundary((socket) => { sockets.push(socket); });
 const domainHttp = vi.hoisted(() => vi.fn<(params: { url: string; init?: RequestInit }) => Promise<Response>>());
 const changesResponse = vi.hoisted(() => vi.fn());
+// Holding the genuine profile HTTP response keeps the real change applier in flight.
+const profileResponseGate = vi.hoisted(() => vi.fn<() => Promise<void>>());
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let authScreen: RenderScreenResult | undefined;
 
-async function restoreTestAccount(): Promise<void> {
+async function restoreTestAccount(options: { mountAuth?: boolean } = {}): Promise<void> {
     await loadSyncSingletonForTests();
+    const { profileDefaults } = await import('./domains/profiles/profile');
+    let bootstrapping = true;
     account = await restoreServerAccountForTest({
         serverUrl: 'http://localhost:53288',
         accountId: ACCOUNT_ID,
@@ -160,6 +151,21 @@ async function restoreTestAccount(): Promise<void> {
                 updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
             });
             if (path === '/v2/account/settings') return jsonResponse({ content: null, version: 0 });
+            if (path === '/v1/account/profile') {
+                await profileResponseGate();
+                return jsonResponse({ ...profileDefaults, id: ACCOUNT_ID });
+            }
+            if (path === AUTHORING_MEMORY_ROUTE_V1) return jsonResponse(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
+            if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return jsonResponse(createPlainProjectAccountRowListFixture());
+            if (path === SESSION_DRAFT_V2_ROUTE_LIST) return jsonResponse(SessionDraftListResponseV2Schema.parse({ items: [] }));
+            if (path === '/v2/sessions' || path === '/v2/sessions/active') return jsonResponse({ sessions: [], nextCursor: null, hasNext: false });
+            if (path === '/v1/machines' || path === '/v1/artifacts') return jsonResponse([]);
+            if (path === '/v1/friends' || path === '/v1/friends/requests') return jsonResponse({ friends: [], requests: [] });
+            if (path === '/v1/kv') return jsonResponse({ items: [] });
+            if (path === '/v1/account/saved-secrets/resources/materials') return jsonResponse({ resources: [] });
+            if (path === '/v1/feed') return jsonResponse(FeedResponseSchema.parse({ items: [], hasMore: false }));
+            if (bootstrapping && path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) return jsonResponse({ availabilityCursor: 0, snapshots: [] });
+            if (bootstrapping && path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) return jsonResponse({ availabilityCursor: 0, pluginIds: [], intentReads: [], failedPluginIds: [] });
             if (path === '/v2/cursor') return jsonResponse({ cursor: 0, changesFloor: 0 });
             if (path === '/v2/changes') {
                 const page = await changesResponse({ url: String(url), init });
@@ -168,6 +174,13 @@ async function restoreTestAccount(): Promise<void> {
             return domainHttp({ url: String(url), init });
         },
     });
+    const { storage } = await import('./domains/state/storage');
+    await waitForHomeGovernance(() => {
+        expect(storage.getState().isDataReady).toBe(true);
+        expect(storage.getState().profile.id).toBe(ACCOUNT_ID);
+    });
+    bootstrapping = false;
+    if (!options.mountAuth) return;
     const { AuthProvider } = await import('@/auth/context/AuthContext');
     const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
     authScreen = await renderScreen(React.createElement(AuthProvider, {
@@ -207,11 +220,13 @@ function availabilityIntentDiscoveryResponse(): Response {
     return jsonResponse({
         availabilityCursor: 9,
         pluginIds: [AVAILABILITY_PLUGIN_ID],
+        intentReads: [{ pluginId: AVAILABILITY_PLUGIN_ID, response: availabilityIntentValue(AVAILABILITY_PLUGIN_ID) }],
+        failedPluginIds: [],
     });
 }
 
-function availabilityIntentResponse(pluginId: string): Response {
-    return jsonResponse({
+function availabilityIntentValue(pluginId: string) {
+    return {
         availabilityCursor: 9,
         packageAssets: [],
         hostingCapability: { enabled: false },
@@ -225,7 +240,7 @@ function availabilityIntentResponse(pluginId: string): Response {
         },
         release: null,
         uiArtifacts: [],
-    });
+    };
 }
 
 function currentAccountStoredContentCompatibilityFeaturesResponse(): Response {
@@ -275,6 +290,8 @@ describe('sync AccountChange catch-up projection', () => {
         domainHttp.mockReset();
         domainHttp.mockResolvedValue(Response.json({}, { status: 404 }));
         changesResponse.mockReset();
+        profileResponseGate.mockReset();
+        profileResponseGate.mockResolvedValue(undefined);
     });
 
     afterEach(async () => {
@@ -334,7 +351,7 @@ describe('sync AccountChange catch-up projection', () => {
                 effectiveAccess: { v: 1, level: accessLevel, sources: [],
                     capabilities: projectLegacySessionAccessCapabilitiesV1({ level: accessLevel }) },
             } });
-            if (url.pathname === '/v1/sessions/embed/turns') return jsonResponse({ v: 1, sessionId: 'embed', turns: [] });
+            if (url.pathname === '/v1/sessions/embed/turns') return jsonResponse({ v: 1, sessionId: 'embed', updatedAt: 1, turns: [] });
             if (url.pathname === '/v1/sessions/embed/messages') return jsonResponse({ messages: [], nextAfterSeq: null });
             if (url.pathname === '/v2/sessions/embed/pending') return jsonResponse({ pending: [], pendingVersion: 0 });
             throw new Error(`Account request escaped embed: ${url.pathname}`);
@@ -354,6 +371,7 @@ describe('sync AccountChange catch-up projection', () => {
         const state = (await import('@/sync/domains/state/storage')).storage;
         const retainedTranscriptBeforeRenewal = state.getState().sessionMessages.embed;
         const retainedTurnsBeforeRenewal = state.getState().sessions.embed?.sessionTurns;
+        expect(retainedTurnsBeforeRenewal).toBeDefined();
         expect(state.getState().isDataReady).toBe(true);
         expect((sync as unknown as SyncAccountChangeCatchUpHarness).changesCursor).toBe('8');
         const initialContext = sync.getEmbedSessionRequestContext();
@@ -407,6 +425,10 @@ describe('sync AccountChange catch-up projection', () => {
             if (path === '/v1/account/saved-secrets/resources/materials') {
                 return jsonResponse({ resources: [] });
             }
+            if (path === '/v2/sessions/metadata-upgrades') {
+                // This Account's empty Session inventory has no metadata tuples to upgrade.
+                return jsonResponse({ sessionIds: [] });
+            }
             if (path === '/v1/plugins/data/ui-query') {
                 dataReadCount += 1;
                 return collectionResponse(
@@ -420,9 +442,6 @@ describe('sync AccountChange catch-up projection', () => {
             }
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
                 return availabilityIntentDiscoveryResponse();
-            }
-            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) {
-                return availabilityIntentResponse(AVAILABILITY_PLUGIN_ID);
             }
             return jsonResponse({});
         });
@@ -494,12 +513,10 @@ describe('sync AccountChange catch-up projection', () => {
         const {
             subscribeAccountEncryptionModeCacheInvalidation,
         } = await import('./api/account/apiAccountEncryptionMode');
+        await restoreTestAccount({ mountAuth: true });
         const { sync } = await import('./sync');
         const syncHarness = sync as unknown as SyncAccountChangeCatchUpHarness;
-
-        await restoreTestAccount();
         const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
-        syncHarness.changesCursor = '0';
         const cursorScope = syncHarness.getChangesCursorScope();
         expect(cursorScope).not.toBeNull();
 
@@ -515,7 +532,7 @@ describe('sync AccountChange catch-up projection', () => {
                 intentReads: await Promise.all([AVAILABILITY_PLUGIN_ID, unaffectedPluginId].map(async (pluginId) => ({
                     pluginId,
                     response: PluginAvailabilityIntentReadActionOutputV1Schema.parse({
-                        ...await availabilityIntentResponse(pluginId).json(),
+                        ...availabilityIntentValue(pluginId),
                         availabilityCursor: 8,
                     }),
                 }))),
@@ -565,22 +582,33 @@ describe('sync AccountChange catch-up projection', () => {
                     status: 'ok',
                 });
             });
-            // A named X hint retires X before refresh, without withdrawing Y.
+            // A freshness hint has no replacement fact: retain confirmed reads
+            // while the named plugin's authoritative refresh is held.
             expect(availabilityReader?.readMaterializations()).toMatchObject({
                 kind: 'available',
-                intentReads: [{ pluginId: unaffectedPluginId }],
+                availabilityCursor: 8,
+                intentReads: [{ pluginId: AVAILABILITY_PLUGIN_ID }, { pluginId: unaffectedPluginId }],
             });
         } finally {
             availabilityRefresh.resolve();
-            await availabilityHook.unmount();
         }
-        await pagerRefreshed;
-        await syncHarness.pluginAvailabilitySync.awaitQueue({ timeoutMs: 2_000 });
-        expect(availabilityReader?.readMaterializations()).toMatchObject({
-            kind: 'available',
-            availabilityCursor: 9,
-            intentReads: [{ pluginId: AVAILABILITY_PLUGIN_ID }],
+        await act(async () => {
+            await pagerRefreshed;
+            await waitForHomeGovernance(() => {
+                expect(availabilityReader?.readMaterializations()).toMatchObject({
+                    kind: 'available',
+                    availabilityCursor: 9,
+                });
+            });
         });
+        // A named X refresh replaces X, not the unaffected Y read.
+        expect(availabilityReader?.readMaterializations()).toMatchObject({
+            intentReads: [
+                { pluginId: AVAILABILITY_PLUGIN_ID, response: { availabilityCursor: 9 } },
+                { pluginId: unaffectedPluginId, response: { availabilityCursor: 8 } },
+            ],
+        });
+        await availabilityHook.unmount();
 
         expect(syncHarness.changesCursor).toBe('9');
         expect(loadChangesCursor(cursorScope)).toBe('9');
@@ -594,23 +622,19 @@ describe('sync AccountChange catch-up projection', () => {
         expect(domainHttp.mock.calls.map(([params]) => new URL(params.url).pathname)).toEqual(expect.arrayContaining([
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
         ]));
 
         accountEncryptionModeInvalidation();
         settingsWatch.dispose();
         pager.dispose();
         syncHarness.disconnectServer();
-    }, 30_000);
+    });
 
     it('publishes a fetched AccountChange to the Home whose cursor was read when focus changes in flight', async () => {
         const harness = await prepareAccountChangeWakeSchedulingHarness();
         const { subscribeHomeAccountChange } = await import('./runtime/orchestration/homeAccountChange');
         const { getActiveServerSnapshot, upsertAndActivateServer } = await import('./domains/server/serverRuntime');
         const sourceServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-        harness.changesCursor = '0';
-        harness.settingsSync = { invalidateAndAwait: vi.fn(async () => undefined) };
-        harness.profileSync = { invalidateAndAwait: vi.fn(async () => undefined) };
 
         let releaseChanges!: () => void;
         const changesReleased = new Promise<void>((resolve) => {
@@ -652,7 +676,7 @@ describe('sync AccountChange catch-up projection', () => {
         releaseChanges();
 
         await expect(catchUp).resolves.toMatchObject({ status: 'ok' });
-        expect(observedWakes).toEqual([{
+        expect(observedWakes).toMatchObject([{
             serverId: sourceServerId,
             entityIds: ['self'],
             // An unqualified self change can alter credential/Account currentness.
@@ -667,12 +691,8 @@ describe('sync AccountChange catch-up projection', () => {
         const { subscribeHomeAccountChange } = await import('./runtime/orchestration/homeAccountChange');
         const { getActiveServerSnapshot, upsertAndActivateServer } = await import('./domains/server/serverRuntime');
         const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
-        const { storage } = await import('./domains/state/storage');
         const appliedSnapshot = getActiveServerSnapshot();
         const appliedServerId = String(appliedSnapshot.serverId ?? '').trim();
-        harness.changesCursor = '0';
-        harness.settingsSync = { invalidateAndAwait: vi.fn(async () => undefined) };
-        harness.profileSync = { invalidateAndAwait: vi.fn(async () => undefined) };
         changesResponse.mockResolvedValueOnce({
             status: 'ok' as const,
             changes: [{
@@ -690,13 +710,9 @@ describe('sync AccountChange catch-up projection', () => {
             scope: 'device',
         });
         const stagedSnapshot = getActiveServerSnapshot();
-        storage.getState().activateProfileScope({
-            serverId: stagedSnapshot.serverId,
-            accountId: ACCOUNT_ID,
-        });
         expect(stagedSnapshot.serverId).not.toBe(appliedServerId);
         // Selecting a Home cannot grant its Account an applied runtime lifetime.
-        expect(getActiveServerAccountScope()).toBeNull();
+        expect(getActiveServerAccountScope()).toEqual({ serverId: appliedServerId, accountId: ACCOUNT_ID });
 
         const observedWakes: Array<{ serverId: string }> = [];
         const dispose = subscribeHomeAccountChange((event) => observedWakes.push(event));
@@ -713,138 +729,90 @@ describe('sync AccountChange catch-up projection', () => {
     it('coalesces wakes received after a changes response into one trailing canonical catch-up', async () => {
         const harness = await prepareAccountChangeWakeSchedulingHarness();
         const { subscribeHomeAccountChange } = await import('./runtime/orchestration/homeAccountChange');
-        const observedHomes: string[] = [];
-        const disposeHomeAccountChanged = subscribeHomeAccountChange(({ serverId }) => observedHomes.push(serverId));
-        const resumeUnit: ResumeSyncUnit = {
-            invalidateCoalesced: vi.fn(),
-            awaitQueue: vi.fn(async () => {}),
-        };
-        harness.purchasesSync = resumeUnit;
-        harness.nativeUpdateSync = resumeUnit;
-        harness.sessionsSync = resumeUnit;
-        harness.machinesSync = resumeUnit;
-
-        const rearmPendingOutbox = vi
-            .spyOn(harness, 'rearmPendingOutboxForActiveScope')
-            .mockResolvedValue(undefined);
-        // The cursor owner has already completed; hold only the outer resume tail to
-        // reproduce a wake delivered after /v2/changes responds but before cleanup.
-        const resumeViaChanges = vi.spyOn(harness, 'resumeViaChanges').mockResolvedValue({
-            status: 'ok',
-            refreshedByCatchUp: { sessions: false, machines: false },
+        const { loadChangesCursor } = await import('./domains/state/persistence');
+        const observed: Array<readonly string[] | undefined> = [];
+        const dispose = subscribeHomeAccountChange(({ entityIds }) => observed.push(entityIds));
+        const profileStarted = createDeferred<void>();
+        const releaseProfile = createDeferred<void>();
+        profileResponseGate.mockImplementationOnce(async () => {
+            profileStarted.resolve();
+            await releaseProfile.promise;
         });
-
-        let releaseFirstResume!: () => void;
-        const firstResumeFinished = new Promise<void>((resolve) => {
-            releaseFirstResume = resolve;
+        changesResponse.mockResolvedValue({ changes: [], nextCursor: '1' }).mockResolvedValueOnce({
+            changes: [{ cursor: 1, kind: 'account', entityId: 'self', changedAt: 1, hint: null }], nextCursor: '1',
         });
-        let markFirstResumeFinalizing!: () => void;
-        const firstResumeFinalizing = new Promise<void>((resolve) => {
-            markFirstResumeFinalizing = resolve;
-        });
-        let catchUpCalls = 0;
-        vi.spyOn(harness, 'catchUpLoadedExternalSessionsOnResume').mockImplementation(async () => {
-            catchUpCalls += 1;
-            if (catchUpCalls !== 1) return;
-            markFirstResumeFinalizing();
-            await firstResumeFinished;
-        });
-
         const firstResume = harness.resumeSync('manual');
-        await firstResumeFinalizing;
-        expect(resumeViaChanges).toHaveBeenCalledTimes(1);
-
-        await Promise.all([
-            harness.handleUpdate(accountChangeWake('account-change-1')),
-            harness.handleUpdate(accountChangeWake('account-change-2')),
-            harness.handleUpdate(accountChangeWake('account-change-3')),
-        ]);
-        const observedBeforeResume = [...observedHomes];
-        disposeHomeAccountChanged();
-        expect(resumeViaChanges).toHaveBeenCalledTimes(1);
-
-        releaseFirstResume();
-        await firstResume;
-        await vi.waitFor(() => expect(harness.resumeInFlight).toBeNull());
-
-        expect(resumeViaChanges).toHaveBeenCalledTimes(2);
-        // The socket wake is already a durable changes-cursor signal. Its trailing pass must not
-        // repeat the full resume's outbox, external-session, purchases, or native-update tail.
-        expect(rearmPendingOutbox).toHaveBeenCalledTimes(1);
-        expect(catchUpCalls).toBe(1);
-        expect(resumeUnit.invalidateCoalesced).toHaveBeenCalledTimes(2);
-        expect(observedBeforeResume).toEqual([]);
+        try {
+            await profileStarted.promise;
+            // The page arrived; its real profile materialization still owns the resume slot.
+            await Promise.all([1, 2, 3].map(id => harness.handleUpdate(accountChangeWake(`account-change-${id}`))));
+            expect(changesResponse).toHaveBeenCalledOnce();
+            releaseProfile.resolve();
+            await firstResume;
+            await waitForHomeGovernance(() => {
+                expect(changesResponse).toHaveBeenCalledTimes(2);
+                expect(harness.resumeInFlight).toBeNull();
+            });
+            expect(changesResponse.mock.calls.map(([request]) => new URL(request.url).searchParams.get('after'))).toEqual(['0', '1']);
+            expect(loadChangesCursor(harness.getChangesCursorScope())).toBe('1');
+            expect(observed).toEqual([['self']]);
+        } finally {
+            releaseProfile.resolve();
+            dispose();
+        }
     });
 
     it('publishes no content-free Home change for a focused-Home wake and asks for the exact page instead', async () => {
         const harness = await prepareAccountChangeWakeSchedulingHarness();
         const { subscribeHomeAccountChange } = await import('./runtime/orchestration/homeAccountChange');
-        const resumeUnit: ResumeSyncUnit = { invalidateCoalesced: vi.fn(), awaitQueue: vi.fn(async () => {}) };
-        harness.purchasesSync = resumeUnit;
-        harness.nativeUpdateSync = resumeUnit;
-        harness.sessionsSync = resumeUnit;
-        harness.machinesSync = resumeUnit;
-        vi.spyOn(harness, 'rearmPendingOutboxForActiveScope').mockResolvedValue(undefined);
-        vi.spyOn(harness, 'catchUpLoadedExternalSessionsOnResume').mockResolvedValue(undefined);
-        const resumeViaChanges = vi.spyOn(harness, 'resumeViaChanges').mockResolvedValue({
-            status: 'ok',
-            refreshedByCatchUp: { sessions: false, machines: false },
+        const changesStarted = createDeferred<void>();
+        const releaseChanges = createDeferred<void>();
+        changesResponse.mockImplementationOnce(async () => {
+            changesStarted.resolve();
+            await releaseChanges.promise;
+            return { changes: [{ cursor: 1, kind: 'account', entityId: 'self', changedAt: 1, hint: null }], nextCursor: '1' };
         });
         const observed: Array<Readonly<{ serverId: string; entityIds?: readonly string[] }>> = [];
         const dispose = subscribeHomeAccountChange((event) => observed.push(event));
 
-        await harness.handleUpdate(accountChangeWake('account-change-focused'));
-        await vi.waitFor(() => expect(resumeViaChanges).toHaveBeenCalled());
-        await vi.waitFor(() => expect(harness.resumeInFlight).toBeNull());
-        dispose();
-
-        // A busy Account wakes about once a second; every Home projection with an entity filter
-        // (governance, eligibility, Teams) would treat a content-free event as "anything changed"
-        // and refetch. The focused Home's exact page is published by the change planner instead.
-        expect(observed).toEqual([]);
+        try {
+            await harness.handleUpdate(accountChangeWake('account-change-focused'));
+            await changesStarted.promise;
+            expect(observed).toEqual([]);
+            releaseChanges.resolve();
+            await waitForHomeGovernance(() => expect(harness.resumeInFlight).toBeNull());
+            expect(changesResponse).toHaveBeenCalledOnce();
+            expect(observed).toEqual([expect.objectContaining({ entityIds: ['self'] })]);
+        } finally {
+            releaseChanges.resolve();
+            dispose();
+        }
     });
 
     it('drops a queued AccountChange wake when its server/account lifetime resets', async () => {
         const harness = await prepareAccountChangeWakeSchedulingHarness();
-        const resumeUnit: ResumeSyncUnit = {
-            invalidateCoalesced: vi.fn(),
-            awaitQueue: vi.fn(async () => {}),
-        };
-        harness.purchasesSync = resumeUnit;
-        harness.nativeUpdateSync = resumeUnit;
-        harness.sessionsSync = resumeUnit;
-        harness.machinesSync = resumeUnit;
-
-        vi.spyOn(harness, 'rearmPendingOutboxForActiveScope').mockResolvedValue(undefined);
-        // Keep the same post-catch-up window open, then retire the Account scope.
-        const resumeViaChanges = vi.spyOn(harness, 'resumeViaChanges').mockResolvedValue({
-            status: 'ok',
-            refreshedByCatchUp: { sessions: false, machines: false },
+        const { loadChangesCursor } = await import('./domains/state/persistence');
+        const scope = harness.getChangesCursorScope();
+        const cursorBefore = loadChangesCursor(scope);
+        const changesStarted = createDeferred<void>();
+        const releaseChanges = createDeferred<void>();
+        changesResponse.mockImplementationOnce(async () => {
+            changesStarted.resolve();
+            await releaseChanges.promise;
+            return { changes: [], nextCursor: '1' };
         });
-
-        let releaseFirstResume!: () => void;
-        const firstResumeFinished = new Promise<void>((resolve) => {
-            releaseFirstResume = resolve;
-        });
-        let markFirstResumeFinalizing!: () => void;
-        const firstResumeFinalizing = new Promise<void>((resolve) => {
-            markFirstResumeFinalizing = resolve;
-        });
-        vi.spyOn(harness, 'catchUpLoadedExternalSessionsOnResume').mockImplementation(async () => {
-            markFirstResumeFinalizing();
-            await firstResumeFinished;
-        });
-
         const firstResume = harness.resumeSync('manual');
-        await firstResumeFinalizing;
-        await harness.handleUpdate(accountChangeWake('account-change-before-reset'));
-
-        harness.disconnectServer();
-        releaseFirstResume();
-        await firstResume;
-        await Promise.resolve();
-
-        expect(resumeViaChanges).toHaveBeenCalledTimes(1);
-        expect(harness.resumeInFlight).toBeNull();
+        try {
+            await changesStarted.promise;
+            await harness.handleUpdate(accountChangeWake('account-change-before-reset'));
+            harness.disconnectServer();
+            releaseChanges.resolve();
+            await firstResume;
+            await waitForHomeGovernance(() => expect(harness.resumeInFlight).toBeNull());
+            expect(changesResponse).toHaveBeenCalledOnce();
+            expect(loadChangesCursor(scope)).toBe(cursorBefore);
+        } finally {
+            releaseChanges.resolve();
+        }
     });
 });

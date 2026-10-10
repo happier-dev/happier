@@ -777,15 +777,16 @@ describe('sync.sendMessage wake-after-send', () => {
         const sessionRpc = vi.spyOn(apiSocket, 'sessionRPC');
         const directSend = vi.spyOn(sync, 'sendMessage');
 
-        await expect(sync.submitMessage(sessionId, 'durable now', undefined, undefined, {
+        const submitResult = await sync.submitMessage(sessionId, 'durable now', undefined, undefined, {
             callerSurface: 'sync_submit_message',
             forceImmediate: true,
             hostAdmissionOrigin: 'voice',
-        })).resolves.toBeUndefined();
+        });
 
         expect(pendingPost).toHaveBeenCalledTimes(1);
         const localId = storage.getState().sessionPending[sessionId]?.messages[0]?.localId;
         expect(localId).toEqual(expect.any(String));
+        expect(submitResult).toMatchObject({ persistence: 'pending', localId });
         const [pendingPath, pendingInit] = pendingPost.mock.calls[0]!;
         expect(pendingPath).toBe(`/v2/sessions/${sessionId}/pending`);
         expect(pendingInit).toMatchObject({ method: 'POST' });

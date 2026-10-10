@@ -12,6 +12,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { flushActivityUpdates, handleSocketUpdate, handleUpdateContainer } from './socket';
@@ -105,6 +106,69 @@ describe('socket update handling: plaintext update-session', () => {
         resetSessionSurfaceVisibilityForTests();
         socketPostDecryptSideEffectMocks.notifyActivityAgentRequest.mockClear();
         socketPostDecryptSideEffectMocks.reportNewAgentRequestsFromSessionTransition.mockClear();
+    });
+
+    it.each(['retained', 'cache-only'] as const)('preserves completion through delayed HTTP hydration of a %s session', async (mode) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(10_000);
+        const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        const session = { ...buildSession('s_delayed_completion'), serverId,
+            updatedAt: 100, activeAt: 100, thinking: true, thinkingAt: 100,
+            latestTurnId: 'turn-1', latestTurnStatus: 'in_progress' as const, latestTurnStatusObservedAt: 100,
+            latestReadyEventSeq: 1, latestReadyEventAt: 100,
+            pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 100 };
+        if (mode === 'retained') storage.getState().applySessions([session]);
+        else replaceActiveSessionListRows([{ ...session, archivedAt: null }]);
+        const snapshot = createDeferred<void>();
+        const applySessions = (rows: Parameters<ReturnType<typeof storage.getState>['applySessions']>[0]) => storage.getState().applySessions(rows);
+        const hydration = fetchAndApplySessionById({
+            sessionId: session.id, serverId, credentials: { token: 'test-token' },
+            accountCurrentness: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 },
+            encryption: { decryptEncryptionKey: async () => null, initializeSessions: async () => {}, getSessionEncryption: () => null },
+            sessionDataKeys: new Map(), includeTurnsProjection: false,
+            request: async () => {
+                await snapshot.promise;
+                return Response.json({ session: { ...session, dataEncryptionKey: null, share: null,
+                    metadataLayoutVersion: 0, metadataVersion: 2,
+                    metadata: JSON.stringify({ path: '/tmp/new', host: 'localhost' }), agentState: JSON.stringify({}) } });
+            },
+            applySessions, getExistingSession: (id) => storage.getState().sessions[id], log: { log: () => {} },
+        });
+        await handleUpdateContainer({ ...buildBaseParams(), applySessions, sourceServerId: serverId, updateData: {
+            id: 'completion', seq: 2, createdAt: 200,
+            body: { t: 'update-session', id: session.id, active: true, activeAt: 200,
+                thinking: false, thinkingAt: 200, latestTurnId: 'turn-1', latestTurnStatus: 'completed', latestTurnStatusObservedAt: 200,
+                latestReadyEventSeq: 2, latestReadyEventAt: 200,
+                pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, pendingRequestObservedAt: 200 },
+        } });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(storage.getState().sessionListRowsByServerId[serverId][session.id].latestTurnStatus).toBe('completed');
+        const completedPending = {
+            hasPendingPermissionRequests: storage.getState().sessionListRowsByServerId[serverId][session.id].hasPendingPermissionRequests,
+            pendingRequestObservedAt: storage.getState().sessionListRowsByServerId[serverId][session.id].pendingRequestObservedAt,
+        };
+        snapshot.resolve();
+        expect((await hydration).ok).toBe(true);
+        expect(storage.getState().sessions[session.id]).toMatchObject({ active: true, pendingPermissionRequestCount: mode === 'retained' ? 0 : 1, pendingRequestObservedAt: mode === 'retained' ? 200 : 100 });
+        expect(storage.getState().sessionListRowsByServerId[serverId][session.id]).toMatchObject(completedPending);
+        expect(storage.getState().sessions[session.id]).toMatchObject({ latestTurnStatus: 'completed', latestReadyEventSeq: 2, latestReadyEventAt: 200 });
+        expect(storage.getState().sessions[session.id].metadata?.path).toBe('/tmp/new');
+        expect(storage.getState().sessionListRowsByServerId[serverId][session.id]).toMatchObject({ latestTurnStatus: 'completed', latestReadyEventSeq: 2, latestReadyEventAt: 200 });
+    });
+
+    it('publishes a terminal-only cached transition without waiting for the activity window', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(10_000);
+        const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        const session = { ...buildSession('s_terminal_only'), serverId, updatedAt: 100, activeAt: 100,
+            latestTurnId: 'turn-1', latestTurnStatus: 'in_progress' as const, latestTurnStatusObservedAt: 100,
+            latestReadyEventSeq: 1, latestReadyEventAt: 100, hasUnreadMessages: true };
+        replaceActiveSessionListRows([session]);
+        await handleUpdateContainer({ ...buildBaseParams(), sourceServerId: serverId, updateData: {
+            id: 'completion', seq: 2, createdAt: 200, body: { t: 'update-session', id: session.id,
+                latestTurnStatus: 'completed', latestTurnStatusObservedAt: 200 },
+        } });
+        expect(storage.getState().sessionListRowsByServerId[serverId][session.id].latestTurnStatus).toBe('completed');
     });
 
     it('applies working-to-online activity even when a newer durable projection advanced updatedAt', () => {

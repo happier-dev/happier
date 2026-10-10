@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS, TokenStorage } from '@/auth/storage/tokenStorage';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { subscribeAuthCredentialsInvalidation, type AuthCredentialsInvalidationEvent } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -38,10 +39,13 @@ afterEach(async () => {
 });
 
 function installRejectedBearerBoundary(onRequest?: (init?: RequestInit) => Promise<Response>) {
-    const requests: RequestInit[] = [];
+    const requests: (RequestInit & { path: string })[] = [];
     setRuntimeFetch(async (input, init) => {
-        if (new URL(String(input)).pathname === '/v1/auth/ping') return Response.json({});
-        requests.push(init ?? {});
+        const path = new URL(String(input)).pathname;
+        if (path === '/health') return Response.json({ status: 'ok' });
+        if (path === '/v1/auth/ping') return Response.json({});
+        if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+        requests.push({ ...init, path, headers: new Headers(init?.headers) });
         return onRequest ? await onRequest(init) : new Response(null, { status: 401 });
     });
     return requests;
@@ -50,16 +54,20 @@ function installRejectedBearerBoundary(onRequest?: (init?: RequestInit) => Promi
 describe('serverFetch auth invalidation', () => {
     it('retains marked first-key custody and credential bytes without retrying the rejected bearer', async () => {
         const { serverId, serverUrl } = getActiveServerSnapshot();
+        const createdAt = Date.now();
         const markedCustody = {
             provider: 'github', proof: 'proof-a', secret: 'secret-a', serverId, serverUrl,
             accountEncryptionFirstKey: {
                 accountId: 'auth-account', requestDigest: `aemrb1_${'A'.repeat(43)}`,
-                requestJson: '{}', pending: 'pending-a', createdAt: Date.now(),
-                expiresAt: Number.MAX_SAFE_INTEGER, migrationSubmissionAttempted: true as const,
+                requestJson: '{}', pending: 'pending-a', createdAt,
+                expiresAt: createdAt + ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS, migrationSubmissionAttempted: true as const,
             },
         };
         expect(await TokenStorage.setCredentials({ token: rejectedToken, secret: 'secret-a' })).toBe(true);
         expect(await TokenStorage.setPendingExternalAuth(markedCustody)).toBe(true);
+        const { guardAccountEncryptionFirstKeyCredentialMutation } = await import('@/sync/ops/account/accountEncryptionFirstKeyExternalAuth');
+        expect(await guardAccountEncryptionFirstKeyCredentialMutation({ serverId, serverUrl }))
+            .toMatchObject({ kind: 'finish_encryption_setup', recovery: { pending: markedCustody } });
         const requests = installRejectedBearerBoundary(async (init) => new Response(null, {
             status: new Headers(init?.headers).get('authorization') === `Bearer ${replacementToken}` ? 200 : 401,
         }));
@@ -71,14 +79,16 @@ describe('serverFetch auth invalidation', () => {
             recovery: { pending: { accountEncryptionFirstKey: { migrationSubmissionAttempted: true,
                 rejectedCredentialTokenDigest: expect.any(String) } } } });
         const { peekServerReachabilityToken } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
-        expect(peekServerReachabilityToken(serverUrl)).toBeNull();
+        expect(peekServerReachabilityToken(serverUrl, null)).toBeNull();
 
         expect((await serverFetch('/v1/machines')).status).toBe(401);
         expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(401);
-        expect(requests).toHaveLength(3);
-        expect(new Headers(requests[0]?.headers).get('authorization')).toBe(`Bearer ${rejectedToken}`);
-        expect(new Headers(requests[1]?.headers).get('authorization')).toBeNull();
-        expect(new Headers(requests[2]?.headers).get('authorization')).toBeNull();
+        expect(requests.map(request => ({ path: request.path, authorization: new Headers(request.headers).get('authorization') })))
+            .toEqual([
+                { path: '/v1/machines', authorization: `Bearer ${rejectedToken}` },
+                { path: '/v1/machines', authorization: null },
+                { path: '/v1/machines', authorization: null },
+            ]);
         expect(events).toHaveLength(1);
 
         expect(await TokenStorage.setCredentials({ token: replacementToken, secret: 'secret-a' })).toBe(true);
@@ -143,11 +153,15 @@ describe('serverFetch auth invalidation', () => {
 
     it('does not emit an auth-credential invalidation notification when the stored credentials were not invalidated', async () => {
         await TokenStorage.setCredentials({ token: replacementToken });
-        installRejectedBearerBoundary();
+        const requests = installRejectedBearerBoundary(async (init) => new Response(null, {
+            status: new Headers(init?.headers).get('authorization') === `Bearer ${replacementToken}` ? 200 : 401,
+        }));
         const { serverFetch } = await import('./client');
-        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(401);
+        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(200);
         const { serverId, serverUrl } = getActiveServerSnapshot();
         expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toEqual({ token: replacementToken });
         expect(events).toHaveLength(0);
+        expect(requests.map(request => new Headers(request.headers).get('authorization')))
+            .toEqual([`Bearer ${rejectedToken}`, `Bearer ${replacementToken}`]);
     });
 });

@@ -6,6 +6,7 @@ import {
     resetServerReachabilitySupervisors,
     startServerReachabilitySupervisor,
     subscribeServerReachabilityState,
+    waitForServerReachable,
 } from './serverReachabilitySupervisorPool';
 
 function delayedResponse(params: Readonly<{ ms: number; response: Response; signal?: AbortSignal }>): Promise<Response> {
@@ -29,7 +30,7 @@ function delayedResponse(params: Readonly<{ ms: number; response: Response; sign
     });
 }
 
-describe('serverReachabilitySupervisorPool (probe timeouts)', () => {
+describe('serverReachabilitySupervisorPool (slow successful probes)', () => {
     const previousProbeTimeout = process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_PROBE_TIMEOUT_MS;
 
     beforeEach(() => {
@@ -44,12 +45,12 @@ describe('serverReachabilitySupervisorPool (probe timeouts)', () => {
         vi.useRealTimers();
     });
 
-    it('does not allow a hung /health probe to block reachability supervision indefinitely', async () => {
+    it('keeps a slow /health probe pending until the Home answers', async () => {
         setRuntimeFetch((input, init) => {
             const url = String(input);
             if (url.endsWith('/health')) {
                 return delayedResponse({
-                    ms: 1_000,
+                    ms: 20_000,
                     response: new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
                     signal: init?.signal ?? undefined,
                 });
@@ -66,17 +67,24 @@ describe('serverReachabilitySupervisorPool (probe timeouts)', () => {
             serverUrl: 'https://example.test',
             token: null,
         });
+        let reachable = false;
+        const wait = waitForServerReachable({ serverUrl: 'https://example.test', token: null })
+            .then(() => { reachable = true; });
+        void wait.catch(() => {});
 
         let assertionError: unknown = null;
         try {
-            await vi.advanceTimersByTimeAsync(60);
+            await vi.advanceTimersByTimeAsync(16_000);
             try {
-                expect(lastPhase).toBe('offline');
+                // The generic supervisor stays idle while its initial readiness
+                // probe is pending; neither idle nor connecting is an outage.
+                expect(['idle', 'connecting']).toContain(lastPhase);
+                expect(reachable).toBe(false);
             } catch (error) {
                 assertionError = error;
             }
         } finally {
-            await vi.advanceTimersByTimeAsync(2_000);
+            await vi.advanceTimersByTimeAsync(4_000);
             await startPromise.catch(() => {});
             unsubscribe();
         }
@@ -84,9 +92,11 @@ describe('serverReachabilitySupervisorPool (probe timeouts)', () => {
         if (assertionError) {
             throw assertionError;
         }
+        await wait;
+        expect(lastPhase).toBe('online');
     });
 
-    it('does not allow a hung authenticated /v1/auth/ping probe to block reachability supervision indefinitely', async () => {
+    it('keeps a slow authenticated /v1/auth/ping probe pending until the Home answers', async () => {
         setRuntimeFetch((input, init) => {
             const url = String(input);
             if (url.endsWith('/health')) {
@@ -94,7 +104,7 @@ describe('serverReachabilitySupervisorPool (probe timeouts)', () => {
             }
             if (url.endsWith('/v1/auth/ping')) {
                 return delayedResponse({
-                    ms: 1_000,
+                    ms: 20_000,
                     response: new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
                     signal: init?.signal ?? undefined,
                 });
@@ -114,14 +124,14 @@ describe('serverReachabilitySupervisorPool (probe timeouts)', () => {
 
         let assertionError: unknown = null;
         try {
-            await vi.advanceTimersByTimeAsync(60);
+            await vi.advanceTimersByTimeAsync(16_000);
             try {
-                expect(lastPhase).toBe('offline');
+                expect(['idle', 'connecting']).toContain(lastPhase);
             } catch (error) {
                 assertionError = error;
             }
         } finally {
-            await vi.advanceTimersByTimeAsync(2_000);
+            await vi.advanceTimersByTimeAsync(4_000);
             await startPromise.catch(() => {});
             unsubscribe();
         }
@@ -129,5 +139,6 @@ describe('serverReachabilitySupervisorPool (probe timeouts)', () => {
         if (assertionError) {
             throw assertionError;
         }
+        expect(lastPhase).toBe('online');
     });
 });

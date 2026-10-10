@@ -1,4 +1,5 @@
-import { type SessionMessageV1 } from '@happier-dev/protocol';
+import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { parseSessionMessageDeliveryResolutionV1, SessionMessageAcceptedDeliveryFactsV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { deriveSessionMutationEqualityTagV1, SESSION_DISCUSSION_MUTATION_EQUALITY_HKDF_LABEL_V1, SESSION_INPUT_EQUALITY_HKDF_LABEL_V1 } from '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1';
 import { projectSessionMetadataForWire } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { encodeBase64 } from '@/encryption/base64';
@@ -116,7 +117,10 @@ export class SessionEncryption {
 
         const computeMessageFingerprint = (message: EncryptedApiMessage): string => {
             const messageRole = typeof message.messageRole === 'string' ? message.messageRole : 'null';
-            return `${computeMessageCiphertextFingerprint(message.content.c)}:role:${messageRole}`;
+            const resolution = parseSessionMessageDeliveryResolutionV1(message.deliveryResolution);
+            const deliveryFingerprint = resolution?.kind === 'provider_accepted' && resolution.content.t === 'encrypted'
+                ? computeMessageCiphertextFingerprint(resolution.content.c) : 'none';
+            return `${computeMessageCiphertextFingerprint(message.content.c)}:role:${messageRole}:delivery:${deliveryFingerprint}`;
         };
 
         // Check cache for all messages first
@@ -194,6 +198,20 @@ export class SessionEncryption {
                     onAuthenticationFailure: (index) => options.onAuthenticationFailure?.(toDecrypt[index].index),
                 },
             );
+            const acceptedContent = toDecrypt.map(({ message }) => {
+                const resolution = parseSessionMessageDeliveryResolutionV1(message.deliveryResolution);
+                return resolution?.kind === 'provider_accepted' && resolution.content.t === 'encrypted'
+                    ? resolution.content.c : null;
+            });
+            const acceptedIndices = acceptedContent.flatMap((content, index) => content === null ? [] : [index]);
+            const acceptedFacts = acceptedIndices.length > 0 ? await decryptBase64Payloads(
+                this.encryptor, acceptedIndices.map((index) => acceptedContent[index]!),
+                { decryptName: 'sync.encryption.decryptMessages.acceptedDelivery', decryptFields: { messages: acceptedIndices.length } },
+            ) : [];
+            const acceptedDeliveryByIndex = new Map(acceptedIndices.map((index, position) => {
+                const parsed = SessionMessageAcceptedDeliveryFactsV1Schema.safeParse(acceptedFacts[position]);
+                return [index, parsed.success ? parsed.data : undefined] as const;
+            }));
             if (!this.isCurrent()) return messages.map(() => null);
 
             for (let i = 0; i < toDecrypt.length; i++) {
@@ -208,8 +226,12 @@ export class SessionEncryption {
                         messageRole: message.messageRole ?? null,
                         content: decryptedData,
                         createdAt: message.createdAt,
+                        ...(acceptedDeliveryByIndex.get(i) ? { acceptedDelivery: acceptedDeliveryByIndex.get(i) } : {}),
                     };
-                    this.cache.setCachedMessage(message.id, result, toDecrypt[i].fingerprint, this.sessionId);
+                    // Failed protected detail is retryable even when the message itself opened.
+                    if (acceptedContent[i] === null || result.acceptedDelivery !== undefined) {
+                        this.cache.setCachedMessage(message.id, result, toDecrypt[i].fingerprint, this.sessionId);
+                    }
                     results[index] = result;
                 } else {
                     const result: DecryptedMessage = {

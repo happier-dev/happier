@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { SecretStringSchema } from '@/sync/encryption/secretSettings';
 import type { RemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 
 import { isEligiblePersonalHomeRelocationHost } from './personalHomeRelocationEligibility';
@@ -33,7 +32,7 @@ describe('isEligiblePersonalHomeRelocationHost', () => {
             ssh: {
                 target: 'ops@server.example.test',
                 authMode: 'password' as const,
-                passwordEnc: SecretStringSchema.parse({ _isSecretValue: true, value: 'encrypted-password' }),
+                passwordSecretRef: 'happier:shared-secret:v1:ssh-password',
             },
         };
         expect(isEligiblePersonalHomeRelocationHost(passwordHost, false)).toBe(false);

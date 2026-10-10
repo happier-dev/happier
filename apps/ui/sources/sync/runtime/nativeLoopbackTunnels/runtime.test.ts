@@ -46,6 +46,7 @@ function createSshSupervisor(): NativeSshTunnelSupervisor {
         markForeground: vi.fn(async () => {
             snapshot = { leases: snapshot.leases.map(() => createSshLease()), platformLimitations: [] };
         }),
+        dispose: vi.fn(async () => { snapshot = { leases: [], platformLimitations: [] }; }),
     };
 }
 

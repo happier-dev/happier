@@ -12,6 +12,21 @@ import {
 } from './nativeCryptoWorker/types';
 
 describe('SessionEncryption.decryptMessages (cache behavior)', () => {
+  it('opens accepted delivery facts and refreshes unchanged ciphertext after settlement', async () => {
+    const encryptor = new AES256Encryption(new Uint8Array(32).fill(4));
+    const facts = { v: 1, acceptedAtMs: 1234, delivery: { kind: 'steer', turnId: 'turn-1' } } as const;
+    const [messageBytes, factBytes] = await encryptor.encrypt([{ role: 'user', content: { type: 'text', text: 'hello' } }, facts]);
+    const sessionEnc = new SessionEncryption('s-accepted', encryptor, new EncryptionCache());
+    const message = { id: 'm-accepted', seq: 1, localId: 'input-1', createdAt: 1, updatedAt: 1,
+      content: { t: 'encrypted', c: encodeBase64(messageBytes, 'base64') } } as const;
+    expect((await sessionEnc.decryptMessage(message))?.acceptedDelivery).toBeUndefined();
+    const settled = { ...message, deliveryResolution: { v: 1, kind: 'provider_accepted',
+      content: { t: 'encrypted', c: encodeBase64(factBytes, 'base64') } } } as const;
+    expect((await sessionEnc.decryptMessage(settled))?.acceptedDelivery).toEqual(facts);
+    const mismatched = { ...message, deliveryResolution: { v: 1, kind: 'provider_accepted',
+      content: { t: 'plain', v: facts } } } as const;
+    expect((await sessionEnc.decryptMessage(mismatched))?.acceptedDelivery).toBeUndefined();
+  });
   it('releases decrypted message entries for one session without clearing another session', () => {
     const cache = new EncryptionCache();
     const first = {

@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { SESSION_DRAFT_V2_ROUTE_LIST, SessionDraftListResponseV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import type { PauseController } from '@/utils/timing/pauseController';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -37,6 +43,9 @@ describe('sync resumeSync background interruption', () => {
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
+            if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture());
+            if (path === SESSION_DRAFT_V2_ROUTE_LIST) return Response.json(SessionDraftListResponseV2Schema.parse({ items: [] }));
             if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: home.accountId });
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
             if (path === '/v2/cursor') return Response.json({ cursor: 0 });
@@ -44,7 +53,7 @@ describe('sync resumeSync background interruption', () => {
                 if (holdChanges) { startChanges(); await changesResponse; }
                 return Response.json({ changes: [], nextCursor });
             }
-            if (path === '/v2/sessions') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
             if (path === '/v1/machines') return Response.json([]);
             if (path === '/v1/artifacts') return Response.json([]);
             if (path === '/v1/friends') return Response.json({ friends: [] });
@@ -57,10 +66,14 @@ describe('sync resumeSync background interruption', () => {
         await upsertAndActivateServer({ serverUrl: home.serverUrl });
         await restoreConnectionToActiveServer({ token: home.token });
         const { storage } = await import('./domains/state/storage');
-        await vi.waitFor(() => expect(storage.getState().isDataReady).toBe(true));
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         // The elapsed downtime comes from a real transport disconnect and clock,
         // not synthetic private Sync credentials/encryption or disconnected state.
-        const socket = network.socketBoundaries.find((boundary) => boundary.serverUrl === home.serverUrl);
+        // Reachability and Sync have distinct Socket.IO connections for this
+        // Home. Only the direct Sync socket owns its measured offline duration.
+        const socket = network.socketBoundaries.find((boundary) => (
+            boundary.serverUrl === home.serverUrl && boundary.socket.onAny.mock.calls.length > 0
+        ));
         expect(socket).toBeDefined();
         socket!.trigger('disconnect', 'transport close');
         now += 1_000;

@@ -35,12 +35,13 @@ function sanitizeArtifactHeaderVersion(value: unknown): number {
 
 /** Presentation projection only. Strict readers and storage writers consume the raw header. */
 export function projectArtifactHeaderForDisplay(header: Readonly<Record<string, unknown>>): ArtifactHeader {
-    // Workflow titles are public authored content, under the kind owner's metadata.
+    // Authored titles follow each kind owner's header (Workflow metadata, Role name).
     // Project them without changing the raw header that strict readers and writes consume.
     const workflow = header.kind === 'workflow-definition.v1'
         ? WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(header)
         : null;
     const title = workflow?.success ? workflow.data.metadata.title
+        : header.kind === 'role.v1' && typeof header.name === 'string' && header.name.length > 0 ? header.name
         : typeof header.title === 'string' ? header.title : null;
     const v = sanitizeArtifactHeaderVersion(header.v);
     const kindRaw = typeof header.kind === 'string' ? header.kind.trim() : '';

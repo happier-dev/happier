@@ -14,7 +14,6 @@ import {
     reportServerUnreachable,
     waitForServerReachable,
 } from './serverReachabilitySupervisorPool';
-import { readServerReachabilityWaitTimeoutMs } from './serverReachabilityTuning';
 
 function tryParseUrl(raw: string, base?: string): URL | null {
     try {
@@ -118,27 +117,34 @@ export async function runtimeFetchWithServerReachability(params: Readonly<{
         }
     }
 
-    const reachability = await acquireServerReachabilitySupervisor({
+    const signal = params.signal ?? params.init.signal ?? undefined;
+    const reachabilityPromise = acquireServerReachabilitySupervisor({
         serverUrl: params.serverUrl,
         token: effectiveToken,
         ...(params.runtimeOrigin ? { runtimeOrigin: params.runtimeOrigin } : {}),
     });
+    let reachability: Awaited<typeof reachabilityPromise> | null = null;
 
     try {
         await waitForServerReachable({
             serverUrl: params.serverUrl,
             token: effectiveToken,
+            ...(params.runtimeOrigin ? { runtimeOrigin: params.runtimeOrigin } : {}),
             ...(params.homeIdentityId ? { homeIdentityId: params.homeIdentityId } : {}),
-            signal: params.signal ?? (params.init.signal ?? undefined),
-            timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : readServerReachabilityWaitTimeoutMs(),
+            signal,
+            timeoutMs: params.timeoutMs,
             acceptAuthFailed: true,
         });
+        reachability = await reachabilityPromise;
         const probeReportScope = peekServerReachabilityScope(params.serverUrl, effectiveToken);
         params.onIssued?.();
-        const response = await runtimeFetch(params.url, {
-            ...params.init,
-            headers,
-        });
+        let response: Response;
+        try {
+            response = await runtimeFetch(params.url, { ...params.init, headers, signal });
+        } catch (error) {
+            if (!signal?.aborted) reportServerUnreachable(params.serverUrl, error, effectiveToken);
+            throw error;
+        }
         // A normal authenticated domain endpoint uses 403 for authorization
         // denials. Only 401 proves that this request's credential was rejected;
         // the dedicated authenticated readiness probe separately owns its
@@ -149,10 +155,13 @@ export async function runtimeFetchWithServerReachability(params: Readonly<{
             }
         }
         return response;
-    } catch (error) {
-        reportServerUnreachable(params.serverUrl, error, effectiveToken);
-        throw error;
     } finally {
-        await reachability.release();
+        if (reachability) {
+            await reachability.release();
+        } else {
+            // Cancellation ends this caller immediately; shared startup may
+            // still be serving others. Release this lease when it arrives.
+            void reachabilityPromise.then(lease => lease.release()).catch(() => {});
+        }
     }
 }

@@ -1,11 +1,9 @@
-import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
+import type { ManagedConnectionState, ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
 import { Platform } from 'react-native';
-import { runtimeFetch } from '@/utils/system/runtimeFetch';
-
-import { buildRetryLaterProbeResultFromResponse } from './retryLaterProbeResult';
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
+import { acquireServerReachabilitySupervisor, subscribeServerReachabilityState } from './serverReachabilitySupervisorPool';
 
 /** Probe-local browser refusal detail, independent of the message shown to people. */
 export type EndpointReadinessProbeResult = ReadinessProbeResult & Readonly<{
@@ -45,44 +43,47 @@ function isWebMixedContentBlocked(baseUrl: string): boolean {
     return pageProtocol === 'https:' && endpointProtocol === 'http:';
 }
 
-function joinBaseAndPath(baseUrl: string, path: string): string {
-    const base = String(baseUrl ?? '').replace(/\/+$/, '');
-    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    return `${base}${normalizedPath}`;
+export function readEndpointReadinessResultFromState(state: ManagedConnectionState): EndpointReadinessProbeResult | null {
+    if (state.phase === 'online') return { status: 'ready' };
+    const errorMessage = sanitizeEndpointErrorMessage(state.lastErrorMessage);
+    const detail = errorMessage ? { errorMessage } : {};
+    if (state.phase === 'auth_failed') return { status: 'auth_failed', ...detail };
+    if (state.phase !== 'offline') return null;
+    if (state.reason === 'probe_failed' || state.reason === 'server_restarting') {
+        return {
+            status: 'retry_later',
+            reason: state.reason,
+            ...(state.nextRetryAt === null ? {} : { retryAfterMs: Math.max(0, state.nextRetryAt - Date.now()) }),
+            ...detail,
+        };
+    }
+    return { status: 'server_unreachable', ...detail };
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.max(0, timeoutMs));
-    const upstreamSignal = init.signal;
-    let removeListener = () => {};
-    if (upstreamSignal) {
-        if (upstreamSignal.aborted) {
-            controller.abort();
-        } else {
-            const onAbort = () => controller.abort();
-            upstreamSignal.addEventListener('abort', onAbort, { once: true });
-            removeListener = () => upstreamSignal.removeEventListener('abort', onAbort);
-        }
+export function readEndpointReadinessBlockedResult(endpoint: string): EndpointReadinessProbeResult | null {
+    const backgroundRetryAfterMs = 60_000;
+    if (!isRuntimeActive()) {
+        return { status: 'retry_later', retryAfterMs: backgroundRetryAfterMs, errorMessage: 'Runtime is inactive' };
     }
-    try {
-        return await runtimeFetch(url, { ...init, signal: controller.signal });
-    } finally {
-        clearTimeout(timer);
-        removeListener();
+    const normalized = normalizeAbsoluteHttpBaseUrl(endpoint);
+    if (!normalized) return { status: 'server_unreachable', errorMessage: 'Invalid endpoint URL' };
+    if (isWebMixedContentBlocked(normalized)) {
+        return {
+            status: 'retry_later',
+            retryAfterMs: backgroundRetryAfterMs,
+            blockedBy: 'mixed_content',
+            errorMessage: 'Browser blocked mixed content (HTTPS app cannot reach HTTP endpoint)',
+        };
     }
+    return null;
 }
 
 export function createEndpointReadinessProbe(params: Readonly<{
     endpoint: string;
     token: string | null | (() => string | null) | (() => Promise<string | null>);
-    timeoutMs?: number;
     signal?: AbortSignal;
 }>): () => Promise<EndpointReadinessProbeResult> {
     const endpoint = normalizeAbsoluteHttpBaseUrl(params.endpoint);
-    const timeoutMs = params.timeoutMs ?? 800;
-    const backgroundRetryAfterMs = 60_000;
-    const readinessProbePaths = ['/health'];
     const resolveToken = async (): Promise<string | null> => {
         try {
             const raw = typeof params.token === 'function' ? params.token() : params.token;
@@ -95,125 +96,59 @@ export function createEndpointReadinessProbe(params: Readonly<{
     };
 
     return async () => {
-        if (!isRuntimeActive()) {
-            return {
-                status: 'retry_later',
-                retryAfterMs: backgroundRetryAfterMs,
-                errorMessage: 'Runtime is inactive',
+        const blocked = readEndpointReadinessBlockedResult(params.endpoint);
+        if (blocked) return blocked;
+        // The guard above establishes an absolute HTTP endpoint.
+        if (!endpoint) throw new Error('Invalid endpoint URL');
+        return await new Promise<EndpointReadinessProbeResult>((resolve, reject) => {
+            let settled = false;
+            let unsubscribe = () => {};
+            let release = () => {};
+            const cleanup = () => {
+                unsubscribe();
+                release();
+                params.signal?.removeEventListener('abort', onAbort);
             };
-        }
-        if (!endpoint) {
-            return {
-                status: 'server_unreachable',
-                errorMessage: 'Invalid endpoint URL',
+            const onAbort = () => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                const error = new Error('Aborted');
+                error.name = 'AbortError';
+                reject(error);
             };
-        }
-        if (isWebMixedContentBlocked(endpoint)) {
-            return {
-                status: 'retry_later',
-                retryAfterMs: backgroundRetryAfterMs,
-                blockedBy: 'mixed_content',
-                errorMessage: 'Browser blocked mixed content (HTTPS app cannot reach HTTP endpoint)',
-            };
-        }
-        let readinessError: string | null = null;
-        let readinessOk = false;
-        for (const path of readinessProbePaths) {
-            try {
-                const response = await fetchWithTimeout(
-                    joinBaseAndPath(endpoint, path),
-                    {
-                        method: 'GET',
-                        headers: { Accept: 'application/json' },
-                        ...(params.signal ? { signal: params.signal } : {}),
-                    },
-                    timeoutMs,
-                );
-
-                if (response.status === 429) {
-                    return buildRetryLaterProbeResultFromResponse(response, `Readiness probe returned ${response.status}`);
-                }
-
-                if (response.status === 503 || response.status >= 500) {
-                    return buildRetryLaterProbeResultFromResponse(response, `Readiness probe returned ${response.status}`);
-                }
-
-                if (response.ok) {
-                    readinessOk = true;
-                    break;
-                }
-
-                if (response.status === 401 || response.status === 403) {
-                    readinessOk = true;
-                    break;
-                }
-
-                if (response.status === 404) {
-                    readinessError ??= `Readiness probe returned ${response.status}`;
-                    continue;
-                }
-
-                readinessError ??= `Readiness probe returned ${response.status}`;
-            } catch (error) {
-                readinessError = sanitizeEndpointErrorMessage(error) ?? readinessError ?? 'Network request failed';
+            params.signal?.addEventListener('abort', onAbort, { once: true });
+            if (params.signal?.aborted) {
+                onAbort();
+                return;
             }
-        }
-
-        if (!readinessOk) {
-            return {
-                status: 'server_unreachable',
-                errorMessage: readinessError ?? 'Network request failed',
-            };
-        }
-
-        const token = await resolveToken();
-        if (!token) {
-            return { status: 'ready' };
-        }
-
-        try {
-            const authResponse = await fetchWithTimeout(
-                joinBaseAndPath(endpoint, '/v1/auth/ping'),
-                {
-                    method: 'GET',
-                    headers: {
-                        Accept: 'application/json',
-                        Authorization: `Bearer ${token}`,
-                    },
-                    ...(params.signal ? { signal: params.signal } : {}),
-                },
-                timeoutMs,
-            );
-
-            if (authResponse.status === 401 || authResponse.status === 403) {
-                return {
-                    status: 'auth_failed',
-                    statusCode: authResponse.status,
-                    errorMessage: `Authenticated probe returned ${authResponse.status}`,
+            void resolveToken().then((token) => {
+                if (settled) return;
+                // The Home pool owns the network probe. This caller observes its
+                // verdict and releases only its own demand, including on abort.
+                const leasePromise = acquireServerReachabilitySupervisor({ serverUrl: endpoint, token });
+                release = () => {
+                    void leasePromise.then((lease) => lease.release()).catch(() => {});
                 };
-            }
-
-            if (authResponse.status === 429) {
-                return buildRetryLaterProbeResultFromResponse(authResponse, `Authenticated probe returned ${authResponse.status}`);
-            }
-
-            if (authResponse.status >= 500) {
-                return buildRetryLaterProbeResultFromResponse(authResponse, `Authenticated probe returned ${authResponse.status}`);
-            }
-
-            if (authResponse.status !== 200) {
-                return {
-                    status: 'server_unreachable',
-                    errorMessage: `Authenticated probe returned ${authResponse.status}`,
+                const finish = (result: EndpointReadinessProbeResult) => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    resolve(result);
                 };
-            }
-
-            return { status: 'ready' };
-        } catch (error) {
-            return {
-                status: 'server_unreachable',
-                errorMessage: sanitizeEndpointErrorMessage(error) ?? 'Network request failed',
-            };
-        }
+                const detach = subscribeServerReachabilityState(endpoint, (state) => {
+                    const result = readEndpointReadinessResultFromState(state);
+                    if (result) finish(result);
+                }, token);
+                unsubscribe = detach;
+                if (settled) unsubscribe();
+                void leasePromise.catch((error: unknown) => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    reject(error);
+                });
+            });
+        });
     };
 }

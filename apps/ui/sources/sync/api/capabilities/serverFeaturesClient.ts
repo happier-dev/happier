@@ -1,4 +1,6 @@
-import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type FeaturesResponse as ServerFeatures } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { z } from 'zod';
 import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
@@ -21,11 +23,13 @@ import {
 import { decodeServerFeaturesResponse } from './serverFeaturesParse';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { normalizeBaseUrl } from './probeAuthenticatedServerAuthPingEndpoint';
 import { isServerFeaturesProbeRetryable } from './serverFeaturesProbeRetryability';
 import { recordAccountStoredContentServerRequirements } from '@/sync/http/accountStoredContentCompatibility';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import type { ResolvedServerScopedTransport } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedTransport';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 
 export { isServerFeaturesProbeRetryable } from './serverFeaturesProbeRetryability';
 
@@ -65,6 +69,53 @@ const endpointCache = new AsyncTtlCache<ServerFeaturesSnapshot>({
 });
 const snapshotListeners = new Set<() => void>();
 const transientRetryAtByProjectionKey = new Map<string, number>();
+const PUBLIC_SNAPSHOT_STORAGE_PREFIX = 'server-features-snapshot-v1:';
+const StoredPublicSnapshotSchema = z.object({
+    serverUrl: z.string(),
+    updatedAt: z.number().finite(),
+    expiresAt: z.number().finite(),
+    features: createStoredReadSchema(FeaturesResponseSchema),
+});
+
+function publicSnapshotServerUrl(cacheKey: string): string | null {
+    const active = getActiveServerSnapshot();
+    return normalizeBaseUrl(getServerProfileById(cacheKey)?.serverUrl
+        ?? (areServerProfileIdentifiersEquivalent(cacheKey, active.serverId) ? active.serverUrl : ''));
+}
+
+/** Public discovery only. The existing cache keeps last-known facts while refreshing; reload
+ * restores that same entry and its original freshness, never an authenticated descriptor. */
+function restorePublicSnapshot(cacheKey: string): void {
+    if (cache.get(cacheKey)) return;
+    try {
+        const raw = getPersistenceStorage().getString(`${PUBLIC_SNAPSHOT_STORAGE_PREFIX}${cacheKey}`);
+        if (!raw) return;
+        const parsed = StoredPublicSnapshotSchema.safeParse(JSON.parse(raw));
+        if (!parsed.success || parsed.data.serverUrl !== publicSnapshotServerUrl(cacheKey)) return;
+        const { features, updatedAt, expiresAt } = parsed.data;
+        cache.setSuccess(cacheKey, { status: 'ready', features, serverIdentityId: features.capabilities.serverIdentity.serverIdentityId },
+            { nowMs: updatedAt, ttlMs: expiresAt - updatedAt });
+    } catch {
+        // Unreadable derived storage is a cold start; network discovery still owns the answer.
+    }
+}
+
+function persistPublicSnapshot(cacheKey: string): void {
+    try {
+        const entry = cache.get(cacheKey);
+        const key = `${PUBLIC_SNAPSHOT_STORAGE_PREFIX}${cacheKey}`;
+        if (entry?.kind !== 'success' || entry.value.status !== 'ready') {
+            getPersistenceStorage().delete(key);
+            return;
+        }
+        const serverUrl = publicSnapshotServerUrl(cacheKey);
+        if (!serverUrl) return;
+        getPersistenceStorage().set(key, JSON.stringify({ serverUrl, updatedAt: entry.updatedAt,
+            expiresAt: entry.expiresAt, features: entry.value.features }));
+    } catch {
+        // Optional derived persistence cannot turn successful discovery into a failure.
+    }
+}
 
 function notifyServerFeaturesSnapshotChanged(): void {
     for (const listener of snapshotListeners) {
@@ -76,13 +127,23 @@ function writeServerFeaturesSnapshot(
     cacheKey: string,
     snapshot: ServerFeaturesSnapshot,
     ttlMs: number,
-): void {
+): ServerFeaturesSnapshot {
+    const previous = cache.get(cacheKey);
+    const retained = retainServerFeaturesSnapshot(previous?.kind === 'success' ? previous.value : undefined, snapshot);
     transientRetryAtByProjectionKey.delete(`public\u0000${cacheKey}`);
-    cache.setSuccess(cacheKey, snapshot, { ttlMs });
-    notifyServerFeaturesSnapshotChanged();
+    cache.setSuccess(cacheKey, retained, { ttlMs });
+    if (previous?.kind !== 'success' || retained !== previous.value) notifyServerFeaturesSnapshotChanged();
+    return retained;
 }
 
 type ActiveFeatureProjection = 'public' | 'authenticated';
+
+function retainServerFeaturesSnapshot(
+    previous: ServerFeaturesSnapshot | undefined,
+    snapshot: ServerFeaturesSnapshot,
+): ServerFeaturesSnapshot {
+    return previous && stableJsonStringify(previous) === stableJsonStringify(snapshot) ? previous : snapshot;
+}
 
 function getActiveProjectionCache(projection: ActiveFeatureProjection): AsyncTtlCache<ServerFeaturesSnapshot> {
     return projection === 'authenticated' ? authenticatedCache : cache;
@@ -107,11 +168,14 @@ function writeActiveProjectionSnapshot(
     }
     transientRetryAtByProjectionKey.delete(retryKey);
     if (projection === 'public') {
-        writeServerFeaturesSnapshot(cacheKey, snapshot, ttlMs);
-        return snapshot;
+        const retained = writeServerFeaturesSnapshot(cacheKey, snapshot, ttlMs);
+        persistPublicSnapshot(cacheKey);
+        return retained;
     }
-    authenticatedCache.setSuccess(cacheKey, snapshot, { ttlMs });
-    return snapshot;
+    const previous = authenticatedCache.get(cacheKey);
+    const retained = retainServerFeaturesSnapshot(previous?.kind === 'success' ? previous.value : undefined, snapshot);
+    authenticatedCache.setSuccess(cacheKey, retained, { ttlMs });
+    return retained;
 }
 
 function writeEndpointServerFeaturesSnapshot(
@@ -302,6 +366,7 @@ async function getServerFeaturesSnapshotWithRetry(
     const explicitServerUrl = isExplicitServerRequest
         ? normalizeBaseUrl(explicitServerProfile?.serverUrl ?? '')
         : null;
+    if (projection === 'public') restorePublicSnapshot(cacheKey);
 
     // A previous explicit probe can finish its feature response before its
     // request-scoped transport release rejects. Retry that retained cleanup at
@@ -603,7 +668,7 @@ async function getServerFeaturesSnapshotWithRetry(
                     requirements:
                         parsed.capabilities.accountStoredContentCompatibility,
                 });
-                publishSnapshot(value);
+                const published = publishSnapshot(value);
                 // Learning a stable server identity can synchronously change
                 // the active/profile scope key. Publish the same observed
                 // snapshot under that canonical key before returning so an
@@ -613,9 +678,9 @@ async function getServerFeaturesSnapshotWithRetry(
                 // here would also remove this still-running dedupe entry.
                 const canonicalCacheKey = getCacheKey(params?.serverId);
                 if (canonicalCacheKey !== cacheKey) {
-                    publishSnapshot(value, canonicalCacheKey);
+                    return publishSnapshot(value, canonicalCacheKey);
                 }
-                return value;
+                return published;
             } finally {
                 if (releaseExplicitTransport) await releaseExplicitTransport();
             }
@@ -733,6 +798,7 @@ export async function refreshAuthenticatedServerFeaturesSnapshot(params: {
 
 export function getCachedServerFeaturesSnapshot(params?: { serverId?: string }): ServerFeaturesSnapshot | null {
     const cacheKey = getCacheKey(params?.serverId);
+    restorePublicSnapshot(cacheKey);
     const cached = cache.get(cacheKey);
     return cached?.kind === 'success' ? cached.value : null;
 }
@@ -773,6 +839,7 @@ export function primeServerFeaturesSnapshot(params: {
 export function deleteServerFeaturesSnapshot(params?: { serverId?: string }): void {
     const cacheKey = getCacheKey(params?.serverId);
     cache.delete(cacheKey);
+    persistPublicSnapshot(cacheKey);
     transientRetryAtByProjectionKey.delete(`public\u0000${cacheKey}`);
     notifyServerFeaturesSnapshotChanged();
 }
@@ -938,5 +1005,8 @@ export function resetServerFeaturesClientForTests(): void {
     authenticatedCache.clear();
     endpointCache.clear();
     transientRetryAtByProjectionKey.clear();
+    for (const key of getPersistenceStorage().getAllKeys()) {
+        if (key.startsWith(PUBLIC_SNAPSHOT_STORAGE_PREFIX)) getPersistenceStorage().delete(key);
+    }
     notifyServerFeaturesSnapshotChanged();
 }

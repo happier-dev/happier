@@ -12,10 +12,10 @@ export function isEligiblePersonalHomeRelocationHost(
 ): boolean {
     if (!host.ssh.target.trim()) return false;
     if (host.ssh.authMode === 'password') {
-        return secretMaterialAllowed && Boolean(host.ssh.passwordEnc);
+        return secretMaterialAllowed && Boolean(host.ssh.passwordSecretRef);
     }
     if (host.ssh.authMode !== 'keyfile') return true;
     const localOverrides = getRemoteHostLocalOverrides(host.id);
     return Boolean(localOverrides?.identityFilePath?.trim())
-        || (secretMaterialAllowed && Boolean(host.ssh.identityPrivateKeyEnc));
+        || (secretMaterialAllowed && Boolean(host.ssh.identityPrivateKeySecretRef));
 }

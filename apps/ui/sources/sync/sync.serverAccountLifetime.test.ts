@@ -47,7 +47,6 @@ const fetchAccountEncryptionCurrentness = vi.hoisted(() => vi.fn());
 const cancelAutomationRun = vi.hoisted(() => vi.fn());
 const retryAutomationReplyHandoff = vi.hoisted(() => vi.fn());
 const deleteAutomationDefinition = vi.hoisted(() => vi.fn());
-const runAutomationDefinitionNow = vi.hoisted(() => vi.fn());
 const getAutomationSettings = vi.hoisted(() => vi.fn());
 const updateAutomationSettings = vi.hoisted(() => vi.fn());
 const clearAutomationRunHistory = vi.hoisted(() => vi.fn());
@@ -117,7 +116,6 @@ vi.mock('./api/automations/apiAutomations', async (importOriginal) => {
         cancelAutomationRun,
         retryAutomationReplyHandoff,
         deleteAutomationDefinition,
-        runAutomationDefinitionNow,
         getAutomationSettings,
         updateAutomationSettings,
         clearAutomationRunHistory,
@@ -151,7 +149,6 @@ type SyncResetOwnerTestSeam = {
     cancelAutomationRun(runId: string): Promise<unknown>;
     retryAutomationReplyHandoff(runId: string): Promise<unknown>;
     deleteAutomation(automationId: string): Promise<void>;
-    runAutomationNow(automationId: string): Promise<unknown>;
     getAutomationSettings(): Promise<AutomationV3Settings>;
     updateAutomationSettings(input: AutomationV3Settings): Promise<AutomationV3Settings>;
     clearAutomationRunHistory(automationId: string): Promise<unknown>;
@@ -715,33 +712,4 @@ describe('Sync Server/Account lifetime reset boundary', () => {
         }
     });
 
-    it('does not cache a run-now response after its Server/Account scope expires', async () => {
-        const owner = sync as unknown as SyncResetOwnerTestSeam;
-        const credentials: AuthCredentials = { token: 'token-event-run-now', secret: 'secret-event-run-now' };
-        const previousCredentials = owner.credentials;
-        const previousGeneration = owner.serverScopeGeneration;
-        let resolveRun: (value: typeof eventRunDetail) => void = () => {
-            throw new Error('Automation run-now test promise did not initialize');
-        };
-        const pendingRun = new Promise<typeof eventRunDetail>((resolve) => {
-            resolveRun = resolve;
-        });
-        const upsertAutomationRun = vi.spyOn(storage.getState(), 'upsertAutomationRun');
-        runAutomationDefinitionNow.mockReset();
-        runAutomationDefinitionNow.mockReturnValue(pendingRun);
-        owner.credentials = credentials;
-
-        try {
-            const operation = owner.runAutomationNow('automation-event-owner');
-            owner.serverScopeGeneration = previousGeneration + 1;
-            resolveRun(eventRunDetail);
-
-            await expect(operation).rejects.toThrow('Automation server-account scope changed');
-            expect(upsertAutomationRun).not.toHaveBeenCalled();
-        } finally {
-            upsertAutomationRun.mockRestore();
-            owner.credentials = previousCredentials;
-            owner.serverScopeGeneration = previousGeneration;
-        }
-    });
 });

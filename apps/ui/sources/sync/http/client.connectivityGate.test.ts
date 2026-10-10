@@ -4,6 +4,8 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
+const accountToken = createAccountTokenForTests('connectivity-account');
+
 beforeEach(async () => {
     await upsertAndActivateServer({ serverUrl: 'https://api.example.test', name: 'Connectivity Home' });
 });
@@ -27,13 +29,12 @@ afterEach(async () => {
     resetRuntimeFetch();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS;
 });
 
 function installTokenStorageBoundary(params: { failGetCredentials?: boolean } = {}) {
     vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async () => {
         if (params.failGetCredentials) throw new Error('Unexpected credential read');
-        return { token: createAccountTokenForTests('connectivity-account') };
+        return { token: accountToken };
     });
 }
 
@@ -57,89 +58,49 @@ function installRuntimeFetchMock() {
 }
 
 describe('serverFetch connectivity supervision', () => {
-    it('does not attempt the main request when server reachability cannot be established', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-        vi.spyOn(Math, 'random').mockReturnValue(0);
-        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
-
+    it('does not publish a Home outage when a local pre-dispatch callback throws', async () => {
         installTokenStorageBoundary();
-        const runtimeFetchMock = installRuntimeFetchMock();
-
+        setRuntimeFetch(async () => new Response(null, { status: 200 }));
+        const { subscribeServerReachabilityState, peekServerReachabilityState } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        const unsubscribe = subscribeServerReachabilityState('https://api.example.test', () => {}, accountToken);
         const { serverFetch } = await import('./client');
-        const promise = serverFetch('/v1/account/profile');
-        const assertion = expect(promise).rejects.toMatchObject({
-            name: 'ServerFetchConnectivityTimeoutError',
-        });
-        await vi.advanceTimersByTimeAsync(5);
-        await assertion;
-
-        expect(runtimeFetchMock).toHaveBeenCalled();
-        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
+        const error = new Error('Local callback failure');
+        try {
+            await expect(serverFetch('/v1/account/profile', {}, { onIssued: () => { throw error; } })).rejects.toBe(error);
+            expect(peekServerReachabilityState('https://api.example.test', accountToken)?.phase).toBe('online');
+        } finally {
+            unsubscribe();
+        }
     });
-
-    it('marks connectivity timeouts as non-retryable (prevents nested backoff loops)', async () => {
+    it.each(['stored-credentials', 'explicit-authorization', 'unauthenticated'] as const)(
+        'keeps an offline %s request pending until caller cancellation without sending the domain request', async (authentication) => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
         vi.spyOn(Math, 'random').mockReturnValue(0);
-        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
 
-        installTokenStorageBoundary();
-        installRuntimeFetchMock();
-
-        const { serverFetch } = await import('./client');
-        const promise = serverFetch('/v1/account/profile');
-        const assertion = expect(promise).rejects.toMatchObject({
-            name: 'ServerFetchConnectivityTimeoutError',
-            retryable: false,
-        });
-        await vi.advanceTimersByTimeAsync(5);
-        await assertion;
-    });
-
-    it('still gates reachability when includeAuth=false but a bearer Authorization header is provided', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-        vi.spyOn(Math, 'random').mockReturnValue(0);
-        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
-
-        installTokenStorageBoundary({ failGetCredentials: true });
+        installTokenStorageBoundary({ failGetCredentials: authentication !== 'stored-credentials' });
         const runtimeFetchMock = installRuntimeFetchMock();
-
         const { serverFetch } = await import('./client');
+        const controller = new AbortController();
         const promise = serverFetch(
             '/v1/account/profile',
-            { headers: { Authorization: 'Bearer token-a' } },
-            { includeAuth: false },
+            { signal: controller.signal, ...(authentication === 'explicit-authorization'
+                ? { headers: { Authorization: `Bearer ${accountToken}` } } : {}) },
+            { includeAuth: authentication === 'stored-credentials' },
         );
-        const assertion = expect(promise).rejects.toMatchObject({
-            name: 'ServerFetchConnectivityTimeoutError',
-        });
-        await vi.advanceTimersByTimeAsync(5);
-        await assertion;
+        const settled = vi.fn();
+        void promise.then(settled, settled);
+        await vi.advanceTimersByTimeAsync(60_000);
 
-        expect(runtimeFetchMock).toHaveBeenCalled();
+        expect(settled).not.toHaveBeenCalled();
+        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).endsWith(
+            authentication === 'unauthenticated' ? '/health' : '/v1/auth/ping',
+        ))).toBe(true);
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
-    });
 
-    it('gates reachability even when includeAuth=false and no Authorization header is provided', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-        vi.spyOn(Math, 'random').mockReturnValue(0);
-        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
-
-        installTokenStorageBoundary({ failGetCredentials: true });
-        const runtimeFetchMock = installRuntimeFetchMock();
-
-        const { serverFetch } = await import('./client');
-        const promise = serverFetch('/v1/account/profile', undefined, { includeAuth: false });
-        const assertion = expect(promise).rejects.toMatchObject({
-            name: 'ServerFetchConnectivityTimeoutError',
-        });
-        await vi.advanceTimersByTimeAsync(5);
+        const assertion = expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+        controller.abort();
         await assertion;
-
-        expect(runtimeFetchMock).toHaveBeenCalled();
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
     });
 
@@ -165,7 +126,7 @@ describe('serverFetch connectivity supervision', () => {
         const { waitForServerReachable, subscribeServerReachabilityState } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         await waitForServerReachable({
             serverUrl: 'https://api.example.test',
-            token: 'token-a',
+            token: accountToken,
             timeoutMs: 5_000,
             acceptAuthFailed: true,
         });
@@ -173,7 +134,7 @@ describe('serverFetch connectivity supervision', () => {
         let lastPhase = '';
         const unsubscribe = subscribeServerReachabilityState('https://api.example.test', (state) => {
             lastPhase = state.phase;
-        });
+        }, accountToken);
         expect(lastPhase).toBe('auth_failed');
 
         const { serverFetch } = await import('./client');
@@ -186,87 +147,28 @@ describe('serverFetch connectivity supervision', () => {
         unsubscribe();
     });
 
-    it('does not bypass offline backoff when called repeatedly while unreachable', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-        vi.spyOn(Math, 'random').mockReturnValue(0);
-        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '25';
-
-        installTokenStorageBoundary();
-        const runtimeFetchMock = installRuntimeFetchMock();
-
-        const { serverFetch } = await import('./client');
-
-        const first = serverFetch('/v1/account/profile');
-        const firstAssertion = expect(first).rejects.toMatchObject({
-            name: 'ServerFetchConnectivityTimeoutError',
-        });
-        await vi.advanceTimersByTimeAsync(25);
-        await firstAssertion;
-
-        const second = serverFetch('/v1/account/profile');
-        const secondAssertion = expect(second).rejects.toMatchObject({
-            name: 'ServerFetchConnectivityTimeoutError',
-        });
-        await vi.advanceTimersByTimeAsync(25);
-        await secondAssertion;
-
-        expect(runtimeFetchMock).toHaveBeenCalled();
-        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
-    });
-
     it('dedupes the initial reachability start/probe across concurrent callers', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
         vi.spyOn(Math, 'random').mockReturnValue(0);
-        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
-
         installTokenStorageBoundary();
-        const runtimeFetchMock = installRuntimeFetchMock();
+        const readiness = createDeferred<Response>();
+        const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            if (String(input).endsWith('/v1/auth/ping')) return await readiness.promise;
+            return new Response(null, { status: 200 });
+        });
+        setRuntimeFetch(runtimeFetchMock);
 
         const { serverFetch } = await import('./client');
         const first = serverFetch('/v1/account/profile');
         const second = serverFetch('/v1/account/profile');
-        const firstAssertion = expect(first).rejects.toMatchObject({ name: 'ServerFetchConnectivityTimeoutError' });
-        const secondAssertion = expect(second).rejects.toMatchObject({ name: 'ServerFetchConnectivityTimeoutError' });
-
-        await vi.advanceTimersByTimeAsync(5);
-        await firstAssertion;
-        await secondAssertion;
+        await vi.advanceTimersByTimeAsync(0);
 
         const probeCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/v1/auth/ping'));
         expect(probeCalls).toHaveLength(1);
-    });
-
-    it('does not get retried by default backoff when reachability times out', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-        vi.spyOn(Math, 'random').mockReturnValue(0);
-        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
-
-        installTokenStorageBoundary();
-        const runtimeFetchMock = installRuntimeFetchMock();
-
-        const { createBackoff } = await import('@/utils/timing/time');
-        const backoff = createBackoff({
-            minDelay: 1,
-            maxDelay: 1,
-            maxFailureCount: 3,
-            onError: () => {},
-            onRetry: () => {},
-        });
-
-        const { serverFetch } = await import('./client');
-        const promise = backoff(() => serverFetch('/v1/account/profile'));
-        const assertion = expect(promise).rejects.toMatchObject({ name: 'ServerFetchConnectivityTimeoutError' });
-
-        await vi.advanceTimersByTimeAsync(5);
-        await assertion;
-
-        // If the error were treated as retryable, the backoff loop would schedule a retry and re-run the probe.
-        await vi.advanceTimersByTimeAsync(10);
-        const probeCalls = runtimeFetchMock.mock.calls.filter(([input]) => String(input).endsWith('/v1/auth/ping'));
-        expect(probeCalls).toHaveLength(1);
+        expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
+        readiness.resolve(new Response(null, { status: 200 }));
+        await expect(Promise.all([first, second])).resolves.toMatchObject([{ status: 200 }, { status: 200 }]);
     });
 
     it('does not mark the server unreachable when a request is aborted by the caller', async () => {
@@ -300,7 +202,7 @@ describe('serverFetch connectivity supervision', () => {
         const { subscribeServerReachabilityState, waitForServerReachable } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         await waitForServerReachable({
             serverUrl: 'https://api.example.test',
-            token: 'token-a',
+            token: accountToken,
             timeoutMs: 5_000,
             acceptAuthFailed: true,
         });
@@ -308,7 +210,7 @@ describe('serverFetch connectivity supervision', () => {
         let lastReachabilityPhase = '';
         const unsubscribe = subscribeServerReachabilityState('https://api.example.test', (state) => {
             lastReachabilityPhase = state.phase;
-        });
+        }, accountToken);
         expect(lastReachabilityPhase).toBe('online');
 
         const { serverFetch } = await import('./client');

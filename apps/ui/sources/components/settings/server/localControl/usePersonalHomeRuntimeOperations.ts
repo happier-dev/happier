@@ -1,17 +1,13 @@
 import * as React from 'react';
-import type { AccountDirectoryCapabilities } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol';
 
-import { accountDirectoryCredentialStorage } from '@/auth/accountDirectory/accountDirectoryCredentialStorage';
 import type {
     PersonalHomeRelocationDestination,
     PersonalHomeRelocationRecovery,
     PersonalHomeRuntimeControlOperations,
 } from '@/components/settings/server/localControl/PersonalHomeRuntimeControlSection';
-import {
-    createPersonalHomeRelocationProfilePublication,
-    createPersonalHomeRelocationPromptResponder,
-    createPersonalHomeRelocationPromptResponderWithPublication,
-} from '@/components/settings/server/localControl/personalHomeRelocationPromptResponder';
+import { createPersonalHomeRelocationTaskContinuation, resolveRelocationDirectoryPublication,
+    type RelocationDirectoryPublication } from './personalHomeRelocationTaskContinuation';
 import { isEligiblePersonalHomeRelocationHost } from '@/components/settings/server/localControl/personalHomeRelocationEligibility';
 import { runRelayRuntimeUninstallTask } from '@/components/settings/server/localControl/useLocalRelayRuntimeControl';
 import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
@@ -19,15 +15,12 @@ import { buildRemoteSshManageHostSystemTaskSpec } from '@/components/systemTasks
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { randomUUID } from '@/platform/randomUUID';
-import { probeServerFeaturesAtUrl } from '@/sync/api/capabilities/serverFeaturesClient';
-import {
-    createAccountDirectorySession,
-    parseAccountDirectoryCapability,
-} from '@/sync/domains/accountDirectory/accountDirectorySession';
-import { rebuildHomeSearchIndex } from '@/sync/domains/memory/searchHomeMemory';
-import { getRemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
-import { readRemoteHosts } from '@/sync/domains/remoteHosts/remoteHostModel';
-import { resolveRemoteHostEffectiveSshConfig } from '@/sync/domains/remoteHosts/resolveRemoteHostEffectiveSshConfig';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCatalogSnapshot';
+import { withRemoteHostSshConfig } from '@/sync/ops/remoteHosts/remoteHostOperations';
+import { createUiHomeRuntimeActionClient } from '@/sync/ops/actions/homeRuntimeActionClient';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import {
     findPersonalHomeBootstrapCompletedProfile,
     getAccountServiceEndpointSnapshot,
@@ -37,34 +30,10 @@ import {
     type AccountServiceEndpointV1,
     type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
-import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { invokeDesktopHost } from '@/utils/platform/desktopHost';
 
-type RelocationDirectoryPublication = Readonly<{
-    endpoint: string;
-    serverIdentityId: string;
-    capability: AccountDirectoryCapabilities;
-}>;
-
-async function resolveRelocationDirectoryPublication(
-    endpoint: AccountServiceEndpointV1 | null,
-): Promise<RelocationDirectoryPublication | null> {
-    if (!endpoint?.url.trim()) return null;
-    const observed = await probeServerFeaturesAtUrl({ endpointUrl: endpoint.url, force: true });
-    const serverIdentityId = observed.status === 'ready' ? observed.serverIdentityId?.trim() ?? '' : '';
-    const capability = parseAccountDirectoryCapability(
-        observed.status === 'ready' ? observed.features.capabilities.accountDirectory : null,
-    );
-    if (!serverIdentityId || capability?.homeDirectory !== true
-        || (endpoint.serverIdentityId && endpoint.serverIdentityId !== serverIdentityId)) {
-        return null;
-    }
-    const credential = await accountDirectoryCredentialStorage.read({ endpoint: endpoint.url, serverIdentityId });
-    return credential.kind === 'valid' ? { endpoint: endpoint.url, serverIdentityId, capability } : null;
-}
 
 function useRelocationDirectoryPublication(enabled: boolean): RelocationDirectoryPublication | null {
     const [endpoint, setEndpoint] = React.useState<AccountServiceEndpointV1 | null>(getAccountServiceEndpointSnapshot);
@@ -97,6 +66,7 @@ export type PersonalHomeRuntimeOperations = Readonly<{
     /** This desktop's Personal Home profile (the receipt written at setup), when exactly one exists. */
     personalHomeProfile: ServerProfile | null;
     operations: PersonalHomeRuntimeControlOperations;
+    searchApproval: ReturnType<typeof useMountedActionExecution>['approval'];
 }>;
 
 /**
@@ -118,15 +88,18 @@ export function usePersonalHomeRuntimeOperations(params: Readonly<{
         () => findPersonalHomeBootstrapCompletedProfile(profiles ?? listServerProfiles()),
         [profiles, profilesGeneration],
     );
-    const remoteHostsRaw = useSetting('remoteHostsV1');
+    const searchAction = useMountedActionExecution(personalHomeProfile ? resolveServerProfileScopeId(personalHomeProfile) : null);
+    const runtimeAction = React.useMemo(() => createUiHomeRuntimeActionClient(), []);
+    const hostScope = useActiveServerAccountScope();
+    const hostCatalog = useRemoteHostCatalogSnapshot(hostScope);
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const remoteHostsSecretMaterialEnabled = useFeatureEnabled('remoteHosts.secretMaterial');
     const relocationDirectoryPublication = useRelocationDirectoryPublication(personalHomeProfile !== null);
     const eligibleRelocationHosts = React.useMemo(
-        () => (remoteHostsManagementEnabled ? readRemoteHosts(remoteHostsRaw).filter((host) => (
+        () => (remoteHostsManagementEnabled ? (hostCatalog?.data ?? []).filter((host) => (
             isEligiblePersonalHomeRelocationHost(host, remoteHostsSecretMaterialEnabled)
         )) : []),
-        [remoteHostsManagementEnabled, remoteHostsRaw, remoteHostsSecretMaterialEnabled],
+        [remoteHostsManagementEnabled, hostCatalog?.data, remoteHostsSecretMaterialEnabled],
     );
     const relocationDestinations = React.useMemo<readonly PersonalHomeRelocationDestination[]>(
         () => eligibleRelocationHosts.map((host) => ({
@@ -147,15 +120,9 @@ export function usePersonalHomeRuntimeOperations(params: Readonly<{
         if (!destination) {
             throw new Error(t('errors.operationFailed'));
         }
-        const resolved = await resolveRemoteHostEffectiveSshConfig({
-            remoteHost: destination,
-            localOverrides: getRemoteHostLocalOverrides(destination.id),
-            secretMaterialAllowed: remoteHostsSecretMaterialEnabled,
-            decryptSecretValue: (input) => sync.decryptSecretValue(input),
-        });
-        if (!resolved.ok) {
-            throw new Error(resolved.error.message);
-        }
+        if (!hostScope || !hostCatalog || hostCatalog.stale || hostCatalog.catalog.status !== 'ready' || hostCatalog.catalog.cleanup === 'pending'
+            || typeof hostCatalog.catalog.revision !== 'number') throw new Error('remote_host_catalog_unavailable');
+        const revision = hostCatalog.catalog.revision;
         const channel = resolvePreferredPublicReleaseRingLabelForCurrentApp();
         const operationId = recovery?.operationId ?? `relocation-${randomUUID()}`;
         const sourceDescriptorRevision = recovery?.sourceDescriptorRevision
@@ -165,46 +132,52 @@ export function usePersonalHomeRuntimeOperations(params: Readonly<{
         // even when the screen's capability probe has not settled yet.
         const directoryPublication = relocationDirectoryPublication
             ?? await resolveRelocationDirectoryPublication(getAccountServiceEndpointSnapshot());
-        const respondToPrompt = directoryPublication
-            ? createPersonalHomeRelocationPromptResponder({
-                operationId,
-                homeServerIdentityId: personalHomeProfile.serverIdentityId,
-                homeLabel: personalHomeProfile.name,
-                session: createAccountDirectorySession({
-                    endpoint: directoryPublication.endpoint,
-                    serverIdentityId: directoryPublication.serverIdentityId,
-                }, { capability: directoryPublication.capability }),
-            })
-            : createPersonalHomeRelocationPromptResponderWithPublication({
-                operationId,
-                homeServerIdentityId: personalHomeProfile.serverIdentityId,
-                homeLabel: personalHomeProfile.name,
-                publication: createPersonalHomeRelocationProfilePublication(personalHomeProfile),
-            });
+        const respondToPrompt = await createPersonalHomeRelocationTaskContinuation({
+            operationId, profile: personalHomeProfile, directoryPublication,
+        });
         return {
-            spec: buildRemoteSshManageHostSystemTaskSpec({
-                action: 'personalHome.relocate',
-                channel,
-                sshTarget: resolved.value.sshTarget,
-                sshPort: resolved.value.sshPort ? String(resolved.value.sshPort) : '',
-                sshAuth: resolved.value.sshAuth,
-                identityFilePath: resolved.value.identityFilePath,
-                identityPrivateKey: resolved.value.identityPrivateKey,
-                sshConfigFilePath: resolved.value.sshConfigFilePath,
-                sshPassword: resolved.value.password,
-                knownHostsMode: 'app',
-                serviceMode: 'user',
-                relayRuntime: { channel, mode: 'user' },
-                personalHomeRelocation: {
-                    operationId,
-                    destinationMachineId: destination.id,
-                    sourceDescriptorRevision,
-                    ...(recovery ? { recoveryAction: recovery.recoveryAction } : {}),
-                },
-            }),
+            withTaskSpec: async <T,>(run: (spec: SystemTaskSpec, startSpec?: (spec: SystemTaskSpec) => Promise<string>) => Promise<T>): Promise<T> => {
+                const account = await captureLazyActionAccountContext(hostScope.serverId);
+                try {
+                    if (account.accountId !== hostScope.accountId) throw new Error('action_account_scope_changed');
+                    return await withRemoteHostSshConfig(account, { hostId: destination.id, expectedRevision: revision }, async ({ config, assertCurrent }) => {
+                        assertCurrent();
+                        return run(buildRemoteSshManageHostSystemTaskSpec({
+                            action: 'personalHome.relocate',
+                            channel,
+                            sshTarget: config.value.sshTarget,
+                            sshPort: config.value.sshPort ? String(config.value.sshPort) : '',
+                            sshAuth: config.value.sshAuth,
+                            identityFilePath: config.value.identityFilePath,
+                            identityPrivateKey: config.value.identityPrivateKey,
+                            sshConfigFilePath: config.value.sshConfigFilePath,
+                            sshPassword: config.value.password,
+                            knownHostsMode: 'app',
+                            serviceMode: 'user',
+                            relayRuntime: { channel, mode: 'user' },
+                            personalHomeRelocation: {
+                                operationId,
+                                destinationMachineId: destination.id,
+                                sourceDescriptorRevision,
+                                ...(recovery ? { recoveryAction: recovery.recoveryAction } : {}),
+                            },
+                        }), async () => {
+                            assertCurrent();
+                            const outcome = await runtimeAction('relay.runtime.personal_home.relocate', {
+                                hostId: destination.id, expectedRevision: revision,
+                                sourceServerId: resolveServerProfileScopeId(personalHomeProfile),
+                                operationId, sourceDescriptorRevision,
+                                ...(recovery ? { recoveryAction: recovery.recoveryAction } : {}),
+                            }, { serverId: hostScope.serverId, expectedAccountId: hostScope.accountId });
+                            if (!('status' in outcome) || outcome.status !== 'task_started') throw new Error('reason' in outcome ? outcome.reason : t('settings.systemTaskStartFailed'));
+                            return outcome.taskId;
+                        });
+                    });
+                } finally { account.dispose(); }
+            },
             respondToPrompt,
         };
-    }, [eligibleRelocationHosts, personalHomeProfile, relocationDirectoryPublication, remoteHostsSecretMaterialEnabled]);
+    }, [eligibleRelocationHosts, hostCatalog, hostScope, personalHomeProfile, relocationDirectoryPublication, runtimeAction]);
     const prepareRelocationRecovery = React.useCallback(async (recovery: PersonalHomeRelocationRecovery) => {
         return await prepareRelocation(recovery.destinationMachineId, recovery);
     }, [prepareRelocation]);
@@ -217,12 +190,19 @@ export function usePersonalHomeRuntimeOperations(params: Readonly<{
         const openPath = async (path: string) => {
             const normalizedPath = path.trim();
             if (!normalizedPath) throw new Error(t('settings.systemTaskOpenLogsFailed'));
-            await invokeDesktopHost('system_tasks_open_log_path', { path: normalizedPath });
+            const outcome = await runtimeAction('relay.runtime.open_path', { path: normalizedPath });
+            if (!('status' in outcome) || outcome.status !== 'completed') throw new Error('reason' in outcome ? outcome.reason : t('settings.systemTaskOpenLogsFailed'));
         };
         return {
             ...(personalHomeProfile ? {
                 repairSearch: async () => {
-                    await rebuildHomeSearchIndex({ serverId: resolveServerProfileScopeId(personalHomeProfile) });
+                    const result = await searchAction.execute('home.search.rebuild', {});
+                    if (!result.ok) {
+                        if (result.errorCode === 'approval_canceled' || result.errorCode === 'approval_rejected') return false;
+                        throw new Error(result.error);
+                    }
+                    if (!getActionSpec('home.search.rebuild').outputSchema?.safeParse(result.result).success) throw new Error(t('errors.operationFailed'));
+                    return true;
                 },
                 ...(removeProfile ? { removeProfile: async () => await removeProfile(personalHomeProfile) } : {}),
             } : {}),
@@ -234,14 +214,19 @@ export function usePersonalHomeRuntimeOperations(params: Readonly<{
             revealBackupOutput: async (path: string) => {
                 const normalizedPath = path.trim();
                 if (!normalizedPath) throw new Error(t('settings.systemTaskOpenLogsFailed'));
-                await invokeDesktopHost('system_tasks_reveal_output_path', { path: normalizedPath });
+                const outcome = await runtimeAction('relay.runtime.reveal_output', { path: normalizedPath });
+                if (!('status' in outcome) || outcome.status !== 'completed') throw new Error('reason' in outcome ? outcome.reason : t('settings.systemTaskOpenLogsFailed'));
             },
-            selectBackupArchive: async () => await invokeDesktopHost<string | null>(
-                'desktop_pick_personal_home_backup_archive',
-            ),
-            selectBackupExportDestination: async () => await invokeDesktopHost<string | null>(
-                'desktop_save_personal_home_backup_archive',
-            ),
+            selectBackupArchive: async () => {
+                const outcome = await runtimeAction('relay.runtime.personal_home.choose_archive', {});
+                if (!('path' in outcome)) throw new Error('reason' in outcome ? outcome.reason : t('errors.operationFailed'));
+                return outcome.path;
+            },
+            selectBackupExportDestination: async () => {
+                const outcome = await runtimeAction('relay.runtime.personal_home.choose_backup_destination', {});
+                if (!('path' in outcome)) throw new Error('reason' in outcome ? outcome.reason : t('errors.operationFailed'));
+                return outcome.path;
+            },
             // Relocation needs the adopted profile's stable Home identity and descriptor revision,
             // so it stays profile-scoped alongside search repair and profile removal.
             ...(personalHomeProfile && relocationDestinations.length > 0
@@ -254,7 +239,7 @@ export function usePersonalHomeRuntimeOperations(params: Readonly<{
                 }
                 : {}),
         };
-    }, [removeProfile, personalHomeProfile, prepareRelocation, prepareRelocationRecovery, relocationDestinations]);
+    }, [removeProfile, personalHomeProfile, prepareRelocation, prepareRelocationRecovery, relocationDestinations, runtimeAction, searchAction.execute]);
 
-    return React.useMemo(() => ({ personalHomeProfile, operations: personalHomeOperations }), [personalHomeProfile, personalHomeOperations]);
+    return React.useMemo(() => ({ personalHomeProfile, operations: personalHomeOperations, searchApproval: searchAction.approval }), [personalHomeProfile, personalHomeOperations, searchAction.approval]);
 }

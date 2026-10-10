@@ -2,15 +2,24 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+// Keep the real owner graph behind boundary installation. The testkit barrel
+// also exports provider harnesses which can load Modal/text before configuration.
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { createSystemTaskRunner } from '@/components/systemTasks/createSystemTaskRunner';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import type { PreparedPersonalHomeRelocationTask } from './PersonalHomeRuntimeControlSection';
+import type { SystemTaskSpec } from '@happier-dev/protocol';
 import type { RelayRuntimeStatusData } from './relayRuntimeStatus';
-import type { useLocalRelayRuntimeControl } from './useLocalRelayRuntimeControl';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+function createPreparedRelocationTask(input: Readonly<{ spec: SystemTaskSpec;
+    respondToPrompt: PreparedPersonalHomeRelocationTask['respondToPrompt'] }>): PreparedPersonalHomeRelocationTask {
+    return { respondToPrompt: input.respondToPrompt, withTaskSpec: async run => run(input.spec) };
+}
 
 const modalMockRef = vi.hoisted(() => ({
     current: null as ReturnType<
@@ -101,7 +110,24 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 // Import the section once at module scope: collection carries no test or hook
 // timeout, so a cold module graph under host load cannot time out a test body.
+const { useLocalRelayRuntimeControl } = await import('./useLocalRelayRuntimeControl');
 const { PersonalHomeRuntimeControlSection } = await import('./PersonalHomeRuntimeControlSection');
+
+describe('Personal Home SSH task material custody', () => {
+    it('hands relocation material to the runner without retaining it in the UI operation projection', async () => {
+        const harness = createScriptedRunnerHarness();
+        const hook = await renderHook(() => useLocalRelayRuntimeControl({ runner: harness.runner }));
+        const spec: SystemTaskSpec = { protocolVersion: 1, kind: 'remote.ssh.manageHost.v1', params: { action: 'personalHome.relocate',
+            ssh: { target: 'user@remote.test', auth: 'password', password: 'private-password', identityPrivateKey: 'private-key' },
+            personalHome: { operationId: 'move-1', destinationMachineId: 'host-1', sourceDescriptorRevision: 1 } } };
+        await renderer.act(async () => { await hook.getCurrent().startExternalOperation(spec); });
+        expect(harness.specByKind('remote.ssh.manageHost.v1')?.params.ssh).toMatchObject({ password: 'private-password', identityPrivateKey: 'private-key' });
+        expect(JSON.stringify(hook.getCurrent().activeOperationSpec)).not.toContain('private-password');
+        expect(JSON.stringify(hook.getCurrent().activeOperationSpec)).not.toContain('private-key');
+        expect(hook.getCurrent().activeOperationSpec?.params).toMatchObject({ action: 'personalHome.relocate',
+            personalHome: { operationId: 'move-1', destinationMachineId: 'host-1' } });
+    });
+});
 
 type ScriptedSpec = { kind: string; params: Record<string, unknown> };
 
@@ -522,9 +548,9 @@ describe('PersonalHomeRuntimeControlSection Personal Home operations', () => {
         });
     });
 
-    it('offers the canonical Home search repair operation under Advanced', async () => {
+    it.each([true, false])('offers Home search repair under Advanced and announces completion only for a committed result (%s)', async (committed) => {
         const harness = createScriptedRunnerHarness();
-        const repairSearch = vi.fn(async () => {});
+        const repairSearch = vi.fn(async () => committed);
         const screen = await renderScreen(React.createElement(PersonalHomeRuntimeControlSection, {
             runner: harness.runner,
             operations: { repairSearch },
@@ -534,6 +560,7 @@ describe('PersonalHomeRuntimeControlSection Personal Home operations', () => {
             .toBe('Rebuild Home search');
         await screen.pressByTestIdAsync('settings.personalHomeRuntime.repairSearch');
         expect(repairSearch).toHaveBeenCalledTimes(1);
+        expect(alertRef()).toHaveBeenCalledTimes(committed ? 1 : 0);
     });
 
     it('composes the canonical runtime owner once and presents inspect facts from the inspect task', async () => {
@@ -1575,7 +1602,7 @@ describe('PersonalHomeRuntimeControlSection Personal Home operations', () => {
             revision: 2,
             endpoints: [{ kind: 'https', url: 'https://destination.example.test' }],
         } }));
-        const prepare = vi.fn(async (): Promise<PreparedPersonalHomeRelocationTask> => ({
+        const prepare = vi.fn(async (): Promise<PreparedPersonalHomeRelocationTask> => createPreparedRelocationTask({
             spec: {
                 protocolVersion: 1,
                 kind: 'remote.ssh.manageHost.v1',
@@ -1633,7 +1660,7 @@ describe('PersonalHomeRuntimeControlSection Personal Home operations', () => {
 
     it('offers Cancel only during the relocation coordinator reversible window', async () => {
         const harness = createScriptedRunnerHarness();
-        const prepare = vi.fn(async (): Promise<PreparedPersonalHomeRelocationTask> => ({
+        const prepare = vi.fn(async (): Promise<PreparedPersonalHomeRelocationTask> => createPreparedRelocationTask({
             spec: {
                 protocolVersion: 1,
                 kind: 'remote.ssh.manageHost.v1',
@@ -1679,7 +1706,7 @@ describe('PersonalHomeRuntimeControlSection Personal Home operations', () => {
             revision: 2,
             endpoints: [{ kind: 'https', url: 'https://destination.example.test' }],
         } }));
-        const prepare = vi.fn(async (): Promise<PreparedPersonalHomeRelocationTask> => ({
+        const prepare = vi.fn(async (): Promise<PreparedPersonalHomeRelocationTask> => createPreparedRelocationTask({
             spec: {
                 protocolVersion: 1,
                 kind: 'remote.ssh.manageHost.v1',
@@ -1734,7 +1761,7 @@ describe('PersonalHomeRuntimeControlSection Personal Home operations', () => {
     it('surfaces only the coordinator-selected relocation recovery and resumes it through the same remote task owner', async () => {
         const harness = createScriptedRunnerHarness();
         const respondToPrompt = vi.fn(async () => ({ descriptor: null }));
-        const prepare = vi.fn(async (): Promise<PreparedPersonalHomeRelocationTask> => ({
+        const prepare = vi.fn(async (): Promise<PreparedPersonalHomeRelocationTask> => createPreparedRelocationTask({
             spec: {
                 protocolVersion: 1,
                 kind: 'remote.ssh.manageHost.v1',
@@ -1747,7 +1774,7 @@ describe('PersonalHomeRuntimeControlSection Personal Home operations', () => {
             destinationMachineId: string;
             sourceDescriptorRevision: number;
             recoveryAction: 'finish_move' | 'return_to_source';
-        }>): Promise<PreparedPersonalHomeRelocationTask> => ({
+        }>): Promise<PreparedPersonalHomeRelocationTask> => createPreparedRelocationTask({
             spec: {
                 protocolVersion: 1,
                 kind: 'remote.ssh.manageHost.v1',
@@ -1816,7 +1843,7 @@ describe('PersonalHomeRuntimeControlSection Personal Home operations', () => {
             destinationMachineId: string;
             sourceDescriptorRevision: number;
             recoveryAction: 'finish_move' | 'return_to_source';
-        }>): Promise<PreparedPersonalHomeRelocationTask> => ({
+        }>): Promise<PreparedPersonalHomeRelocationTask> => createPreparedRelocationTask({
             spec: {
                 protocolVersion: 1,
                 kind: 'remote.ssh.manageHost.v1',

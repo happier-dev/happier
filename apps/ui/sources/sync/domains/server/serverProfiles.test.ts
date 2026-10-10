@@ -3000,6 +3000,18 @@ describe('serverProfiles', () => {
         expect(profiles.listServerProfiles().some((p) => p.serverUrl === 'https://selfhost.example.test')).toBe(true);
         expect(profiles.getActiveServerUrl()).toBe('https://selfhost.example.test');
         expect(profiles.getActiveServerId()).toBeTruthy();
+        // Opening the Home's own UI is an entry to that Home even without ?server=.
+        expect(profiles.getActiveServerSnapshot().isSelectionExplicit).toBe(true);
+    });
+
+    it('does not treat the hosted Cloud web UI as an explicit Home entry', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        delete process.env.EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS;
+        stubWebRuntime('https://app.happier.dev');
+        const profiles = await importFresh();
+        expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
+        expect(profiles.getActiveServerSnapshot().isSelectionExplicit).toBe(false);
     });
 
     it('avoids seeding Metro/local UI origins as a relay server in stack context', async () => {

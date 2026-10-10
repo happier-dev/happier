@@ -7,7 +7,6 @@ import {
     resolveServerProfileForPortableIdentity,
     type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
-import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 
 /**
  * How the app names a Home to a person: the name the Home itself publishes (`homePresentation`, set
@@ -37,25 +36,12 @@ export function resolveHomeDisplayNameForServerIdentity(serverIdentityId: string
 }
 
 /**
- * A label for a Home wherever one must be shown even without a name (lists that tell Homes apart):
- * the display name when there is one, else a sentence naming the Home by its host ("Home on
- * devbox.internal"), never the bare address; the Home's id only when it has no address at all.
+ * A human title wherever a Home must be labelled, even before its profile has loaded. Addresses
+ * belong in the consumer's distinguishing metadata, never in the title. Keep the actual-name
+ * resolver nullable so naming and rename affordances still know when a Home is unnamed.
  */
-export function resolveHomeDisplayLabel(profile: ServerProfile | null | undefined, fallbackId: string): string {
-    const name = resolveHomeDisplayName(profile);
-    if (name) return name;
-    const host = readHomeHost(profile?.serverUrl ?? '');
-    return host ? t('server.homeOnHost', { host }) : fallbackId;
-}
-
-function readHomeHost(serverUrl: string): string {
-    const display = toServerUrlDisplay(serverUrl);
-    if (!display) return '';
-    try {
-        return new URL(display).host;
-    } catch {
-        return display;
-    }
+export function resolveHomeDisplayLabel(profile: ServerProfile | null | undefined, _fallbackId: string): string {
+    return resolveHomeDisplayName(profile) ?? t('settingsAccount.thisHomeTitle');
 }
 
 /**

@@ -32,6 +32,7 @@ describe('sync.create initial awaits', () => {
     let stallCore: boolean;
     let petsEnabled: boolean;
     let authPing: 'ready' | 'offline' | 'auth-failed';
+    let accountModeUnavailable: boolean;
     let cleanupStateSubscription: (() => void) | undefined;
 
     beforeEach(async () => {
@@ -40,6 +41,7 @@ describe('sync.create initial awaits', () => {
         stallCore = false;
         petsEnabled = false;
         authPing = 'ready';
+        accountModeUnavailable = false;
         cleanupStateSubscription = undefined;
         network = await installSessionOpsNetworkBoundary();
         home = await network.addHome('https://initial-sync.example.test', 'plain-account');
@@ -63,7 +65,11 @@ describe('sync.create initial awaits', () => {
                 });
             }
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption') return accountModeUnavailable
+                // A transient invalid response reaches the mode reader's real
+                // backoff; HTTP 503 instead remains in transport supervision.
+                ? Response.json({ mode: 'unavailable' })
+                : Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: home.accountId });
             if (path === '/v1/account/pets') return Response.json({ ok: true, pets: [pet] });
@@ -226,5 +232,44 @@ describe('sync.create initial awaits', () => {
         expect(sync.getCredentials()).toEqual({ token: home.token });
         expect(network.socketBoundaries.some(({ token }) => token === home.token)).toBe(true);
         expect(network.httpRequests.some(({ url, token }) => new URL(url).pathname === '/v1/account/encryption/currentness' && token === `Bearer ${home.token}`)).toBe(true);
+    });
+
+    it.each(['socket-reconnect', 'app-foreground'] as const)('refreshes an unavailable Account mode subscription on %s', async (reason) => {
+        await finishInitialCreate();
+        const { sync } = await import('./sync');
+        const {
+            fetchAccountEncryptionMode,
+            invalidateAccountEncryptionModeCache,
+            getCachedAccountEncryptionMode,
+            subscribeAccountEncryptionModeCacheInvalidation,
+        } = await import('./api/account/apiAccountEncryptionMode');
+        const credentials = sync.getCredentials()!;
+        accountModeUnavailable = true;
+        invalidateAccountEncryptionModeCache();
+        let disclosure: 'plain' | 'e2ee' | null = null;
+        let modeReadFailed = false;
+        const refresh = () => {
+            disclosure = null;
+            void fetchAccountEncryptionMode(credentials).then(
+                ({ mode }) => { disclosure = mode; },
+                () => { disclosure = null; modeReadFailed = true; },
+            );
+        };
+        const unsubscribe = subscribeAccountEncryptionModeCacheInvalidation(refresh);
+        try {
+            refresh();
+            await flushHookEffects({ cycles: 16, turns: 2, advanceTimersMs: 1_000 });
+            expect(modeReadFailed).toBe(true);
+            expect(disclosure).toBeNull();
+            expect(getCachedAccountEncryptionMode(credentials)).toBeNull();
+            accountModeUnavailable = false;
+            vi.useRealTimers();
+            await sync.resumeSync(reason);
+            await flushHookEffects({ cycles: 8, turns: 2 });
+
+            expect(disclosure).toBe('plain');
+        } finally {
+            unsubscribe();
+        }
     });
 });

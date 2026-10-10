@@ -124,6 +124,36 @@ describe('serverFeaturesClient', () => {
         await resetServerReachabilitySupervisors();
     });
 
+    it('restores last-known public feature discovery before a reload refresh settles, without renewing freshness or crossing Homes', async () => {
+        useFrozenServerFeaturesClock();
+        const client = await import('./serverFeaturesClient');
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        client.resetServerFeaturesClientForTests();
+        const payload = FeaturesResponseSchema.parse({ features: { workflows: { enabled: true }, automations: { enabled: true } }, capabilities: {} });
+        featuresFetchMock.mockResolvedValue(createResponse(200, payload));
+        const ready = await client.getServerFeaturesSnapshot({ force: true });
+        const key = 'server-features-snapshot-v1:server-a';
+        const persisted = getPersistenceStorage().getString(key);
+        expect(persisted).toBeDefined();
+        client.resetServerFeaturesClientForTests();
+        getPersistenceStorage().set(key, persisted!);
+        setFrozenServerFeaturesClock(new Date(frozenServerFeaturesTime.getTime() + 11 * 60 * 1000));
+        expect(client.getCachedServerFeaturesSnapshot()).toEqual(ready);
+        getPersistenceStorage().set('server-features-snapshot-v1:server-b', persisted!);
+        expect(client.getCachedServerFeaturesSnapshot({ serverId: 'server-b' })).toBeNull();
+        let settle: ((response: Response) => void) | undefined;
+        featuresFetchMock.mockImplementation(() => new Promise<Response>(resolve => { settle = resolve; }));
+        const refreshing = client.getServerFeaturesSnapshot();
+        await vi.waitFor(() => expect(settle).toBeDefined());
+        const disabled = FeaturesResponseSchema.parse({ features: { workflows: { enabled: false }, automations: { enabled: false } }, capabilities: {} });
+        settle!(createResponse(200, disabled));
+        await refreshing;
+        expect(client.getCachedServerFeaturesSnapshot()).toMatchObject({ status: 'ready', features: { features: { workflows: { enabled: false } } } });
+        client.deleteServerFeaturesSnapshot();
+        expect(client.getCachedServerFeaturesSnapshot()).toBeNull();
+        expect(getPersistenceStorage().getString(key)).toBeUndefined();
+    });
+
     it('deduplicates in-flight feature fetches per server', async () => {
         const payload = {
             features: {
@@ -305,7 +335,7 @@ describe('serverFeaturesClient', () => {
 
         const result = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
 
-        expect(result.status).toBe('ready');
+        expect(result).toMatchObject({ status: 'ready' });
         expect(setServerProfileIdentityForUrlMock).toHaveBeenCalledWith(
             'https://active.example.test',
             'srv_active_identity',

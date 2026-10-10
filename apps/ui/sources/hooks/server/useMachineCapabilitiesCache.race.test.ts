@@ -23,9 +23,39 @@ function lifetime(accountId: string) {
     return { value, retire() { current = false; for (const cancel of callbacks) cancel(); } };
 }
 
-afterEach(() => { boundary.rpc.mockReset(); });
+afterEach(() => { boundary.rpc.mockReset(); vi.useRealTimers(); });
 
 describe('machine capabilities cache races at the RPC boundary', () => {
+    it.each([
+        { label: 'machine-details', request: { checklistId: CHECKLIST_IDS.MACHINE_DETAILS } },
+        { label: 'execution-runs', request: { requests: [{ id: 'tool.executionRuns' }] } },
+        { label: 'login-status', request: { checklistId: CHECKLIST_IDS.NEW_SESSION,
+            overrides: { 'cli.codex': { params: { includeLoginStatus: true } } } } },
+    ] satisfies ReadonlyArray<{ label: string; request: CapabilitiesDetectRequest }>)('keeps $label detection pending beyond the retired default deadlines and publishes its result', async ({ label, request }) => {
+        vi.useFakeTimers();
+        const reply = createDeferred<unknown>();
+        // Model the transport honoring an explicit deadline; cache and capability
+        // operations remain real, so restoring their old defaults fails this case.
+        boundary.rpc.mockImplementation(({ timeoutMs }: { timeoutMs?: number }) => {
+            if (typeof timeoutMs !== 'number') return reply.promise;
+            return Promise.race([reply.promise, new Promise((resolve) => {
+                setTimeout(() => resolve({ error: 'Timeout' }), timeoutMs);
+            })]);
+        });
+        const target = { machineId: `cache-unbounded-${label}`, serverId: 'cache-unbounded-home' };
+        const pending = prefetchMachineCapabilities({ ...target, request });
+        try {
+            await vi.advanceTimersByTimeAsync(21_000);
+            expect(getMachineCapabilitiesCacheState(target.machineId, target.serverId)).toMatchObject({ status: 'loading' });
+        } finally {
+            reply.resolve(response('completed-after-retired-deadline'));
+            await pending;
+        }
+        expect(getMachineCapabilitiesCacheState(target.machineId, target.serverId)).toMatchObject({ status: 'loaded', snapshot: {
+            response: { results: { 'cli.codex': { data: { version: 'completed-after-retired-deadline' } } } },
+        } });
+    });
+
     it('keeps a shared Account read alive when one presenter closes and another remains current', async () => {
         const firstReader = lifetime('shared-account');
         const secondReader = lifetime('shared-account');

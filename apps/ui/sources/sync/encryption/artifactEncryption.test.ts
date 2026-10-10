@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes';
-import { ArtifactEncryption } from './artifactEncryption';
-import { frameSessionDataKeyBundleV0, sealAesGcmPayloadWebCrypto } from '@happier-dev/protocol';
+import { ArtifactEncryption, projectArtifactHeaderForDisplay } from './artifactEncryption';
+import { buildRoleArtifactHeaderV1, frameSessionDataKeyBundleV0, sealAesGcmPayloadWebCrypto } from '@happier-dev/protocol';
 import { encodeBase64 } from '@/encryption/base64';
 
 describe('ArtifactEncryption', () => {
+  it('projects the authored Role name for every display consumer without changing its stored header', async () => {
+    const header = buildRoleArtifactHeaderV1({ name: 'Code reviewer', instructions: 'Review changes',
+      runsAs: { kind: 'session' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true });
+    expect(projectArtifactHeaderForDisplay(header).title).toBe('Code reviewer');
+    const encryption = new ArtifactEncryption(new Uint8Array(32).fill(7));
+    const stored = await encryption.encryptHeader(header);
+    expect((await encryption.decryptHeader(stored))?.title).toBe('Code reviewer');
+    await expect(encryption.decryptHeaderRaw(stored)).resolves.toEqual(header);
+    expect(projectArtifactHeaderForDisplay({ kind: 'markdown', name: 'Not a Role' }).title).toBeNull();
+  });
   it('refuses an excess actor field before encrypting public-share body content', async () => {
     const encryption = new ArtifactEncryption(new Uint8Array(32).fill(7));
     // Runtime input deliberately exceeds the TypeScript contract at a storage writer boundary.

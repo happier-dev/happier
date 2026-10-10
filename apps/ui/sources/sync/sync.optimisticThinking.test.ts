@@ -12,6 +12,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { IDBFactory } from 'fake-indexeddb';
 import type { ManagedEndpointSupervisor } from '@happier-dev/connection-supervisor';
 import { createSocketIoAckTimeoutError } from '@happier-dev/sync-client';
+import { SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, type SessionMetadataTuplePatchV1 } from '@happier-dev/protocol';
 import type { ResumeSessionOptions } from '@/sync/ops/sessions';
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
@@ -1358,14 +1359,14 @@ describe('sync.sendMessage optimistic thinking', () => {
             source: 'server_pending', deliveryStatus: 'accepted', pendingOutboxScope: ownerScope,
             text: 'owner canonical', rawRecord,
         });
-        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ didUpdate: true }));
+        const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } }));
         const { sync } = await import('./sync');
 
         await expect((sync as any).updatePendingRequestedAction(
             sessionId,
             localId,
             { v: 1, kind: 'send_now' },
-        )).resolves.toBeUndefined();
+        )).resolves.toEqual({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } });
 
         expect(request).toHaveBeenCalledTimes(1);
         expect((await loadPendingOutboxForSession(sessionId, otherScope))).toEqual([
@@ -2362,7 +2363,7 @@ describe('sync.sendMessage optimistic thinking', () => {
             const { sync } = await import('./sync');
             sync.encryption = encryption;
 
-            await expect(sync.submitMessage(sessionId, 'queue through server pending')).resolves.toBeUndefined();
+            const submitResult = await sync.submitMessage(sessionId, 'queue through server pending');
 
             expect(requestSpy).toHaveBeenCalledTimes(1);
             expect(requestSpy.mock.calls.map(([path, init]) => [path, init])).toContainEqual([
@@ -2380,6 +2381,7 @@ describe('sync.sendMessage optimistic thinking', () => {
             ]);
             const localId = pendingBeforeRetry[0]?.localId ?? pendingBeforeRetry[0]?.id;
             expect(typeof localId).toBe('string');
+            expect(submitResult).toMatchObject({ persistence: 'pending', localId });
             const outboxScope = storage.getState().profileScope!;
             expect(await loadPendingOutboxForSession(sessionId, outboxScope)).toEqual([
                 expect.objectContaining({ localId }),
@@ -3172,51 +3174,6 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].latestTurnStatus).toBe('completed');
     });
 
-    it('publishes session metadata after send when apply timing is next_prompt and local permission selection is newer', async () => {
-        const sessionId = 's_perm_next_prompt';
-        storage.getState().applySessions([
-            {
-                ...createSession({ sessionId }),
-                metadata: { permissionMode: 'default', permissionModeUpdatedAt: 1 } as any,
-            },
-        ]);
-
-        storage.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' as any });
-        storage.getState().updateSessionPermissionMode(sessionId, 'yolo' as any);
-
-        const localUpdatedAt = storage.getState().sessions[sessionId].permissionModeUpdatedAt;
-        expect(typeof localUpdatedAt).toBe('number');
-
-        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
-        await encryption.initializeSessions(new Map([[sessionId, null]]));
-
-        const { sync } = await import('./sync');
-        sync.encryption = encryption;
-        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
-        sync.setMessageTransport({
-            emitWithAck: vi.fn(async () => ({
-                ok: true,
-                id: 'm1',
-                seq: 1,
-                localId: null,
-                didWrite: true,
-            })) as any,
-            send: vi.fn(),
-        });
-
-        const publish = vi.fn(async () => {});
-        (sync as any).publishSessionPermissionModeToMetadata = publish;
-
-        await sync.sendMessage(sessionId, 'hello');
-
-        expect(publish).toHaveBeenCalledTimes(1);
-        expect(publish).toHaveBeenCalledWith({
-            sessionId,
-            permissionMode: 'yolo',
-            permissionModeUpdatedAt: localUpdatedAt,
-        });
-    });
-
     it('keeps an acknowledged exact send accepted when its Account retires during next-prompt permission publication', async () => {
         const sessionId = 's_exact_perm_publish_retired_after_ack';
         const serverId = getActiveServerSnapshot().serverId;
@@ -3492,14 +3449,14 @@ describe('sync.sendMessage optimistic thinking', () => {
                 text: 'other scope custody',
                 operation: 'enqueue',
             }), otherScope));
-            const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ didUpdate }));
+            const request = vi.spyOn(apiSocket, 'request').mockResolvedValue(Response.json({ didUpdate, requestedAction: { v: 1, kind: 'send_now' } }));
             const { sync } = await import('./sync');
 
             await expect((sync as any).updatePendingRequestedAction(
                 sessionId,
                 localId,
                 { v: 1, kind: 'send_now' },
-            )).resolves.toBeUndefined();
+            )).resolves.toEqual({ didUpdate, requestedAction: { v: 1, kind: 'send_now' } });
 
             expect(request).toHaveBeenCalledTimes(1);
             expect((await loadPendingOutboxForSession(sessionId, outboxScope))).toEqual(
@@ -3574,9 +3531,11 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
     let runtime: typeof import('./syncEngine')['sync'];
     let authDenied: boolean;
     let authProbeStatuses: number[];
+    let metadataWrites: SessionMetadataTuplePatchV1[];
+    let beforeSessionMetadataRead: (() => void) | undefined;
 
-    const request = async (url: RequestInfo | URL): Promise<Response> => {
-        const path = new URL(String(url)).pathname;
+    const request = async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const path = new URL(String(url), 'https://optimistic-account.example.test').pathname;
         if (path === '/health') return Response.json({});
         if (path === '/v1/auth/ping') {
             const status = authDenied ? 401 : 200;
@@ -3591,6 +3550,29 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         });
         if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
         if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+        if (path.startsWith('/v2/sessions/s_account_permission_')) {
+            const sessionId = path.slice('/v2/sessions/'.length);
+            const session = state.getState().sessions[sessionId];
+            if (init?.method === 'PATCH') {
+                const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+                metadataWrites.push(patch);
+                return Response.json(SessionMetadataTuplePatchSuccessV1Schema.parse({
+                    success: true, metadataLayoutVersion: 1,
+                    sharedMetadata: { version: session.metadataVersion + 1 },
+                    agentState: { version: session.agentStateVersion + 1 },
+                }));
+            }
+            beforeSessionMetadataRead?.();
+            return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({
+                id: sessionId, createdAt: 1, updatedAt: 2, seq: 1,
+                active: true, activeAt: 2, encryptionMode: 'plain', dataEncryptionKey: null,
+                metadataLayoutVersion: 0, metadataVersion: 1,
+                metadata: JSON.stringify(session.metadata), agentStateVersion: session.agentStateVersion, agentState: null, share: null,
+                effectiveAccess: { v: 1, level: session.access!.level, sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
+                responsibleAccountId: null, responsibleAccount: null,
+                archivedAt: null, pendingCount: 0, pendingVersion: 0,
+            }) });
+        }
         return Response.json({ error: 'not_found' }, { status: 404 });
     };
 
@@ -3613,6 +3595,8 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         accountTransport.emitted.mockReset();
         authDenied = false;
         authProbeStatuses = [];
+        metadataWrites = [];
+        beforeSessionMetadataRead = undefined;
         await loadSyncSingletonForTests();
         state = (await import('./domains/state/storage')).storage;
         restored = await restoreServerAccountForTest({
@@ -3661,7 +3645,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         const sessionId = 's_account_permission_frozen';
         state.getState().applySessions([createSessionFixture({
             id: sessionId, serverId: restored!.home.id, active: true,
-            metadata: { path: '/repo', host: 'test-host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+            metadata: { path: '/repo', host: 'test-host', version: '0.0.9', permissionMode: 'default', permissionModeUpdatedAt: 1 },
         })]);
         state.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
         state.getState().updateSessionPermissionMode(sessionId, 'yolo');
@@ -3676,18 +3660,27 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
             throw new Error(`Unexpected socket event: ${event}`);
         });
 
-        await runtime.sendMessage(sessionId, 'hello', undefined, {}, { localId: 'frozen-permission' });
+        const accountLifetime = (await import('./domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the restored Account lifetime');
+        await runtime.sendMessage(sessionId, 'hello', undefined, {}, {
+            localId: 'frozen-permission', serverId: restored!.home.id, accountLifetime,
+            session: state.getState().sessions[sessionId],
+        });
 
-        expect(accountTransport.ack.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(0);
+        expect(accountTransport.ack).toHaveBeenCalledWith('message', expect.objectContaining({
+            message: { t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({ permissionMode: 'yolo' }) }) },
+        }));
+        expect(metadataWrites).toEqual([]);
         expect(state.getState().sessions[sessionId].permissionMode).toBe('read-only');
-        expect(state.getState().sessions[sessionId].metadata?.permissionMode).toBe('default');
+        const { readSessionOwnerMetadataView } = await import('./domains/session/readSessionOwnerMetadataView');
+        expect(readSessionOwnerMetadataView(state.getState().sessions[sessionId])?.permissionMode).toBe('default');
     });
 
     it('publishes the admitted next-prompt permission through the real Account metadata writer', async () => {
         const sessionId = 's_account_permission_admitted';
         state.getState().applySessions([createSessionFixture({
             id: sessionId, serverId: restored!.home.id, active: true,
-            metadata: { path: '/repo', host: 'test-host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+            metadata: { path: '/repo', host: 'test-host', version: '0.0.9', permissionMode: 'default', permissionModeUpdatedAt: 1 },
         })]);
         state.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
         state.getState().updateSessionPermissionMode(sessionId, 'yolo');
@@ -3697,10 +3690,45 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
             throw new Error(`Unexpected socket event: ${event}`);
         });
 
-        await runtime.sendMessage(sessionId, 'hello', undefined, {}, { localId: 'admitted-permission' });
+        const accountLifetime = (await import('./domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the restored Account lifetime');
+        await runtime.sendMessage(sessionId, 'hello', undefined, {}, {
+            localId: 'admitted-permission', serverId: restored!.home.id, accountLifetime,
+            session: state.getState().sessions[sessionId],
+        });
 
-        expect(accountTransport.ack.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(1);
-        expect(state.getState().sessions[sessionId].metadata?.permissionMode).toBe('yolo');
+        expect(metadataWrites).toEqual([expect.objectContaining({ mode: 'owner_migration' })]);
+        const { readSessionOwnerMetadataView } = await import('./domains/session/readSessionOwnerMetadataView');
+        expect(readSessionOwnerMetadataView(state.getState().sessions[sessionId])?.permissionMode).toBe('yolo');
+    });
+
+    it('keeps an admitted prompt accepted when its permission publication is superseded during tuple acquisition', async () => {
+        const sessionId = 's_account_permission_read_race';
+        state.getState().applySessions([createSessionFixture({
+            id: sessionId, serverId: restored!.home.id, active: true,
+            metadata: { path: '/repo', host: 'test-host', version: '0.0.9', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+        })]);
+        state.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
+        state.getState().updateSessionPermissionMode(sessionId, 'yolo');
+        accountTransport.ack.mockImplementation(async (event: string) => {
+            if (event === 'message') {
+                beforeSessionMetadataRead = () => state.getState().updateSessionPermissionMode(sessionId, 'read-only');
+                return { ok: true, id: 'admitted-message', seq: 1, localId: 'read-race', didWrite: true };
+            }
+            throw new Error(`Unexpected socket event: ${event}`);
+        });
+        const accountLifetime = (await import('./domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the restored Account lifetime');
+
+        await expect(runtime.sendMessage(sessionId, 'hello', undefined, {}, {
+            localId: 'read-race', serverId: restored!.home.id, accountLifetime,
+            session: state.getState().sessions[sessionId],
+        })).resolves.toMatchObject({ localId: 'read-race', persistence: 'transcript_committed' });
+
+        expect(metadataWrites).toEqual([]);
+        expect(state.getState().sessions[sessionId].permissionMode).toBe('read-only');
+        const { readSessionOwnerMetadataView } = await import('./domains/session/readSessionOwnerMetadataView');
+        expect(readSessionOwnerMetadataView(state.getState().sessions[sessionId])?.permissionMode).toBe('default');
     });
 
     it('removes the direct-send local pending row when the server rejects the message', async () => {

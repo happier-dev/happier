@@ -38,12 +38,7 @@ vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('./api/social/apiFriends', () => ({
-    getUserProfile: vi.fn(),
-}));
-
 import { storage } from './domains/state/storage';
-import { getUserProfile } from './api/social/apiFriends';
 
 const initialStorageState = storage.getState();
 
@@ -60,30 +55,22 @@ describe('sync.assumeUsers', () => {
         vi.clearAllMocks();
     });
 
-    it('does not cache null when user fetch throws a transient error', async () => {
-        (getUserProfile as any).mockRejectedValueOnce(new Error('boom'));
-
+    it('rejects a transient profile read so feed refresh retries without caching absence', async () => {
+        const failure = new TypeError('Failed to fetch');
+        const request = vi.fn(async () => new Response('', { status: 404 }));
+        request.mockRejectedValueOnce(failure);
         const { sync } = await import('./sync');
-        await sync.assumeUsers(['user_transient']);
-
+        await expect(sync.assumeUsers(['user_transient'], { request })).rejects.toBe(failure);
         expect(storage.getState().users.user_transient).toBeUndefined();
+        await sync.assumeUsers(['user_transient'], { request });
+        expect(storage.getState().users.user_transient).toBeNull();
     });
 
     it('caches null when user fetch returns null (not found)', async () => {
-        (getUserProfile as any).mockResolvedValueOnce(null);
-
         const { sync } = await import('./sync');
-        await sync.assumeUsers(['user_missing']);
+        const request = vi.fn(async () => new Response('', { status: 404 }));
+        await sync.assumeUsers(['user_missing'], { request });
 
         expect(storage.getState().users.user_missing).toBeNull();
-    });
-
-    it('caches null when user fetch throws a 404-shaped error', async () => {
-        (getUserProfile as any).mockRejectedValueOnce({ status: 404 });
-
-        const { sync } = await import('./sync');
-        await sync.assumeUsers(['user_404']);
-
-        expect(storage.getState().users.user_404).toBeNull();
     });
 });

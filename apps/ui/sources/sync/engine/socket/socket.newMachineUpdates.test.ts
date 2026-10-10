@@ -21,8 +21,31 @@ import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleUpdateContainer } from './socket';
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { subscribeActivityLocalNotifications } from '@/activity/notifications/runtime/activityLocalNotificationBus';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 const initialStorageState = storage.getState();
+describe('committed usage source wake', () => {
+    it('invalidates source readers after a content-free harvest settlement and rejects retired ingress', async () => {
+        const homes: string[] = [];
+        const release = subscribeHomeAccountChange(event => homes.push(event.serverId));
+        try {
+            const update = { type: 'usage-sources-invalidated', machineId: 'machine', installationId: 'installation' };
+            await handleEphemeralSocketUpdate(buildEphemeralParams({ sourceServerId: 'home-b', update }));
+            await handleEphemeralSocketUpdate(buildEphemeralParams({ sourceServerId: 'home-a', update, shouldContinue: () => false }));
+            expect(homes).toEqual(['home-b']);
+        } finally { release(); }
+    });
+    it.each(['session', null])('invalidates only the source Home and ignores retired usage ingress (Session id %s)', async sessionId => {
+        const homes: string[] = [];
+        const release = subscribeHomeAccountChange(event => homes.push(event.serverId));
+        try {
+            const update = { type: 'usage', id: sessionId, key: 'codex:model', tokens: { total: 1 }, cost: { total: 0 }, timestamp: 1000 };
+            await handleEphemeralSocketUpdate(buildEphemeralParams({ sourceServerId: 'home-b', update }));
+            await handleEphemeralSocketUpdate(buildEphemeralParams({ sourceServerId: 'home-a', update, shouldContinue: () => false }));
+            expect(homes).toEqual(['home-b']);
+        } finally { release(); }
+    });
+});
 let machineContextOwner: Encryption;
 beforeEach(async () => { machineContextOwner = await Encryption.create(new Uint8Array(32).fill(17)); });
 

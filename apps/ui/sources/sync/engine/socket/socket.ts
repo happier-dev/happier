@@ -58,6 +58,7 @@ import { classifySessionTupleApplyCurrentness } from '@/sync/store/domains/sessi
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { notifyExecutionRunActivityFromUpdate } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { notifyTeamCredentialUsageChanged } from '@/sync/engine/teams/teamCredentialUsageChanges';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -2537,6 +2538,11 @@ export function handleEphemeralSocketUpdate(params: {
     } else if (updateData.type === 'execution-run-updated') {
         if (!shouldContinue()) return Promise.resolve();
         notifyExecutionRunActivityFromUpdate(sourceServerId, updateData);
+    } else if (updateData.type === 'usage' || updateData.type === 'usage-sources-invalidated') {
+        if (!shouldContinue() || !sourceServerId) return Promise.resolve();
+        // Committed accounting and settled capture both wake canonical readers;
+        // neither payload is admitted as a second accounting/source projection.
+        publishHomeAccountChange(sourceServerId);
     } else if (updateData.type === 'team-credential-usage-changed') {
         if (!shouldContinue() || !sourceServerId) return Promise.resolve();
         notifyTeamCredentialUsageChanged({ serverId: sourceServerId, resourceId: updateData.resourceId });

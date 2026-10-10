@@ -8,6 +8,7 @@ import {
     resetServerReachabilitySupervisors,
     startServerReachabilitySupervisor,
     subscribeServerReachabilityState,
+    waitForServerReachable,
 } from './serverReachabilitySupervisorPool';
 
 function carrierForEndpoint(endpointId: string): HomeCarrier {
@@ -145,6 +146,63 @@ describe('serverReachabilitySupervisorPool (transport identity)', () => {
 
             expect(phases).toContain('shutting_down');
             expect(peekServerReachabilityState(serverUrl, null)?.phase).toBe('online');
+        } finally {
+            unsubscribe();
+        }
+    });
+
+    it('keeps the selected carrier when a readiness observer omits transport hints', async () => {
+        setRuntimeFetch(async () => { throw new TypeError('Canonical URL has no ingress'); });
+        const serverUrl = 'https://example.test';
+        const phases: string[] = [];
+        const unsubscribe = subscribeServerReachabilityState(serverUrl, state => { phases.push(state.phase); }, null);
+        try {
+            await startServerReachabilitySupervisor({ serverUrl, token: null, homeCarrier: carrierForEndpoint('endpoint-a') });
+            phases.length = 0;
+            await startServerReachabilitySupervisor({ serverUrl, token: null });
+            expect(peekServerReachabilityState(serverUrl, null)?.phase).toBe('online');
+            expect(phases).not.toContain('shutting_down');
+            await startServerReachabilitySupervisor({ serverUrl, token: null, runtimeOrigin: serverUrl, homeCarrier: null });
+            expect(peekServerReachabilityState(serverUrl, null)?.phase).toBe('offline');
+        } finally {
+            unsubscribe();
+        }
+    });
+
+    it('keeps the selected native origin for an observer and re-probes an explicit direct admission', async () => {
+        const serverUrl = 'https://example.test';
+        const runtimeOrigin = 'http://127.0.0.1:43210';
+        const requests: string[] = [];
+        setRuntimeFetch(async (url) => {
+            requests.push(String(url));
+            return new Response(null, { status: 200 });
+        });
+        await startServerReachabilitySupervisor({ serverUrl, token: null, runtimeOrigin });
+        await waitForServerReachable({ serverUrl, token: null });
+        expect(requests).toEqual([`${runtimeOrigin}/health`]);
+        await waitForServerReachable({ serverUrl, token: null, runtimeOrigin: serverUrl, homeCarrier: null });
+        expect(requests).toEqual([`${runtimeOrigin}/health`, `${serverUrl}/health`]);
+        expect(peekServerReachabilityState(serverUrl, null)?.phase).toBe('online');
+    });
+
+    it('does not admit a failing direct reset with the previous native transport verdict', async () => {
+        const serverUrl = 'https://example.test';
+        const runtimeOrigin = 'http://127.0.0.1:43210';
+        const controller = new AbortController();
+        setRuntimeFetch(async (url) => {
+            if (new URL(String(url)).origin === serverUrl) throw new TypeError('Direct ingress unavailable');
+            return new Response(null, { status: 200 });
+        });
+        await startServerReachabilitySupervisor({ serverUrl, token: null, runtimeOrigin });
+        const phases: string[] = [];
+        const unsubscribe = subscribeServerReachabilityState(serverUrl, state => {
+            phases.push(state.phase);
+            if (state.phase === 'offline') controller.abort();
+        }, null);
+        try {
+            await expect(waitForServerReachable({ serverUrl, token: null, runtimeOrigin: serverUrl, homeCarrier: null, signal: controller.signal }))
+                .rejects.toMatchObject({ name: 'AbortError' });
+            expect(phases).toContain('offline');
         } finally {
             unsubscribe();
         }

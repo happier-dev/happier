@@ -3,14 +3,17 @@ import {
     type HomeConnectionStatusKey,
     type HomeConnectionSummary,
 } from '@/components/navigation/connectionStatus/resolveHomeConnectionSummary';
-import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { resolveHomeDisplayLabel, resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import {
     areServerProfileIdentifiersEquivalent,
+    isServerProfilePersonalHomeBootstrapCompleted,
     resolveServerProfileScopeId,
     type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
+import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
+import { t } from '@/text';
 
 export const HOMES_COLLECTION_ROOT = SETTINGS_ROUTES.servers;
 export const HOMES_ADD_ROUTE = `${HOMES_COLLECTION_ROOT}/add` as const;
@@ -43,6 +46,19 @@ export type HomeCollection = Readonly<{
     homes: readonly HomeCollectionRow[];
     groups: readonly HomeCollectionGroupRow[];
 }>;
+
+/** A Home's metadata: its location or address, use here, and any trouble. */
+export function describeHomeRow(row: HomeCollectionRow): string {
+    const facts: string[] = [];
+    // A generic human title must not erase the identifier that distinguishes
+    // unnamed Homes. Keep it in metadata even when there is also a status fact.
+    if (!resolveHomeDisplayName(row.profile)) facts.push(toServerUrlDisplay(row.serverUrl));
+    if (isServerProfilePersonalHomeBootstrapCompleted(row.profile)) facts.push(t('homesJourneys.livesOnThisComputer'));
+    if (row.current) facts.push(t('addFlows.homesInUse'));
+    if (row.needsAttention || row.summary.kind === 'reconnecting') facts.push(t(row.summary.statusLabelKey));
+    if (facts.length === 0) facts.push(toServerUrlDisplay(row.serverUrl));
+    return facts.join(' · ');
+}
 
 /**
  * The Homes this device knows, as Settings → Homes lists them: the Home in use first, then the other

@@ -104,11 +104,11 @@ describe('SavedServersSection: the Home this device uses', () => {
         expect(handlers.onRetry).toHaveBeenCalledWith(servers[3]);
     });
 
-    it('names an unnamed Home in a sentence rather than by its raw address', async () => {
+    it('gives an unnamed Home a human title rather than its raw address', async () => {
         const { screen } = await render();
         const row = homeRow(screen, 'devbox');
-        // This suite's text mock returns bare keys; the label owner's own test covers the host wording.
-        expect(row?.props.title).toBe('server.homeOnHost');
+        // This suite's text mock returns bare keys; the label owner's own test covers the fallback.
+        expect(row?.props.title).toBe('settingsAccount.thisHomeTitle');
     });
 
     it('keeps only the ⋯ menu beside each Home on a phone', async () => {

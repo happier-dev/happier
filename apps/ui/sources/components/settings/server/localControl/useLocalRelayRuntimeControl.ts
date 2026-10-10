@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import { redactSensitiveSystemTaskJsonValue } from '@happier-dev/cli-common/systemTasks';
 
 import { getDefaultSystemTaskRunner, useSystemTaskSnapshot, waitForSystemTaskResult } from '@/components/systemTasks';
 import type { SystemTaskPromptContinuation, SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
@@ -10,13 +11,8 @@ import {
     type LocalRelayRuntimeTaskOptions,
 } from '@/components/systemTasks/specs/localControl/buildLocalRelayRuntimeSystemTaskSpec';
 import { readRelayRuntimeStatusData, type RelayRuntimeStatusData } from './relayRuntimeStatus';
-import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
-import { disconnectThisComputerBeforeForgettingHome } from '@/components/serverProfiles/disconnectThisComputerFromHome';
-import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
-import {
-    listServerProfiles,
-    retirePersonalHomeBootstrapCompletion,
-} from '@/sync/domains/server/serverProfiles';
+import { withPersonalHomeEraseDisconnect } from './personalHomeEraseTaskContinuation';
+import { completePersonalHomeErase, type PersonalHomeEraseOutcome } from './personalHomeEraseCompletion';
 
 type RelayRuntimeActionKind =
     | 'relay.runtime.installOrUpdate.v1'
@@ -112,16 +108,7 @@ type PersonalHomeRecoveryArchive = PersonalHomeBackupFacts & Readonly<{ verified
 type PersonalHomeLastOperation =
     | Readonly<{ operation: 'backup'; backup: PersonalHomeBackupFacts }>
     | Readonly<{ operation: 'restore'; restore: Readonly<{ outcome: string; recoveryArchive: PersonalHomeRecoveryArchive | null; error: string | null }> }>
-    | Readonly<{ operation: 'erase'; erase: Readonly<{
-        outcome: 'completed' | 'completed_with_cleanup_attention' | 'partial';
-        removedPaths: readonly string[];
-        remainingOwnedPaths: readonly string[];
-        remainingUnknownPaths: readonly string[];
-        stoppedRunningHome: boolean;
-        inspectionComplete: boolean;
-        inspectionError: string | null;
-        error: string | null;
-    }> }>;
+    | Readonly<{ operation: 'erase'; erase: PersonalHomeEraseOutcome }>;
 
 function readPersonalHomeBackupFacts(value: unknown): PersonalHomeBackupFacts | null {
     if (!value || typeof value !== 'object') return null;
@@ -341,7 +328,7 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
         if (!continued) return;
         setActionTaskId(continued.taskId);
         setOperationTaskId(continued.taskId);
-        setActiveOperationSpec(continued.spec);
+        setActiveOperationSpec({ ...continued.spec, params: redactSensitiveSystemTaskJsonValue(continued.spec.params) });
     }, [runner]);
 
     React.useEffect(() => {
@@ -409,7 +396,7 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
         if (promptContinuation) runner.registerPromptContinuation?.(taskId, promptContinuation);
         if (retainSnapshot) {
             setOperationTaskId(taskId);
-            setActiveOperationSpec(started.spec);
+            setActiveOperationSpec({ ...started.spec, params: redactSensitiveSystemTaskJsonValue(started.spec.params) });
         }
         const result = await waitForSystemTaskResult(runner, taskId);
         if (!result.ok) {
@@ -596,24 +583,8 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
             // R15 c: the Home is going away. Once the person confirmed the erase — and before the task
             // destroys any data — this computer stops serving it through the same disconnect as
             // removing a Home; when that must not go ahead, the erase is answered "not confirmed".
-            const disconnectingContinuation: SystemTaskPromptContinuation | undefined = promptContinuation
-                ? async (prompt) => {
-                    const answer = await promptContinuation(prompt);
-                    const confirmed = typeof answer === 'object' && answer !== null
-                        && (answer as { confirmed?: unknown }).confirmed === true;
-                    const data = (prompt.data ?? {}) as { canonicalServerUrl?: unknown; homeServerIdentityId?: unknown };
-                    const serverUrl = typeof data.canonicalServerUrl === 'string' ? data.canonicalServerUrl.trim() : '';
-                    if (!confirmed || !serverUrl) return answer;
-                    erasedIdentity = typeof data.homeServerIdentityId === 'string'
-                        ? data.homeServerIdentityId.trim() || null
-                        : erasedIdentity;
-                    const mayErase = await disconnectThisComputerBeforeForgettingHome({
-                        serverUrl,
-                        serverIdentityId: typeof data.homeServerIdentityId === 'string' ? data.homeServerIdentityId : null,
-                        label: toServerUrlDisplay(serverUrl),
-                    }, runner);
-                    return mayErase ? answer : { confirmed: false };
-                }
+            const disconnectingContinuation = promptContinuation
+                ? withPersonalHomeEraseDisconnect(runner, promptContinuation, identity => { erasedIdentity = identity ?? erasedIdentity; })
                 : undefined;
             const outcome = await runPersonalHomeTask(
                 'relay.runtime.personal_home.erase.v1',
@@ -622,60 +593,26 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
                 disconnectingContinuation,
             );
             if (outcome.status !== 'completed') return null;
-            const data = outcome.result.data as Record<string, unknown> | undefined;
-            const erase = {
-                outcome: data?.outcome === 'partial'
-                    ? 'partial' as const
-                    : data?.outcome === 'completed_with_cleanup_attention'
-                        ? 'completed_with_cleanup_attention' as const
-                        : 'completed' as const,
-                removedPaths: Array.isArray(data?.removedPaths) ? data.removedPaths.filter((value): value is string => typeof value === 'string') : [],
-                remainingOwnedPaths: Array.isArray(data?.remainingOwnedPaths) ? data.remainingOwnedPaths.filter((value): value is string => typeof value === 'string') : [],
-                remainingUnknownPaths: Array.isArray(data?.remainingUnknownPaths) ? data.remainingUnknownPaths.filter((value): value is string => typeof value === 'string') : [],
-                stoppedRunningHome: data?.stoppedRunningHome === true,
-                inspectionComplete: data?.inspectionComplete !== false,
-                inspectionError: typeof data?.inspectionError === 'string' ? data.inspectionError : null,
-                error: typeof data?.error === 'string' ? data.error : null,
-            };
-            // Partial deletion retains its saved binding. Once data is gone, completion is
-            // retired before guarded credential/profile cleanup, which may still refuse.
-            const erasedProfile = erasedIdentity
-                ? listServerProfiles().find((profile) => profile.serverIdentityId === erasedIdentity)
-                : null;
-            if (erase.outcome !== 'partial' && erasedProfile && erasedIdentity) {
-                try {
-                    await retirePersonalHomeBootstrapCompletion(erasedIdentity);
-                    const removal = await removeServerProfileUiAction({
-                        profileId: erasedProfile.id,
-                        serverUrl: erasedProfile.serverUrl,
-                        // Disconnected above, after the erase was confirmed and before any data went.
-                        thisComputer: 'disconnected',
-                    });
-                    if (removal.kind !== 'completed') throw new Error(t('errors.operationFailed'));
-                } catch (error) {
-                    erase.outcome = 'completed_with_cleanup_attention';
-                    const cleanupError = error instanceof Error ? error.message : t('errors.operationFailed');
-                    erase.error = [erase.error, cleanupError].filter(Boolean).join('\n');
-                }
-            }
+            const erase = await completePersonalHomeErase(outcome.result, erasedIdentity);
             setLastOperation({ operation: 'erase', erase });
             refreshAfterMutation();
             return erase;
         }, [refreshAfterMutation, runPersonalHomeTask, runner]),
         startExternalOperation: React.useCallback(async (
             spec: SystemTaskSpec,
-            options: Readonly<{ promptContinuation?: SystemTaskPromptContinuation }> = {},
+            options: Readonly<{ promptContinuation?: SystemTaskPromptContinuation;
+                startSpec?: (spec: SystemTaskSpec) => Promise<string> }> = {},
         ): Promise<string | null> => {
             if (isUnavailable) return null;
             try {
-                const taskId = await runner.start(spec);
+                const taskId = await (options.startSpec ? options.startSpec(spec) : runner.start(spec));
                 if (options.promptContinuation) runner.registerPromptContinuation?.(taskId, options.promptContinuation);
                 setBridgeUnavailable(false);
                 setLastErrorMessage(null);
                 handledActionTaskIdRef.current = null;
                 setActionTaskId(taskId);
                 setOperationTaskId(taskId);
-                setActiveOperationSpec(spec);
+                setActiveOperationSpec({ ...spec, params: redactSensitiveSystemTaskJsonValue(spec.params) });
                 return taskId;
             } catch (error) {
                 const message = readSystemTaskStartErrorMessage(error);

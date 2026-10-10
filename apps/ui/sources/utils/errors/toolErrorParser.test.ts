@@ -3,6 +3,20 @@ import { parseToolUseError, parseAllToolUseErrors, hasToolUseError, isCancelErro
 
 describe('toolErrorParser', () => {
     describe('parseToolUseError', () => {
+        it('reads the canonical typed tool error without exposing diagnostic metadata', () => {
+            const result = parseToolUseError({
+                errorMessage: 'target_unavailable', errorCode: 'change_title_failed',
+                _happier: { canonicalToolName: 'change_title' }, _raw: { content: 'native error' }, _acp: {},
+            });
+            expect(result).toEqual({ isToolUseError: false, errorMessage: 'target_unavailable' });
+        });
+
+        it('reads the persisted native title failure through the same typed-error contract', () => {
+            const content = '{"errorCode":"change_title_failed","error":"target_unavailable"}';
+            expect(parseToolUseError({ content, tool_use_result: `Error: ${content}`, title: 'errorCode' }))
+                .toEqual({ isToolUseError: false, errorMessage: 'target_unavailable' });
+        });
+
         it('should parse tool use error correctly', () => {
             const input = '<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>';
             const result = parseToolUseError(input);

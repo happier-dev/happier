@@ -5,6 +5,7 @@ import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serve
 
 import {
     buildHomeCollection,
+    describeHomeRow,
     homeCollectionHref,
     resolveSelectedHomeCollectionKey,
 } from './homeCollectionModel';
@@ -14,6 +15,19 @@ function profile(id: string, overrides: Partial<ServerProfile> = {}): ServerProf
 }
 
 describe('buildHomeCollection', () => {
+    it('keeps unnamed Home addresses in metadata even when a status fact is present', () => {
+        const collection = buildHomeCollection({
+            servers: [profile('home-a'), profile('home-b')], groups: [], activeServerId: 'home-a',
+            activeTargetKey: null, deviceDefaultServerId: null,
+            authStatusByServerId: { 'home-a': 'signedIn', 'home-b': 'signedOut' },
+            homeConnectionSummaryByServerId: {},
+        });
+        for (const row of collection.homes) {
+            expect(row.title).not.toContain(row.serverUrl);
+            expect(describeHomeRow(row)).toContain(`${row.id}.example.test`);
+        }
+    });
+
     it('lists the Home in use first, then the other Homes in their saved order, then groups', () => {
         const collection = buildHomeCollection({
             servers: [profile('acme', { name: 'Acme' }), profile('personal', { name: 'Studio' }), profile('cloud', { name: 'Cloud' })],

@@ -1,6 +1,7 @@
 import { registerSyncRuntime } from './sync';
 import { type SessionMessageV1, type SessionMessagesPageV1 } from '@happier-dev/protocol';
 import { projectSessionMetadataForWire } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { parsePermissionIntentAlias, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import {
@@ -27,7 +28,7 @@ import {
     type AuthCredentials,
 } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { Encryption } from '@/sync/encryption/encryption';
+import { Encryption, captureEncryptionGenerationCurrentness } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import {
@@ -52,6 +53,7 @@ import { InvalidateSync } from '@/utils/sessions/sync';
 import { PauseController } from '@/utils/timing/pauseController';
 import { createUserRequestLeaseOwner } from '@/sync/runtime/connectivity/userRequestLease';
 import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperations/consumeActionOperationSnapshotPush';
+import { getActionOperation } from '@/sync/ops/actionOperations';
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import {
     assertServerReachabilityAuthenticated,
@@ -70,7 +72,7 @@ import {
     isTerminalAuthError,
 } from '@/sync/runtime/connectivity/authErrors';
 import { resolveSocketErrorClassification } from '@/sync/runtime/connectivity/resolveSocketErrorClassification';
-import { isTransientConnectivityError, shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
+import { isTransientConnectivityError, RetryableServerResponseError, shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isSocketIoAckTimeoutError } from '@happier-dev/sync-client';
 import { readServerFetchWriteTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import {
@@ -329,7 +331,6 @@ import type { ArtifactBodyInput, ArtifactHeader, DecryptedArtifact } from './dom
 import type {
     AutomationDefinition,
     AutomationDefinitionRun,
-    AutomationRunNowAdmission,
 } from './domains/automations/automationTypes';
 import { getUserProfile } from './api/social/apiFriends';
 import {
@@ -345,7 +346,6 @@ import {
     replaceAutomationDefinitionAssignments,
     retryAutomationReplyHandoff,
     resumeAutomationDefinition,
-    runAutomationDefinitionNow,
     updateAutomationSettings,
     type AutomationRequestContext,
 } from './api/automations/apiAutomations';
@@ -384,6 +384,7 @@ import type {
     SessionMessageHostAdmissionOrigin,
     SessionSubmitPort,
     SubmitSessionOutboundHandoff,
+    SubmitSessionUserMessageResult,
     SubmitPersistence,
 } from './domains/session/input/types';
 import type { SessionMessageDirectBypassReason } from './domains/session/control/submitMode';
@@ -491,7 +492,6 @@ import {
     handleDeleteArtifactSocketUpdate,
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
-    updateArtifactViaApi,
     updateArtifactWithHeaderViaApi,
     type ArtifactDataKeyCache,
     type ArtifactViewRead,
@@ -518,12 +518,14 @@ import {
     type AutomationRunDetailRouteInspection,
 } from './domains/automations/automationRunDetailInspection';
 import { projectAutomationDefinitionSessionLink } from './domains/automations/automationSessionLink';
+import { readPluginEventAutomationEditSeed, type PluginEventAutomationEditSeed } from './domains/automations/pluginEventAutomationEditSeed';
 import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos/syncTodos';
 import { fetchAndApplyAccountPets } from './domains/pets/syncAccountPets';
 import type { AccountPetMetadata } from './domains/pets/accountPetLibraryTypes';
 import {
     planSyncActionsFromChanges,
     plannedChangesAffectSessionListQuery,
+    plannedChangesAffectProfileCatalog,
 } from './runtime/orchestration/changesPlanner';
 import { applyPlannedChangeActions } from './runtime/orchestration/changesApplier';
 import { runSocketReconnectCatchUpViaChanges } from './runtime/orchestration/socketReconnectViaChanges';
@@ -547,6 +549,10 @@ import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncrypt
 import { createApiSessionDraftsTransport } from '@/sync/api/account/apiSessionDrafts';
 import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
 import { createAuthoringMemoryCipher } from '@/sync/encryption/authoringMemoryEncryption';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import { createApiProjectAccountRowsTransport } from '@/sync/api/account/apiProjectAccountRows';
+import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAccountRowsSync';
+import type { WorkspaceRefAccountMutation } from '@/sync/domains/workspaces/workspaceRefs';
 import { createApiAuthoringMemoryTransport } from '@/sync/api/account/apiAuthoringMemory';
 import { createAuthoringMemorySync, importLegacyAuthoringMemory, type AuthoringMemoryDelta } from '@/sync/engine/authoringMemory/authoringMemorySync';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
@@ -569,7 +575,7 @@ import { hasRawComposerAttachmentSelectionV1, type HappierStructuredInputV1, typ
 import { SessionUserMessageSendResponseSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
 import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
-import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import type { PendingRequestedActionV1, PendingResetStartSetResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type { ExternalSessionsRpcErrorCode } from '@happier-dev/protocol/sessions/external/rpcErrorCodes';
@@ -1293,7 +1299,7 @@ class Sync {
         encryption: Encryption | null = null;
         serverID!: string;
         anonID!: string;
-        private credentials!: AuthCredentials;
+        private credentials: AuthCredentials | null = null;
         private appliedServerTarget: SyncServerTarget | null = null;
         private embedSessionScope: (SyncEmbedSessionOptions & Readonly<{
             request: ServerFetch;
@@ -1320,6 +1326,7 @@ class Sync {
       private sessionDraftOfflineCatchUpPending = false;
       private sessionDraftRepositoryConfiguredScope: ServerAccountScope | null = null;
       private authoringMemoryRuntime: Promise<ReturnType<typeof createAuthoringMemorySync>> | null = null;
+      private projectAccountRowsRuntime: Promise<ReturnType<typeof createProjectAccountRowsSync>> | null = null;
       private readonly sessionDraftRuntimeHydrationGate = new SessionDraftRuntimeHydrationGate();
       private readonly sessionSystemRecordRepositories = new Map<string, SessionSystemRecordRepository>();
     private sessionsSync: InvalidateSync;
@@ -2350,6 +2357,8 @@ class Sync {
     }
 
     private clearActiveAccountSettingsScope(): void {
+        this.projectAccountRowsRuntime = null;
+        storage.getState().clearProjectAccountRowsScope();
         this.authoringMemoryRuntime = null;
         storage.getState().resetAuthoringMemory();
         this.flushSessionMaterializedMaxSeqForCurrentScopeNow();
@@ -2375,6 +2384,7 @@ class Sync {
         }
 
         if (!areAccountSettingsScopesEqual(this.pendingSettingsScope, scope)) {
+            this.projectAccountRowsRuntime = null;
             this.authoringMemoryRuntime = null;
             storage.getState().resetAuthoringMemory();
             this.flushSessionMaterializedMaxSeqForCurrentScopeNow();
@@ -2390,6 +2400,7 @@ class Sync {
         await storage.getState().activateSettingsScope(scope, legacyScopes);
         this.hydrateAuthoringMemoryProjection(scope);
         storage.getState().activateProfileScope(scope, legacyScopes);
+        storage.getState().activateProjectAccountRowsScope(scope);
         storage.getState().activateSessionLocalStateScope(scope);
         this.pendingSettings = loadPendingAccountSettings(scope);
         this.pendingSettingsScope = scope;
@@ -2684,11 +2695,12 @@ class Sync {
 
     public getEmbedSessionRequestContext() {
         const scope = this.embedSessionScope;
-        if (!scope || !scope.isCurrent()) return null;
+        const credentials = this.credentials;
+        if (!scope || !scope.isCurrent() || !credentials) return null;
         const revision = this.serverScopeGeneration;
         const isCurrent = () => this.embedSessionScope === scope && scope.isCurrent();
         return { serverId: scope.endpointUrl, accountId: scope.accountId, sessionId: scope.scope.sessionId,
-            credentials: this.credentials, request: scope.request,
+            credentials, request: scope.request,
             revision, isCurrent,
             onRetire: (cancel: () => void) => {
                 if (!isCurrent()) {
@@ -2779,7 +2791,11 @@ class Sync {
         if (!serverId || !accountId) return;
         const settingsScope = createAccountSettingsScope(serverId, accountId);
         if (settingsScope) {
-            if (!areAccountSettingsScopesEqual(this.pendingSettingsScope, settingsScope)) this.authoringMemoryRuntime = null;
+            if (!areAccountSettingsScopesEqual(this.pendingSettingsScope, settingsScope)) {
+                this.authoringMemoryRuntime = null;
+                this.projectAccountRowsRuntime = null;
+                storage.getState().activateProjectAccountRowsScope(settingsScope);
+            }
             this.hydrateAuthoringMemoryProjection(settingsScope);
         }
         setWarmCacheAccountScope(accountId);
@@ -3029,6 +3045,8 @@ class Sync {
     }
 
     private resetServerScopedRuntimeState = (targetToReset?: SyncServerTarget | null) => {
+        this.projectAccountRowsRuntime = null;
+        storage.getState().clearProjectAccountRowsScope();
         this.authoringMemoryRuntime = null;
         storage.getState().resetAuthoringMemory();
         apiSocket.invalidateRequests('server-switch');
@@ -3141,6 +3159,16 @@ class Sync {
             delete next[activeServerIdForReset];
             return next;
         };
+        const withoutOutgoingHomeMachineEntries = <T>(entries: Readonly<Record<string, T>>): Readonly<Record<string, T>> => {
+            if (!activeServerIdForReset) return entries;
+            const outgoingKeys = Object.keys(entries).filter((serverId) => (
+                areServerProfileIdentifiersEquivalent(serverId, activeServerIdForReset)
+            ));
+            if (outgoingKeys.length === 0) return entries;
+            const next = { ...entries };
+            for (const serverId of outgoingKeys) delete next[serverId];
+            return next;
+        };
 
         storage.setState((state) => ({
             ...state,
@@ -3169,20 +3197,8 @@ class Sync {
                 const { [activeServerIdForReset]: _, ...rest } = previous;
                 return rest;
             })(),
-            machineListByServerId: (() => {
-                if (!activeServerIdForReset) return state.machineListByServerId;
-                if (!(activeServerIdForReset in state.machineListByServerId)) return state.machineListByServerId;
-                const next = { ...state.machineListByServerId };
-                delete next[activeServerIdForReset];
-                return next;
-            })(),
-            machineListStatusByServerId: (() => {
-                if (!activeServerIdForReset) return state.machineListStatusByServerId;
-                if (!(activeServerIdForReset in state.machineListStatusByServerId)) return state.machineListStatusByServerId;
-                const next = { ...state.machineListStatusByServerId };
-                delete next[activeServerIdForReset];
-                return next;
-            })(),
+            machineListByServerId: withoutOutgoingHomeMachineEntries(state.machineListByServerId),
+            machineListStatusByServerId: withoutOutgoingHomeMachineEntries(state.machineListStatusByServerId),
             sessionScmStatus: {},
             machines: {},
             machineDisplayById: {},
@@ -3248,6 +3264,7 @@ class Sync {
         this.appliedServerTarget = null;
         const serverId = disconnectedTarget?.serverId ?? '';
         this.resetServerScopedRuntimeState(disconnectedTarget);
+        this.credentials = null;
         // Signed-out is a transient availability state, not evidence that this Account's last
         // known definitions disappeared. Keep them visible but inert until credential recovery.
         if (serverId) storage.getState().setMachinePoolListStatus(serverId, 'signedOut');
@@ -3944,6 +3961,7 @@ class Sync {
     ): Promise<DirectMessageSubmitResult> {
         const embedScope = this.embedSessionScope;
         const exactAccountLifetime = options?.accountLifetime;
+        const permissionPublicationAccountLifetime = exactAccountLifetime ?? captureActiveServerAccountScopeLifetime();
         const exactScopeError = () => Object.assign(
             new Error('Session Account authority is unavailable'),
             { code: 'session_account_scope_retired' },
@@ -4018,44 +4036,13 @@ class Sync {
         });
 
         try {
-            const publishNextPromptPermissionModeIfNeeded = async (): Promise<void> => {
-                if (embedScope) return;
-                const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
-                if (settingsApplyTiming !== 'next_prompt') {
-                    return;
-                }
-
-                const latestSession = exactAccountLifetime
-                    ? session
-                    : storage.getState().sessions[sessionId] ?? null;
-                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
-                const metadataUpdatedAtRaw = latestSession
-                    ? readSessionOwnerMetadataView(latestSession)?.permissionModeUpdatedAt ?? null
-                    : null;
-                const metadataUpdatedAt =
-                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
-                        ? metadataUpdatedAtRaw
-                        : 0;
-
-                if (!(typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt)) {
-                    return;
-                }
-
-                const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
-                try {
-                    await this.publishSessionPermissionModeToMetadata({
-                        sessionId,
-                        permissionMode: modeToPublish,
-                        permissionModeUpdatedAt: localUpdatedAt,
-                        ...(exactAccountLifetime ? {
-                            serverId: exactAccountLifetime.scope.serverId,
-                            accountLifetime: exactAccountLifetime,
-                        } : {}),
-                    });
-                } catch {
-                    // Best-effort only: sending messages must not fail due to metadata publish failures.
-                }
-            };
+            const publishNextPromptPermissionModeIfNeeded = () => embedScope
+                ? Promise.resolve(false)
+                : this.publishNextPromptPermissionModeAfterAdmission({
+                    sessionId,
+                    admittedPermissionMode: content.meta?.permissionMode,
+                    accountLifetime: permissionPublicationAccountLifetime,
+                });
 
             // Read permission mode from session state
             const permissionMode = session.permissionMode || 'default';
@@ -4077,10 +4064,16 @@ class Sync {
             const pendingMessageExistedBeforeSend = pendingMessageBeforeSend != null;
             const preserveExistingPendingProjection = options?.preserveExistingPendingProjection === true
                 && pendingMessageBeforeSend != null;
+            const removeLocallyOwnedPendingMessage = () => {
+                // A server snapshot can take custody while the Socket ACK
+                // is in flight. This send only owns its local projection.
+                const pending = storage.getState().sessionPending[sessionId]?.messages
+                    .find((message) => message.id === localId || message.localId === localId);
+                if (pending?.source === 'server_pending') return;
+                storage.getState().removePendingMessage(sessionId, localId);
+            };
             const removePendingMessageCreatedForSend = () => {
-                if (!pendingMessageExistedBeforeSend) {
-                    storage.getState().removePendingMessage(sessionId, localId);
-                }
+                if (!pendingMessageExistedBeforeSend) removeLocallyOwnedPendingMessage();
             };
 
             const sentFrom = resolveSentFrom();
@@ -4240,7 +4233,7 @@ class Sync {
                             return { localId, persistence: 'pending' as const };
                         }
                         if (!isFallbackSafeSessionUserMessageRpcError(error)) {
-                            storage.getState().removePendingMessage(sessionId, localId);
+                            removeLocallyOwnedPendingMessage();
                             throw error;
                         }
                         if (selectedComposerAttachment) {
@@ -4309,20 +4302,20 @@ class Sync {
                     });
                 } catch (error) {
                     if (exactAccountLifetime) {
-                        storage.getState().removePendingMessage(sessionId, localId);
+                        removeLocallyOwnedPendingMessage();
                         throw error;
                     }
                     if (this.keepPendingMessageForRetryableCommitFailure({ sessionId, localId, error })) {
                         return null;
                     }
-                    storage.getState().removePendingMessage(sessionId, localId);
+                    removeLocallyOwnedPendingMessage();
                     throw error;
                 }
             })();
 
             if (!rawAck) {
                 if (exactAccountLifetime) {
-                    storage.getState().removePendingMessage(sessionId, localId);
+                    removeLocallyOwnedPendingMessage();
                     throw Object.assign(new Error('Exact Session delivery acknowledgement is unavailable'), {
                         code: 'session_exact_transport_unavailable',
                     });
@@ -4334,7 +4327,7 @@ class Sync {
             const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
             if (!parsedAck.success) {
                 if (exactAccountLifetime) {
-                    storage.getState().removePendingMessage(sessionId, localId);
+                    removeLocallyOwnedPendingMessage();
                     throw new Error('Exact Session delivery returned an invalid acknowledgement');
                 }
                 // Treat malformed ACKs as "no ACK": keep the pending bubble and retry later.
@@ -4350,7 +4343,7 @@ class Sync {
             assertExactActiveTransport();
 
             if (ack.ok !== true) {
-                storage.getState().removePendingMessage(sessionId, localId);
+                removeLocallyOwnedPendingMessage();
                 throw new Error(ack.error || 'Message send rejected');
             }
 
@@ -4814,10 +4807,10 @@ class Sync {
             serverId?: string | null;
             accountLifetime?: ServerAccountScopeLifetime;
         }>,
-    ): Promise<void> {
+    ): Promise<PendingResetStartSetResultV1> {
         assertValidPendingMessageId(localId);
-        await this.withPendingQueueOwnerContext(sessionId, async ({ outboxScope, request, serverWireMode, isCurrent }) => {
-            await updatePendingRequestedActionV2({
+        return await this.withPendingQueueOwnerContext(sessionId, async ({ outboxScope, request, serverWireMode, isCurrent }) => {
+            const receipt = await updatePendingRequestedActionV2({
                 sessionId,
                 localId,
                 requestedAction,
@@ -4833,6 +4826,7 @@ class Sync {
                     serverId: outboxScope.serverId,
                 });
             }
+            return receipt;
         }, undefined, options?.serverId, options?.accountLifetime);
     }
 
@@ -4865,8 +4859,9 @@ class Sync {
                 return this.sendMessage(targetSessionId, targetText, targetDisplayText, targetMetaOverrides, options);
             },
             abortSession: (targetSessionId) => { assertScope(); return this.abortSession(targetSessionId); },
-            updatePendingRequestedAction: (targetSessionId, localId, requestedAction, options) => {
-                assertScope(); return this.updatePendingRequestedAction(targetSessionId, localId, requestedAction, options);
+            updatePendingRequestedAction: async (targetSessionId, localId, requestedAction, options) => {
+                assertScope();
+                await this.updatePendingRequestedAction(targetSessionId, localId, requestedAction, options);
             },
             ensureSessionRuntimeForPendingInput: async (options) => {
                 assertScope();
@@ -4916,7 +4911,7 @@ class Sync {
             localId?: string;
             onOutboundHandoff?: (handoff: SubmitSessionOutboundHandoff) => void;
         }>,
-    ): Promise<void> {
+    ): Promise<SubmitSessionUserMessageResult> {
         let state = storage.getState();
         let session = state.sessions[sessionId] ?? null;
         if (!session) {
@@ -4974,6 +4969,7 @@ class Sync {
                 'Failed to submit message',
             );
         }
+        return result;
     }
 
     private async updateSessionMetadataWithRetry(
@@ -4985,13 +4981,21 @@ class Sync {
             sessionExpectation?:
                 SessionMetadataInactiveModelIntentExpectationV1;
             mutationIntent?: 'rename_session';
+            expectedMetadataRevision?: number;
+            onMetadataCommitted?: (revision: number) => void;
             accountLifetime?: Pick<ServerAccountScopeLifetime, 'scope' | 'isCurrent'>;
             authority?: ServerAccountRequestAuthority;
+            shouldContinue?: () => boolean;
         }>,
     ): Promise<void> {
         const exactAccountLifetime = options?.accountLifetime;
         const exactAuthority = options?.authority;
         const assertCurrent = (): void => {
+            if (options?.shouldContinue?.() === false) {
+                throw Object.assign(new Error('Session metadata publication was superseded'), {
+                    code: 'session_metadata_publication_superseded',
+                });
+            }
             if (
                 exactAccountLifetime
                 && (
@@ -5296,6 +5300,11 @@ class Sync {
                 if (!currentSession) {
                     return;
                 }
+                // The tuple's flat compatibility view carries predecessor Agent
+                // aliases. Normalize through the same reader used by hydration.
+                const ownerMetadataView = next.mode === 'owner'
+                    ? MetadataSchema.parse(next.value.metadata)
+                    : null;
                 const {
                     ownerMetadata: _obsoleteOwnerMetadata,
                     ...ordinarySession
@@ -5310,8 +5319,8 @@ class Sync {
                     metadataLayoutVersion: 1,
                     ...(next.mode === 'owner'
                         ? {
-                            ownerMetadataView: next.value.metadata,
-                            composerOptionsInput: projectComposerOptionsInputV1(next.value.metadata),
+                            ownerMetadataView,
+                            composerOptionsInput: projectComposerOptionsInputV1(ownerMetadataView),
                             agentState: next.value.agentState,
                             agentStateVersion: next.agentStateVersion,
                         }
@@ -5323,6 +5332,8 @@ class Sync {
             updater,
             sessionExpectation: options?.sessionExpectation,
             mutationIntent: options?.mutationIntent,
+            expectedMetadataRevision: options?.expectedMetadataRevision,
+            onMetadataCommitted: options?.onMetadataCommitted,
             maxAttempts: typeof options?.maxAttempts === 'number' ? options.maxAttempts : 8,
         });
     }
@@ -5583,6 +5594,7 @@ class Sync {
         permissionModeUpdatedAt: number;
         serverId?: string | null;
         accountLifetime?: ServerAccountScopeLifetime;
+        shouldPublishPermissionIntent?: () => boolean;
     }): Promise<void> {
         await publishPermissionModeToMetadataEngine({
             sessionId: params.sessionId,
@@ -5591,8 +5603,46 @@ class Sync {
             updateSessionMetadataWithRetry: (sessionId, updater) => this.patchSessionMetadataWithRetry(sessionId, updater, {
                 ...(params.serverId ? { serverId: params.serverId } : {}),
                 ...(params.accountLifetime ? { accountLifetime: params.accountLifetime } : {}),
+                ...(params.shouldPublishPermissionIntent ? { shouldContinue: params.shouldPublishPermissionIntent } : {}),
             }),
         });
+    }
+
+    async publishNextPromptPermissionModeAfterAdmission(params: Readonly<{
+        sessionId: string;
+        admittedPermissionMode: unknown;
+        accountLifetime: ServerAccountScopeLifetime | null;
+    }>): Promise<boolean> {
+        const admitted = typeof params.admittedPermissionMode === 'string'
+            ? parsePermissionIntentAlias(params.admittedPermissionMode) : null;
+        const lifetime = params.accountLifetime;
+        if (!admitted || !lifetime || storage.getState().settings.sessionPermissionModeApplyTiming !== 'next_prompt') return false;
+        const shouldPublishPermissionIntent = () => {
+            const latest = storage.getState().sessions[params.sessionId];
+            return lifetime.isCurrent()
+                && areServerAccountScopesEqual(lifetime.scope, getActiveServerAccountScope())
+                && (!latest?.serverId || areServerProfileIdentifiersEquivalent(latest.serverId, lifetime.scope.serverId))
+                && (typeof latest?.permissionMode === 'string' ? parsePermissionIntentAlias(latest.permissionMode) : 'default') === admitted;
+        };
+        if (!shouldPublishPermissionIntent()) return false;
+        const latest = storage.getState().sessions[params.sessionId];
+        const updatedAt = latest?.permissionModeUpdatedAt;
+        const committed = resolvePermissionIntentFromSessionMetadata(latest ? readSessionOwnerMetadataView(latest) : null);
+        if (!(typeof updatedAt === 'number' && Number.isFinite(updatedAt) && updatedAt > (committed?.updatedAt ?? 0))) return false;
+        try {
+            await this.publishSessionPermissionModeToMetadata({
+                sessionId: params.sessionId,
+                permissionMode: admitted,
+                permissionModeUpdatedAt: updatedAt,
+                serverId: lifetime.scope.serverId,
+                accountLifetime: lifetime,
+                shouldPublishPermissionIntent,
+            });
+            return shouldPublishPermissionIntent();
+        } catch (error) {
+            console.warn('[sync] Could not publish the admitted permission intent', error);
+            return false;
+        }
     }
 
     async publishSessionAcpSessionModeOverrideToMetadata(params: {
@@ -6114,6 +6164,20 @@ class Sync {
         }, undefined, options?.serverId);
     }
 
+    async withdrawPendingMessage(
+        sessionId: string,
+        pendingId: string,
+        options?: PendingQueueOwnerOptions & { accountLifetime?: ServerAccountScopeLifetime; targetExecutionRunId?: string },
+    ): Promise<import('@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1').PendingMessageWithdrawOutcomeV1> {
+        return await this.withPendingQueueOwnerContext(sessionId, async ({ outboxScope, request, isCurrent }) => (
+            deletePendingMessageV2({
+                sessionId, pendingId, request, outboxScope, withdraw: true,
+                targetExecutionRunId: options?.targetExecutionRunId,
+                isOutboxScopeCurrent: isCurrent,
+            })
+        ), undefined, options?.serverId, options?.accountLifetime);
+    }
+
     async discardPendingMessage(
         sessionId: string,
         pendingId: string,
@@ -6320,36 +6384,17 @@ class Sync {
         
         if (missingIds.length === 0) return;
 
-        const isNotFoundError = (error: unknown): boolean => {
-            const e = error as any;
-            const status =
-                e?.status ??
-                e?.response?.status ??
-                e?.data?.status ??
-                e?.cause?.status ??
-                null;
-            return status === 404;
-        };
-
-        // Fetch missing users in parallel. Only cache null for explicit "not found" responses.
-        // Do not cache null for transient errors; otherwise we permanently treat that user as absent.
+        // The API owns 404-to-null normalization. Other failures must reach the
+        // Feed retry owner before it publishes a snapshot without these users.
         const results = await Promise.all(
-            missingIds.map(async (id) => {
-                try {
-                    const profile = await getUserProfile(credentials, id, { request, retry: 'none' });
-                    return { id, profile, cache: true };
-                } catch (error) {
-                    if (isNotFoundError(error)) {
-                        return { id, profile: null as UserProfile | null, cache: true };
-                    }
-                    return { id, profile: undefined as unknown as UserProfile | null, cache: false };
-                }
-            }),
+            missingIds.map(async (id) => ({
+                id,
+                profile: await getUserProfile(credentials, id, { request, retry: 'none' }),
+            })),
         );
 
         const usersMap: Record<string, UserProfile | null> = {};
         for (const r of results) {
-            if (!r.cache) continue;
             usersMap[r.id] = r.profile;
         }
 
@@ -6387,7 +6432,8 @@ class Sync {
     }
 
     private fetchSessions = async (options?: FetchSessionsOptions) => {
-        if (!this.credentials) return;
+        const credentials = this.credentials;
+        if (!credentials) return;
         const appliedTransportTarget = this.getAppliedTransportTarget();
         if (!appliedTransportTarget) return;
         const serverScopeGeneration = this.serverScopeGeneration;
@@ -6416,6 +6462,7 @@ class Sync {
             serverScopeGeneration,
             snapshotGeneration,
             appliedTransportTarget,
+            credentials,
         ).catch((error) => {
             this.publishActiveSessionListObservation(this.socketStatus === 'disconnected' || this.socketStatus === 'error'
                 ? 'offline'
@@ -6471,6 +6518,7 @@ class Sync {
         serverScopeGeneration: number,
         snapshotGeneration: number,
         appliedTransportTarget: SyncServerTarget,
+        credentials: AuthCredentials,
     ) => {
         const shouldContinue = () => (
             this.serverScopeGeneration === serverScopeGeneration
@@ -6500,7 +6548,7 @@ class Sync {
         const upgradeLifetime = !isAppend && !this.embedSessionScope
             ? captureActiveServerAccountScopeLifetime()
             : null;
-        const upgradeCredentials = this.credentials;
+        const upgradeCredentials = credentials;
         const upgradeDiscovery = upgradeLifetime && upgradeCredentials && shouldContinue() ? (async () => {
             const isCurrent = () => upgradeLifetime.isCurrent() && shouldContinue();
             try {
@@ -6534,7 +6582,7 @@ class Sync {
             : false;
         const organizationSnapshotRefresh = !isAppend && activeServerId
             ? fetchAndApplySessionOrganizationSnapshot({
-                credentials: this.credentials,
+                credentials,
                 serverId: activeServerId,
                 serverUrl: appliedTransportTarget.serverUrl,
                 requestAtEndpoint: sessionRequest,
@@ -6542,13 +6590,13 @@ class Sync {
                 shouldContinue,
             })
             : null;
-        if (organizationSnapshotRefresh) {
-            if (hasLastKnownOrganizationSnapshot) {
-                void organizationSnapshotRefresh.catch(() => undefined);
-            } else {
-                await organizationSnapshotRefresh.catch(() => undefined);
-            }
-        }
+        // Attach failure handling immediately while the Session read overlaps
+        // this request. The containing retry attempt still owns both outcomes.
+        const organizationSnapshotOutcome = organizationSnapshotRefresh?.then(
+            () => ({ ok: true as const }),
+            (error: unknown) => ({ ok: false as const, error }),
+        );
+        if (!hasLastKnownOrganizationSnapshot) await organizationSnapshotOutcome;
         const organizationPinnedSessionIds = isAppend
             ? []
             : resolveOrganizationPinnedSessionIdsForServer(storage.getState(), activeServerId);
@@ -6567,7 +6615,7 @@ class Sync {
             sessionListMaxPages: 1,
             includeActiveSessionRows: !isAppend,
             includeSessionListAttentionRows: !isAppend || continuation?.kind === 'attention',
-            credentials: this.credentials,
+            credentials,
             encryption: this.encryption,
             sessionDataKeys: this.sessionDataKeys,
             sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes,
@@ -6623,6 +6671,8 @@ class Sync {
             },
             log,
         });
+        const organizationOutcome = await organizationSnapshotOutcome;
+        if (shouldContinue() && organizationOutcome?.ok === false) throw organizationOutcome.error;
         // A canceled acquisition applied no rows, so it must not advance this
         // Home's frontier either — otherwise the cursor moves past a page that
         // was never stored and no later refresh recovers it. Same guard the
@@ -7160,6 +7210,12 @@ class Sync {
                   const forceSessionSystemRecordRefresh = reason === 'socket-reconnect'
                       || reason === 'server-reachable'
                       || reason === 'manual';
+                  if (forceSessionSystemRecordRefresh || reason === 'app-foreground') {
+                      // A failed mode read leaves mounted subscribers closed until
+                      // the existing cache refresh signal wakes them. Foreground
+                      // also recovers intentional disconnects without a reconnect.
+                      invalidateAccountEncryptionModeCache();
+                  }
                   const sessionSystemRecordRefreshScope = getActiveServerAccountScope();
                   for (const repository of this.sessionSystemRecordRepositories.values()) {
                       repository.refreshObserved(
@@ -7303,27 +7359,19 @@ class Sync {
               await syncUnit.awaitQueue({ timeoutMs });
           };
 
-          // Bootstrap concurrency is slightly higher to reduce time-to-first-render.
-          const bootstrapConcurrencyLimit = this.syncTuning.bootstrapConcurrencyLimit;
-
-          // Phase 1: load settings first. Session bootstrap depends on settings for pinned
-          // and durable-attention rows, so fetching sessions concurrently can omit rows
-          // that must be visible before the user scrolls.
-          await invalidateBounded(this.settingsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs);
-
-          // Phase 2: load core UI state and every projection consumed immediately after readiness.
-          await runTasksWithLimit(
-              [
-                  () => invalidateBounded(this.profileSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-                  () => invalidateBounded(this.accountPetsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-                  () => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-                  () => invalidateBounded(this.machinesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-                  () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-                  () => invalidateBounded(this.pluginAvailabilitySync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-                  () => invalidateBounded(this.purchasesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-              ],
-              bootstrapConcurrencyLimit
-          );
+          // Settings determines pinned and durable-attention Session rows, but the
+          // other core projections do not depend on it. Their snapshot attempts
+          // already share snapshotSyncAttemptLimiter's incumbent admission budget.
+          const settingsReady = invalidateBounded(this.settingsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs);
+          await Promise.all([
+              settingsReady.then(() => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs)),
+              invalidateBounded(this.profileSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              invalidateBounded(this.accountPetsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              invalidateBounded(this.machinesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              invalidateBounded(this.pluginAvailabilitySync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              invalidateBounded(this.purchasesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+          ]);
 
           await this.refreshSessionDraftRepositoryForSync();
 
@@ -7465,7 +7513,10 @@ class Sync {
             sessionExpectation?:
                 SessionMetadataInactiveModelIntentExpectationV1;
             mutationIntent?: 'rename_session';
+            expectedMetadataRevision?: number;
+            onMetadataCommitted?: (revision: number) => void;
             accountLifetime?: Pick<ServerAccountScopeLifetime, 'scope' | 'isCurrent'>;
+            shouldContinue?: () => boolean;
         }>,
     ): Promise<void> => {
         if (!options?.accountLifetime) {
@@ -7711,6 +7762,33 @@ class Sync {
         }
     }
 
+    /** Opens exactly one saved Event for its active editor; Account key/currentness stays Sync-owned. */
+    public async getAutomationPluginEventEditSeed(automationId: string, triggerId: string): Promise<PluginEventAutomationEditSeed | null> {
+        const credentials = this.credentials;
+        if (!credentials) throw new Error('Not authenticated');
+        const { requestContext, shouldContinue } = this.prepareAppliedAutomationExecution();
+        const definition = await this.readAndUpsertAutomationDefinition(automationId, requestContext, shouldContinue);
+        if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+        let accountCurrentness: Awaited<ReturnType<typeof fetchAccountEncryptionCurrentness>>;
+        try {
+            accountCurrentness = await fetchAccountEncryptionCurrentness(credentials, {
+                request: (path, init) => requestContext.request(path, init, { includeAuth: false }),
+            });
+        } catch {
+            if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+            return null;
+        }
+        if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+        const material = resolveAutomationRunDetailAccountMaterial({ credentials, accountCurrentness });
+        if (material.kind !== 'available') return null;
+        const seed = readPluginEventAutomationEditSeed(definition, triggerId, {
+            mode: accountCurrentness.mode,
+            ...(material.material ? { material: material.material } : {}),
+        });
+        if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+        return seed;
+    }
+
     private async readAndUpsertAutomationDefinition(
         automationId: string,
         requestContext: AutomationRequestContext,
@@ -7778,28 +7856,6 @@ class Sync {
     }
 
     /**
-     * Admits one occurrence and returns the server's whole receipt.
-     *
-     * The bounded Automation Run cache still receives the exact Run body, and
-     * the declared workflow correspondence travels back to the caller so it can
-     * open that exact managed Run. Nothing here infers the correspondence.
-     */
-    public async runAutomationNow(
-        automationId: string,
-    ): Promise<AutomationRunNowAdmission> {
-        if (!this.credentials) {
-            throw new Error('Not authenticated');
-        }
-        const { requestContext, shouldContinue } = this.prepareAppliedAutomationExecution();
-        const admitted = await runAutomationDefinitionNow(this.credentials, automationId, requestContext);
-        if (!shouldContinue()) {
-            throw new Error('Automation server-account scope changed');
-        }
-        storage.getState().upsertAutomationRun(admitted.run);
-        return admitted;
-    }
-
-    /**
      * Opens one direct Run detail for its route only. The exact Account
      * currentness witness and key proof stay on the Sync owner; the resulting
      * private projection is never copied into the bounded Automation Run cache.
@@ -7813,44 +7869,66 @@ class Sync {
             throw new Error('Not authenticated');
         }
         const { requestContext, shouldContinue } = this.prepareAppliedAutomationExecution();
-        const detail = await getAutomationRunDetail(credentials, automationId, runId, requestContext);
-        if (!shouldContinue()) {
-            throw new Error('Automation server-account scope changed');
-        }
-
-        let accountCurrentness: Awaited<ReturnType<typeof fetchAccountEncryptionCurrentness>>;
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const serverId = this.getAppliedTransportTarget()?.serverId;
+        const account = serverId ? await captureLazyActionAccountContext(serverId).catch(() => null) : null;
         try {
-            accountCurrentness = await fetchAccountEncryptionCurrentness(credentials, {
-                request: (path, init) => requestContext.request(path, init, { includeAuth: false }),
-            });
-        } catch {
+            if (!shouldContinue()) throw new Error('Automation server-account scope changed');
+            const detail = await getAutomationRunDetail(credentials, automationId, runId, requestContext);
             if (!shouldContinue()) {
                 throw new Error('Automation server-account scope changed');
             }
-            return {
-                detail,
-                privateContent: createAutomationRunDetailPrivateContentCurrentnessUnavailable(),
-            };
-        }
-        if (!shouldContinue()) {
-            throw new Error('Automation server-account scope changed');
-        }
 
-        const material = resolveAutomationRunDetailAccountMaterial({
-            credentials,
-            accountCurrentness,
-        });
-        const privateContent = inspectAutomationRunDetailPrivateContent({
-            detail,
-            accountCurrentness,
-            ...(material.kind === 'available' && material.material
-                ? { material: material.material }
-                : {}),
-        });
-        if (!shouldContinue()) {
-            throw new Error('Automation server-account scope changed');
-        }
-        return { detail, privateContent };
+            let accountCurrentness: Awaited<ReturnType<typeof fetchAccountEncryptionCurrentness>>;
+            try {
+                accountCurrentness = await fetchAccountEncryptionCurrentness(credentials, {
+                    request: (path, init) => requestContext.request(path, init, { includeAuth: false }),
+                });
+            } catch {
+                if (!shouldContinue()) {
+                    throw new Error('Automation server-account scope changed');
+                }
+                return {
+                    detail,
+                    privateContent: createAutomationRunDetailPrivateContentCurrentnessUnavailable(),
+                };
+            }
+            if (!shouldContinue()) {
+                throw new Error('Automation server-account scope changed');
+            }
+
+            const material = resolveAutomationRunDetailAccountMaterial({
+                credentials,
+                accountCurrentness,
+            });
+            let workflowResult: Parameters<typeof inspectAutomationRunDetailPrivateContent>[0]['workflowResult'];
+            if (detail.workflowRun && detail.resultEnvelope !== null && account && account.credentials.token === credentials.token) {
+                account.assertCurrent();
+                const [{ createUiWorkflowAction }, { WorkflowRunGetResultV1Schema }] = await Promise.all([
+                    import('@/sync/ops/actions/workflowActionDeps'),
+                    import('@happier-dev/protocol/workflows/actionsV1'),
+                ]);
+                const opened = await createUiWorkflowAction({ account })({ actionId: 'workflow.run.get',
+                    input: { runId: detail.workflowRun.workflowRunId },
+                    context: { surface: 'ui', authority: 'present_user', serverId: account.serverId, runtimeAccountId: account.accountId },
+                }).catch(() => null);
+                account.assertCurrent();
+                const parsed = WorkflowRunGetResultV1Schema.safeParse(opened);
+                if (parsed.success) workflowResult = { accountId: account.accountId, detail: parsed.data };
+            }
+            const privateContent = inspectAutomationRunDetailPrivateContent({
+                detail,
+                accountCurrentness,
+                ...(material.kind === 'available' && material.material
+                    ? { material: material.material }
+                    : {}),
+                ...(workflowResult ? { workflowResult } : {}),
+            });
+            if (!shouldContinue()) {
+                throw new Error('Automation server-account scope changed');
+            }
+            return { detail, privateContent };
+        } finally { account?.dispose(); }
     }
 
     /** Cancellation updates the one incumbent bounded Run cache when its scope remains current. */
@@ -7897,7 +7975,7 @@ class Sync {
         return run;
     }
 
-    public getCredentials() {
+    public getCredentials(): AuthCredentials | null {
         return this.credentials;
     }
 
@@ -7965,7 +8043,7 @@ class Sync {
         return this.withArtifactReadAuthority(signal, params => fetchArtifactBinaryFromApi({ ...params, artifactId, reference }));
     };
 
-    public fetchArtifactHtmlPreview = async (artifactId: string, signal?: AbortSignal): Promise<string> => {
+    public fetchArtifactHtmlPreview = async (artifactId: string, signal?: AbortSignal): Promise<NonNullable<ArtifactViewRead['htmlPreview']>> => {
         return this.withArtifactReadAuthority(signal, params => fetchArtifactHtmlPreviewFromApi({ ...params, artifactId }));
     };
 
@@ -8006,31 +8084,6 @@ class Sync {
         });
     }
 
-    public async updateArtifact(
-        artifactId: string, 
-        title: string | null, 
-        body: ArtifactBodyInput,
-        sessions?: string[],
-        draft?: boolean
-    ): Promise<void> {
-        if (!this.credentials) {
-            throw new Error('Not authenticated');
-        }
-
-        await updateArtifactViaApi({
-            credentials: this.credentials,
-            artifactId,
-            title,
-            body,
-            sessions,
-            draft,
-            encryption: this.encryption,
-            artifactDataKeys: this.artifactDataKeys,
-            getArtifact: (id) => storage.getState().artifacts[id],
-            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
-        });
-    }
-
     public async updateArtifactWithHeader(
         artifactId: string,
         header: Readonly<Record<string, unknown>>,
@@ -8057,6 +8110,7 @@ class Sync {
 
     private fetchMachines = async () => {
         if (!this.credentials) return;
+        const credentials = this.credentials;
         const appliedTransportTarget = this.getAppliedTransportTarget();
         if (!appliedTransportTarget) return;
         const generation = this.serverScopeGeneration;
@@ -8068,22 +8122,40 @@ class Sync {
         const cachedMachineDisplayEntries = buildMachineDisplayCacheEntriesFromRenderables(storage.getState().machineDisplayById);
 
         await fetchAndApplyMachines({
-            credentials: this.credentials,
+            credentials,
+            readAccountMode: async () => (await fetchAccountEncryptionMode(credentials, { request: this.createAppliedTransportRequest(appliedTransportTarget) })).mode,
             request: this.createAppliedTransportRequest(appliedTransportTarget),
             encryption: this.encryption,
             machineDataKeys: this.machineDataKeys,
-            throwOnError: false,
+            throwOnError: true,
             getExistingMachine: (machineId) => storage.getState().machines[machineId] ?? null,
+            getMachineSnapshot: () => storage.getState().machines,
             cachedMachineDisplayEntries,
             shouldContinue,
-            applyMachineDisplayEntries: (machines) => {
+            applyMachineDisplayEntries: (machines, options) => {
                 if (!shouldContinue()) return;
-                storage.getState().replaceMachineDisplays(machines, { sourceServerId });
+                storage.getState().replaceMachineDisplays(machines, { sourceServerId, replace: options?.replace });
             },
             machineDisplayHydrationConcurrencyLimit: this.syncTuning.machineDisplayHydrationConcurrencyLimit,
             applyMachines: (machines, replace) => {
                 if (!shouldContinue()) return;
                 storage.getState().applyMachines(machines, replace, { sourceServerId });
+                const scope = getActiveServerAccountScope();
+                if (!scope || scope.serverId !== sourceServerId) return;
+                // Role selects an attempt, not permission: the worklist reauthorizes every read
+                // and commit. Custodians and current foreign holders repair Team joins through
+                // the same invalidation lifecycle, including when the custodian is offline.
+                const holders = machines.filter(machine => machine.access?.role === 'manage'
+                    && machine.access.accessState === 'ready' && machine.access.resourceMode === 'e2ee');
+                if (holders.length === 0) return;
+                void import('./api/machines/machineDataKeyEnvelopesApi').then(owner => {
+                    if (!shouldContinue()) return;
+                    for (const machine of holders) {
+                        void owner.prepareMachineDataKeyEnvelopesDetachedForScope({
+                            scope, machineId: machine.id, isCurrent: shouldContinue,
+                        });
+                    }
+                }).catch(() => { /* The next canonical invalidation retries unavailable local loading. */ });
             },
             replace: true,
             sourceServerId,
@@ -8226,6 +8298,22 @@ class Sync {
             };
             const mode = await fetchAccountEncryptionMode(credentials, { request });
             if (!isCurrent()) throw new Error('Authoring memory Account/Home retired');
+            const legacySettings = {
+                read: () => readAccountSettingsBaseline({ request, credentials, encryption, accountMode: mode.mode }),
+                remove: async (key: string, expectedVersion: number) => {
+                    if (!isCurrent()) throw new Error('Authoring memory Account/Home retired');
+                    if (key !== 'recentMachinePaths' && key !== 'lastUsedProfile' && key !== 'lastEngineSelectionsByScopeV1') {
+                        throw new Error('Invalid authoring-memory retirement key');
+                    }
+                    const result = await retireLegacyAuthoringMemoryKey({
+                        credentials, encryption, accountMode: mode.mode, settingsScope: scope,
+                        requestContext: { ...requestContext, request },
+                        key, expectedSettingsVersion: expectedVersion,
+                    });
+                    if (!isCurrent()) throw new Error('Authoring memory Account/Home retired');
+                    return result.status;
+                },
+            };
             const owner = createAuthoringMemorySync({
                 transport: createApiAuthoringMemoryTransport({ request }),
                 cipher: createAuthoringMemoryCipher({ mode: mode.mode,
@@ -8233,6 +8321,14 @@ class Sync {
                         ? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : null,
                     randomBytes: getRandomBytes }),
                 isCurrent,
+                legacySettings,
+                onProjectLastOpenedChanged: () => {
+                    const runtime = this.projectAccountRowsRuntime;
+                    if (runtime) fireAndForget(runtime.then(rows => {
+                        if (isCurrent() && this.projectAccountRowsRuntime === runtime) rows.refreshRecency(
+                            ref => owner.readProjectLastOpened({ serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id }));
+                    }), { tag: 'Sync.projectAccountRows.recency' });
+                },
                 apply: (delta) => {
                     const previous = storage.getState().authoringMemory;
                     storage.getState().applyAuthoringMemory(delta);
@@ -8242,22 +8338,12 @@ class Sync {
                 },
             });
             await owner.bootstrap();
-            await importLegacyAuthoringMemory({ owner, settings: {
-                read: () => readAccountSettingsBaseline({ request, credentials, encryption, accountMode: mode.mode }),
-                remove: async (key, expectedVersion) => {
-                    owner.assertCurrent();
-                    if (key !== 'recentMachinePaths' && key !== 'lastUsedProfile' && key !== 'lastEngineSelectionsByScopeV1') {
-                        throw new Error('Invalid authoring-memory retirement key');
-                    }
-                    const result = await retireLegacyAuthoringMemoryKey({
-                        credentials, encryption, accountMode: mode.mode, settingsScope: scope,
-                        requestContext: { ...requestContext, request },
-                        key, expectedSettingsVersion: expectedVersion,
-                    });
-                    owner.assertCurrent();
-                    return result.status;
-                },
-            } });
+            await importLegacyAuthoringMemory({ owner, settings: legacySettings });
+            const rowsRuntime = this.projectAccountRowsRuntime;
+            if (rowsRuntime) fireAndForget(rowsRuntime.then(rows => {
+                if (isCurrent() && this.projectAccountRowsRuntime === rowsRuntime) rows.refreshRecency(
+                    ref => owner.readProjectLastOpened({ serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id }));
+            }), { tag: 'Sync.projectAccountRows.recency' });
             return owner;
         }).catch((error: unknown) => {
             // Retired Account/Home work is cancellation, including owner-local scope checks.
@@ -8289,16 +8375,82 @@ class Sync {
         // The next access re-reads persisted currentness after the atomic switch.
         // Retiring the runtime also rejects any source-mode response still in flight.
         this.authoringMemoryRuntime = null;
+        this.projectAccountRowsRuntime = null;
     }
+
+    private ensureProjectAccountRowsRuntime(): Promise<ReturnType<typeof createProjectAccountRowsSync>> {
+        if (this.embedSessionScope || isEmbedWindowContext()) throw new Error('Project rows require Account authority');
+        if (this.projectAccountRowsRuntime) return this.projectAccountRowsRuntime;
+        const credentials = this.credentials;
+        const scope = this.pendingSettingsScope;
+        const context = this.createAppliedSettingsRequestContext(scope);
+        const target = this.getAppliedTransportTarget();
+        if (!credentials || !scope || !context || !target) throw new Error('Project Account/Home unavailable');
+        const guard = this.createAppliedTransportScopeGuard(target);
+        storage.getState().activateProjectAccountRowsScope(scope);
+        storage.getState().setProjectAccountRowsStatusForScope(scope, 'loading');
+        const task = Promise.resolve().then(async () => {
+            const isCurrent = () => this.projectAccountRowsRuntime === task && guard()
+                && this.credentials === credentials && areAccountSettingsScopesEqual(this.pendingSettingsScope, scope);
+            const request = async (path: string, init?: RequestInit) => {
+                if (!isCurrent()) throw new StaleServerGenerationError();
+                const response = await context.request(path, { ...init, headers: { ...init?.headers, Authorization: `Bearer ${credentials.token}` } });
+                if (!isCurrent()) throw new StaleServerGenerationError();
+                return response;
+            };
+            const mode = await fetchAccountEncryptionMode(credentials, { request });
+            if (!isCurrent()) throw new StaleServerGenerationError();
+            const owner = createProjectAccountRowsSync({
+                scope, transport: createApiProjectAccountRowsTransport({ request }),
+                cipher: createProjectAccountRowCipherV1({ mode: mode.mode,
+                    material: mode.mode === 'e2ee' && !isTokenOnlyAuthCredentials(credentials)
+                        ? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : null, randomBytes: getRandomBytes }),
+                isCurrent,
+                apply: snapshot => storage.getState().applyProjectAccountRowsForScope(scope, snapshot),
+                // Optional recency is attached by the memory owner when it is available.
+                // Its failure must not stop the independent structural census.
+                writeRecency: async (ref, timestamp) => (await this.ensureAuthoringMemoryRuntime())
+                    .writeProjectLastOpened({ serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id }, timestamp),
+                readLegacyLabel: key => storage.getState().settings.workspaceLabelsV1[key],
+                retireLegacyLabel: async (key, label) => {
+                    const version = storage.getState().settingsVersion;
+                    if (version === null) throw new Error('Legacy workspace label version unavailable');
+                    const result = await this.mutateAccountSettingsOnce({ expectedSettingsScope: scope, expectedSettingsVersion: version,
+                        rebaseOnConflict: true, mutate: raw => {
+                            const labels = raw.workspaceLabelsV1;
+                            if (typeof labels !== 'object' || labels === null || Array.isArray(labels)) return { settings: { ...raw }, value: undefined };
+                            const values = labels as Record<string, unknown>;
+                            return { settings: values[key] !== label ? { ...raw } : { ...raw, workspaceLabelsV1: Object.fromEntries(Object.entries(values).filter(([id]) => id !== key)) }, value: undefined };
+                        } });
+                    if (result.status === 'conflict' || result.status === 'outcomeUnknown') throw new Error('Legacy workspace label retirement unconfirmed');
+                },
+            });
+            await owner.refresh();
+            const memoryRuntime = this.authoringMemoryRuntime;
+            if (memoryRuntime) fireAndForget(memoryRuntime.then(memory => {
+                if (isCurrent() && this.authoringMemoryRuntime === memoryRuntime) owner.refreshRecency(
+                    ref => memory.readProjectLastOpened({ serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id }));
+            }), { tag: 'Sync.projectAccountRows.recency' });
+            return owner;
+        }).catch((error: unknown) => {
+            if (this.projectAccountRowsRuntime === task && guard()) storage.getState().setProjectAccountRowsStatusForScope(scope, 'error');
+            throw error;
+        });
+        this.projectAccountRowsRuntime = task;
+        void task.catch(() => { if (this.projectAccountRowsRuntime === task) this.projectAccountRowsRuntime = null; });
+        return task;
+    }
+
+    public mutateProjectWorkspaceRef = async (mutation: WorkspaceRefAccountMutation, expectedScope: AccountSettingsScope) => {
+        if (!areAccountSettingsScopesEqual(this.pendingSettingsScope, expectedScope)) throw new Error('Project Account/Home changed');
+        return await (await this.ensureProjectAccountRowsRuntime()).mutateRef(mutation);
+    };
 
     private syncSettings = async () => {
         if (!this.credentials) return;
         if (!this.embedSessionScope && !isEmbedWindowContext()) {
-            fireAndForget(this.ensureAuthoringMemoryRuntime().catch((error: unknown) => {
-                if (!(error instanceof StaleServerGenerationError)) throw error;
-                // The failed runtime is cleared by its owner. The next current-generation
-                // settings lifecycle bootstraps it again through this same entry point.
-            }), { tag: 'Sync.authoringMemory.bootstrap' });
+            fireAndForget(this.ensureAuthoringMemoryRuntime(), { tag: 'Sync.authoringMemory.bootstrap' });
+            fireAndForget(this.ensureProjectAccountRowsRuntime(), { tag: 'Sync.projectAccountRows.bootstrap' });
         }
         const settingsScope = this.pendingSettingsScope;
         const requestContext = this.createAppliedSettingsRequestContext(settingsScope);
@@ -8429,6 +8581,7 @@ class Sync {
             content: import('@happier-dev/protocol').AccountSettingsStoredContentEnvelope;
             expectedSettingsVersion: number;
             accountMode: 'plain' | 'e2ee';
+            remoteAlertPolicy?: import('@happier-dev/protocol/account/settings/accountRemoteAlertPolicy').AccountRemoteAlertPolicyV1 | null;
         }>) => Promise<OneShotAccountSettingsPreparedCommitResult>;
     }>): Promise<OneShotAccountSettingsMutationResult<T>> => {
         if (input.signal?.aborted) throw new Error('Account Settings mutation was cancelled before issuance');
@@ -8529,7 +8682,7 @@ class Sync {
 
             if (!response.ok) {
                 log.log(`[fetchNativeUpdate] Request failed: ${response.status}`);
-                return;
+                throw new RetryableServerResponseError(response.status, 'Native update status is unavailable');
             }
 
             const data = await response.json();
@@ -8547,7 +8700,7 @@ class Sync {
             }
         } catch (error) {
             console.error('[fetchNativeUpdate] Error:', error);
-            storage.getState().applyNativeUpdateStatus(null);
+            throw error;
         }
     }
 
@@ -11163,6 +11316,9 @@ class Sync {
               status,
               refreshedByCatchUp: { ...refreshedByCatchUp },
           });
+          const credentials = this.credentials;
+          if (!credentials) return finish('fallback');
+          const request = embedScope?.request ?? this.createAppliedTransportRequest(transportTarget);
 
           const canWriteCursor = (): boolean => {
               if (shouldContinue()) {
@@ -11177,7 +11333,7 @@ class Sync {
 	              && offlineForMs >= this.syncTuning.messageForceSnapshotOfflineMs;
 
           const catchUp = await runSocketReconnectCatchUpViaChanges({
-              credentials: this.credentials,
+              credentials,
               accountId: opts.accountId,
               planContext: {
                   isSessionListMember: (sessionId) => embedScope ? sessionId === embedScope.scope.sessionId : this.isSessionListMemberOnHome(transportTarget.serverId, sessionId),
@@ -11186,8 +11342,8 @@ class Sync {
               changesPageLimit: CHANGES_PAGE_LIMIT,
               maxChangesPagesPerResume: this.syncTuning.changesMaxPagesPerResume,
               forceSnapshotRefresh,
-                fetchChanges: (params) => fetchChanges({ ...params, ...(embedScope ? { request: embedScope.request, sessionId: embedScope.scope.sessionId } : {}) }),
-                fetchCurrentCursor: (params) => fetchCurrentChangesCursor({ ...params, ...(embedScope ? { request: embedScope.request } : {}) }),
+                fetchChanges: (params) => fetchChanges({ ...params, request, ...(embedScope ? { sessionId: embedScope.scope.sessionId } : {}) }),
+                fetchCurrentCursor: (params) => fetchCurrentChangesCursor({ ...params, request }),
                 checkpointCursor: async (cursor, context) => {
                     if (!canWriteCursor()) {
                         return false;
@@ -11283,7 +11439,7 @@ class Sync {
                         scopedPlan.sessionOrganization = { mode: 'none' };
                         scopedPlan.invalidate.sessionFolderAssignments = false;
                         return await applyPlannedChangeActions({
-                            planned: scopedPlan, credentials: this.credentials,
+                            planned: scopedPlan, credentials,
                             isSessionMessagesLoaded: (sid) => storage.getState().sessionMessages[sid]?.isLoaded === true,
                             getSessionMaterializedMaxSeq: (sid) => this.sessionMaterializedMaxSeqById[sid] ?? 0,
                             invalidate: { sessions: () => this.refreshEmbedSessionSnapshot(), sessionRows: () => this.refreshEmbedSessionSnapshot() },
@@ -11297,7 +11453,7 @@ class Sync {
                     const plannedServerId = transportTarget.serverId || sessionRecordChangeScope?.serverId || '';
                     return await applyPlannedChangeActions({
                         planned,
-                        credentials: this.credentials,
+                        credentials,
                         isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
                         shouldCatchUpSessionMessages: (sessionId) =>
                             resolveSessionLiveConsumption(sessionId).isFullContentConsumer,
@@ -11324,6 +11480,7 @@ class Sync {
                                 // second time to the earlier content-free wake.
                                 publishHomeAccountChange(plannedServerId, changedEntityIds, {
                                     sessionListQueryAffects: plannedChangesAffectSessionListQuery(planned),
+                                    profileCatalogAffects: plannedChangesAffectProfileCatalog(planned),
                                 });
                             }
                             publishActivePluginCollectionUiQueryChanges(changes);
@@ -11399,7 +11556,7 @@ class Sync {
                                     throw new Error('Cannot refresh session folder assignments without an active server');
                                 }
                                 await fetchAndApplySessionFolderAssignments({
-                                    credentials: this.credentials,
+                                    credentials,
                                     serverId: plannedServerId,
                                     sessionIds,
                                 });
@@ -11417,7 +11574,7 @@ class Sync {
                                 throw new Error('Session organization AccountChange scope changed before refresh');
                             }
                             await fetchAndApplySessionOrganizationSnapshot({
-                                credentials: this.credentials,
+                                credentials,
                                 serverId: plannedServerId,
                                 serverUrl: serverSnapshot.serverUrl,
                                 shouldContinue,
@@ -11467,6 +11624,11 @@ class Sync {
                             if (!isAppliedTransportCurrent()) throw new Error('Authoring memory transport retired');
                             await (await this.ensureAuthoringMemoryRuntime()).refresh(key);
                             if (!isAppliedTransportCurrent()) throw new Error('Authoring memory transport retired');
+                        },
+                        materializeProjectAccountRow: async () => {
+                            if (!isAppliedTransportCurrent()) throw new Error('Project row transport retired');
+                            await (await this.ensureProjectAccountRowsRuntime()).refresh();
+                            if (!isAppliedTransportCurrent()) throw new Error('Project row transport retired');
                         },
                         materializeSessionDraft: async (address) => {
                             if (
@@ -11561,6 +11723,13 @@ class Sync {
               update,
               encryption: this.encryption,
               credentials: this.credentials ?? null,
+              readAccountMode: async () => {
+                  const credentials = this.credentials;
+                  if (!credentials || !shouldContinue()) throw new Error('machine_target_changed');
+                  const result = await fetchAccountEncryptionMode(credentials, { request: this.createAppliedTransportRequest(appliedTransportTarget) });
+                  if (!shouldContinue() || this.credentials !== credentials) throw new Error('machine_target_changed');
+                  return result.mode;
+              },
               settingsSecretsKey: this.settingsSecretsKey,
               settingsSecretsReadKeys: this.settingsSecretsReadKeys,
               settingsScope: this.pendingSettingsScope,
@@ -11695,6 +11864,20 @@ class Sync {
         const sourceServerId = messageContext.serverId;
         const accountScope = getActiveServerAccountScope();
         const shouldContinue = this.createServerScopeGuard();
+        const actionOperationTransportTarget = this.getAppliedTransportTarget();
+        const actionOperationCredentials = this.credentials;
+        const actionOperationEncryption = this.encryption;
+        const actionOperationAccountLifetime = captureActiveServerAccountScopeCurrentness();
+        const actionOperationCipherLifetime = captureEncryptionGenerationCurrentness(actionOperationEncryption, {
+            accountId: accountScope?.accountId, serverId: sourceServerId,
+        });
+        const actionOperationScopeIsCurrent = () => {
+            return shouldContinue() && this.encryption === actionOperationEncryption
+                && this.credentials === actionOperationCredentials
+                && !!actionOperationTransportTarget && this.isAppliedTransportTargetCurrent(actionOperationTransportTarget)
+                && actionOperationAccountLifetime.isCurrent() && actionOperationCipherLifetime.isCurrent()
+                && !!accountScope && areServerProfileIdentifiersEquivalent(accountScope.serverId, sourceServerId);
+        };
         const getSessionEncryption = this.encryption
             ? this.encryption.getSessionEncryption.bind(this.encryption)
             : (() => null);
@@ -11715,15 +11898,34 @@ class Sync {
                 ephemeralUpdate,
                 { sourceServerId, shouldContinue },
             ),
-            updateActionOperationSnapshot: accountScope && this.encryption
-                ? (ephemeralUpdate) => consumeActionOperationSnapshotPush({
-                    update: ephemeralUpdate,
-                    accountId: accountScope.accountId,
-                    sourceServerId,
-                    openSnapshot: (ciphertext) => this.encryption?.openActionOperationSnapshotRaw(ciphertext) ?? null,
-                    shouldContinue,
-                    onSnapshot: (snapshot) => actionOperationPresentationCoordinator.observe(snapshot),
-                })
+            updateActionOperationSnapshot: accountScope && actionOperationCredentials && actionOperationTransportTarget
+                ? async (ephemeralUpdate) => {
+                    if (!actionOperationScopeIsCurrent()) return;
+                    let mode: 'plain' | 'e2ee';
+                    try {
+                        mode = (await fetchAccountEncryptionMode(actionOperationCredentials, {
+                            request: this.createAppliedTransportRequest(actionOperationTransportTarget),
+                        })).mode;
+                    } catch {
+                        // Unavailable Account mode never admits content by key presence.
+                        return;
+                    }
+                    if (!actionOperationScopeIsCurrent()) return;
+                    await consumeActionOperationSnapshotPush({
+                        update: ephemeralUpdate,
+                        accountId: accountScope.accountId,
+                        accountEncryptionMode: mode,
+                        sourceServerId,
+                        ...(actionOperationEncryption ? {
+                            openSnapshot: (ciphertext: string) => actionOperationEncryption.openActionOperationSnapshotRaw(ciphertext),
+                        } : {}),
+                        readSnapshot: (operationId) => getActionOperation({ operationId,
+                            machineId: ephemeralUpdate.machineId, serverId: sourceServerId,
+                            accountId: accountScope.accountId, requireCurrentDomainFacts: true }),
+                        shouldContinue: actionOperationScopeIsCurrent,
+                        onSnapshot: (snapshot) => actionOperationPresentationCoordinator.observe(snapshot),
+                    });
+                }
                 : undefined,
         }), { tag: 'Sync.handleEphemeralUpdate' });
     }

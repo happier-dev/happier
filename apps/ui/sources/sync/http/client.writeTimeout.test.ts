@@ -3,10 +3,13 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { peekServerReachabilityState, subscribeServerReachabilityState } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+
+const accountToken = createAccountTokenForTests('write-account');
 
 beforeEach(async () => {
     await upsertAndActivateServer({ serverUrl: 'https://api.example.test', name: 'Write Home' });
-    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('write-account') });
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: accountToken });
 });
 
 afterEach(async () => {
@@ -22,7 +25,7 @@ afterEach(async () => {
 });
 
 describe('serverFetch write timeout', () => {
-    it('aborts a stalled mutating request with a retryable timeout', async () => {
+    it('aborts a stalled mutating request with a retryable timeout without declaring the Home unreachable', async () => {
         vi.useFakeTimers();
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_WRITE_TIMEOUT_MS = '50';
         setRuntimeFetch(async (input, init) => {
@@ -32,15 +35,16 @@ describe('serverFetch write timeout', () => {
                 }
                 await new Promise<void>((_resolve, reject) => {
                     init?.signal?.addEventListener('abort', () => {
-                        const error = new Error('Aborted');
-                        error.name = 'AbortError';
-                        reject(error);
+                        // Native transports may reject cancellation without an
+                        // AbortError name; the request signal owns that fact.
+                        reject(new TypeError('Transport cancelled'));
                     }, { once: true });
                 });
                 return new Response(null, { status: 200 });
         });
 
         const { serverFetch } = await import('./client');
+        const unsubscribe = subscribeServerReachabilityState('https://api.example.test', () => {}, accountToken);
         const request = serverFetch(
             '/v2/sessions/s1/pending',
             { method: 'POST', body: '{}' },
@@ -52,6 +56,11 @@ describe('serverFetch write timeout', () => {
         });
         await vi.advanceTimersByTimeAsync(60);
         await assertion;
+        try {
+            expect(peekServerReachabilityState('https://api.example.test', accountToken)?.phase).toBe('online');
+        } finally {
+            unsubscribe();
+        }
     });
 
     it('classifies write timeouts as transient and leaves GET reads unbounded', async () => {

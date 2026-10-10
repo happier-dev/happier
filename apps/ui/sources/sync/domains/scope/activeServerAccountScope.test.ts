@@ -23,7 +23,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshot,
 }));
 
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
+vi.mock('@/sync/runtime/orchestration/appliedActiveServerRuntime', () => ({
     getAppliedActiveServerSnapshot: () => appliedServerSnapshot,
     isAppliedActiveServerRuntimeAvailable: () => appliedRuntime.available,
 }));

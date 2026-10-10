@@ -5,17 +5,14 @@ import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
-import { createEndpointSupervisedRequest } from '@/sync/runtime/connectivity/createEndpointSupervisedRequest';
-import { getEndpointSupervisorForServer } from '@/sync/runtime/connectivity/endpointSupervisorPool';
+import { buildRetryLaterProbeResultFromResponse } from '@/sync/runtime/connectivity/retryLaterProbeResult';
+import { sanitizeEndpointErrorMessage } from '@/sync/runtime/connectivity/sanitizeEndpointErrorMessage';
 import {
-    reportServerUnreachable,
-    ServerReachabilityWaitTimeoutError,
+    peekServerReachabilityScope,
+    reportServerReachabilityProbeResult,
     invalidateServerReachabilitySupervisor,
     waitForServerReachable,
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
-import {
-    readServerReachabilityWaitTimeoutMs,
-} from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { notifyAuthCredentialsInvalidated } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
@@ -42,13 +39,6 @@ export class ServerFetchAbortedForServerSwitchError extends Error {
     constructor() {
         super('Aborted request due to an active server switch');
         this.name = 'ServerFetchAbortedForServerSwitchError';
-    }
-}
-
-export class ServerFetchConnectivityTimeoutError extends Error {
-    constructor() {
-        super('Timed out waiting for server reachability');
-        this.name = 'ServerFetchConnectivityTimeoutError';
     }
 }
 
@@ -527,10 +517,6 @@ async function requestAtEndpoint(
         && !isCrossOrigin
         && !!absoluteRequestUrl
         && !!activeServerUrl;
-    const endpointSupervisor =
-        isSupervisedOrigin
-            ? getEndpointSupervisorForServer({ serverId: context.serverId, serverUrl: context.endpointUrl })
-            : null;
     // A Home carrier is bound to exactly one Home. An absolute cross-origin URL
     // is by definition not that Home, so it keeps the platform transport — which
     // also means a Home bearer can never reach the carrier for another origin
@@ -558,8 +544,8 @@ async function requestAtEndpoint(
                             token: tokenForReachability,
                             ...(homeIdentityId ? { homeIdentityId } : {}),
                             signal: requestController.signal,
-                            timeoutMs: readServerReachabilityWaitTimeoutMs(),
                             acceptAuthFailed: true,
+                            runtimeOrigin: context.runtimeOrigin,
                             homeCarrier,
                         });
                     } catch (error) {
@@ -573,46 +559,45 @@ async function requestAtEndpoint(
                                 throw new ServerFetchAbortedForServerSwitchError();
                             }
                             if (didWriteTimeout) {
-                                reportServerUnreachable(context.endpointUrl, error, tokenForReachability);
                                 throw new ServerFetchWriteTimeoutError();
                             }
                             throw error;
-                        }
-                        if (error instanceof ServerReachabilityWaitTimeoutError) {
-                            throw new ServerFetchConnectivityTimeoutError();
                         }
                         throw error;
                     }
                 }
 
-                if (endpointSupervisor && retryMode !== 'none') {
-                    const supervisedFetch = createEndpointSupervisedRequest({
-                        serverId: context.serverId,
-                        serverUrl: transportOrigin,
-                        token: usedToken,
-                        endpointSupervisor,
-                        ...(homeCarrier ? { homeCarrier } : {}),
-                    });
-                    markIssued();
-                    response = await supervisedFetch(requestUrl, {
-                        ...init,
-                        headers,
-                        signal: requestController.signal,
-                    });
-                } else if (homeCarrier) {
-                    markIssued();
-                    response = await homeCarrier.request(requestUrl, {
-                        ...init,
-                        headers,
-                        signal: requestController.signal,
-                    });
-                } else {
-                    markIssued();
-                    response = await runtimeFetch(requestUrl, {
-                        ...init,
-                        headers,
-                        signal: requestController.signal,
-                    });
+                // Request admission and evidence use the actual bearer, not the
+                // settings facade's potentially newer credential binding.
+                const probeReportScope = isSupervisedOrigin
+                    ? peekServerReachabilityScope(context.endpointUrl, usedToken)
+                    : null;
+                markIssued();
+                const request = { ...init, headers, signal: requestController.signal };
+                try {
+                    response = homeCarrier
+                        ? await homeCarrier.request(requestUrl, request)
+                        : await runtimeFetch(requestUrl, request);
+                } catch (error) {
+                    if (probeReportScope && !requestController.signal.aborted
+                        && !(error instanceof Error && error.name === 'AbortError')) {
+                        const errorMessage = sanitizeEndpointErrorMessage(error) ?? 'Network request failed';
+                        reportServerReachabilityProbeResult(context.endpointUrl, {
+                            status: 'server_unreachable', errorMessage,
+                        }, probeReportScope, usedToken);
+                    }
+                    throw error;
+                }
+                if (probeReportScope && retryMode !== 'none') {
+                    if (usedToken && response.status === 401) {
+                        reportServerReachabilityProbeResult(context.endpointUrl, {
+                            status: 'auth_failed', statusCode: 401, errorMessage: 'HTTP 401',
+                        }, probeReportScope, usedToken);
+                    } else if (response.status >= 500) {
+                        reportServerReachabilityProbeResult(context.endpointUrl,
+                            buildRetryLaterProbeResultFromResponse(response, `HTTP ${response.status}`),
+                            probeReportScope, usedToken);
+                    }
                 }
             } catch (error) {
                 maybeLogRuntimeFetchFailure({
@@ -632,18 +617,11 @@ async function requestAtEndpoint(
                         throw new ServerFetchAbortedForServerSwitchError();
                     }
                     if (didWriteTimeout) {
-                    reportServerUnreachable(context.endpointUrl, error, usedToken);
                         throw new ServerFetchWriteTimeoutError();
                     }
                     // Caller aborts should not poison reachability state.
                     throw error;
                 }
-                if (error instanceof ServerFetchConnectivityTimeoutError) {
-                    // Reachability wait timeouts already represent a "paused/offline" state; do not report an extra
-                    // transport failure which can reset backoff scheduling.
-                    throw error;
-                }
-                reportServerUnreachable(context.endpointUrl, error, usedToken);
                 throw error;
             }
 

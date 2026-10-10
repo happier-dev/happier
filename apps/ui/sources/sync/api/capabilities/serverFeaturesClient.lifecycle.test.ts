@@ -1,14 +1,23 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
+import { renderHook } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { abortServerFetches } from '@/sync/http/client';
 import { resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import {
+    useServerFeaturesMainSelectionSnapshot,
+    useServerFeaturesRuntimeSnapshot,
+    useServerFeaturesSnapshotForServerId,
+} from '@/sync/domains/features/featureDecisionRuntime';
+import {
     getCachedServerFeaturesSnapshot,
     getServerFeaturesSnapshot,
     resetServerFeaturesClientForTests,
+    subscribeServerFeaturesSnapshot,
+    getServerFeaturesSnapshotRetryDelayMs,
 } from './serverFeaturesClient';
 
 vi.mock('react-native', async () => {
@@ -23,10 +32,87 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
 }));
 
 afterEach(async () => {
+    vi.useRealTimers();
     resetServerFeaturesClientForTests();
     resetServerProfilesRuntimeForTests();
     await resetServerReachabilitySupervisors();
     boundary.fetch.mockReset();
+});
+
+it.each(['runtime', 'explicit'] as const)('releases the %s observer retry when it unmounts after a failed first observation', async (scope) => {
+    const home = await upsertAndActivateServer({ serverUrl: 'https://feature-retry-cleanup.example.test' });
+    boundary.fetch.mockImplementation(async (url) => String(url).endsWith('/v1/features')
+        ? new Response(null, { status: 503 })
+        : Response.json({ ok: true }));
+    vi.useFakeTimers();
+    const useSnapshot = scope === 'runtime'
+        ? useServerFeaturesRuntimeSnapshot
+        : () => useServerFeaturesSnapshotForServerId(home.id);
+    const hook = await renderHook(useSnapshot, { flushOptions: { cycles: 1, turns: 0 } });
+    try {
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(hook.getCurrent()).toMatchObject({ status: 'error', reason: 'response_status', httpStatus: 503 });
+        expect(vi.getTimerCount()).toBe(1);
+    } finally {
+        await hook.unmount();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+});
+
+it('keeps the main-selection snapshot and render count stable across an identical retry', async () => {
+    const home = await upsertAndActivateServer({ serverUrl: 'https://feature-retry-stability.example.test' });
+    boundary.fetch.mockImplementation(async (url) => String(url).endsWith('/v1/features')
+        ? new Response(null, { status: 503 })
+        : Response.json({ ok: true }));
+    await getServerFeaturesSnapshot({ serverId: home.id });
+    vi.useFakeTimers();
+    let renders = 0;
+    const hook = await renderHook(() => {
+        renders++;
+        return useServerFeaturesMainSelectionSnapshot([home.id]);
+    }, { flushOptions: { cycles: 1, turns: 0 } });
+    try {
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        const before = hook.getCurrent();
+        const beforeRenders = renders;
+        const beforeRequests = boundary.fetch.mock.calls.filter(([url]) => String(url).endsWith('/v1/features')).length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(30_001); });
+        expect(boundary.fetch.mock.calls.filter(([url]) => String(url).endsWith('/v1/features'))).toHaveLength(beforeRequests + 1);
+        expect(hook.getCurrent()).toBe(before);
+        expect(renders).toBe(beforeRenders);
+    } finally {
+        await hook.unmount();
+    }
+});
+
+it.each(['ready', 'unsupported', 'error'] as const)('retains an identical %s feature observation through a real refresh without notifying subscribers', async (status) => {
+    const home = await upsertAndActivateServer({ serverUrl: 'https://feature-stability.example.test' });
+    boundary.fetch.mockImplementation(async (url) => {
+        if (!String(url).endsWith('/v1/features')) return Response.json({ ok: true });
+        if (status === 'ready') return Response.json(createRootLayoutFeaturesResponse());
+        return new Response(null, { status: status === 'unsupported' ? 404 : 503 });
+    });
+    const first = await getServerFeaturesSnapshot({ serverId: home.id });
+    expect(first.status).toBe(status);
+    let notifications = 0;
+    const unsubscribe = subscribeServerFeaturesSnapshot(() => notifications++);
+    try {
+        const refreshed = await getServerFeaturesSnapshot({ serverId: home.id, force: true });
+        expect(refreshed).toBe(first);
+        expect(getCachedServerFeaturesSnapshot({ serverId: home.id })).toBe(first);
+        expect(notifications).toBe(0);
+        if (status === 'error') {
+            expect(getServerFeaturesSnapshotRetryDelayMs({ serverId: home.id, snapshot: refreshed })).toBeGreaterThan(0);
+        }
+        boundary.fetch.mockImplementation(async (url) => String(url).endsWith('/v1/features')
+            ? new Response(null, { status: status === 'unsupported' ? 503 : 404 })
+            : Response.json({ ok: true }));
+        const changed = await getServerFeaturesSnapshot({ serverId: home.id, force: true });
+        expect(changed).not.toBe(first);
+        expect(notifications).toBe(1);
+    } finally {
+        unsubscribe();
+    }
 });
 
 it('recovers through three same-Home transport cancellations while a cancelled waiter leaves the shared observation alive', async () => {

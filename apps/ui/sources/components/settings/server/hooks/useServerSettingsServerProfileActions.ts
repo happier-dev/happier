@@ -5,8 +5,8 @@ import { t } from '@/text';
 import { resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { buildSettingHref } from '@/components/settings/catalog/settingDeclarations';
-import { homeAdministrationServerSettingsPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
-import { HOME_SERVER_SETTINGS } from '@/components/settings/home/governance/homeServerSettings';
+import { homeAdministrationOverviewPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
+import { HOME_OVERVIEW_SETTINGS } from '@/components/settings/home/governance/homeOverviewSettings';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { retargetPendingTerminalConnectToServerUrl } from '@/sync/domains/pending/retargetPendingTerminalConnectToServerUrl';
@@ -47,8 +47,8 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
 
     const onRenameServer = React.useCallback(async (profile: ServerProfile) => {
         router.push(buildSettingHref(
-            homeAdministrationServerSettingsPath(resolveServerProfileScopeId(profile)),
-            HOME_SERVER_SETTINGS.settings.HAPPIER_HOME_DISPLAY_NAME,
+            homeAdministrationOverviewPath(resolveServerProfileScopeId(profile)),
+            HOME_OVERVIEW_SETTINGS.settings.homeName,
         ) as Href);
     }, [router]);
 

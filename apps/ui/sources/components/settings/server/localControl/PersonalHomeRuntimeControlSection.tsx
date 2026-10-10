@@ -6,7 +6,7 @@ import { isHappierRuntimePathWithinRoot } from '@happier-dev/cli-common/happierR
 import { Modal } from '@/modal';
 import { SystemTaskProgressCard } from '@/components/systemTasks';
 import { resolveSystemTaskStepLabel } from '@/components/systemTasks/resolveSystemTaskStepLabel';
-import type { SystemTaskPromptContinuation, SystemTaskRunner } from '@/components/systemTasks/types';
+import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
@@ -21,8 +21,8 @@ import { resolveHomeMemorySearchReadiness } from '@/sync/domains/memory/useMemor
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import type { SystemTaskPromptEnvelope } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
-import type { CustomModalInjectedProps } from '@/modal';
-import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
+import { createPersonalHomeErasePreviewContinuation } from './personalHomeEraseTaskContinuation';
+import { bindPersonalHomeRelocationTaskContinuation } from './personalHomeRelocationTaskContinuation';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 
 export type PersonalHomeRelocationDestination = Readonly<{
@@ -32,7 +32,7 @@ export type PersonalHomeRelocationDestination = Readonly<{
 }>;
 
 export type PreparedPersonalHomeRelocationTask = Readonly<{
-    spec: SystemTaskSpec;
+    withTaskSpec<T>(run: (spec: SystemTaskSpec, startSpec?: (spec: SystemTaskSpec) => Promise<string>) => Promise<T>): Promise<T>;
     respondToPrompt: (prompt: SystemTaskPromptEnvelope) => Promise<unknown>;
 }>;
 
@@ -44,7 +44,7 @@ export type PersonalHomeRelocationRecovery = Readonly<{
 }>;
 
 export type PersonalHomeRuntimeControlOperations = Readonly<{
-    repairSearch?: () => Promise<void>;
+    repairSearch?: () => Promise<boolean>;
     removeProfile?: () => Promise<void>;
     uninstallRuntime?: () => Promise<void>;
     openDataLocation?: (path: string) => Promise<void>;
@@ -99,69 +99,6 @@ function formatTimestamp(value: string | null): string {
         : formatWithCachedDateTimeFormatter(parsed, getPreferredLanguage(), { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-type PersonalHomeErasePreviewProps = CustomModalInjectedProps & Readonly<{
-    canonicalServerUrl: string;
-    homeServerIdentityId: string | null;
-    paths: readonly string[];
-    estimatedBytes: number | null;
-    onConfirm: () => void;
-    onCancel: () => void;
-}>;
-
-function pathLeaf(path: string): string {
-    return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-}
-
-const PersonalHomeErasePreview = React.memo(function PersonalHomeErasePreview(
-    props: PersonalHomeErasePreviewProps,
-) {
-    const resolve = (confirmed: boolean) => {
-        if (confirmed) props.onConfirm();
-        else props.onCancel();
-        props.onClose();
-    };
-    return <View testID="settings.personalHomeRuntime.erasePreview" style={{ gap: 12 }}>
-        <ItemGroup>
-            <Item testID="settings.personalHomeRuntime.erasePreviewHome" title={t('personalHome.settings.eraseHomeTarget')} subtitle={props.canonicalServerUrl} subtitleLines={0} showChevron={false} mode="info" />
-            <Item testID="settings.personalHomeRuntime.erasePreviewIdentity" title={t('personalHome.settings.identityTitle')} subtitle={props.homeServerIdentityId ?? t('personalHome.settings.identityUnavailable')} subtitleLines={0} showChevron={false} mode="info" />
-            <Item testID="settings.personalHomeRuntime.erasePreviewSize" title={t('personalHome.settings.estimatedSize')} subtitle={formatBytes(props.estimatedBytes)} showChevron={false} mode="info" />
-        </ItemGroup>
-        <ItemGroup title={t('personalHome.settings.eraseDataBody')}>
-            {props.paths.map((path, index) => <Item key={path} testID={`settings.personalHomeRuntime.erasePreviewPath.${index}`} title={pathLeaf(path)} subtitle={path} subtitleLines={0} showChevron={false} mode="info" />)}
-        </ItemGroup>
-        <ItemGroup>
-            <Item testID="settings.personalHomeRuntime.erasePreviewCancel" title={t('common.cancel')} onPress={() => resolve(false)} />
-            <Item testID="settings.personalHomeRuntime.erasePreviewConfirm" title={tLoose('common.delete')} onPress={() => resolve(true)} destructive />
-        </ItemGroup>
-    </View>;
-});
-
-async function confirmPersonalHomeErasePreview(input: Readonly<{
-    canonicalServerUrl: string;
-    homeServerIdentityId: string | null;
-    paths: readonly string[];
-    estimatedBytes: number | null;
-}>): Promise<boolean> {
-    const deferred = createDeferredOnce<boolean>();
-    Modal.show({
-        component: PersonalHomeErasePreview,
-        props: {
-            ...input,
-            onConfirm: () => deferred.resolve(true),
-            onCancel: () => deferred.resolve(false),
-        },
-        onRequestClose: () => deferred.resolve(false),
-        chrome: {
-            kind: 'card',
-            title: t('personalHome.settings.eraseDataTitle'),
-            bodyScroll: 'auto',
-            dimensions: { width: 520, maxHeightRatio: 0.85, size: 'md' },
-            testID: 'settings.personalHomeRuntime.erasePreviewModal',
-        },
-        closeOnBackdrop: true,
-    });
-    return await deferred.promise;
-}
 
 type PersonalHomeDetailRow = Readonly<{
     testID?: string;
@@ -499,42 +436,12 @@ const PersonalHomeRuntimeControlSectionContent = React.memo(function PersonalHom
             );
             return;
         }
-        const promptContinuation: SystemTaskPromptContinuation = async (prompt) => {
-            if (prompt.kind !== 'personal_home.confirm_erase.v1') return undefined;
-            const rawPaths = prompt.data.paths;
-            const paths = Array.isArray(rawPaths)
-                ? rawPaths.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-                : [];
-            const estimatedBytes = typeof prompt.data.estimatedBytes === 'number'
-                && Number.isFinite(prompt.data.estimatedBytes) && prompt.data.estimatedBytes >= 0
-                ? prompt.data.estimatedBytes : null;
-            const canonicalServerUrl = typeof prompt.data.canonicalServerUrl === 'string'
-                ? prompt.data.canonicalServerUrl.trim() : '';
-            const homeServerIdentityId = prompt.data.homeServerIdentityId === null
-                || (typeof prompt.data.homeServerIdentityId === 'string' && prompt.data.homeServerIdentityId.trim().length > 0)
-                ? prompt.data.homeServerIdentityId : undefined;
-            if (!Array.isArray(rawPaths) || paths.length === 0 || paths.length !== rawPaths.length
-                || !canonicalServerUrl || homeServerIdentityId === undefined
-                || prompt.data.previewComplete !== true || prompt.data.previewReason !== null) return { confirmed: false };
-            if (verifiedBackupHomeServerIdentityId !== null
-                && homeServerIdentityId !== verifiedBackupHomeServerIdentityId) return { confirmed: false };
-            if (verifiedBackupPath !== null
-                && paths.some((ownedPath) => isHappierRuntimePathWithinRoot(verifiedBackupPath, ownedPath))) {
-                return { confirmed: false };
-            }
-            const confirmed = await confirmPersonalHomeErasePreview({
-                canonicalServerUrl,
-                homeServerIdentityId,
-                paths,
-                estimatedBytes,
-            });
-            return { confirmed };
-        };
+        const promptContinuation = createPersonalHomeErasePreviewContinuation({ verifiedBackupHomeServerIdentityId, verifiedBackupPath });
         await control.erasePersonalHomeData(promptContinuation);
     }, [control, props.operations]);
 
     const repairSearch = React.useCallback(async () => {
-        await props.operations?.repairSearch?.();
+        if (await props.operations?.repairSearch?.() !== true) return;
         await Modal.alert(
             t('personalHome.settings.repairSearchCompleteTitle'),
             t('personalHome.settings.repairSearchCompleteBody'),
@@ -543,23 +450,13 @@ const PersonalHomeRuntimeControlSectionContent = React.memo(function PersonalHom
 
     const [relocationMenuOpen, setRelocationMenuOpen] = React.useState(false);
     const startRelocationTask = React.useCallback(async (prepared: PreparedPersonalHomeRelocationTask) => {
-        const promptContinuation: SystemTaskPromptContinuation = async (prompt) => {
-            if (prompt.kind !== 'personal_home.publish_relocation_descriptor.v1'
-                && prompt.kind !== 'personal_home.read_relocation_descriptor.v1') return undefined;
-            try {
-                return await prepared.respondToPrompt(prompt);
-            } catch {
-                // Publication/readback ambiguity must flow through the relocation
-                // authority reconciler; never terminate the surviving task.
-                return { descriptor: null };
-            }
-        };
-        await control.startExternalOperation(prepared.spec, { promptContinuation });
+        await prepared.withTaskSpec((spec, startSpec) => control.startExternalOperation(spec, {
+            promptContinuation: bindPersonalHomeRelocationTaskContinuation(prepared.respondToPrompt), startSpec,
+        }));
     }, [control]);
     const relocate = React.useCallback(async (destination: PersonalHomeRelocationDestination) => {
         const relocation = props.operations?.relocation;
         if (!relocation) return;
-        const prepared = await relocation.prepare(destination.id);
         const accepted = await Modal.confirm(
             t('personalHome.settings.relocateConfirmTitle'),
             `${t('personalHome.settings.relocateConfirmBody')}`
@@ -567,6 +464,7 @@ const PersonalHomeRuntimeControlSectionContent = React.memo(function PersonalHom
             { confirmText: t('personalHome.settings.relocateConfirmAction'), destructive: true },
         );
         if (!accepted) return;
+        const prepared = await relocation.prepare(destination.id);
         await startRelocationTask(prepared);
     }, [props.operations?.relocation, startRelocationTask]);
 

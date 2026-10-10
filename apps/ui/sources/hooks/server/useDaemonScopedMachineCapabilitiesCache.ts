@@ -1,10 +1,12 @@
-import { useMachineCliDetectionTarget } from '@/sync/domains/state/storage';
+import * as React from 'react';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { getMachineContributionRegistryProjectionRevision, subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { useMachineCapabilitiesCache, type MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 
-export function resolveDaemonCapabilitiesCacheKeySalt(machine: Readonly<{ daemonStateVersion?: number }> | null | undefined): number {
-    return typeof machine?.daemonStateVersion === 'number' ? machine.daemonStateVersion : 0;
+export function resolveDaemonCapabilitiesCacheKeySalt(machine: Readonly<{ id: string }> | null | undefined, serverId?: string | null): number {
+    return machine ? getMachineContributionRegistryProjectionRevision({ machineId: machine.id, serverId: serverId ?? null }) : 0;
 }
 
 export function useDaemonScopedMachineCapabilitiesCache(params: Readonly<{
@@ -14,28 +16,28 @@ export function useDaemonScopedMachineCapabilitiesCache(params: Readonly<{
     staleMs?: number;
     request: CapabilitiesDetectRequest;
     timeoutMs?: number;
-    /**
-     * Optional override; when omitted, falls back to the machine store's daemonStateVersion.
-     */
-    daemonStateVersion?: number | null;
-}>): { state: MachineCapabilitiesCacheState; refresh: (next?: { request?: CapabilitiesDetectRequest; timeoutMs?: number; bypassCache?: boolean }) => void } {
-    // Subscribe to the narrow, reference-stable CLI-detection projection rather than the whole
-    // machine record: presence heartbeats rewrite `activeAt`/`updatedAt`/`seq` constantly, and a
-    // wide subscription re-renders every consumer (including every machine picker row) for fields
-    // this cache key never reads.
-    const machineTarget = useMachineCliDetectionTarget(params.machineId ?? null);
-    const cacheKeySalt =
-        typeof params.daemonStateVersion === 'number'
-            ? params.daemonStateVersion
-            : resolveDaemonCapabilitiesCacheKeySalt(machineTarget);
+}>): { state: MachineCapabilitiesCacheState; cacheKeySalt: number; refresh: (next?: { request?: CapabilitiesDetectRequest; timeoutMs?: number; bypassCache?: boolean }) => void } {
+    const activeServer = useActiveServerSnapshot(!params.serverId);
+    const serverId = params.serverId?.trim() || activeServer.serverId;
+    const machineId = params.machineId;
+    // Reuse the existing daemon/registry currentness owner. Workspace sync and
+    // local-service publications do not invalidate these capability answers.
+    const subscribe = React.useCallback((listener: () => void) => machineId
+        ? subscribeMachineContributionRegistryProjectionInvalidation({ machineId, serverId }, listener)
+        : () => {}, [machineId, serverId]);
+    const read = React.useCallback(() => machineId
+        ? getMachineContributionRegistryProjectionRevision({ machineId, serverId })
+        : 0, [machineId, serverId]);
+    const cacheKeySalt = React.useSyncExternalStore(subscribe, read, read);
 
-    return useMachineCapabilitiesCache({
+    const cache = useMachineCapabilitiesCache({
         machineId: params.machineId,
-        serverId: params.serverId,
+        serverId,
         cacheKeySalt,
         enabled: params.enabled,
         staleMs: params.staleMs,
         request: params.request,
         timeoutMs: params.timeoutMs,
     });
+    return { ...cache, cacheKeySalt };
 }

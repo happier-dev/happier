@@ -60,12 +60,12 @@ describe('Home rename entry', () => {
 
             expect(profiles.getServerProfileById(addressedHome.id)?.name).toBe('Legacy name');
             expect(profiles.getActiveServerId()).toBe(otherHome.id);
-            const { homeAdministrationServerSettingsPath } = await import('@/components/settings/home/governance/homeAdministrationRoutes');
-            const { HOME_SERVER_SETTINGS } = await import('@/components/settings/home/governance/homeServerSettings');
+            const { homeAdministrationOverviewPath } = await import('@/components/settings/home/governance/homeAdministrationRoutes');
+            const { HOME_OVERVIEW_SETTINGS } = await import('@/components/settings/home/governance/homeOverviewSettings');
             const { buildSettingHref } = await import('@/components/settings/catalog/settingDeclarations');
             expect(routerPush).toHaveBeenCalledWith(buildSettingHref(
-                homeAdministrationServerSettingsPath(profiles.resolveServerProfileScopeId(addressedHome)),
-                HOME_SERVER_SETTINGS.settings.HAPPIER_HOME_DISPLAY_NAME,
+                homeAdministrationOverviewPath(profiles.resolveServerProfileScopeId(addressedHome)),
+                HOME_OVERVIEW_SETTINGS.settings.homeName,
             ));
         } finally {
             localStorage.restore();

@@ -6,6 +6,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
 import { AccessEndpointSettingsSection } from '@/components/settings/server/accessEndpoints/AccessEndpointSettingsSection';
 import type { AccessEndpointRemediationPressPayload } from '@/components/settings/server/accessEndpoints/AccessChannelChoiceCard';
@@ -36,7 +37,7 @@ import {
     relayAccessProviderUiCatalog,
     relayAccessProviderUsesPrerequisitesStep,
 } from './relayAccessUiCatalog';
-import { useRelayAccessControl } from './useRelayAccessControl';
+import { useRelayAccessControl, type RelayAccessControlOptions } from './useRelayAccessControl';
 import { Icon } from '@/components/ui/icons/Icon';
 
 function resolveStatusSubtitle(state: string | null | undefined): string {
@@ -66,7 +67,9 @@ export type RelayAccessControlSectionProps = Readonly<{
     onShareUrlChange?: (shareUrl: string | null) => void;
     serverProfileId?: string | null;
     upstreamUrl?: string | null;
+    remoteHost?: RelayAccessControlOptions['remoteHost'];
     target?: RelayAccessTaskTarget;
+    runWithTarget?: <T>(run: (target: RelayAccessTaskTarget, startSpec?: (spec: SystemTaskSpec) => Promise<string>, admittedUpstreamUrl?: string | null) => Promise<T>) => Promise<T>;
     presentation?: 'settings' | 'wizard';
     onWizardPrimaryChange?: (state: Readonly<{ label: string; disabled: boolean; onPress: (() => void) | (() => Promise<void>) }> | null) => void;
     onRequestAdvance?: () => void;
@@ -106,7 +109,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
         lastErrorMessage,
         refreshStatus,
         snapshot,
-    } = useRelayAccessControl({ runner, upstreamUrl: normalizedUpstreamUrl, target });
+    } = useRelayAccessControl({ runner, upstreamUrl: normalizedUpstreamUrl, target, runWithTarget: props.runWithTarget, remoteHost: props.remoteHost });
 
     const resolvedProviderId = snapshot?.providerId ?? null;
     const resolvedShareUrl = snapshot?.status?.shareUrl ?? null;

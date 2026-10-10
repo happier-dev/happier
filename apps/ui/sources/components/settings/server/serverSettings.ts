@@ -1,4 +1,4 @@
-import { defineSettingsPage, settingsHosts, type SettingsHostPredicate } from '@/components/settings/catalog/settingDeclarations';
+import { defineSettingsPage, settingsHosts, parseSettingScalarValue, type SettingsHostPredicate } from '@/components/settings/catalog/settingDeclarations';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 
 // The setup surface policy is fixed by the build, so like a host fact it decides whether a row exists.
@@ -20,17 +20,22 @@ export const SERVERS_SETTINGS = defineSettingsPage({
         connection: {
             titleKey: 'server.page.connectionTitle',
             settings: {
-                standardOnly: { titleKey: 'personalHome.settings.standardOnlyTitle', descriptionKey: 'personalHome.settings.standardOnlySubtitle' },
+                standardOnly: {
+                    storage: { scope: 'local', kind: 'localOwner', access: 'read_write', allowedValues: [true, false],
+                        read: local => local.homeApplicationCarrierEligibility === 'standard_only',
+                        parse: value => typeof value === 'boolean' ? parseSettingScalarValue(value) : { success: false },
+                        commit: async (_local, value, writeLocal) => {
+                            const { commitHomeApplicationCarrierEligibility } = await import('@/sync/runtime/orchestration/connectionManager');
+                            commitHomeApplicationCarrierEligibility(value === true ? 'standard_only' : 'automatic',
+                                eligibility => writeLocal({ homeApplicationCarrierEligibility: eligibility }));
+                        } } },
             },
         },
         homesView: {
             // Rendered while a Homes group is being edited (page state).
             titleKey: 'server.multiServerView.title',
             settings: {
-                groupPresentation: {
-                    titleKey: 'server.multiServerView.presentationChoice.title',
-                    keywordKeys: ['server.multiServerView.presentationChoice.flat', 'server.multiServerView.presentationChoice.grouped'],
-                },
+                groupPresentation: {},
             },
         },
         relayAccess: {
@@ -39,10 +44,10 @@ export const SERVERS_SETTINGS = defineSettingsPage({
             titleKey: 'settings.relayAccess.title',
             host: localRelayHostAllowed,
             settings: {
-                accessMethod: { titleKey: 'settings.relayAccess.methodTitle', descriptionKey: 'settings.relayAccess.footer' },
-                lanUrl: { titleKey: 'settings.relayAccess.fields.urlLabel' },
-                cloudflareHostname: { titleKey: 'settings.relayAccess.fields.hostnameLabel' },
-                cloudflareToken: { titleKey: 'settings.relayAccess.fields.tokenLabel' },
+                accessMethod: {},
+                lanUrl: {},
+                cloudflareHostname: {},
+                cloudflareToken: {},
             },
         },
     },
@@ -58,10 +63,9 @@ export const HOMES_ADD_SETTINGS = defineSettingsPage({
         add: {
             titleKey: 'addFlows.addHome',
             settings: {
-                addHome: { titleKey: 'addFlows.addHome', keywordKeys: ['server.pageSections.addTitle', 'server.addServerTitle'], host: addHomeAllowed },
+                addHome: { host: addHomeAllowed },
                 createPersonalHome: {
-                    titleKey: 'setupOnboarding.setupNewRelayAction',
-                    descriptionKey: 'setupOnboarding.openSetupWizardSubtitle',
+
                     host: relaySelectionAllowed,
                 },
             },

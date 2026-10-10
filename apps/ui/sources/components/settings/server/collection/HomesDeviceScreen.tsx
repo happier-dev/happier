@@ -28,7 +28,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { findPersonalHomeBootstrapCompletedProfile, resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { resolveKnownLocalRelayUrl } from '@/sync/domains/server/url/resolveKnownLocalRelayUrl';
-import { retryActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
+import { commitHomeApplicationCarrierEligibility } from '@/sync/runtime/orchestration/connectionManager';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -110,10 +110,7 @@ export const HomesDeviceScreen = React.memo(function HomesDeviceScreen() {
                         testID="settings.server.standardOnly.switch"
                         value={homeApplicationCarrierEligibility === 'standard_only'}
                         onValueChange={(enabled) => {
-                            setHomeApplicationCarrierEligibility(enabled ? 'standard_only' : 'automatic');
-                            fireAndForget(retryActiveServerConnection(), {
-                                tag: 'HomesDeviceScreen.homeApplicationCarrierEligibility',
-                            });
+                            commitHomeApplicationCarrierEligibility(enabled ? 'standard_only' : 'automatic', setHomeApplicationCarrierEligibility);
                         }}
                     />}
                 />

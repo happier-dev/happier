@@ -265,6 +265,11 @@ describe('serverReachabilitySupervisorPool (readiness probe)', () => {
         expect(requestedUrls).toEqual(['https://example.test/health']);
     });
 
+    it.each([401, 403])('does not label an authentication-protected /health as an unreachable Home (%i)', async status => {
+        const { observed } = await runProbe({ token: null, respond: () => new Response(null, { status }) });
+        expect(observed.phase).toBe('online');
+    });
+
     it('preserves planned restart reason from proxy maintenance health responses (tokenless)', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);

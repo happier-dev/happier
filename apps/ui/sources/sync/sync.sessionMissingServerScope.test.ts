@@ -4182,7 +4182,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                         resumeWhenAvailable: true,
                     }),
                 }));
-                return Response.json({ didUpdate: true });
+                return Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'enqueue' } });
             }
             if (path === `/v2/sessions/${sessionId}`) {
                 return Response.json({
@@ -4229,7 +4229,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             localId,
             { v: 1, kind: 'enqueue' },
             { resumeWhenAvailable: true },
-        )).resolves.toBeUndefined();
+        )).resolves.toEqual({ didUpdate: true, requestedAction: { v: 1, kind: 'enqueue' } });
 
         expect(requestMock).toHaveBeenCalledWith(
             `/v2/sessions/${sessionId}`,

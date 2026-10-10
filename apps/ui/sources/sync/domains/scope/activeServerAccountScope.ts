@@ -1,7 +1,7 @@
 import {
     getAppliedActiveServerSnapshot,
     isAppliedActiveServerRuntimeAvailable,
-} from '@/sync/runtime/orchestration/connectionManager';
+} from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 

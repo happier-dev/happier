@@ -72,7 +72,7 @@ describe('resolveHomeDisplayName', () => {
         ]) {
             expect(resolveHomeDisplayName(profile({ name, ...moved })), name).toBeNull();
             expect(resolveHomeDisplayLabel(profile({ name, ...moved }), 'home-a'), name)
-                .toBe('server.homeOnHost(host=192.168.5.15:53288)');
+                .toBe('settingsAccount.thisHomeTitle');
         }
         // Words stay names, including single words and names with version dots.
         for (const name of ['Studio', 'devbox', 'Lab v2.1', 'Work Home']) {
@@ -102,17 +102,17 @@ describe('resolveHomeDisplayLabel', () => {
             .toBe('personalHome.settings.defaultHomeLabel');
     });
 
-    it('names an unnamed Home in a sentence with its host as the qualifier, never the raw address', async () => {
+    it('keeps unnamed Home titles human, leaving the address to distinguishing metadata', async () => {
         const { resolveHomeDisplayLabel } = await import('./homeDisplayName');
-        expect(resolveHomeDisplayLabel(profile({}), 'home-a')).toBe('server.homeOnHost(host=127.0.0.1:53288)');
+        expect(resolveHomeDisplayLabel(profile({}), 'home-a')).toBe('settingsAccount.thisHomeTitle');
         expect(resolveHomeDisplayLabel(profile({
             name: 'devbox.internal',
             serverUrl: 'https://devbox.internal/',
-        }), 'home-a')).toBe('server.homeOnHost(host=devbox.internal)');
+        }), 'home-a')).toBe('settingsAccount.thisHomeTitle');
     });
 
-    it('falls back to the id only when there is no address to qualify the Home', async () => {
+    it('keeps a missing Home profile human rather than exposing its internal id', async () => {
         const { resolveHomeDisplayLabel } = await import('./homeDisplayName');
-        expect(resolveHomeDisplayLabel(null, 'home-a')).toBe('home-a');
+        expect(resolveHomeDisplayLabel(null, 'home-a')).toBe('settingsAccount.thisHomeTitle');
     });
 });

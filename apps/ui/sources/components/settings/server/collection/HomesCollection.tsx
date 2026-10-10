@@ -20,8 +20,6 @@ import {
     collectionListStyles,
 } from '@/components/ui/lists/collection/CollectionList';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { isServerProfilePersonalHomeBootstrapCompleted } from '@/sync/domains/server/serverProfiles';
-import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -32,6 +30,7 @@ import {
     HOMES_DEVICE_ROUTE,
     HOMES_GROUP_NEW_ROUTE,
     buildHomeCollection,
+    describeHomeRow,
     homeCollectionHref,
     homeGroupCollectionHref,
     resolveSelectedHomeCollectionKey,
@@ -86,16 +85,7 @@ function openHref(router: ReturnType<typeof useRouter>, href: string, replace: b
     if (result !== true) fireAndForget(result, { tag });
 }
 
-/** A Home's line in the list: where it lives or its address, whether it is in use here, and trouble only when there is some. */
-export function describeHomeRow(row: HomeCollectionRow): string {
-    const facts: string[] = [];
-    if (isServerProfilePersonalHomeBootstrapCompleted(row.profile)) facts.push(t('homesJourneys.livesOnThisComputer'));
-    if (row.current) facts.push(t('addFlows.homesInUse'));
-    if (row.needsAttention || row.summary.kind === 'reconnecting') facts.push(t(row.summary.statusLabelKey));
-    if (facts.length === 0) facts.push(toServerUrlDisplay(row.serverUrl));
-    return facts.join(' · ');
-}
-
+export { describeHomeRow } from './homeCollectionModel';
 /** The collection's "+": add a Home (a draft in the collection) or make a group of Homes. */
 export const AddHomesMenu = React.memo(function AddHomesMenu(props: Readonly<{ replace: boolean }>) {
     const router = useRouter();

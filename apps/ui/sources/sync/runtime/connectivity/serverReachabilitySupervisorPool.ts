@@ -13,11 +13,12 @@ import { probeAuthenticatedServerAuthPingEndpoint } from '@/sync/api/capabilitie
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 import { createNotAuthenticatedError } from './authErrors';
 import { buildRetryLaterProbeResultFromResponse } from './retryLaterProbeResult';
 import { recordFailedHomeReach } from './homeReachFailures';
-import { readServerReachabilityBackgroundRetryMs, readServerReachabilityProbeTimeoutMs } from './serverReachabilityTuning';
+import { readServerReachabilityBackgroundRetryMs } from './serverReachabilityTuning';
 
 export class ServerReachabilityWaitTimeoutError extends Error {
     constructor() {
@@ -110,31 +111,6 @@ function createExternallyDisconnectableTransport(): TransportController {
     };
 }
 
-async function fetchWithTimeout(
-    homeCarrier: HomeCarrier | null,
-    input: string,
-    init: RequestInit,
-    timeoutMs: number,
-): Promise<Response> {
-    const send = async (request: RequestInit): Promise<Response> => (
-        homeCarrier ? await homeCarrier.request(input, request) : await runtimeFetch(input, request)
-    );
-    if (typeof AbortController !== 'function') {
-        return await send(init);
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-        controller.abort();
-    }, Math.max(0, timeoutMs));
-
-    try {
-        return await send({ ...init, signal: controller.signal });
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
 async function probeServerReadiness(params: Readonly<{
     endpoint: string;
     token: string | null;
@@ -156,14 +132,12 @@ async function probeServerReadiness(params: Readonly<{
     // remains the probe for the tokenless case, where no authenticated route can be used.
     if (!params.token) {
         try {
-            const healthResponse = await fetchWithTimeout(
-                homeCarrier,
+            const healthResponse = await (homeCarrier ? homeCarrier.request.bind(homeCarrier) : runtimeFetch)(
                 `${endpoint}/health`,
                 {
                     method: 'GET',
                     headers: { Accept: 'application/json' },
                 },
-                readServerReachabilityProbeTimeoutMs(),
             );
             if (healthResponse.status === 429) {
                 return buildRetryLaterProbeResultFromResponse(healthResponse, `Health check returned ${healthResponse.status}`);
@@ -171,7 +145,10 @@ async function probeServerReadiness(params: Readonly<{
             if (healthResponse.status >= 500) {
                 return buildRetryLaterProbeResultFromResponse(healthResponse, `Health check returned ${healthResponse.status}`);
             }
-            if (!healthResponse.ok) {
+            // A protected health route still answered; without credentials it
+            // cannot establish credential rejection. Public feature admission
+            // separately verifies that this address is a usable Happier Home.
+            if (!healthResponse.ok && healthResponse.status !== 401 && healthResponse.status !== 403) {
                 return {
                     status: 'server_unreachable',
                     errorMessage: `Health check returned ${healthResponse.status}`,
@@ -187,27 +164,11 @@ async function probeServerReadiness(params: Readonly<{
         return { status: 'ready' };
     }
 
-    if (typeof AbortController !== 'function') {
-        return await probeAuthenticatedServerAuthPingEndpoint({
-            endpoint,
-            token: params.token,
-            ...(homeCarrier ? { homeCarrier } : {}),
-        });
-    }
-
-    const controller = new AbortController();
-    const timeoutMs = readServerReachabilityProbeTimeoutMs();
-    const timeout = setTimeout(() => controller.abort(), Math.max(0, timeoutMs));
-    try {
-        return await probeAuthenticatedServerAuthPingEndpoint({
-            endpoint,
-            token: params.token,
-            signal: controller.signal,
-            ...(homeCarrier ? { homeCarrier } : {}),
-        });
-    } finally {
-        clearTimeout(timeout);
-    }
+    return await probeAuthenticatedServerAuthPingEndpoint({
+        endpoint,
+        token: params.token,
+        ...(homeCarrier ? { homeCarrier } : {}),
+    });
 }
 
 type ReachabilitySupervisorEntry = {
@@ -367,13 +328,15 @@ function findEntryForRead(serverUrlRaw: string, token?: string | null): Reachabi
 
 function waitForState(params: Readonly<{
     entry: ReachabilitySupervisorEntry;
+    startup: Promise<void>;
     predicate: (state: ManagedConnectionState) => boolean;
     signal?: AbortSignal;
-    timeoutMs: number;
+    timeoutMs?: number;
+    onState?: (state: ManagedConnectionState) => void;
 }>): Promise<void> {
-    if (params.predicate(params.entry.state)) return Promise.resolve();
-
     return new Promise<void>((resolve, reject) => {
+        let started = false;
+        let settled = false;
         const createAbortError = (): Error => {
             try {
                 // DOMException exists in modern JS runtimes and provides a standard AbortError shape.
@@ -386,32 +349,45 @@ function waitForState(params: Readonly<{
             }
         };
 
-        const timeout = setTimeout(() => {
+        const timeout = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0 ? setTimeout(() => {
             cleanup();
             reject(new ServerReachabilityWaitTimeoutError());
-        }, Math.max(0, params.timeoutMs));
+        }, params.timeoutMs) : null;
 
         const onAbort = () => {
             cleanup();
             reject(createAbortError());
         };
 
-        const unsubscribe = subscribeServerReachabilityState(params.entry.serverUrl, (state) => {
-            if (!params.predicate(state)) return;
+        const observe = (state: ManagedConnectionState) => {
+            if (settled) return;
+            params.onState?.(state);
+            // A previously online transport cannot admit a request while its
+            // replacement is still starting. Cancellation stays independent
+            // of that shared startup, including a pending initial probe.
+            if (!started || !params.predicate(state)) return;
             cleanup();
             resolve();
-        }, params.entry.token);
+        };
+        const unsubscribe = subscribeServerReachabilityState(params.entry.serverUrl, observe, params.entry.token);
 
         const cleanup = () => {
-            clearTimeout(timeout);
+            settled = true;
+            if (timeout !== null) clearTimeout(timeout);
             unsubscribe();
             params.signal?.removeEventListener('abort', onAbort);
         };
 
+        void params.startup.then(() => {
+            started = true;
+            observe(params.entry.state);
+        }, (error: unknown) => {
+            cleanup();
+            reject(error);
+        });
         if (params.signal) {
             if (params.signal.aborted) {
-                cleanup();
-                reject(createAbortError());
+                onAbort();
                 return;
             }
             params.signal.addEventListener('abort', onAbort, { once: true });
@@ -419,7 +395,8 @@ function waitForState(params: Readonly<{
     });
 }
 
-async function waitForNetworkAllowed(params: Readonly<{ signal?: AbortSignal; timeoutMs: number }>): Promise<void> {
+async function waitForNetworkAllowed(params: Readonly<{ signal?: AbortSignal; timeoutMs?: number }>): Promise<void> {
+    throwIfAborted(params.signal);
     if (networkAllowed) return;
 
     await new Promise<void>((resolve, reject) => {
@@ -434,10 +411,10 @@ async function waitForNetworkAllowed(params: Readonly<{ signal?: AbortSignal; ti
             }
         };
 
-        const timeout = setTimeout(() => {
+        const timeout = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0 ? setTimeout(() => {
             cleanup();
             reject(new ServerReachabilityWaitTimeoutError());
-        }, Math.max(0, params.timeoutMs));
+        }, params.timeoutMs) : null;
 
         const onAbort = () => {
             cleanup();
@@ -451,7 +428,7 @@ async function waitForNetworkAllowed(params: Readonly<{ signal?: AbortSignal; ti
         });
 
         const cleanup = () => {
-            clearTimeout(timeout);
+            if (timeout !== null) clearTimeout(timeout);
             unsubscribe();
             params.signal?.removeEventListener('abort', onAbort);
         };
@@ -499,56 +476,41 @@ export async function waitForServerReachable(params: Readonly<{
     token: string | null;
     homeIdentityId?: string;
     signal?: AbortSignal;
-    timeoutMs: number;
+    timeoutMs?: number;
     acceptAuthFailed?: boolean;
+    /** Verified transport origin; admission remains keyed by the stable Home and bearer. */
+    runtimeOrigin?: string;
     /** Semantic carrier for Homes whose canonical URL has no reachable ingress. */
     homeCarrier?: HomeCarrier | null;
 }>): Promise<void> {
     await waitForNetworkAllowed({ signal: params.signal, timeoutMs: params.timeoutMs });
     const entry = getOrCreateEntry(params.serverUrl, params.token);
-    const tokenChanged = entry.token !== params.token;
-    entry.token = params.token;
-    // Keep the probe on the selected carrier when the canonical URL is only a
-    // stable identity (for example an ingress-less browser Home). Optional
-    // preserves existing direct callers that have no carrier context.
-    if ('homeCarrier' in params) {
-        entry.homeCarrier = params.homeCarrier ?? null;
-    }
-
-    // `createManagedConnectionSupervisor.start()` now preserves an already scheduled offline reconnect. Keep the
-    // pool's narrower lifecycle guard so redundant callers do not restart an active supervisor; auth recovery below
-    // still performs an explicit restart only when its token changed.
-    //
-    // Only start when the supervisor has never been started (idle) or when it was explicitly stopped (shutting_down).
-    // If we are stuck in auth_failed and the auth token changed, restart from a fresh initial probe.
-    if (entry.state.phase === 'idle' || entry.state.phase === 'shutting_down') {
-        await entry.supervisor.start();
-    } else if (entry.state.phase === 'auth_failed' && tokenChanged) {
-        await entry.supervisor.stop();
-        await entry.supervisor.start();
-    }
+    // Admission consumes the same transport selection/start operation as socket
+    // owners and leases. Omitted hints preserve selection; explicit direct hints
+    // re-probe instead of borrowing a verdict for the previous transport.
+    const startup = startServerReachabilitySupervisor(params);
     const homeIdentityId = params.homeIdentityId?.trim() || null;
-    try {
-        await waitForState({
-            entry,
-            signal: params.signal,
-            timeoutMs: params.timeoutMs,
-            predicate: (state) => state.phase === 'online' || (params.acceptAuthFailed === true && state.phase === 'auth_failed'),
-        });
-    } catch (error) {
-        if (homeIdentityId && networkAllowed && (typeof navigator === 'undefined' || navigator.onLine !== false)
-            && entry.state.phase === 'offline'
-            && error instanceof ServerReachabilityWaitTimeoutError
-            && !entry.recordedFailuresForOfflineEpisode.has(homeIdentityId)) {
+    await waitForState({
+        entry,
+        startup,
+        signal: params.signal,
+        timeoutMs: params.timeoutMs,
+        predicate: (state) => state.phase === 'online' || (params.acceptAuthFailed === true && state.phase === 'auth_failed'),
+        onState: (state) => {
+            // Foreground reach diagnostics follow an actual canonical outage,
+            // never the duration of a caller's wait or intentional shutdown.
+            if (!homeIdentityId || params.signal?.aborted || !networkAllowed
+                || (typeof navigator !== 'undefined' && navigator.onLine === false)
+                || state.phase !== 'offline'
+                || entry.recordedFailuresForOfflineEpisode.has(homeIdentityId)) return;
             entry.recordedFailuresForOfflineEpisode.add(homeIdentityId);
             try {
                 recordFailedHomeReach(homeIdentityId, Date.now());
             } catch (storageError) {
                 console.warn('[serverReachability] Failed to persist a Home reach failure', storageError);
             }
-        }
-        throw error;
-    }
+        },
+    });
 }
 
 export async function invalidateServerReachabilitySupervisor(params: Readonly<{
@@ -611,6 +573,8 @@ export async function invalidateAllServerReachabilitySupervisors(): Promise<void
 }
 
 export function reportServerUnreachable(serverUrl: string, error: unknown, token?: string | null): void {
+    // A caller's deadline or cancellation is not evidence about the Home.
+    if (error instanceof ServerReachabilityWaitTimeoutError || (error instanceof Error && error.name === 'AbortError')) return;
     const entry = findEntryForRead(serverUrl, token);
     if (!entry) return;
     if (entry.state.phase !== 'online' && entry.state.phase !== 'connecting') {
@@ -637,6 +601,18 @@ export function reportServerRestarting(serverUrl: string, retryAfterMs?: number,
         reason: 'server_restarting',
         errorMessage: 'Server restart in progress',
     }, scope);
+}
+
+/** Forwards operation evidence using the scope captured before its request was issued. */
+export function reportServerReachabilityProbeResult(
+    serverUrl: string,
+    probe: Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>>,
+    scope?: ManagedProbeReportScope,
+    token?: string | null,
+): void {
+    const entry = findEntryForRead(serverUrl, token);
+    if (!entry || !scope) return;
+    entry.supervisor.reportProbeResult?.(probe, scope);
 }
 
 export function reportServerAuthFailed(
@@ -691,12 +667,13 @@ export async function startServerReachabilitySupervisor(params: Readonly<{
         if (runtimeOriginRaw && !canonicalRuntimeOrigin) {
             throw new Error('Invalid server reachability runtime origin');
         }
-        // "No distinct origin" has two spellings among callers: omitting `runtimeOrigin`, and passing
-        // the canonical server URL itself. They describe the same transport, so they must produce the
-        // same stored identity — otherwise alternating callers on one entry read each other as a
-        // transport change and restart the supervisor (and the sync socket mirroring it) per request.
-        const runtimeOrigin = canonicalRuntimeOrigin === entry.serverUrl ? null : canonicalRuntimeOrigin;
-        const homeCarrier = params.homeCarrier ?? null;
+        // Observers do not select transports. Omitted hints preserve the active
+        // owner selection; the socket owner explicitly supplies the canonical
+        // URL/null carrier when returning to direct transport.
+        const runtimeOrigin = 'runtimeOrigin' in params
+            ? (canonicalRuntimeOrigin === entry.serverUrl ? null : canonicalRuntimeOrigin)
+            : entry.runtimeOrigin;
+        const homeCarrier = 'homeCarrier' in params ? params.homeCarrier ?? null : entry.homeCarrier;
         // A replaced carrier is a replaced transport, exactly like a replaced
         // origin: the supervisor must re-probe rather than keep a stale verdict.
         // A carrier is spelled by the EndpointId its transport cryptographically proves, never by

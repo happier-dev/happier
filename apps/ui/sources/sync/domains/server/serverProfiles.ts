@@ -1574,12 +1574,18 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
     const tabId = readTabActiveServerId();
     const tabProfile = findProfileByServerIdentifier(state.servers, tabId);
     const tabExplicit = Boolean(tabProfile);
-    const isSelectionExplicit = tabExplicit || state.activeServerIdIsExplicit === true;
     const selectedId = tabProfile
         ? tabProfile.id
         : resolvePrimaryActiveServerId(state.servers, state.activeServerId);
     const selected = selectedId ? state.servers[selectedId] : null;
     const sameOriginUrl = getWebSameOriginServerUrl();
+    // Navigating to a Home's own web UI names that Home, just as ?server= does.
+    // Static Cloud/Metro and desktop bundle origins are not serving Homes.
+    // This is ephemeral entry context; it does not persist another selection.
+    const servingHomeSelected = sameOriginUrl !== null
+        && comparableUrlKey(sameOriginUrl) === comparableUrlKey(window.location.origin)
+        && comparableUrlKey(sameOriginUrl) === comparableUrlKey(selected?.canonicalServerUrl ?? selected?.serverUrl ?? '');
+    const isSelectionExplicit = tabExplicit || state.activeServerIdIsExplicit === true || servingHomeSelected;
 
     if (selected) {
         const runtimeLease = activeRuntimeOriginLease?.target.serverId === resolveServerProfileScopeId(selected)
