@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { InputHintsSchema, InputPathSchema } from '../inputs/inputFields.js';
@@ -22,9 +23,9 @@ export function projectWidgetDefinitionForSharedPublicationV1(definition: Widget
     return WidgetDefinitionV1Schema.parse(copy);
 }
 /** Who made a definition: the person, their agent, or a trusted plugin acting for the Account. */
-export const WidgetDefinitionAuthorV1Schema = z.object({ kind: z.enum(['person', 'agent', 'plugin']) }).strict();
+export const WidgetDefinitionAuthorV1Schema = lazyZodSchema(() => z.object({ kind: z.enum(['person', 'agent', 'plugin']) }).strict());
 export type WidgetDefinitionAuthorV1 = z.infer<typeof WidgetDefinitionAuthorV1Schema>;
-export const WidgetDefinitionProvenanceV1Schema = z.object({
+export const WidgetDefinitionProvenanceV1Schema = lazyZodSchema(() => z.object({
     authorAccountId: id.optional(),
     /** Written when the definition is made; a definition saved before these facts existed has neither. */
     author: WidgetDefinitionAuthorV1Schema.optional(),
@@ -33,33 +34,33 @@ export const WidgetDefinitionProvenanceV1Schema = z.object({
         z.object({ kind: z.literal('authored') }).strict(),
         z.object({ kind: z.literal('session'), serverId: id, sessionId: id, itemId: id }).strict(),
     ]),
-}).strict();
+}).strict());
 export type WidgetDefinitionProvenanceV1 = z.infer<typeof WidgetDefinitionProvenanceV1Schema>;
 
 const document = z.unknown().superRefine((value, context) => {
     const result = preflightPluginDeclarativeDocumentV1(value);
     if (!result.ok) context.addIssue({ code: 'custom', message: result.message });
 }).pipe(PluginDeclarativeDocumentV1Schema);
-export const WidgetDefinitionBodyV1Schema = z.discriminatedUnion('kind', [
+export const WidgetDefinitionBodyV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('declarative'), document }).strict(),
     z.object({ kind: z.literal('installed'), surface: asProtocolZod(PluginContributionIdentityV1Schema) }).strict(),
-]);
+]));
 export type WidgetDefinitionBodyV1 = z.infer<typeof WidgetDefinitionBodyV1Schema>;
 const shape = {
-    sizeDeclaration: WidgetSizeDeclarationV1Schema,
+    sizeDeclaration: z.lazy(() => WidgetSizeDeclarationV1Schema),
     name: id, description: z.string().optional(), body: WidgetDefinitionBodyV1Schema,
     inputs: InputHintsSchema, inputSchema: PluginJsonSchemaV2Schema,
     sessionInputPath: InputPathSchema.optional(),
     connectedAccountPurposeBindings: z.array(WidgetConnectedAccountPurposeBindingV1Schema).optional(),
 };
-export const WidgetDefinitionDraftV1Schema = z.object(shape).strict();
+export const WidgetDefinitionDraftV1Schema = lazyZodSchema(() => z.object(shape).strict());
 export type WidgetDefinitionDraftV1 = z.infer<typeof WidgetDefinitionDraftV1Schema>;
-export const WidgetDefinitionPatchV1Schema = z.object({ ...shape,
+export const WidgetDefinitionPatchV1Schema = lazyZodSchema(() => z.object({ ...shape,
     description: z.string().nullable().optional(), sessionInputPath: InputPathSchema.nullable().optional(),
     connectedAccountPurposeBindings: z.array(WidgetConnectedAccountPurposeBindingV1Schema).nullable().optional(),
-}).partial().strict();
+}).partial().strict());
 export type WidgetDefinitionPatchV1 = z.infer<typeof WidgetDefinitionPatchV1Schema>;
-export const WidgetDefinitionV1Schema = z.object({ v: z.literal(1), id, ...shape,
+export const WidgetDefinitionV1Schema = lazyZodSchema(() => z.object({ v: z.literal(1), id, ...shape,
     provenance: WidgetDefinitionProvenanceV1Schema,
 }).strict().superRefine((value, context) => {
     if (value.sessionInputPath && !value.inputs.fields.some(field => field.path === value.sessionInputPath)) {
@@ -67,7 +68,7 @@ export const WidgetDefinitionV1Schema = z.object({ v: z.literal(1), id, ...shape
     }
     const paths = value.inputs.fields.map(field => field.path);
     if (new Set(paths).size !== paths.length) context.addIssue({ code: 'custom', path: ['inputs'], message: 'Duplicate input path' });
-});
+}));
 export type WidgetDefinitionV1 = z.infer<typeof WidgetDefinitionV1Schema>;
 export const WidgetDefinitionV1StoredSchema = createStoredReadSchema(WidgetDefinitionV1Schema);
 

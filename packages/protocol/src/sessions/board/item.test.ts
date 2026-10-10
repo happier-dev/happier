@@ -1,9 +1,19 @@
+import { artifactHtmlBundleFromBodyV1 } from '../../artifacts/artifactHtmlV1.js';
 import { describe, expect, it } from 'vitest';
 import { SessionSurfaceItemV1Schema, SessionSurfaceItemV1StoredSchema, isSessionSurfaceItemSourceCompatible } from './item.js';
 import { createSessionSurfaceNoteDocumentV1, readSessionSurfaceNoteTextV1 } from './declarative/note.js';
 
 describe('Session surface items', () => {
   const note = { v: 1, title: '', frame: 'card', height: { mode: 'auto', fallback: 'regular' }, source: { kind: 'declarative', document: { version: 1, root: { kind: 'stack', children: [] } } } };
+  it('normalizes retained Board items at the stored owner and preserves explicit transcript intent', () => {
+    expect(SessionSurfaceItemV1StoredSchema.parse(note)).toMatchObject({ destination: 'board' });
+    expect(SessionSurfaceItemV1StoredSchema.parse({ ...note, destination: 'transcript' })).toMatchObject({ destination: 'transcript' });
+  });
+  it('keeps creation destination fixed through content updates', () => {
+    const transcript = SessionSurfaceItemV1Schema.parse({ ...note, destination: 'transcript' });
+    expect(isSessionSurfaceItemSourceCompatible(transcript, { ...transcript, title: 'Edited' })).toBe(true);
+    expect(isSessionSurfaceItemSourceCompatible(transcript, { ...transcript, destination: 'board' })).toBe(false);
+  });
   it('accepts an explicitly saved blank native note', () => {
     expect(SessionSurfaceItemV1Schema.parse(note)).toEqual(note);
   });
@@ -13,7 +23,7 @@ describe('Session surface items', () => {
     const stored = { ...snapshot, extra: true, height: { ...snapshot.height, extra: true }, source: { ...snapshot.source,
       extra: true, document: { ...snapshot.source.document, extra: true, root: { ...snapshot.source.document.root, extra: true } } },
       snapshot: { ...snapshot.snapshot, extra: true, provenance: [{ label: 'Status', extra: true }] } };
-    expect(SessionSurfaceItemV1StoredSchema.parse(stored)).toEqual(snapshot);
+    expect(SessionSurfaceItemV1StoredSchema.parse(stored)).toEqual({ ...snapshot, destination: 'board' });
     expect(SessionSurfaceItemV1Schema.safeParse(stored).success).toBe(false);
     for (const invalid of [
       { ...stored, height: { mode: 'fixed' } },
@@ -32,7 +42,7 @@ describe('Session surface items', () => {
       definition: { ...instance.definition, extra: true, surface: { ...instance.definition.surface, extra: true } },
       bindings: { connection: { ...instance.bindings.connection, extra: true } },
     } } };
-    expect(SessionSurfaceItemV1StoredSchema.parse(stored)).toEqual(canonical);
+    expect(SessionSurfaceItemV1StoredSchema.parse(stored)).toEqual({ ...canonical, destination: 'board' });
     expect(SessionSurfaceItemV1Schema.safeParse(stored).success).toBe(false);
     expect(SessionSurfaceItemV1StoredSchema.safeParse({ ...stored, source: { kind: 'widget', instance: {
       ...instance, definition: { kind: 'artifact', artifactId: 'private-definition', extra: true },
@@ -110,7 +120,7 @@ describe('Session surface items', () => {
       ...note,
       source: {
         kind: 'hostedHtml',
-        source: { kind: 'html', html: '<main>Hello</main>' },
+        source: artifactHtmlBundleFromBodyV1('<main>Hello</main>'),
         requestedCapabilities: { hostMethods: ['context'] },
       },
     });
@@ -119,7 +129,7 @@ describe('Session surface items', () => {
       ...hosted,
       source: {
         kind: 'hostedHtml',
-        source: { kind: 'html', html: '<main>Changed</main>' },
+        source: artifactHtmlBundleFromBodyV1('<main>Changed</main>'),
         requestedCapabilities: { hostMethods: ['context'] },
       },
     })).toBe(true);

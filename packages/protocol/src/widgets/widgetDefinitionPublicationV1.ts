@@ -12,18 +12,18 @@ export async function prepareWidgetDefinitionPublicationV1(
   deps: Pick<ActionExecutorDeps, 'widgetAccountScope' | 'widgetDefinitionArtifacts'>,
   input: unknown, context: ActionExecutorContext,
 ): Promise<Readonly<{ ok: true; input: unknown }> | ActionExecuteFailure> {
-  const parsed = WidgetInstanceActionInputSchemasV1['widgets.instance.add'].safeParse(input);
+  const parsed = WidgetInstanceActionInputSchemasV1['widgets.item.add'].safeParse(input);
   if (!parsed.success) return failure('invalid_parameters');
   const args = parsed.data;
   if (args.surface.owner.kind !== 'sessionBoard') return { ok: true, input: args };
-  const scopeFailure = admitWidgetActionSurfaceV1(deps, args.surface, context);
+  const scopeFailure = await admitWidgetActionSurfaceV1(deps, args.surface, context);
   if (scopeFailure) return scopeFailure;
   let instance = args.instance;
   if (instance.definition.kind === 'artifact') {
     if (!deps.widgetDefinitionArtifacts) return failure('widget_definition_unavailable');
     try {
       const definition = await deps.widgetDefinitionArtifacts.get(instance.definition.artifactId, context.signal);
-      const retired = admitWidgetActionSurfaceV1(deps, args.surface, context);
+      const retired = await admitWidgetActionSurfaceV1(deps, args.surface, context);
       if (retired) return retired;
       if (!definition) return failure('widget_definition_not_found');
       instance = { ...instance, definition: { kind: 'inline', definition: projectWidgetDefinitionForSharedPublicationV1(definition) } };

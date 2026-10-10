@@ -17,11 +17,13 @@ export async function readWidgetActionSurfaceAdmissionV1(
   try { scope = deps.widgetAccountScope?.() ?? null; }
   catch { return failure('widget_scope_unavailable'); }
   if (!scope) return failure('widget_scope_unavailable');
-  if (scope.serverId !== surface.serverId || context.serverId && context.serverId !== surface.serverId)
+  const contextHomeId = context.serverIdentityId ?? context.serverId;
+  if (scope.serverId !== surface.serverId || contextHomeId && contextHomeId !== surface.serverId)
     return failure('server_target_mismatch');
   if (scope.accountId !== surface.accountId && !(surface.owner.kind === 'project' && surface.artifactId || surface.owner.kind === 'workBoard'))
     return failure('account_target_mismatch');
-  if (surface.owner.kind === 'project' || surface.owner.kind === 'workBoard') {
+  if (surface.owner.kind === 'project' || surface.owner.kind === 'workBoard'
+    || surface.owner.kind === 'pluginArea' || surface.owner.kind === 'corePage') {
     const port = readWidgetActionSurfacePortV1(deps, surface);
     if (!port) return failure('unsupported_widget_surface');
     try {

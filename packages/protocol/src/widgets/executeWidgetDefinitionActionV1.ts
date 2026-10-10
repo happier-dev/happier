@@ -12,7 +12,7 @@ const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorC
  * Who is making a definition, from the host-stamped invocation (never Action input): an agent
  * (its own surface, an MCP client or an admitted Session caller), a trusted plugin, or the person.
  */
-function resolveWidgetDefinitionAuthorV1(context: ActionExecutorContext): WidgetDefinitionAuthorV1 {
+export function resolveWidgetDefinitionAuthorV1(context: ActionExecutorContext): WidgetDefinitionAuthorV1 {
     if (context.surface === 'plugin') return { kind: 'plugin' };
     if (context.surface === 'agent' || context.surface === 'mcp' || context.actionCaller?.kind === 'session') return { kind: 'agent' };
     return { kind: 'person' };
@@ -23,7 +23,7 @@ export async function executeWidgetDefinitionActionV1(deps: WidgetDefinitionActi
     const parsed = WidgetDefinitionActionInputSchemasV1[actionId].safeParse(rawInput);
     if (!parsed.success) return failure('invalid_input');
     const input = parsed.data;
-    const refused = admitWidgetActionSurfaceV1(deps, { ...input.account, owner: { kind: 'home' } }, context);
+    const refused = await admitWidgetActionSurfaceV1(deps, { ...input.account, owner: { kind: 'home' } }, context);
     if (refused) return refused;
     const scope = input.account;
     const port = deps.widgetDefinitionArtifacts;

@@ -15,6 +15,18 @@ const fields = InputHintsSchema.parse({ fields: [
 const valid = () => ({ status: 'valid' as const });
 
 describe('configured widget bindings', () => {
+  it('refuses explicit context bindings for own-value fields in admission and draft projection', () => {
+    const ownFields = [{ ...fields[0]!, contextMode: 'own' as const }];
+    const options = { instance: instance({ 'target.session': { kind: 'context' as const, slot: 'session' } }),
+      fields: ownFields, context: { session: [{ serverId: 'home', sessionId: 'B' }] }, viewerValues: {} };
+    expect(projectWidgetBindingInputV1(options)).toEqual({});
+    expect(resolveWidgetBindingsV1({ ...options, validateValue: valid })).toEqual({ status: 'invalid', fields: [
+      { path: 'target.session', status: 'invalid', reasonCode: 'widget_context_binding_forbidden' },
+    ] });
+    expect(resolveWidgetBindingsV1({ ...options,
+      instance: instance({ 'target.session': { kind: 'value', value: { serverId: 'home', sessionId: 'A' } } }), validateValue: valid,
+    })).toEqual({ status: 'ready', input: { target: { session: { serverId: 'home', sessionId: 'A' } } } });
+  });
   it('reads stored extras canonically while inputs and required identities remain strict', () => {
     const stored = createStoredReadSchema(WidgetInstanceV1Schema);
     const canonical = instance({ target: { kind: 'context', slot: 'session' }, viewer: { kind: 'viewer', purpose: 'checks' },

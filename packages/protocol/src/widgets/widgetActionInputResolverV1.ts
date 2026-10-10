@@ -1,18 +1,47 @@
-import { isSameInputOptionValue, type InputFieldHint, type InputOptionValue } from '../inputs/inputFields.js';
+import { type InputFieldHint, type InputOptionValue } from '../inputs/inputFields.js';
 import { resolveEffectiveInputFields } from '../inputs/inputFieldRuntime.js';
 import { readInputPath } from '../inputs/inputPredicates.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import type { WidgetActionInputResolverV1 } from './actionsV1.js';
 import { resolveConfiguredWidgetInputs, type WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
-import { WidgetInstanceV1Schema, type WidgetBindingResolutionInputV1, type WidgetInputIssueV1 } from './widgetInstanceV1.js';
-import { validateInputTypeValue, type ResolvedInputTypeV1 } from '../inputs/inputTypeRuntime.js';
+import { WidgetInstanceV1Schema, type WidgetBindingResolutionInputV1, type WidgetInputIssueV1, type WidgetInputBindingsV1, type WidgetInstanceV1 } from './widgetInstanceV1.js';
+import { readInputFieldOptionsConstraint, validateInputFieldSchema, validateInputFieldValue, type ResolvedInputTypeV1 } from '../inputs/inputTypeRuntime.js';
 import { hasValidPluginConnectedAccountPurposeBindingsV2 } from '../plugins/actions/v2.js';
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 import { WidgetConnectedAccountPurposeBindingV1Schema } from './widgetConnectedAccountPurposeBindingV1.js';
 import { WidgetSizeDeclarationV1Schema } from './widgetPresentationV1.js';
+import { readWidgetConnectedAccountPurposeV1 } from './widgetViewerPurposeV1.js';
+import type { PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
+import type { PluginProjectedResourceV2 } from '../daemon/contributionRegistryProjection.js';
 
 type Request = Parameters<WidgetActionInputResolverV1['resolve']>[0];
 type Validation = ReturnType<WidgetBindingResolutionInputV1['validateValue']>;
+
+/** Group slots override the surface's slots, but convey values rather than access. */
+export function composeWidgetGroupContextV1(input: Readonly<{
+    providedContext: WidgetBindingResolutionInputV1['context'];
+    groupBindings?: WidgetInputBindingsV1;
+}>): WidgetBindingResolutionInputV1['context'] {
+    if (!input.groupBindings || !Object.keys(input.groupBindings).length) return input.providedContext;
+    return { ...input.providedContext, ...Object.fromEntries(Object.entries(input.groupBindings).map(([slot, binding]) => [slot,
+        binding.kind === 'value' ? [binding.value] : binding.kind === 'context' ? input.providedContext[binding.slot] ?? [] : [],
+    ])) };
+}
+
+/** A following child inherits viewer intent, never a group's private selection. */
+export function inheritWidgetGroupViewerBindingsV1(instance: WidgetInstanceV1, groupBindings: WidgetInputBindingsV1 | undefined, fields: readonly InputFieldHint[]): WidgetInstanceV1 {
+    if (!groupBindings) return instance;
+    let changed = false;
+    const bindings = Object.fromEntries(Object.entries(instance.bindings).map(([path, binding]) => {
+        const field = fields.find(field => field.path === path);
+        if (!field?.connectedAccountOptions || field.contextMode === 'own') return [path, binding];
+        const inherited = binding.kind === 'context' ? groupBindings[binding.slot] : undefined;
+        if (inherited?.kind !== 'viewer') return [path, binding];
+        changed = true;
+        return [path, inherited];
+    }));
+    return changed ? { ...instance, bindings } : instance;
+}
 
 /** Configuration has no viewer value yet; keep every constraint on the saved values. */
 function configurationSchema(schema: PluginJsonSchemaV2, paths: readonly string[]): PluginJsonSchemaV2 {
@@ -51,8 +80,11 @@ function configurationSchema(schema: PluginJsonSchemaV2, paths: readonly string[
     return changed ? projected : schema;
 }
 export type WidgetActionInputResolverPortsV1 = Readonly<{
-    readDescriptor(request: Request): Promise<WidgetInputDescriptorV1 | null>;
+    readDescriptor(request: Request): Promise<(WidgetInputDescriptorV1 & Readonly<{
+        resources?: readonly PluginContributionIdentityV1[]; resourceDeclarations?: readonly PluginProjectedResourceV2[];
+    }>) | null>;
     readContext(request: Request): Promise<WidgetBindingResolutionInputV1['context']>;
+    readGroupBindings?(request: Request): Promise<WidgetInputBindingsV1 | undefined>;
     readViewerValues(request: Request): Promise<Readonly<{ values: WidgetBindingResolutionInputV1['viewerValues']; fields?: readonly WidgetInputIssueV1[] }>>;
     validateValue(field: InputFieldHint, value: JsonValue, request: Request): Promise<Validation>;
     readInputType?(field: InputFieldHint, request: Request): Promise<ResolvedInputTypeV1 | null>;
@@ -62,19 +94,26 @@ export type WidgetActionInputResolverPortsV1 = Readonly<{
 
 /** Host ports supply current facts; neutral binding/schema/options rules have one owner. */
 export function createWidgetActionInputResolverV1(ports: WidgetActionInputResolverPortsV1): WidgetActionInputResolverV1 {
-    return { readSizeDeclaration: async request => {
+    return { readSizeDeclaration: async initialRequest => {
+        const request = { ...initialRequest };
         request.signal?.throwIfAborted();
         const descriptor = await ports.readDescriptor(request);
         request.signal?.throwIfAborted();
         const declaration = WidgetSizeDeclarationV1Schema.safeParse(descriptor?.sizeDeclaration);
         return declaration.success ? declaration.data : null;
-    }, resolve: async request => {
+    }, resolve: async initialRequest => {
+        const request = { ...initialRequest };
+        request.signal?.throwIfAborted();
+        const groupBindings = request.groupBindings ?? await ports.readGroupBindings?.(request);
+        request.groupBindings = groupBindings;
         request.signal?.throwIfAborted();
         const descriptor = await ports.readDescriptor(request);
         request.signal?.throwIfAborted();
         if (!descriptor) return { status: 'unavailable', fields: [{ path: 'input', status: 'unavailable', reasonCode: 'widget_type_unavailable' }] };
+        request.instance = inheritWidgetGroupViewerBindingsV1(request.instance, groupBindings, descriptor.inputs?.fields ?? []);
         const savedInstance = WidgetInstanceV1Schema.parse(request.instance);
-        const [providedContext, currentViewer] = await Promise.all([ports.readContext(request), ports.readViewerValues(request)]);
+        const [surfaceContext, currentViewer] = await Promise.all([ports.readContext(request), ports.readViewerValues(request)]);
+        const providedContext = composeWidgetGroupContextV1({ providedContext: surfaceContext, groupBindings });
         request.signal?.throwIfAborted();
         const viewerPaths = request.admission === 'configuration'
             ? Object.entries(savedInstance.bindings).filter(([, binding]) => binding.kind === 'viewer').map(([path]) => path) : [];
@@ -87,7 +126,9 @@ export function createWidgetActionInputResolverV1(ports: WidgetActionInputResolv
                 && hasValidPluginConnectedAccountPurposeBindingsV2(descriptor.inputSchema, declarations);
             if (!declared) return [{ path, status: 'unavailable' as const, reasonCode: 'widget_viewer_purpose_undeclared' }];
             // Empty host facts are not proof that the purpose's Resource exists.
-            const currentPurpose = currentViewer.values[path] !== undefined || currentViewer.fields?.some(field => field.path === path
+            const currentPurpose = binding.kind === 'viewer' && readWidgetConnectedAccountPurposeV1({ descriptor,
+                resources: descriptor.resourceDeclarations ?? [], path, purpose: binding.purpose }) !== null
+                || currentViewer.values[path] !== undefined || currentViewer.fields?.some(field => field.path === path
                 && field.status === 'selection_required' && field.reasonCode === 'widget_viewer_connection_missing');
             return currentPurpose ? [] : [{ path, status: 'unavailable' as const, reasonCode: 'widget_viewer_purpose_authority_unavailable' }];
         });
@@ -116,36 +157,30 @@ export function createWidgetActionInputResolverV1(ports: WidgetActionInputResolv
             const validation = await ports.validateValue(field, value, request);
             request.signal?.throwIfAborted();
             if (validation.status !== 'valid') { issues.push({ path: field.path, ...validation }); continue; }
-            if (field.inputType) {
-                const type = await ports.readInputType?.(field, request);
-                request.signal?.throwIfAborted();
-                if (!type || type.identity.pluginId !== field.inputType.pluginId || type.identity.localId !== field.inputType.localId) {
-                    issues.push({ path: field.path, status: 'unavailable', reasonCode: 'input_type_unavailable' }); continue;
-                }
-                const values = field.widget === 'multiselect' && Array.isArray(value) ? value : [value];
-                const invalid = values.map(value => validateInputTypeValue(type, value)).find(result => result.status === 'invalid');
-                if (invalid?.status === 'invalid') { issues.push({ path: field.path, status: 'invalid', reasonCode: invalid.reasonCode }); continue; }
+            const type = field.inputType && 'pluginId' in field.inputType ? await ports.readInputType?.(field, request) : undefined;
+            request.signal?.throwIfAborted();
+            const schema = validateInputFieldSchema({ field, value, type });
+            const issue = (result: Exclude<ReturnType<typeof validateInputFieldValue>, { status: 'valid' }>) => ({ path: field.path,
+                ...result, reasonCode: result.reasonCode === 'input_type_option_invalid' ? 'widget_input_option_unavailable' : result.reasonCode });
+            if (schema.status !== 'valid') { issues.push(issue(schema)); continue; }
+            const constraint = readInputFieldOptionsConstraint(field, type, request.instance.bindings[field.path]?.kind === 'viewer');
+            const options = constraint.kind === 'static' ? constraint.options : constraint.kind === 'dynamic'
+                ? await ports.resolveOptions(field, resolved.input, request) : undefined;
+            request.signal?.throwIfAborted();
+            if (options && 'status' in options) {
+                issues.push({ path: field.path, ...options });
+                continue;
+            }
+            if (type) {
                 const current = await ports.readInputType?.(field, request);
+                request.signal?.throwIfAborted();
                 if (!current || current.occurrenceId !== type.occurrenceId) {
                     issues.push({ path: field.path, status: 'unavailable', reasonCode: 'input_type_retired' }); continue;
                 }
-                if (!type.definition.options && !field.options?.length && !field.optionsSourceId) continue;
             }
-            // Existing-purpose defaults have passed current host value admission.
-            // An authored source/type/static constraint is never bypassed here.
-            if (request.instance.bindings[field.path]?.kind === 'viewer' && field.connectedAccountOptions === true
-                && !field.options?.length && !field.optionsSourceId && !field.inputType) continue;
-            if (!field.options?.length && !field.optionsSourceId && !field.inputType && !field.connectedAccountOptions) continue;
-            const options = field.options?.length ? field.options : await ports.resolveOptions(field, resolved.input, request);
-            request.signal?.throwIfAborted();
-            if (!Array.isArray(options)) {
-                const refusal = options as Exclude<Validation, { status: 'valid' }>;
-                issues.push({ path: field.path, ...refusal });
-                continue;
-            }
-            const values = field.widget === 'multiselect' && Array.isArray(value) ? value : [value];
-            if (values.some(selected => !options.some(option => option.disabled !== true && isSameInputOptionValue(option.value, selected))))
-                issues.push({ path: field.path, status: 'invalid', reasonCode: 'widget_input_option_unavailable' });
+            const admitted = validateInputFieldValue({ field, value, type, options,
+                viewerPurpose: request.instance.bindings[field.path]?.kind === 'viewer' });
+            if (admitted.status !== 'valid') issues.push(issue(admitted));
         }
         if (!issues.length) return resolved;
         const status = (['denied', 'invalid', 'unavailable'] as const).find(status => issues.some(issue => issue.status === status))!;

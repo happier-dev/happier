@@ -55,9 +55,16 @@ export const WidgetSurfaceRefV1Schema = lazyZodSchema(() => z.object({
     z.object({ kind: z.literal('sessionBoard'), sessionId: id }).strict(),
     z.object({ kind: z.literal('companion'), sessionId: id }).strict(),
     z.object({ kind: z.literal('workBoard'), boardId: id }).strict(),
-    z.object({ kind: z.literal('project'), projectId: id, dashboardId: id.optional() }).strict(),
-    z.object({ kind: z.literal('pluginArea'), pluginId: id, pageId: id, area: id }).strict(),
-  ]),
+    z.object({ kind: z.literal('project'), projectId: id, layoutId: id.optional() }).strict(),
+    z.object({ kind: z.literal('pluginArea'), pluginId: id, pageId: id, area: id, layoutId: id.optional() }).strict(),
+    z.object({ kind: z.literal('corePage'), pageId: id, area: id, layoutId: id.optional() }).strict(),
+  ]).transform(owner => {
+    if (owner.kind !== 'project' || owner.layoutId !== 'overview') return owner;
+    // The stock Project layout keeps its original omitted-default Artifact identity.
+    const canonical = { ...owner };
+    delete canonical.layoutId;
+    return canonical;
+  }),
 }).strict());
 export type WidgetSurfaceRefV1 = z.infer<typeof WidgetSurfaceRefV1Schema>;
 export const WidgetInstanceRefV1Schema = lazyZodSchema(() => z.object({ surface: WidgetSurfaceRefV1Schema, instanceId: id }).strict());
@@ -88,7 +95,15 @@ export type WidgetBindingResolutionInputV1 = Readonly<{
 
 function projectWidgetBindingsV1(options: Pick<WidgetBindingResolutionInputV1, 'instance' | 'fields' | 'context' | 'viewerValues'> &
   Partial<Pick<WidgetBindingResolutionInputV1, 'validateValue' | 'resolvePaths'>>) {
-  const instance = WidgetInstanceV1StoredSchema.parse(options.instance);
+  let instance = WidgetInstanceV1StoredSchema.parse(options.instance);
+  // Earlier in-program Sources copies retained accounting inputs that inventory cannot answer.
+  // Project those six paths out of binding admission only; never mutate the saved Artifact or
+  // relax rejection of another undeclared path. Applicable scope still uses ordinary admission.
+  if (instance.definition.kind === 'builtin' && instance.definition.id === 'usage_sources') {
+    const retired = ['period', 'projects', 'session', 'costBasis', 'metric', 'breakdown'];
+    const bindings = Object.fromEntries(Object.entries(instance.bindings).filter(([path]) => !retired.includes(path)));
+    instance = { ...instance, bindings };
+  }
   const paths = options.resolvePaths ? new Set(options.resolvePaths) : null;
   const fields = paths ? options.fields.filter(field => paths.has(field.path)) : options.fields;
   let input: Record<string, unknown> = {};
@@ -104,6 +119,10 @@ function projectWidgetBindingsV1(options: Pick<WidgetBindingResolutionInputV1, '
     if (!binding) { unresolved.set(field.path, 'widget_input_missing'); continue; }
     if (field.widget === 'secret') {
       issues.push({ path: field.path, status: 'invalid', reasonCode: 'widget_secret_binding_forbidden' });
+      continue;
+    }
+    if (field.contextMode === 'own' && binding.kind === 'context') {
+      issues.push({ path: field.path, status: 'invalid', reasonCode: 'widget_context_binding_forbidden' });
       continue;
     }
     let value: JsonValue | undefined;
@@ -138,6 +157,7 @@ export function resolveWidgetBindingsV1(options: WidgetBindingResolutionInputV1)
   for (const field of resolveEffectiveInputFields({ inputHints: { fields: [...fields] } }, input)) {
     const binding = instance.bindings[field.path];
     if (field.widget === 'secret' && binding) continue;
+    if (field.contextMode === 'own' && binding?.kind === 'context') continue;
     const value = values.get(field.path);
     if (value === undefined) {
       if (field.required || binding) issues.push({ path: field.path, status: 'selection_required', reasonCode: unresolved.get(field.path) ?? 'widget_input_missing' });

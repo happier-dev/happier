@@ -6,6 +6,8 @@ import type { WidgetDefinitionV1 } from '../widgets/widgetDefinitionV1.js';
 
 import {
     HOME_HUB_DEFAULT_LAYOUT,
+    HomeHubLayoutV1Schema,
+    HomeHubLayoutIntentSchema,
     applyHomeHubLayoutIntent,
     homeHubDefaultWidgetInstanceId,
     listHiddenHomeSetupSteps,
@@ -34,6 +36,64 @@ const SHOWN_ID = homeHubDefaultWidgetInstanceId(SHOWN.key);
 const AVAILABLE_ID = homeHubDefaultWidgetInstanceId(AVAILABLE.key);
 
 describe('configured Home placements', () => {
+    it('uses the loaded effective width when admitting a default-shown child into a group', () => {
+        const widget = { ...SHOWN, sizeDeclaration: { sizes: ['wide'], defaultSize: 'wide' } satisfies WidgetSizeDeclarationV1 };
+        expect(() => applyHomeHubLayoutIntent(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [widget],
+            { kind: 'group_create', groupId: 'wide-group', instanceIds: [SHOWN_ID], width: 'half' })).toThrowError('widget_group_width_no_fit');
+        const grouped = applyHomeHubLayoutIntent(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [widget],
+            { kind: 'group_create', groupId: 'wide-group', instanceIds: [SHOWN_ID], width: 'full' });
+        expect(grouped.items).toMatchObject([{ kind: 'group', children: [{ size: 'wide' }] }]);
+    });
+    it('groups a projected default without duplicating it and restores child presentation on ungroup', () => {
+        const grouped = applyHomeHubLayoutIntent(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [SHOWN],
+            HomeHubLayoutIntentSchema.parse({ kind: 'group_create', groupId: 'reviews', instanceIds: [SHOWN_ID] }));
+        expect(grouped.items).toMatchObject([{ kind: 'group', id: 'reviews', frameStyle: 'card', dividers: 'hairline', children: [{ instance: { id: SHOWN_ID } }] }]);
+        const resolved = resolveHomeHubLayout(grouped, BUILTINS, [SHOWN]);
+        expect(resolved.sections.filter(section => section.kind === 'widget')).toEqual([]);
+        expect(resolved.sections.find(section => section.id === 'reviews')).toMatchObject({ kind: 'group', children: [{ id: SHOWN_ID }] });
+        const restored = applyHomeHubLayoutIntent(grouped, BUILTINS, [SHOWN],
+            HomeHubLayoutIntentSchema.parse({ kind: 'group_ungroup', instanceId: 'reviews' }));
+        expect(restored.items).toMatchObject([{ kind: 'widget', instance: { id: SHOWN_ID } }]);
+        expect(restored.order).toContain(SHOWN_ID);
+        expect(restored.order).not.toContain('reviews');
+    });
+    it('rejects duplicate child identities across Home groups and standalone items', () => {
+        const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} };
+        expect(HomeHubLayoutV1Schema.safeParse({ v: 1, order: [], hidden: [], items: [
+            { kind: 'widget', instance },
+            { kind: 'group', id: 'group', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [{ kind: 'widget', instance }] },
+        ] }).success).toBe(false);
+    });
+    it('moves the last child out, dissolves its group, and retains its saved card frame', () => {
+        const added = applyHomeHubLayoutIntent(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [], { kind: 'widget_add',
+            instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} }, frameStyle: 'card', size: 'small', position: { nativeIndex: 1 } });
+        const grouped = applyHomeHubLayoutIntent(added, BUILTINS, [], { kind: 'group_create', groupId: 'group', instanceIds: ['copy'] });
+        expect(resolveHomeHubLayout(grouped, BUILTINS, []).sections.find(section => section.kind === 'group')).toMatchObject({ children: [{ frameStyle: 'plain' }] });
+        const moved = applyHomeHubLayoutIntent(grouped, BUILTINS, [], { kind: 'move', instanceId: 'copy', toIndex: 0, groupId: null });
+        expect(moved.items).toEqual(added.items);
+        expect(moved.order).toEqual(added.order);
+        expect(moved.order).not.toContain('group');
+        expect(resolveHomeHubLayout(moved, BUILTINS, []).sections.find(section => section.id === 'copy')).toMatchObject({ frameStyle: 'card' });
+    });
+    it('atomically adds a transferred child inside its destination group and retains its saved presentation', () => {
+        const one = { v: 1 as const, id: 'one', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
+        const grouped = applyHomeHubLayoutIntent(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [], { kind: 'group_add', group: {
+            kind: 'group', id: 'group', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [{ kind: 'widget', instance: one, size: 'small' }] } });
+        const two = { ...one, id: 'two' };
+        const added = applyHomeHubLayoutIntent(grouped, BUILTINS, [], HomeHubLayoutIntentSchema.parse({ kind: 'widget_add', instance: two,
+            groupId: 'group', size: 'tall', frameStyle: 'card', position: { nativeIndex: 0 } }));
+        expect(added.items).toMatchObject([{ kind: 'group', children: [{ instance: two, size: 'tall', frameStyle: 'card' }, { instance: one }] }]);
+        expect(added.order).not.toContain('two');
+    });
+    it('removes grouped default children without projecting them again and keeps builtin/setup state', () => {
+        const base = setHomeSetupStepHidden(HOME_HUB_DEFAULT_LAYOUT, 'addPhone', true);
+        const grouped = applyHomeHubLayoutIntent(base, BUILTINS, [SHOWN], { kind: 'group_create', groupId: 'group', instanceIds: [SHOWN_ID] });
+        const removed = applyHomeHubLayoutIntent(grouped, BUILTINS, [SHOWN], { kind: 'remove', instanceId: 'group' });
+        expect(resolveHomeHubLayout(removed, BUILTINS, [SHOWN]).sections.filter(section => section.kind !== 'builtin')).toEqual([]);
+        expect(removed.hidden).toContain('setup:addPhone');
+        expect(removed.hidden).toContain(SHOWN_ID);
+        expect(removed.order).not.toContain('group');
+    });
     it('projects declared defaults and normalizes stale saved size without changing the personal layout', () => {
         const widget = { ...SHOWN, sizeDeclaration: { sizes: ['wide'], defaultSize: 'wide' } satisfies WidgetSizeDeclarationV1 };
         const defaultBefore = structuredClone(HOME_HUB_DEFAULT_LAYOUT);
@@ -47,7 +107,7 @@ describe('configured Home placements', () => {
         expect(HOME_HUB_DEFAULT_LAYOUT).toEqual(defaultBefore);
 
         const stored: HomeHubLayoutValue = { ...HOME_HUB_DEFAULT_LAYOUT,
-            sections: { [SHOWN_ID]: { size: 'medium', frameStyle: 'plain' } } };
+            items: [{ kind: 'widget', instance: { v: 1, id: SHOWN_ID, definition: { kind: 'installed', surface: SHOWN.surface }, bindings: {} }, size: 'medium', frameStyle: 'plain' }] };
         const before = structuredClone(stored);
         expect(resolveHomeHubLayout(stored, BUILTINS, [widget]).sections
             .find(section => section.id === SHOWN_ID)).toMatchObject({ size: 'wide', frameStyle: 'plain' });
@@ -63,25 +123,25 @@ describe('configured Home placements', () => {
         const artifact = { v: 1 as const, id: 'artifact', definition: { kind: 'artifact' as const, artifactId: 'authored' }, bindings: {} };
         const loaded: HomeHubWidgetInput = { key: 'artifact:authored', homeDefault: 'available',
             definition: artifact.definition, sizeDeclaration: definition.sizeDeclaration };
-        const layout: HomeHubLayoutValue = { ...HOME_HUB_DEFAULT_LAYOUT, instances: [inline, artifact],
-            sections: { inline: { size: 'medium' }, artifact: { size: 'medium' } } };
+        const layout: HomeHubLayoutValue = { ...HOME_HUB_DEFAULT_LAYOUT, items: [
+            { kind: 'widget', instance: inline, size: 'medium' }, { kind: 'widget', instance: artifact, size: 'medium' }] };
         expect(resolveHomeHubLayout(layout, [], [loaded]).sections).toMatchObject([
             { id: 'inline', size: 'tall' }, { id: 'artifact', size: 'tall', widget: loaded },
         ]);
         expect(resolveHomeHubLayout(layout, [], []).sections).toMatchObject([
             { id: 'inline', size: 'tall' }, { id: 'artifact', size: 'medium' },
         ]);
-        expect(layout.sections).toEqual({ inline: { size: 'medium' }, artifact: { size: 'medium' } });
+        expect(layout.items.map(item => item.kind === 'widget' && item.size)).toEqual(['medium', 'medium']);
     });
     it('stores a tall size atomically with Add and keeps an independently sized sibling', () => {
         const instance = { v: 1 as const, id: 'tall-copy', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
         const added = applyHomeHubLayoutIntent(HOME_HUB_DEFAULT_LAYOUT, BUILTINS, [],
             { kind: 'widget_add', instance, size: 'tall' });
-        expect(added.sections?.[instance.id]).toMatchObject({ size: 'tall' });
+        expect(added.items).toMatchObject([{ size: 'tall' }]);
         const sibling = { ...instance, id: 'wide-copy' };
         const copies = applyHomeHubLayoutIntent(added, BUILTINS, [], { kind: 'widget_add', instance: sibling, size: 'full' });
         const edited = applyHomeHubLayoutIntent(copies, BUILTINS, [], { kind: 'widget_size', instanceId: instance.id, size: 'small' });
-        expect(edited.sections).toMatchObject({ 'tall-copy': { size: 'small' }, 'wide-copy': { size: 'full' } });
+        expect(edited.items).toMatchObject([{ instance: { id: 'tall-copy' }, size: 'small' }, { instance: { id: 'wide-copy' }, size: 'full' }]);
     });
     it('projects a configured native copy through the same catalog identity without creating defaults or changing its sibling', () => {
         const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'session_summary' })!;
@@ -94,7 +154,7 @@ describe('configured Home placements', () => {
         const projected = resolveHomeHubLayout(copies, BUILTINS, [descriptor]).sections.filter(section => section.kind === 'widget');
         expect(projected).toMatchObject([{ id: one.id, widget: descriptor }, { id: two.id, widget: descriptor }]);
         const removed = applyHomeHubLayoutIntent(copies, BUILTINS, [descriptor], { kind: 'widget_remove', instanceId: one.id });
-        expect(removed.instances).toEqual([two]);
+        expect(removed.items).toEqual([{ kind: 'widget', instance: two }]);
         expect(resolveHomeHubLayout(removed, BUILTINS, []).sections.find(section => section.id === two.id)).toMatchObject({ instance: two });
     });
     it('adds two independently bound copies and edits only the selected instance', () => {
@@ -104,13 +164,13 @@ describe('configured Home placements', () => {
         const apply = (layout: HomeHubLayoutValue, intent: unknown) => applyHomeHubLayoutIntent(layout, BUILTINS, [AVAILABLE], intent as HomeHubLayoutIntent);
         const one = apply(HOME_HUB_DEFAULT_LAYOUT, { kind: 'widget_add', instance: instance('one', 'A') });
         const two = apply(one, { kind: 'widget_add', instance: instance('two', 'B') });
-        expect(two).toMatchObject({ instances: [instance('one', 'A'), instance('two', 'B')] });
+        expect(two).toMatchObject({ items: [{ instance: instance('one', 'A') }, { instance: instance('two', 'B') }] });
         const edited = apply(two, { kind: 'widget_inputs', instanceId: 'one', bindings: { session: { kind: 'value', value: 'C' } } });
-        expect(edited).toMatchObject({ instances: [instance('one', 'C'), instance('two', 'B')] });
+        expect(edited).toMatchObject({ items: [{ instance: instance('one', 'C') }, { instance: instance('two', 'B') }] });
         const wide = apply(edited, { kind: 'widget_size', instanceId: 'one', size: 'full' });
-        expect(wide.sections?.one).toMatchObject({ size: 'full' });
+        expect(wide.items[0]).toMatchObject({ size: 'full' });
         const removed = apply(wide, { kind: 'widget_remove', instanceId: 'one' });
-        expect(removed).toMatchObject({ instances: [instance('two', 'B')] });
+        expect(removed).toMatchObject({ items: [{ instance: instance('two', 'B') }] });
     });
 });
 
@@ -118,7 +178,8 @@ describe('Home customization intents shared with Actions', () => {
     it('preserves saved overrides, including temporarily unknown widgets, across customization and clears only the requested override', () => {
         const stored: HomeHubLayoutValue = { ...HOME_HUB_DEFAULT_LAYOUT, order: ['start', 'future-section', 'attention', 'setup', 'machines', 'usage'],
             hidden: ['setup:addPhone'],
-            sections: { 'future-section': { frameStyle: 'card' }, [SHOWN_ID]: { frameStyle: 'plain' } },
+            sections: { 'future-section': { frameStyle: 'card' } },
+            items: [{ kind: 'widget', instance: { v: 1, id: SHOWN_ID, definition: { kind: 'installed', surface: SHOWN.surface }, bindings: {} }, frameStyle: 'plain' }],
         };
         const added = applyHomeHubLayoutIntent(stored, BUILTINS, [SHOWN, AVAILABLE], { kind: 'widget_add', instance: { v: 1, id: AVAILABLE_ID, definition: { kind: 'installed', surface: AVAILABLE.surface }, bindings: {} } });
         const moved = applyHomeHubLayoutIntent(added, BUILTINS, [SHOWN, AVAILABLE], { kind: 'move', sectionId: AVAILABLE_ID, step: -1 });
@@ -292,11 +353,11 @@ describe('home hub layout', () => {
     });
 
     it('keeps an uninstalled widget\'s place so it comes back where it was', () => {
-        const arranged = { ...HOME_HUB_DEFAULT_LAYOUT, instances: [{ v: 1 as const, id: SHOWN_ID, definition: { kind: 'installed' as const, surface: SHOWN.surface }, bindings: {} }], order: ['start', SHOWN_ID, 'attention', 'setup', 'machines', 'usage'], hidden: [] };
+        const arranged: HomeHubLayoutValue = { ...HOME_HUB_DEFAULT_LAYOUT, items: [{ kind: 'widget', instance: { v: 1, id: SHOWN_ID, definition: { kind: 'installed', surface: SHOWN.surface }, bindings: {} } }], order: ['start', SHOWN_ID, 'attention', 'setup', 'machines', 'usage'], hidden: [] };
         // The plugin is disabled: its widget draws nowhere and is not offered…
         const without = resolveHomeHubLayout(arranged, BUILTINS, []);
         expect(without.sections.map((section) => section.id)).toEqual(['start', SHOWN_ID, 'attention', 'setup', 'machines', 'usage']);
-        expect(without.sections.find(section => section.id === SHOWN_ID)).toMatchObject({ instance: arranged.instances[0] });
+        expect(without.sections.find(section => section.id === SHOWN_ID)).toMatchObject({ instance: arranged.items[0]?.kind === 'widget' ? arranged.items[0].instance : undefined });
         // …and moving another section keeps the widget's id where it was.
         const moved = moveHomeHubSection(arranged, BUILTINS, [], 'usage', -1);
         expect(moved.order).toEqual(['start', SHOWN_ID, 'attention', 'setup', 'usage', 'machines']);

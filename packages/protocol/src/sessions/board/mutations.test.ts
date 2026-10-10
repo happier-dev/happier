@@ -25,11 +25,13 @@ describe('Board sealed mutation contract', () => {
     expect(isSessionBoardMutationResultCorresponding(request, { ...result, itemId: 'Other' })).toBe(false);
     expect(isSessionBoardMutationResultCorresponding(request, { operation: 'update_layout', outcome: 'updated', layoutRevision: 'layout' })).toBe(false);
   });
-  it('requires first placement while retaining the exact sealed aggregate', () => {
+  it('admits transcript creation without layout while preserving atomic Board creation', () => {
     const request = { operation: 'upsert_item', itemId: 'Note', itemContent: content, expectedItemRevision: null, placement: { layoutContent: content, expectedLayoutRevision: null } };
     expect(SessionBoardMutationV1Schema.parse(request)).toEqual(request);
     const { placement: _placement, ...withoutPlacement } = request;
-    expect(SessionBoardMutationV1Schema.safeParse(withoutPlacement).success).toBe(false);
+    expect(SessionBoardMutationV1Schema.safeParse(withoutPlacement).success).toBe(true);
+    expect(SessionBoardMutationV1Schema.safeParse({ ...withoutPlacement, destination: 'both' }).success).toBe(false);
+    expect(SessionBoardMutationV1Schema.safeParse({ operation: 'remove_item', itemId: 'Note', expectedItemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' }).success).toBe(true);
   });
   it('rejects unconditional writes, caller-owned addresses and opaque revision substitutes', () => {
     for (const request of [

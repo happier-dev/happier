@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
@@ -15,7 +16,9 @@ import {
   type SessionBoardActionIdV1,
 } from './actionIds.js';
 import { SessionBoardTabIdSchema, SessionSurfaceItemIdSchema } from './ids.js';
-import { SessionSurfaceItemV1Schema, isSessionSurfaceItemIdentityCorrespondingV1, type SessionSurfaceItemV1 } from './item.js';
+import { SessionSurfaceItemV1Schema, SessionSurfaceItemDestinationV1Schema, isSessionSurfaceItemIdentityCorrespondingV1, type SessionSurfaceItemV1 } from './item.js';
+import { ArtifactWorkspacePublicationSourceV1Schema } from '../../artifacts/artifactWorkspaceFileV1.js';
+import { UiSurfaceCapabilityRequestV1Schema } from '../../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { SessionBoardItemWidthSchema, SessionBoardItemFrameStyleSchema, SessionBoardLayoutV1Schema } from './layout.js';
 import {
   SessionBoardMutationResultV1Schema,
@@ -53,22 +56,22 @@ export const SESSION_BOARD_MUTATION_SERVER_TRANSPORT_V1 = Object.freeze({
 });
 
 /** Optional only because the executor's existing contextual rule stamps the current Session. */
-const SessionBoardActionSessionIdSchema = z.string().trim().min(1).optional();
+const SessionBoardActionSessionIdSchema = lazyZodSchema(() => z.string().trim().min(1).optional());
 
 /** Mirrors the closed `SessionSurfaceItemV1` source union; a new arm must be classified here too. */
 const SessionSurfaceItemSourceKindV1Schema: z.ZodType<SessionSurfaceItemV1['source']['kind']> =
-  z.enum(['declarative', 'hostedHtml', 'widget', 'walkthrough']);
+  lazyZodSchema(() => z.enum(['declarative', 'hostedHtml', 'widget', 'walkthrough']));
 
-export const SessionBoardGetInputV1Schema = z.object({
+export const SessionBoardGetInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionBoardActionSessionIdSchema,
   /** Exact ids opt into full item bodies; the default response stays an inventory. */
   itemIds: z.array(SessionSurfaceItemIdSchema).max(SESSION_BOARD_GET_MAX_LIMIT_V1).optional(),
   cursor: z.string().trim().min(1).optional(),
   limit: z.number().int().min(1).max(SESSION_BOARD_GET_MAX_LIMIT_V1).optional(),
-}).strict();
+}).strict());
 export type SessionBoardGetInputV1 = z.infer<typeof SessionBoardGetInputV1Schema>;
 
-export const SessionBoardGetResultV1Schema = z.object({
+export const SessionBoardGetResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   serverId: z.string().trim().min(1),
   sessionId: z.string().trim().min(1),
@@ -97,7 +100,7 @@ export const SessionBoardGetResultV1Schema = z.object({
     cursor: z.string().trim().min(1).nullable(),
     hasNext: z.boolean(),
   }).strict(),
-}).strict();
+}).strict());
 export type SessionBoardGetResultV1 = z.infer<typeof SessionBoardGetResultV1Schema>;
 
 export type SessionBoardReadProjectionEntryV1 =
@@ -157,45 +160,60 @@ export function projectSessionBoardGetResultV1(input: Readonly<{
   });
 }
 
-export const SessionBoardItemUpsertInputV1Schema = z.object({
+/** A workspace intent exists only until the keyholding host acquires canonical HTML bytes. */
+const SessionSurfaceWorkspacePublicationItemV1Schema = lazyZodSchema(() => z.object({
+  ...SessionSurfaceItemV1Schema.shape,
+  source: z.object({
+    kind: z.literal('hostedHtml'),
+    publicationSource: ArtifactWorkspacePublicationSourceV1Schema,
+    requestedCapabilities: z.lazy(() => UiSurfaceCapabilityRequestV1Schema).optional(),
+  }).strict(),
+}).omit({ snapshot: true }).strict());
+
+export const SessionBoardItemUpsertInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionBoardActionSessionIdSchema,
   itemId: SessionSurfaceItemIdSchema,
   /** `null` requests creation; every other value is an exact optimistic-concurrency operand. */
   expectedItemRevision: SessionSystemRecordRevisionSchema.nullable(),
+  destination: SessionSurfaceItemDestinationV1Schema.optional(),
   /** Optional captured layout operand for an atomic content+placement edit. */
   expectedLayoutRevision: SessionSystemRecordRevisionSchema.nullable().optional(),
-  item: z.lazy(() => SessionSurfaceItemV1Schema),
+  item: z.union([z.lazy(() => SessionSurfaceItemV1Schema), SessionSurfaceWorkspacePublicationItemV1Schema]),
   placement: SessionBoardItemPlacementV1Schema.optional(),
 }).strict().superRefine((input, context) => {
   if (input.expectedLayoutRevision !== undefined && !input.placement) {
     context.addIssue({ code: 'custom', path: ['expectedLayoutRevision'], message: 'A captured layout revision requires a placement edit' });
   }
-  if (!isSessionSurfaceItemIdentityCorrespondingV1(input.itemId, input.item)) {
+  if (input.item.source.kind === 'widget'
+    && !isSessionSurfaceItemIdentityCorrespondingV1(input.itemId, { ...input.item, source: input.item.source })) {
     context.addIssue({ code: 'custom', path: ['item', 'source', 'instance', 'id'], message: 'Widget instance identity must match its Board item identity' });
   }
-  if (input.expectedItemRevision === null && !input.placement) {
+  if (input.destination === 'transcript' && input.placement) {
+    context.addIssue({ code: 'custom', path: ['placement'], message: 'Transcript destination does not modify Board layout' });
+  }
+  if (input.expectedItemRevision === null && (input.destination === 'board' || input.destination === 'both') && !input.placement) {
     context.addIssue({
       code: 'custom',
       path: ['placement'],
       message: 'Item creation requires an atomic first placement',
     });
   }
-});
-export type SessionBoardItemUpsertInputV1 = z.infer<typeof SessionBoardItemUpsertInputV1Schema>;
+}).transform(input => ({ ...input, destination: input.destination ?? (input.placement ? 'board' as const : 'transcript' as const) })));
+export type SessionBoardItemUpsertInputV1 = z.input<typeof SessionBoardItemUpsertInputV1Schema>;
 
-export const SessionBoardItemRemoveInputV1Schema = z.object({
+export const SessionBoardItemRemoveInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionBoardActionSessionIdSchema,
   itemId: SessionSurfaceItemIdSchema,
   expectedItemRevision: SessionSystemRecordRevisionSchema,
-  expectedLayoutRevision: SessionSystemRecordRevisionSchema,
-}).strict();
+  expectedLayoutRevision: SessionSystemRecordRevisionSchema.optional(),
+}).strict());
 export type SessionBoardItemRemoveInputV1 = z.infer<typeof SessionBoardItemRemoveInputV1Schema>;
 
-export const SessionBoardLayoutUpdateInputV1Schema = z.object({
+export const SessionBoardLayoutUpdateInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionBoardActionSessionIdSchema,
   expectedLayoutRevision: SessionSystemRecordRevisionSchema.nullable(),
   operation: SessionBoardLayoutOperationV1Schema,
-}).strict();
+}).strict());
 export type SessionBoardLayoutUpdateInputV1 = z.infer<typeof SessionBoardLayoutUpdateInputV1Schema>;
 
 /**
@@ -204,11 +222,13 @@ export type SessionBoardLayoutUpdateInputV1 = z.infer<typeof SessionBoardLayoutU
  * presentation-neutral descriptor the executor built from content it already
  * opened. It never carries item bytes, and a removal has no destination.
  */
-export const SessionBoardMutationActionResultV1Schema = z.object({
+export const SessionBoardMutationActionResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   serverId: z.string().trim().min(1),
   sessionId: z.string().trim().min(1),
   result: SessionBoardMutationResultV1Schema,
+  /** Creation destination is separate from the optional Board placement below. */
+  itemDestination: SessionSurfaceItemDestinationV1Schema.optional(),
   destination: z.object({
     tabId: SessionBoardTabIdSchema,
     width: SessionBoardItemWidthSchema,
@@ -225,17 +245,34 @@ export const SessionBoardMutationActionResultV1Schema = z.object({
   if (value.result.operation !== 'upsert_item' && value.preview !== undefined) {
     context.addIssue({ code: 'custom', path: ['preview'], message: 'Only an item upsert opens content to preview' });
   }
-});
+  if (value.result.operation !== 'upsert_item' && value.itemDestination !== undefined) {
+    context.addIssue({ code: 'custom', path: ['itemDestination'], message: 'Only an item upsert acknowledges creation destination' });
+  }
+}));
 export type SessionBoardMutationActionResultV1 = z.infer<typeof SessionBoardMutationActionResultV1Schema>;
 
-export const SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1 = Object.freeze({
+// Catalog consumers need exact input/output types, not the full nested Zod
+// implementation classes in every Action row's generated declaration.
+type SessionBoardSchemaCarrierV1<TSchema extends z.ZodType> = z.ZodType<z.output<TSchema>, z.input<TSchema>>;
+
+export const SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1: Readonly<{
+  'session.board.get': SessionBoardSchemaCarrierV1<typeof SessionBoardGetInputV1Schema>;
+  'session.board.item.upsert': SessionBoardSchemaCarrierV1<typeof SessionBoardItemUpsertInputV1Schema>;
+  'session.board.item.remove': SessionBoardSchemaCarrierV1<typeof SessionBoardItemRemoveInputV1Schema>;
+  'session.board.layout.update': SessionBoardSchemaCarrierV1<typeof SessionBoardLayoutUpdateInputV1Schema>;
+}> = Object.freeze({
   'session.board.get': SessionBoardGetInputV1Schema,
   'session.board.item.upsert': SessionBoardItemUpsertInputV1Schema,
   'session.board.item.remove': SessionBoardItemRemoveInputV1Schema,
   'session.board.layout.update': SessionBoardLayoutUpdateInputV1Schema,
 } as const satisfies Readonly<Record<SessionBoardActionIdV1, z.ZodTypeAny>>);
 
-export const SESSION_BOARD_ACTION_OUTPUT_SCHEMAS_V1 = Object.freeze({
+export const SESSION_BOARD_ACTION_OUTPUT_SCHEMAS_V1: Readonly<{
+  'session.board.get': SessionBoardSchemaCarrierV1<typeof SessionBoardGetResultV1Schema>;
+  'session.board.item.upsert': SessionBoardSchemaCarrierV1<typeof SessionBoardMutationActionResultV1Schema>;
+  'session.board.item.remove': SessionBoardSchemaCarrierV1<typeof SessionBoardMutationActionResultV1Schema>;
+  'session.board.layout.update': SessionBoardSchemaCarrierV1<typeof SessionBoardMutationActionResultV1Schema>;
+}> = Object.freeze({
   'session.board.get': SessionBoardGetResultV1Schema,
   'session.board.item.upsert': SessionBoardMutationActionResultV1Schema,
   'session.board.item.remove': SessionBoardMutationActionResultV1Schema,
@@ -246,18 +283,30 @@ export type SessionBoardActionInputV1ById = Readonly<{
   [TActionId in SessionBoardActionIdV1]: z.infer<(typeof SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1)[TActionId]>;
 }>;
 
+/** Historical Action names do not make content-only Session edits Board operations. */
+export function sessionBoardActionUsesLayoutV1(actionId: SessionBoardActionIdV1, input: unknown): boolean {
+  if (actionId === 'session.board.layout.update') return true;
+  // Admission consumes validated operands and must not parse an item document
+  // a second time merely to decide whether it touches layout.
+  if (!input || typeof input !== 'object') return false;
+  if (actionId === 'session.board.get') return !('itemIds' in input) || input.itemIds === undefined;
+  if (actionId === 'session.board.item.upsert') return 'placement' in input && input.placement !== undefined;
+  if (actionId === 'session.board.item.remove') return 'expectedLayoutRevision' in input && input.expectedLayoutRevision !== undefined;
+  return false;
+}
+
 /** Lane 05 owns the continuation; Board only narrows its Action id. */
 export const SessionBoardApprovalRequestCreatedResultV1Schema =
-  ActionApprovalRequestCreatedResultSchema.superRefine((value, context) => {
+  lazyZodSchema(() => ActionApprovalRequestCreatedResultSchema.superRefine((value, context) => {
     if (!SessionBoardActionIdV1Schema.safeParse(value.actionId).success) {
       context.addIssue({ code: 'custom', path: ['actionId'], message: 'Approval must reference a Board Action' });
     }
-  });
+  }));
 export type SessionBoardApprovalRequestCreatedResultV1 = Readonly<
   z.infer<typeof SessionBoardApprovalRequestCreatedResultV1Schema>
 >;
 
-const SessionBoardMutationActionRecoveryEvidenceV1Schema = z.discriminatedUnion('actionId', [
+const SessionBoardMutationActionRecoveryEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
   z.object({
     v: z.literal(1),
     actionId: z.literal('session.board.item.upsert'),
@@ -285,10 +334,10 @@ const SessionBoardMutationActionRecoveryEvidenceV1Schema = z.discriminatedUnion(
     mutationRequest: SessionBoardMutationV1Schema,
     intent: SessionBoardLayoutUpdateInputV1Schema,
   }).strict(),
-]);
+]));
 
 /** Exact issued mutation evidence retained only for an ambiguous post-dispatch result. */
-export const SessionBoardActionRecoveryEvidenceV1Schema = SessionBoardMutationActionRecoveryEvidenceV1Schema.superRefine(
+export const SessionBoardActionRecoveryEvidenceV1Schema = lazyZodSchema(() => SessionBoardMutationActionRecoveryEvidenceV1Schema.superRefine(
   (evidence, context) => {
     let mutation: z.infer<typeof SessionBoardMutationV1Schema> | null = null;
     try {
@@ -388,7 +437,7 @@ export const SessionBoardActionRecoveryEvidenceV1Schema = SessionBoardMutationAc
       }
     }
   },
-);
+));
 export type SessionBoardActionRecoveryEvidenceV1 = Readonly<z.infer<typeof SessionBoardActionRecoveryEvidenceV1Schema>>;
 
 export type SessionBoardOutcomeUnknownDetailsV1 = Readonly<{
@@ -396,18 +445,18 @@ export type SessionBoardOutcomeUnknownDetailsV1 = Readonly<{
 }>;
 // Keep the published failure envelope on the named recovery contract. Re-expanding
 // this nested schema exceeds declaration serialization and erases input option shapes.
-export const SessionBoardOutcomeUnknownDetailsV1Schema: z.ZodType<SessionBoardOutcomeUnknownDetailsV1> = z.object({
+export const SessionBoardOutcomeUnknownDetailsV1Schema: z.ZodType<SessionBoardOutcomeUnknownDetailsV1> = lazyZodSchema(() => z.object({
   recovery: SessionBoardActionRecoveryEvidenceV1Schema,
-}).strict();
+}).strict());
 
 const boardFailure = <TCode extends string>(code: TCode) => z.object({
   ok: z.literal(false), errorCode: z.literal(code), error: z.literal(code),
 }).strict();
-const BoardRevisionConflictDetailsV1Schema = z.object({
+const BoardRevisionConflictDetailsV1Schema = lazyZodSchema(() => z.object({
   currentItemRevision: SessionSystemRecordRevisionSchema.nullable().optional(),
   currentLayoutRevision: SessionSystemRecordRevisionSchema.nullable().optional(),
-}).strict().refine((value) => value.currentItemRevision !== undefined || value.currentLayoutRevision !== undefined);
-const BoardFeatureFailureV1Schema = z.object({
+}).strict().refine((value) => value.currentItemRevision !== undefined || value.currentLayoutRevision !== undefined));
+const BoardFeatureFailureV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   errorCode: z.enum(['feature_disabled', 'feature_unavailable']),
   error: z.enum(['feature_disabled', 'feature_unavailable']),
@@ -423,28 +472,28 @@ const BoardFeatureFailureV1Schema = z.object({
       ? value.details.featureDecision.state !== 'disabled'
       : value.details.featureDecision.state !== 'unknown')
   )) context.addIssue({ code: 'custom', path: ['details', 'featureDecision'], message: 'Feature detail contradicts outer failure' });
-});
-const BoardUpdateRequiredFailureV1Schema = z.object({
+}));
+const BoardUpdateRequiredFailureV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(false), errorCode: z.literal('update_required'), error: z.literal('update_required'),
   details: OperationUpdateRequiredV1Schema,
 }).strict().superRefine((value, context) => {
   if (!SessionBoardActionIdV1Schema.safeParse(value.details.operation).success) {
     context.addIssue({ code: 'custom', path: ['details', 'operation'], message: 'Update requirement must reference a Board Action' });
   }
-});
-const BoardDefiniteFailureCodeV1Schema = z.enum([
+}));
+const BoardDefiniteFailureCodeV1Schema = lazyZodSchema(() => z.enum([
   'cancelled', 'corrupt_or_unopenable', 'encryption_material_unavailable', 'forbidden',
   'invalid_response', 'locked', 'malformed', 'mode_mismatch', 'not_authenticated',
   'not_found', 'offline', 'protocol_unavailable', 'server_error', 'server_target_mismatch',
   'unsupported_action', 'unsupported_version',
-]);
+]));
 export type SessionBoardDefiniteFailureCodeV1 = z.infer<typeof BoardDefiniteFailureCodeV1Schema>;
-const BoardDefiniteFailureV1Schema = z.object({
+const BoardDefiniteFailureV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(false), errorCode: BoardDefiniteFailureCodeV1Schema, error: BoardDefiniteFailureCodeV1Schema,
-}).strict().refine((value) => value.error === value.errorCode);
+}).strict().refine((value) => value.error === value.errorCode));
 
 /** Strict complete failure union accepted by the Board Action family boundary. */
-export const SessionBoardActionFailureV1Schema = z.union([
+export const SessionBoardActionFailureV1Schema = lazyZodSchema(() => z.union([
   boardFailure('session_board_invalid'),
   boardFailure('session_board_item_not_found'),
   boardFailure('session_board_forbidden'),
@@ -464,7 +513,7 @@ export const SessionBoardActionFailureV1Schema = z.union([
     details: SessionBoardOutcomeUnknownDetailsV1Schema,
   }).strict(),
   BoardDefiniteFailureV1Schema,
-]);
+]));
 export type SessionBoardActionFailureV1 = Readonly<z.infer<typeof SessionBoardActionFailureV1Schema>>;
 
 /** Every Board failure code whose strict envelope carries no details. */
@@ -589,9 +638,9 @@ export type SessionBoardMutationTransportResultV1 =
   | Readonly<{ kind: 'applied'; result: SessionBoardMutationResultV1 }>
   | Readonly<{ kind: 'failure'; result: SessionBoardActionFailureV1 }>;
 
-const SessionBoardMutationRequestPathV1Schema = z.object({
+const SessionBoardMutationRequestPathV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
 /**
  * Bind one Board mutation to its exact Home HTTP request through the generic
@@ -843,10 +892,13 @@ export function parseSessionBoardActionPortResultV1(
         || !sessionBoardPlacedDestinationRetainsPlacementV1(mutationOutput.destination, upsert.placement)
       ))
       || (upsert.placement === undefined && mutationOutput.destination !== null)
+      || (upsert.expectedItemRevision === null && mutationOutput.itemDestination !== undefined
+        && mutationOutput.itemDestination !== upsert.destination)
     ) return { success: false };
   } else if (actionId === 'session.board.item.remove') {
     const remove = parsedInput.data as SessionBoardItemRemoveInputV1;
-    if (mutationOutput.result.operation !== 'remove_item' || mutationOutput.result.itemId !== remove.itemId) {
+    if (mutationOutput.result.operation !== 'remove_item' || mutationOutput.result.itemId !== remove.itemId
+      || (remove.expectedLayoutRevision !== undefined && mutationOutput.result.layoutRevision === undefined)) {
       return { success: false };
     }
   } else {

@@ -43,7 +43,7 @@ describe('configured widget Session Board transport', () => {
       .toEqual({ surface, canEdit: true, instances: [{ instance, frameStyle: 'plain' }] });
     const executor = createActionExecutor({ sessionBoardAction: action,
       widgetAccountScope: () => ({ serverId: surface.serverId, accountId: surface.accountId }) });
-    expect(await executor.execute('widgets.instance.list', { surface }, { surface: 'mcp', bypassApprovals: true }))
+    expect(await executor.execute('widgets.item.list', { surface }, { surface: 'mcp', bypassApprovals: true }))
       .toEqual({ ok: true, result: { surface, canEdit: true, instances: [{ instance, frameStyle: 'plain' }] } });
     const capture = await port.captureMove!(surface, instance.id, { surface: 'ui_button' });
     expect(capture).toEqual({ expectedInstance: instance, expectedPresentation: {

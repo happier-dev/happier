@@ -45,6 +45,16 @@ const item = {
 } as const;
 
 describe('Session Board Action contracts', () => {
+  it('defaults visual creation to transcript and requires placement only for explicit Board destinations', () => {
+    const create = { itemId: 'note', expectedItemRevision: null, item };
+    expect(SessionBoardItemUpsertInputV1Schema.parse(create)).toMatchObject({ destination: 'transcript' });
+    expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...create, destination: 'transcript', placement: { width: 'wide' } }).success).toBe(false);
+    for (const destination of ['board', 'both']) {
+      expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...create, destination }).success).toBe(false);
+      expect(SessionBoardItemUpsertInputV1Schema.safeParse({ ...create, destination, placement: { width: 'wide' } }).success).toBe(true);
+    }
+    expect(SessionBoardItemRemoveInputV1Schema.safeParse({ itemId: 'note', expectedItemRevision: revision }).success).toBe(true);
+  });
   it('binds configured widget instance identity to the canonical Board item id on cleartext write seams', () => {
     const widget = { ...item, source: { kind: 'widget', instance: { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'status' } }, bindings: {} } } };
     const upsert = { itemId: 'copy-a', expectedItemRevision: revision, item: widget };
@@ -384,8 +394,8 @@ describe('Session Board Action contracts', () => {
     }).items[0]).not.toHaveProperty('item');
   });
 
-  it('requires an atomic first placement for item creation and stable anchors for every move', () => {
-    const create = { itemId: 'note', expectedItemRevision: null, item };
+  it('requires atomic Board creation and stable anchors for every move', () => {
+    const create = { itemId: 'note', expectedItemRevision: null, item, destination: 'board' };
     expect(SessionBoardItemUpsertInputV1Schema.safeParse(create).success).toBe(false);
     expect(SessionBoardItemUpsertInputV1Schema.safeParse({
       ...create,
@@ -682,7 +692,7 @@ describe('Session Board Action contracts', () => {
 
   it('binds recovery evidence to the exact Home, Session, intent, and immutable sealed mutation', () => {
     const intent = {
-      sessionId: 'session-1', itemId: 'note', expectedItemRevision: null, item,
+      sessionId: 'session-1', itemId: 'note', expectedItemRevision: null, destination: 'board', item,
       placement: { tabId: 'overview', tabTitle: 'Overview', width: 'wide' },
     } as const;
     const mutationRequest = SessionBoardMutationV1Schema.parse({

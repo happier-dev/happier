@@ -6,14 +6,14 @@ export async function exerciseReviewWidgetArea(host: Pick<PluginUiHostApi, 'widg
     const results: PluginUiWidgetAreaResultV1[] = [];
     for (const operation of [
         { actionId: 'widgets.catalog.list' },
-        { actionId: 'widgets.instance.add', instance: { v: 1, id: instanceId,
+        { actionId: 'widgets.item.add', instance: { v: 1, id: instanceId,
             definition: { kind: 'installed', surface: { pluginId: 'examples.public-sdk-review-assistant', localId: 'review-status-widget' } },
             bindings: { session: { kind: 'context', slot: 'session' } } } },
-        { actionId: 'widgets.instance.inputs.validate', instanceId, bindings: { session: { kind: 'context', slot: 'session' } } },
-        { actionId: 'widgets.instance.size.set', instanceId, size: 'full' },
-        { actionId: 'widgets.instance.move', instanceId, toIndex: 0 },
-        { actionId: 'widgets.instance.refresh', instanceId },
-        { actionId: 'widgets.instance.list' },
+        { actionId: 'widgets.item.inputs.validate', instanceId, bindings: { session: { kind: 'context', slot: 'session' } } },
+        { actionId: 'widgets.item.size.set', instanceId, size: 'full' },
+        { actionId: 'widgets.item.move', instanceId, toIndex: 0 },
+        { actionId: 'widgets.item.refresh', instanceId },
+        { actionId: 'widgets.item.list' },
     ] as const) {
         const result = await host.widgetArea({ area: 'pinned', context, operation });
         results.push(result);

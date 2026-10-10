@@ -9,12 +9,12 @@ export async function executeWidgetSnapshotPostV1(
   deps: ActionExecutorDeps, input: unknown, context: ActionExecutorContext,
 ): Promise<ActionExecuteResult> {
   const args = WidgetSnapshotPostInputV1Schema.parse(input);
-  const refusal = admitWidgetActionSurfaceV1(deps, args.surface, context);
+  const refusal = await admitWidgetActionSurfaceV1(deps, args.surface, context);
   if (refusal) return refusal;
   if (!deps.sessionBoardAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
   const boardInput = buildWidgetSnapshotBoardUpsertV1(args);
   // The Board port rechecks Session editor/audience/mode rights before its one sealed mutation.
-  const lastRefusal = admitWidgetActionSurfaceV1(deps, args.surface, context);
+  const lastRefusal = await admitWidgetActionSurfaceV1(deps, args.surface, context);
   if (lastRefusal) return lastRefusal;
   const result = await deps.sessionBoardAction({ actionId: 'session.board.item.upsert', input: boardInput, context,
     ...(context.signal ? { signal: context.signal } : {}) });

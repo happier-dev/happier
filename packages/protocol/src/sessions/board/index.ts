@@ -10,3 +10,5 @@ export * from './layoutOperations.js';
 export * from './declarative/authoring.js';
 export * from './declarative/normalize.js';
 export * from './declarative/note.js';
+export * from './transcriptReference.js';
+export * from './forkVisualCopies.js';

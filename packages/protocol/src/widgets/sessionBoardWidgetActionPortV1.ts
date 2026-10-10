@@ -10,7 +10,7 @@ import { type SessionBoardLayoutOperationV1 } from '../sessions/board/layoutOper
 import { getWidgetSizeFootprintV1, normalizeWidgetSizeForSurfaceV1, resolveSessionBoardWidgetSizeV1, WidgetSizeV1Schema } from './widgetPresentationV1.js';
 import type { WidgetActionSurfacePortV1, WidgetMoveCaptureV1 } from './actionsV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
-import type { WidgetInputBindingsV1, WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
+import { resetWidgetInputBindingsV1, setWidgetInputBindingsV1, type WidgetInputBindingsV1, type WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
 
 const fail = (errorCode: string): Extract<ActionExecuteResult, { ok: false }> => ({ ok: false, errorCode, error: errorCode });
 
@@ -110,6 +110,9 @@ export function createSessionBoardWidgetActionPortV1(
       }) };
     },
     async apply(surface, intent, context, signal) {
+      if (intent.kind === 'group_create' || intent.kind === 'group_add' || intent.kind === 'group_ungroup'
+        || intent.kind === 'group_set' || intent.kind === 'group_inputs' || intent.kind === 'width') return fail('unsupported_widget_group_surface');
+      if (intent.kind === 'move' && intent.groupId !== undefined) return fail('unsupported_widget_group_surface');
       const board = await readBoard(surface, context, signal);
       if ('ok' in board) return board;
       if (!board.capabilities.editSessionRecords) return fail('widget_edit_denied');
@@ -170,9 +173,9 @@ export function createSessionBoardWidgetActionPortV1(
         return await call('session.board.item.remove', { sessionId, itemId: existing!.itemId,
           expectedItemRevision: intent.boardRevisions?.itemRevision ?? existing!.revision, expectedLayoutRevision: intent.boardRevisions?.layoutRevision ?? board.layout.revision }, null);
       }
-      if (intent.kind === 'rename' || intent.kind === 'inputs') {
-        const updated = editSessionBoardWidgetItemV1(item, intent.kind === 'inputs'
-          ? { kind: 'inputs', bindings: intent.bindings }
+      if (intent.kind === 'rename' || intent.kind === 'inputs' || intent.kind === 'inputs_reset') {
+        const updated = editSessionBoardWidgetItemV1(item, intent.kind === 'inputs' || intent.kind === 'inputs_reset'
+          ? { kind: 'inputs', bindings: intent.kind === 'inputs_reset' ? resetWidgetInputBindingsV1(instance.bindings, intent.paths) : setWidgetInputBindingsV1(instance.bindings, intent.bindings, intent.paths) }
           : { kind: 'rename', ...(intent.displayName ? { displayName: intent.displayName } : {}) });
         if (!updated || updated.source.kind !== 'widget') return fail('invalid_widget_shared_content');
         return await call('session.board.item.upsert', { sessionId, itemId: existing!.itemId, expectedItemRevision: existing!.revision, item: updated }, updated.source.instance);

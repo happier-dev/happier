@@ -1,6 +1,8 @@
 export * from './widgetInstanceV1.js';
+export * from './widgetLayoutItemV1.js';
 export * from './builtinWidgetDescriptorV1.js';
 export * from './widgetInputAdmissionV1.js';
+export * from './widgetSharedInputAdmissionV1.js';
 export * from './widgetViewerPurposeV1.js';
 export * from './widgetActionInputResolverV1.js';
 export * from './actionsV1.js';
@@ -16,3 +18,6 @@ export * from './widgetDefinitionPromotionV1.js';
 export * from './definitionActionsV1.js';
 export * from './widgetSnapshotV1.js';
 export * from './widgetSurfaceArtifactV1.js';
+export * from './widgetLayoutFragmentV1.js';
+export * from './widgetLayoutFragmentArtifactV1.js';
+export * from './fragmentActionsV1.js';

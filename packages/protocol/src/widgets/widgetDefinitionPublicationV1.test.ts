@@ -48,13 +48,13 @@ describe('shared widget publication purpose admission', () => {
         const executor = createActionExecutor(deps);
         const context = { surface: 'agent' as const, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
             serverId: 'home', defaultSessionId: 'shared', actionRequestId: 'publish-widget' };
-        expect(await executor.execute('widgets.instance.add', { surface, instance, placement: {} }, context))
+        expect(await executor.execute('widgets.item.add', { surface, instance, placement: {} }, context))
             .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
         expect(pending).toMatchObject({ actionArgs: { instance } });
         expect(pending?.actionArgs).not.toHaveProperty('viewerValues');
         expect(JSON.stringify(pending?.actionArgs)).not.toContain('mine');
         pending = undefined;
-        expect(await executor.execute('widgets.instance.add', { surface, instance, viewerValues: { connection: { ...selected, accountId: 'other' } }, placement: {} }, context))
+        expect(await executor.execute('widgets.item.add', { surface, instance, viewerValues: { connection: { ...selected, accountId: 'other' } }, placement: {} }, context))
             .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
         expect(pending).toBeUndefined();
     });

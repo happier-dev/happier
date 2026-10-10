@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import { createHomeHubArtifactPortV1, buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, type HomeHubArtifactTransportV1 } from './homeHubArtifactV1.js';
 import { HOME_HUB_DEFAULT_LAYOUT, homeHubDefaultWidgetInstanceId, type HomeHubWidgetInput } from './homeHubLayoutV1.js';
+import { flattenWidgetLayoutWidgetsV1, type WidgetLayoutItemV1 } from '../widgets/widgetLayoutItemV1.js';
+import { createHomeWidgetActionPortV1 } from '../widgets/homeWidgetActionPortV1.js';
+
+const instances = (layout: Readonly<{ items: readonly WidgetLayoutItemV1[] }>) => flattenWidgetLayoutWidgetsV1(layout.items).map(item => item.instance);
 
 const shown: HomeHubWidgetInput = { key: 'acme.checks/summary', surface: { pluginId: 'acme.checks', localId: 'summary' }, homeDefault: 'shown' };
 const copy = (id: string, session: string) => ({ v: 1 as const, id, definition: { kind: 'installed' as const, surface: shown.surface }, bindings: { session: { kind: 'value' as const, value: session } } });
@@ -20,6 +24,73 @@ function boundary() {
 }
 
 describe('Home Account Artifact semantic edits', () => {
+    it.each([false, true])('moves to an exact mixed Home position with an explicit outside-group destination (grouped=%s)', async grouped => {
+        const b = boundary();
+        const owner = createHomeHubArtifactPortV1(b.transport, { accountId });
+        const one = copy('one', 'A'); const two = copy('two', 'B');
+        await owner.apply({ kind: 'widget_add', instance: one, size: 'small' });
+        await owner.apply({ kind: 'widget_add', instance: two, size: 'small', frameStyle: 'card' });
+        if (grouped) await owner.apply({ kind: 'group_create', groupId: 'group', instanceIds: ['one', 'two'] });
+        const port = createHomeWidgetActionPortV1(owner);
+        const surface = { serverId: 'home', accountId, owner: { kind: 'home' } } as const;
+        expect(await port.apply(surface, { kind: 'move', instanceId: two.id, nativeIndex: 0, groupId: null }, { surface: 'cli' })).toMatchObject({ ok: true });
+        const layout = await owner.read();
+        expect(layout.order[0]).toBe(two.id);
+        expect(layout.items.find(item => item.kind === 'widget' && item.instance.id === two.id)).toMatchObject({ instance: two, size: 'small', frameStyle: 'card' });
+        expect(instances(layout)).toEqual(expect.arrayContaining([one, two]));
+        if (grouped) expect(layout.items.find(item => item.kind === 'group')).toMatchObject({ children: [{ instance: one }] });
+    });
+    it.each(['item', 'transfer'] as const)('adds a child through the %s Action adapter while preserving its saved frame and size', async destinationKind => {
+        const b = boundary();
+        const owner = createHomeHubArtifactPortV1(b.transport, { accountId, builtins: [] });
+        const one = copy('one', 'A'); const two = copy('two', 'B');
+        await owner.apply({ kind: 'group_add', group: { kind: 'group', id: 'group', width: 'full', frameStyle: 'card', dividers: 'hairline',
+            children: [{ kind: 'widget', instance: one, size: 'small' }] } });
+        const port = createHomeWidgetActionPortV1(owner);
+        const surface = { serverId: 'home', accountId, owner: { kind: 'home' } } as const;
+        const context = { surface: 'cli' } as const;
+        const destination = destinationKind === 'item' ? { groupId: 'group', toIndex: 0 } : { position: { groupId: 'group', index: 0 } };
+        expect(await port.apply(surface, { kind: 'add', instance: two, ...destination,
+            presentation: { size: 'tall', frameStyle: 'card' } }, context)).toMatchObject({ ok: true });
+        expect((await owner.read()).items).toMatchObject([{ kind: 'group', children: [
+            { instance: two, size: 'tall', frameStyle: 'card' }, { instance: one, size: 'small' },
+        ] }]);
+        expect(await port.read(surface, context)).toMatchObject({ items: [{ kind: 'group', children: [{ instance: two, frameStyle: 'card' }, { instance: one }] }],
+            instances: [{ instance: two, size: 'tall', frameStyle: 'plain' }, { instance: one, size: 'small', frameStyle: 'plain' }] });
+    });
+    it('replays a group creation against concurrent child inputs and retains setup through reload', async () => {
+        const b = boundary();
+        const other = createHomeHubArtifactPortV1(b.transport, { accountId });
+        await other.apply({ kind: 'widget_add', instance: copy('one', 'A'), frameStyle: 'card', size: 'small' });
+        await other.apply({ kind: 'setup_visibility', stepId: 'addPhone', hidden: true });
+        let competing = true;
+        const port = createHomeHubArtifactPortV1({ ...b.transport, update: async input => {
+            if (competing) { competing = false; await other.apply({ kind: 'widget_inputs', instanceId: 'one', bindings: copy('one', 'B').bindings }); }
+            return b.transport.update(input);
+        } }, { accountId });
+        await port.apply({ kind: 'group_create', groupId: 'group', instanceIds: ['one'] });
+        const reloaded = await other.read();
+        expect(reloaded.items).toMatchObject([{ kind: 'group', id: 'group', children: [{ instance: copy('one', 'B'), frameStyle: 'card' }] }]);
+        expect(reloaded.hidden).toContain('setup:addPhone');
+        const capture = await port.captureWidgetPresentation(reloaded, 'one');
+        expect(capture).toMatchObject({ groupId: 'group', nativeIndex: 0, frameStyle: 'card' });
+        await other.apply({ kind: 'move', instanceId: 'one', toIndex: 0, groupId: null });
+        await expect(port.apply({ kind: 'widget_remove', instanceId: 'one', expectedPresentation: capture }))
+            .rejects.toMatchObject({ code: 'widget_placement_changed' });
+        expect(instances(await other.read())).toEqual([copy('one', 'B')]);
+    });
+    it('guards a standalone source whose child index and presentation survive a concurrent move into a group', async () => {
+        const b = boundary();
+        const port = createHomeHubArtifactPortV1(b.transport, { accountId, builtins: [] });
+        await port.apply({ kind: 'widget_add', instance: copy('one', 'A'), size: 'small' });
+        const expectedPresentation = await port.captureWidgetPresentation(await port.read(), 'one');
+        expect(expectedPresentation).toMatchObject({ nativeIndex: 0, groupId: null });
+        await port.apply({ kind: 'group_create', groupId: 'group', instanceIds: ['one'] });
+        const groupedPresentation = await port.captureWidgetPresentation(await port.read(), 'one');
+        expect(groupedPresentation).toEqual({ ...expectedPresentation, groupId: 'group' });
+        await expect(port.apply({ kind: 'widget_remove', instanceId: 'one', expectedPresentation }))
+            .rejects.toMatchObject({ code: 'widget_placement_changed' });
+    });
     it('describes declared default and stale saved sizes without persisting presentation normalization', async () => {
         const b = boundary();
         const widget: HomeHubWidgetInput = { ...shown, sizeDeclaration: { sizes: ['wide'], defaultSize: 'wide' } };
@@ -30,7 +101,7 @@ describe('Home Account Artifact semantic edits', () => {
 
         const id = buildHomeHubArtifactIdV1(accountId);
         const instanceId = homeHubDefaultWidgetInstanceId(shown.key);
-        const layout = { ...HOME_HUB_DEFAULT_LAYOUT, sections: { [instanceId]: { size: 'medium', frameStyle: 'plain' } } };
+        const layout = { ...HOME_HUB_DEFAULT_LAYOUT, items: [{ kind: 'widget', instance: { ...copy(instanceId, 'A'), bindings: {} }, size: 'medium', frameStyle: 'plain' }] };
         const row = { artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
             body: JSON.stringify(layout), revision: { headerVersion: 1, bodyVersion: 1 } };
         b.rows.set(id, row);
@@ -43,7 +114,7 @@ describe('Home Account Artifact semantic edits', () => {
     });
     it.each([
         { v: 1, order: ['setup'], hidden: ['setup:addPhone'] },
-        { v: 1, order: ['setup'], instances: [] },
+        { v: 1, order: ['setup'], items: [] },
         { order: ['setup'], hidden: [], obsolete: true },
     ])('normalizes partial stored layouts before projections and semantic edits: %j', async stored => {
         const b = boundary();
@@ -56,7 +127,7 @@ describe('Home Account Artifact semantic edits', () => {
         expect(b.updates).toEqual([]);
         const edited = (await port.apply({ kind: 'setup_visibility', stepId: 'addMachine', hidden: true })).layout;
         expect(edited.hidden).toContain('setup:addMachine');
-        expect(edited.instances).toEqual([]);
+        expect(instances(edited)).toEqual([]);
         expect(await port.read()).toEqual(edited);
     });
 
@@ -82,17 +153,17 @@ describe('Home Account Artifact semantic edits', () => {
         } };
         const seed = (instances: readonly unknown[]) => b.rows.set(id, {
             artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
-            body: JSON.stringify({ v: 1, instances, order: ['one'], sections: { one: { frameStyle: 'plain', obsolete: true } }, obsolete: true }),
+            body: JSON.stringify({ v: 1, items: instances.map(instance => ({ kind: 'widget', instance, frameStyle: 'plain', obsolete: true })), order: ['one'], obsolete: true }),
             revision: { headerVersion: 1, bodyVersion: 1 },
         });
         const port = createHomeHubArtifactPortV1(b.transport, { accountId });
         seed([storedInstance]);
-        const known = { ...HOME_HUB_DEFAULT_LAYOUT, instances: [instance], order: ['one'], sections: { one: { frameStyle: 'plain' } } };
+        const known = { ...HOME_HUB_DEFAULT_LAYOUT, items: [{ kind: 'widget', instance, frameStyle: 'plain' }], order: ['one'] };
         expect(await port.read()).toEqual(known);
         await expect(port.apply({ kind: 'widget_add', instance: storedInstance })).rejects.toBeInstanceOf(z.ZodError);
         expect(b.updates).toEqual([]);
         const edited = (await port.apply({ kind: 'widget_rename', instanceId: 'one', displayName: 'Renamed' })).layout;
-        expect(edited.instances).toEqual([{ ...instance, displayName: 'Renamed' }]);
+        expect(instances(edited)).toEqual([{ ...instance, displayName: 'Renamed' }]);
         expect(JSON.parse(String(b.rows.get(id)?.body))).toEqual(edited);
         expect(await port.read()).toEqual(edited);
         const { id: _missing, ...withoutIdentity } = storedInstance;
@@ -109,9 +180,9 @@ describe('Home Account Artifact semantic edits', () => {
         expect(projected.sections.filter(section => section.kind === 'widget').map(section => section.id)).toEqual([homeHubDefaultWidgetInstanceId(shown.key)]);
         expect(b.rows.size).toBe(0);
         const first = (await port.apply({ kind: 'setup_visibility', stepId: 'addPhone', hidden: true })).layout;
-        expect(first.instances.map(instance => instance.id)).toEqual([homeHubDefaultWidgetInstanceId(shown.key)]);
-        const second = (await port.apply({ kind: 'frameStyle', sectionId: first.instances[0]!.id, frameStyle: 'plain' })).layout;
-        expect(second.instances).toHaveLength(1);
+        expect(instances(first).map(instance => instance.id)).toEqual([homeHubDefaultWidgetInstanceId(shown.key)]);
+        const second = (await port.apply({ kind: 'frameStyle', sectionId: instances(first)[0]!.id, frameStyle: 'plain' })).layout;
+        expect(instances(second)).toHaveLength(1);
         expect(second.hidden).toContain('setup:addPhone');
         expect(second.hidden).toContain('machines');
         expect(b.rows.size).toBe(1);
@@ -132,12 +203,12 @@ describe('Home Account Artifact semantic edits', () => {
             port.apply({ kind: 'widget_size', instanceId: 'two', size: 'full' }),
         ]);
         const layout = await port.read();
-        expect(layout.instances).toEqual(expect.arrayContaining([copy('one', 'C'), copy('two', 'B')]));
+        expect(instances(layout)).toEqual(expect.arrayContaining([copy('one', 'C'), copy('two', 'B')]));
         expect(layout.hidden).toContain('setup:addMachine');
-        expect(layout.sections?.two?.size).toBe('full');
+        expect(layout.items.find(item => item.kind === 'widget' && item.instance.id === 'two')).toMatchObject({ size: 'full' });
         expect(b.rows.size).toBe(1);
         await port.apply({ kind: 'widget_remove', instanceId: 'one' });
-        expect((await port.read()).instances).toEqual([copy('two', 'B')]);
+        expect(instances(await port.read())).toEqual([copy('two', 'B')]);
     });
 
     it('rejects guarded removal on the CAS replay winner when another edit changed the instance', async () => {
@@ -162,8 +233,8 @@ describe('Home Account Artifact semantic edits', () => {
         await expect(port.apply(intent)).rejects.toMatchObject({ code: 'widget_instance_changed' });
         expect(compete).toBe(false);
         const retained = await otherClient.read();
-        expect(retained.instances).toEqual([copy('one', 'C'), copy('two', 'B')]);
-        expect(retained.sections?.one?.size).toBe('full');
+        expect(instances(retained)).toEqual([copy('one', 'C'), copy('two', 'B')]);
+        expect(retained.items.find(item => item.kind === 'widget' && item.instance.id === 'one')).toMatchObject({ size: 'full' });
         expect(retained.hidden).toContain('setup:addPhone');
     });
 
@@ -180,10 +251,10 @@ describe('Home Account Artifact semantic edits', () => {
         await port.apply({ kind: 'widget_inputs', instanceId: 'one', bindings: intent.expectedInstance.bindings });
         expect([...b.rows.values()][0]!.revision).toEqual(revision);
         await port.apply(intent);
-        expect((await port.read()).instances).toEqual([copy('two', 'B')]);
+        expect(instances(await port.read())).toEqual([copy('two', 'B')]);
         await port.apply({ kind: 'widget_inputs', instanceId: 'two', bindings: copy('two', 'C').bindings });
         await port.apply({ kind: 'widget_remove', instanceId: 'two' });
-        expect((await port.read()).instances).toEqual([]);
+        expect(instances(await port.read())).toEqual([]);
     });
 
     it.each(['frame', 'order'] as const)('rejects guarded removal after a concurrent %s-only placement edit wins CAS', async edit => {
@@ -207,8 +278,8 @@ describe('Home Account Artifact semantic edits', () => {
         await expect(port.apply(intent)).rejects.toMatchObject({ code: 'widget_placement_changed' });
         expect(compete).toBe(false);
         const retained = await otherClient.read();
-        expect(retained.instances).toEqual([expectedInstance, copy('two', 'B')]);
-        if (edit === 'frame') expect(retained.sections?.one?.frameStyle).toBe('card');
+        expect(instances(retained)).toEqual([expectedInstance, copy('two', 'B')]);
+        if (edit === 'frame') expect(retained.items.find(item => item.kind === 'widget' && item.instance.id === 'one')).toMatchObject({ frameStyle: 'card' });
         else expect(retained.order.indexOf('one')).toBe(0);
     });
 
@@ -219,16 +290,16 @@ describe('Home Account Artifact semantic edits', () => {
         const intent = { kind: 'widget_add' as const, instance, size: 'full' as const, frameStyle: 'plain' as const,
             position: { anchorId: 'setup', placement: 'before' as const } };
         const added = (await port.apply(intent)).layout;
-        expect(added.sections?.one).toEqual({ size: 'full', frameStyle: 'plain' });
+        expect(added.items.find(item => item.kind === 'widget' && item.instance.id === 'one')).toMatchObject({ size: 'full', frameStyle: 'plain' });
         expect(added.order.indexOf('one')).toBe(added.order.indexOf('setup') - 1);
         // The committed add already carries presentation; persistence received no later patch.
-        expect([...b.rows.values()].map(row => typeof row.body === 'string' ? JSON.parse(row.body).sections.one : null))
-            .toEqual([{ size: 'full', frameStyle: 'plain' }]);
+        expect([...b.rows.values()].map(row => typeof row.body === 'string' ? JSON.parse(row.body).items : null))
+            .toMatchObject([[{ size: 'full', frameStyle: 'plain' }]]);
         expect(b.updates).toEqual([]);
         const remove = { kind: 'widget_remove' as const, instanceId: 'one', expectedInstance: instance,
             expectedPresentation: { size: 'full' as const, frameStyle: 'plain' as const, nativeIndex: added.order.indexOf('one') } };
         await port.apply(remove);
-        expect((await port.read()).instances).toEqual([]);
+        expect(instances(await port.read())).toEqual([]);
     });
 
     it('refuses guarded cleanup when a concurrent Artifact visibility edit wins CAS', async () => {
@@ -255,28 +326,28 @@ describe('Home Account Artifact semantic edits', () => {
         await expect(port.apply(intent)).rejects.toMatchObject({ code: 'widget_placement_changed' });
         expect(compete).toBe(false);
         const retained = await otherClient.read();
-        expect(retained.instances).toEqual([instance]);
+        expect(instances(retained)).toEqual([instance]);
         expect(retained.hidden).toContain(instance.id);
         await otherClient.apply({ kind: 'widget_remove', instanceId: instance.id });
-        expect((await otherClient.read()).instances).toEqual([]);
+        expect(instances(await otherClient.read())).toEqual([]);
     });
 
     it('adds and moves at native indices across builtin and unresolved order slots', async () => {
         const b = boundary();
         const artifactId = buildHomeHubArtifactIdV1(accountId);
         b.rows.set(artifactId, { artifactId, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
-            body: JSON.stringify({ ...HOME_HUB_DEFAULT_LAYOUT, order: ['unresolved', 'setup'], instances: [copy('one', 'A')] }),
+            body: JSON.stringify({ ...HOME_HUB_DEFAULT_LAYOUT, order: ['unresolved', 'setup'], items: [{ kind: 'widget', instance: copy('one', 'A') }] }),
             revision: { headerVersion: 1, bodyVersion: 1 } });
         const port = createHomeHubArtifactPortV1(b.transport, { accountId });
         const added = (await port.apply({ kind: 'widget_add', instance: copy('two', 'B'),
             size: 'full', frameStyle: 'plain', position: { nativeIndex: 1 } })).layout;
         expect(added.order.slice(0, 4)).toEqual(['unresolved', 'two', 'setup', 'start']);
-        expect(added.sections?.two).toEqual({ size: 'full', frameStyle: 'plain' });
+        expect(added.items.find(item => item.kind === 'widget' && item.instance.id === 'two')).toMatchObject({ size: 'full', frameStyle: 'plain' });
         await port.apply({ kind: 'move_to', sectionId: 'one', position: { nativeIndex: 0 } });
         const moved = (await port.apply({ kind: 'move_to', sectionId: 'setup', position: { nativeIndex: 2 } })).layout;
         expect(moved.order.slice(0, 5)).toEqual(['one', 'unresolved', 'setup', 'two', 'start']);
-        expect(moved.instances).toEqual([copy('one', 'A'), copy('two', 'B')]);
-        expect(moved.sections?.two).toEqual({ size: 'full', frameStyle: 'plain' });
+        expect(instances(moved)).toEqual([copy('one', 'A'), copy('two', 'B')]);
+        expect(moved.items.find(item => item.kind === 'widget' && item.instance.id === 'two')).toMatchObject({ size: 'full', frameStyle: 'plain' });
         await expect(port.apply({ kind: 'move_to', sectionId: 'unresolved', position: { nativeIndex: 0 } }))
             .rejects.toMatchObject({ code: 'home_hub_section_not_found' });
         expect((await port.read()).order).toEqual(moved.order);
@@ -296,16 +367,16 @@ describe('Home Account Artifact semantic edits', () => {
         const section = projected.sections.find(section => section.kind === 'widget');
         if (section?.kind !== 'widget') throw new Error('Expected default-shown widget');
         const expectedPresentation = await port.captureWidgetPresentation(sparse, section.id);
-        expect(expectedPresentation).toEqual({ size: 'medium', frameStyle: null, hidden: false,
+        expect(expectedPresentation).toEqual({ size: 'medium', frameStyle: null, hidden: false, groupId: null,
             nativeIndex: projected.sections.indexOf(section) + 1 });
         expect(sparse.order).toEqual(['unresolved']);
-        expect(sparse.instances).toEqual([]);
+        expect(instances(sparse)).toEqual([]);
         expect(b.updates).toEqual([]);
         const intent = { kind: 'widget_remove' as const, instanceId: section.id, expectedInstance: section.instance,
             expectedPresentation };
         await port.apply(intent);
         const reloaded = await port.read();
-        expect(reloaded.instances).toEqual([]);
+        expect(instances(reloaded)).toEqual([]);
         expect(reloaded.order).toContain('unresolved');
         expect(reloaded.hidden).toContain(section.id);
         expect((await port.describe(reloaded)).sections.some(candidate => candidate.id === section.id)).toBe(false);

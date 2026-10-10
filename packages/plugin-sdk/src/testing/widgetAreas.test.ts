@@ -68,15 +68,15 @@ it('activates a real declared plugin and runs area inputs/layout/refresh through
             .rejects.toMatchObject({ code: 'ENOENT' });
         const instance = { v: 1 as const, id: 'copy', definition: { kind: 'installed' as const, surface: { pluginId: widgetAreasPlugin.manifest.id, localId: widget.id } },
             bindings: { directory: { kind: 'context' as const, slot: 'directory' }, filter: { kind: 'context' as const, slot: 'filter' } } };
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.add', instance }, 'files', directory)).toMatchObject({ ok: true });
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.inputs.validate', instanceId: 'copy', bindings: instance.bindings }, 'folders', directory))
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.item.add', instance }, 'files', directory)).toMatchObject({ ok: true });
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.item.inputs.validate', instanceId: 'copy', bindings: instance.bindings }, 'folders', directory))
             .toEqual({ ok: true, result: { status: 'ready', input: { directory, filter: 'folders' } } });
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.size.set', instanceId: 'copy', size: 'full' })).toMatchObject({ ok: true });
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.move', instanceId: 'copy', toIndex: 0 })).toMatchObject({ ok: true });
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.item.size.set', instanceId: 'copy', size: 'full' })).toMatchObject({ ok: true });
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.item.move', instanceId: 'copy', toIndex: 0 })).toMatchObject({ ok: true });
         // A headless SDK fixture has no UI contextual Resource store. Exercise
         // its real refusal, never install a second refresh implementation.
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.refresh', instanceId: 'copy' }))
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.item.refresh', instanceId: 'copy' }))
             .toMatchObject({ ok: false, errorCode: 'widget_refresh_unavailable' });
-        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.instance.list' })).toMatchObject({ ok: true, result: { instances: [{ instance, size: 'full' }] } });
+        expect(await runWidgetAreaExample(fixture.context.hostApi, { actionId: 'widgets.item.list' })).toMatchObject({ ok: true, result: { instances: [{ instance, size: 'full' }] } });
     } finally { await fixture.dispose(); await plugin.dispose(); await rm(directory, { recursive: true, force: true }); }
 });

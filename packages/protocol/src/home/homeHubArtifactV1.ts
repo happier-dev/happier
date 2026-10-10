@@ -1,4 +1,5 @@
 import type { WorkBoardArtifactTransportV1, WorkBoardArtifactRevisionV1, WorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
+import type { ArtifactCallerAccessV1 } from '../artifacts/artifactAccessV1.js';
 import { sha1 } from '@noble/hashes/sha1';
 import { bytesToHex, concatBytes } from '@noble/hashes/utils';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
@@ -17,8 +18,13 @@ export function buildHomeHubArtifactIdV1(accountId: string): string {
     const hex = bytesToHex(bytes);
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-export type HomeHubArtifactV1 = WorkBoardArtifactV1 & Readonly<{ ownerAccountId: string }>;
-export type HomeHubArtifactTransportV1 = Pick<WorkBoardArtifactTransportV1, 'update'> & Readonly<{
+export type HomeHubArtifactV1 = WorkBoardArtifactV1 & Readonly<{
+    ownerAccountId: string;
+    /** Authenticated HTTP admission, never inferred from the stored surface owner. */
+    access?: ArtifactCallerAccessV1;
+    shared?: boolean;
+}>;
+export type HomeHubArtifactTransportV1 = Pick<WorkBoardArtifactTransportV1, 'update'> & Partial<Pick<WorkBoardArtifactTransportV1, 'list' | 'delete'>> & Readonly<{
     /** Exact acknowledged singleton content, including the incumbent in a same-id create race. */
     create(input: Parameters<WorkBoardArtifactTransportV1['create']>[0]): Promise<HomeHubArtifactV1>;
     read(artifactId: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<HomeHubArtifactV1 | null>;

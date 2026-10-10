@@ -1,31 +1,22 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
-import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { WidgetSnapshotDocumentV1Schema, WidgetSnapshotMetadataV1Schema } from './declarative/snapshot.js';
 import { WidgetInstanceV1Schema as InstanceSchema } from '../../widgets/widgetInstanceV1.js';
 const WidgetInstanceV1Schema = z.lazy(() => InstanceSchema);
-import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
+import { getWidgetSharedInputIssuesV1 } from '../../widgets/widgetSharedInputAdmissionV1.js';
 import { UiSurfaceCapabilityRequestV1Schema } from '../../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { PluginHostedHtmlSourceV1Schema } from '../../plugins/contributions/ui/hostedHtmlSourceV1.js';
 import { PluginUiLaunchInputV1Schema } from '../../plugins/ui/semanticCommands.js';
 import { SessionSurfaceDeclarativeDocumentV1Schema } from './declarative/authoring.js';
-import { readPluginDeclarativeDataSourcesV1 } from '../../plugins/contributions/ui/declarativeDocumentAuthoringV1.js';
 
-const HeightSizeSchema = z.enum(['compact', 'regular', 'tall']);
-// Unknown JSON fields cannot hide a private selection from shared-content admission.
-const ConnectedAccountSelectionSchema = createStoredReadSchema(asProtocolZod(QualifiedConnectedAccountRefSchema));
-function containsPrivateConnectedAccountSelection(value: unknown): boolean {
-  const pending = [value];
-  while (pending.length) {
-    const next = pending.pop();
-    if (!next || typeof next !== 'object') continue;
-    if (ConnectedAccountSelectionSchema.safeParse(next).success) return true;
-    pending.push(...(Array.isArray(next) ? next : Object.values(next)));
-  }
-  return false;
-}
-export const SessionSurfaceItemV1Schema = z.object({
+const HeightSizeSchema = lazyZodSchema(() => z.enum(['compact', 'regular', 'tall']));
+export const SessionSurfaceItemDestinationV1Schema = lazyZodSchema(() => z.enum(['transcript', 'board', 'both']));
+export type SessionSurfaceItemDestinationV1 = z.infer<typeof SessionSurfaceItemDestinationV1Schema>;
+export const SessionSurfaceItemV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
+  /** Creation intent; Pin and Unpin belong to layout and do not rewrite it. */
+  destination: SessionSurfaceItemDestinationV1Schema.optional(),
   title: z.string().trim(),
   frame: z.enum(['card', 'full_bleed', 'frameless']),
   height: z.discriminatedUnion('mode', [
@@ -49,15 +40,12 @@ export const SessionSurfaceItemV1Schema = z.object({
       // Account-private definitions must be explicitly copied into shared content.
       instance: WidgetInstanceV1Schema.superRefine((instance, context) => {
         if (instance.definition.kind === 'artifact') context.addIssue({ code: 'custom', path: ['definition'], message: 'A shared Session widget cannot reference an Account-private definition.' });
-        if (instance.definition.kind === 'inline' && containsPrivateConnectedAccountSelection(instance.definition.definition))
-          context.addIssue({ code: 'custom', path: ['definition'], message: 'A shared definition cannot contain a private Connected Account selection.' });
-        if (instance.definition.kind === 'inline' && instance.definition.definition.body.kind === 'declarative'
-          && readPluginDeclarativeDataSourcesV1(instance.definition.definition.body.document).some(source => source.kind === 'resource' && source.input !== undefined))
-          context.addIssue({ code: 'custom', path: ['definition'], message: 'Shared live Resource reads must use the viewer-resolved widget inputs, not authored input literals.' });
-        for (const [path, binding] of Object.entries(instance.bindings)) {
-          if (binding.kind === 'value' && containsPrivateConnectedAccountSelection(binding.value)) {
-            context.addIssue({ code: 'custom', path: ['bindings', path], message: 'Shared connection inputs require viewer intent.' });
-          }
+        for (const issue of getWidgetSharedInputIssuesV1(instance)) {
+          context.addIssue({ code: 'custom', path: issue.inputPath ? ['bindings', issue.inputPath] : ['definition'],
+            message: issue.reasonCode === 'widget_shared_resource_input_literal'
+              ? 'Shared live Resource reads must use the viewer-resolved widget inputs, not authored input literals.'
+              : issue.inputPath ? 'Shared connection inputs require viewer intent.'
+                : 'A shared definition cannot contain a private Connected Account selection.' });
         }
       }),
     }).strict(),
@@ -69,9 +57,11 @@ export const SessionSurfaceItemV1Schema = z.object({
     || !WidgetSnapshotDocumentV1Schema.safeParse(item.source.document).success)) {
     context.addIssue({ code: 'custom', path: ['snapshot'], message: 'A snapshot requires inert declarative content without launch input' });
   }
-});
+}));
 export type SessionSurfaceItemV1 = Readonly<z.infer<typeof SessionSurfaceItemV1Schema>>;
 /** Persisted content drops additive fields before the strict Action/result owners consume it. */
+defineStoredReadProjection(SessionSurfaceItemV1Schema, () => createStoredReadSchema(SessionSurfaceItemV1Schema.clone())
+  .transform(item => ({ ...item, destination: item.destination ?? 'board' as const })));
 export const SessionSurfaceItemV1StoredSchema = createStoredReadSchema(SessionSurfaceItemV1Schema);
 
 /** A Board widget's instance identity is its existing canonical record identity. */
@@ -81,6 +71,7 @@ export function isSessionSurfaceItemIdentityCorrespondingV1(itemId: string, item
 
 /** Compare opened records before sealing; this does not prove encrypted record history. */
 export function isSessionSurfaceItemSourceCompatible(previous: SessionSurfaceItemV1, next: SessionSurfaceItemV1): boolean {
+  if ((previous.destination ?? 'board') !== (next.destination ?? 'board')) return false;
   if (previous.source.kind !== next.source.kind) return false;
   if (previous.source.kind !== 'widget') return true;
   if (next.source.kind !== 'widget' || previous.source.instance.id !== next.source.instance.id) return false;

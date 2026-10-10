@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   getWidgetSupportedSizesV1, getWidgetSizeFootprintV1, getSessionBoardWidgetFootprintV1,
   normalizeWidgetSizeForSurfaceV1, resolveSessionBoardWidgetSizeV1, resolveWidgetSizeChoicesV1,
-  stepWidgetSizeV1, WidgetSizeDeclarationV1Schema, WidgetSessionBoardWidthV1Schema, WidgetSurfacePresentationV1Schema, WIDGET_SIZE_ORDER_V1,
+  stepWidgetSizeV1, WidgetSizeDeclarationV1Schema, WidgetSessionBoardWidthV1Schema, WidgetSurfacePresentationV1Schema, WidgetExpectedPresentationV1Schema, WIDGET_SIZE_ORDER_V1,
 } from './widgetPresentationV1.js';
 import type { WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
 
 describe('portable widget size policy', () => {
+  it('retains explicit ungrouped presentation custody without treating it as an omitted expectation', () => {
+    const capture = { nativeIndex: 0, frameStyle: null, groupId: null };
+    expect(WidgetExpectedPresentationV1Schema.parse(capture)).toEqual(capture);
+    expect(WidgetExpectedPresentationV1Schema.safeParse({ ...capture, groupId: '' }).success).toBe(false);
+  });
   it('advertises two-dimensional size choices rather than width-only presentation', () => {
     expect(WidgetSurfacePresentationV1Schema.safeParse({ sizes: ['tall', 'full'], defaultSize: 'tall' }).success).toBe(true);
   });

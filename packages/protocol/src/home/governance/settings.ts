@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { FeatureDecisionSchema } from '../../features/decision.js';
@@ -11,21 +12,21 @@ import { FeatureDecisionSchema } from '../../features/decision.js';
  * never carries a value, only whether one is set. Writes name registry keys and are validated by
  * the registry on the server, so this contract stays generic instead of repeating each key's type.
  */
-export const HomeSettingSourceV1Schema = z.enum(['deployment', 'home', 'default']);
+export const HomeSettingSourceV1Schema = lazyZodSchema(() => z.enum(['deployment', 'home', 'default']));
 export type HomeSettingSourceV1 = z.infer<typeof HomeSettingSourceV1Schema>;
 
-export const HomeSettingEditableV1Schema = z.enum(['home', 'bootstrap']);
+export const HomeSettingEditableV1Schema = lazyZodSchema(() => z.enum(['home', 'bootstrap']));
 export type HomeSettingEditableV1 = z.infer<typeof HomeSettingEditableV1Schema>;
 
-export const HomeSettingApplyV1Schema = z.enum(['live', 'restart']);
+export const HomeSettingApplyV1Schema = lazyZodSchema(() => z.enum(['live', 'restart']));
 export type HomeSettingApplyV1 = z.infer<typeof HomeSettingApplyV1Schema>;
 
 /** Why a stored `apply: 'restart'` value was not applied at the last start. */
-export const HomeSettingIgnoredReasonV1Schema = z.enum(['invalid_type', 'out_of_bounds', 'secret_unreadable']);
+export const HomeSettingIgnoredReasonV1Schema = lazyZodSchema(() => z.enum(['invalid_type', 'out_of_bounds', 'secret_unreadable']));
 export type HomeSettingIgnoredReasonV1 = z.infer<typeof HomeSettingIgnoredReasonV1Schema>;
 
 /** A registry value in its typed (not env-text) form: boolean, number, string, list or JSON. */
-export const HomeSettingValueV1Schema = z.unknown();
+export const HomeSettingValueV1Schema = lazyZodSchema(() => z.unknown());
 
 /**
  * The registry facts a client needs to render an entry as a setting (plan §3.14 "Console
@@ -33,7 +34,7 @@ export const HomeSettingValueV1Schema = z.unknown();
  * (section, group, family, feature). Families the server derives from its own owners (feature
  * keys, rate limits, retention domains) are known to clients only through this projection.
  */
-export const HomeSettingDeclarationV1Schema = z.object({
+export const HomeSettingDeclarationV1Schema = lazyZodSchema(() => z.object({
   type: z.enum(['boolean', 'int', 'float', 'string', 'enum', 'url', 'email', 'list', 'json']),
   section: z.enum(['reach', 'email', 'policies', 'features', 'data', 'runtime', 'server']),
   group: z.string().min(1).optional(),
@@ -44,6 +45,8 @@ export const HomeSettingDeclarationV1Schema = z.object({
   bounds: z.object({
     min: z.number().optional(),
     max: z.number().optional(),
+    maxUtf8Bytes: z.number().optional(),
+    noControlChars: z.literal(true).optional(),
     values: z.array(z.string()).optional(),
     scheme: z.literal('https').optional(),
   }).strict().optional(),
@@ -52,11 +55,11 @@ export const HomeSettingDeclarationV1Schema = z.object({
    * the console (§3.14, r4), so a client can say why in its own language. Additive.
    */
   readOnlyReason: z.enum(['before_database', 'per_process_identity', 'invariant']).optional(),
-}).strict();
+}).strict());
 
 export type HomeSettingDeclarationV1 = z.infer<typeof HomeSettingDeclarationV1Schema>;
 
-export const HomeSettingEntryV1Schema = z.object({
+export const HomeSettingEntryV1Schema = lazyZodSchema(() => z.object({
   key: z.string().min(1),
   /** Always `null` for a secret: secrets are write-only. */
   value: HomeSettingValueV1Schema.nullable(),
@@ -77,14 +80,14 @@ export const HomeSettingEntryV1Schema = z.object({
     pending: z.boolean(),
     ignoredReason: HomeSettingIgnoredReasonV1Schema.optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
 export type HomeSettingEntryV1 = z.infer<typeof HomeSettingEntryV1Schema>;
 
-export const HomeSettingsGetInputV1Schema = z.object({}).strict();
+export const HomeSettingsGetInputV1Schema = lazyZodSchema(() => z.object({}).strict());
 export type HomeSettingsGetInputV1 = z.infer<typeof HomeSettingsGetInputV1Schema>;
 
-export const HomeSettingsProjectionV1Schema = z.object({
+export const HomeSettingsProjectionV1Schema = lazyZodSchema(() => z.object({
   /** `0` while nothing has been stored; the first stored revision is `1`. */
   revision: z.number().int().min(0),
   /** When the running server process applied its startup configuration (ISO time), if known. */
@@ -97,21 +100,21 @@ export const HomeSettingsProjectionV1Schema = z.object({
    * `blockingDependencyId`. The same decisions close `/v1/features`. Additive.
    */
   featureDecisions: z.array(FeatureDecisionSchema).optional(),
-}).strict();
+}).strict());
 
 export type HomeSettingsProjectionV1 = z.infer<typeof HomeSettingsProjectionV1Schema>;
 
-export const HomeSettingSecretWriteV1Schema = z.union([
+export const HomeSettingSecretWriteV1Schema = lazyZodSchema(() => z.union([
   z.object({ replace: z.string().min(1) }).strict(),
   z.object({ clear: z.literal(true) }).strict(),
-]);
+]));
 export type HomeSettingSecretWriteV1 = z.infer<typeof HomeSettingSecretWriteV1Schema>;
 
 /**
  * A partial write against the revision the caller last read. `values[key] = null` clears the
  * stored value (the key falls back to its default); secrets travel only in `secrets`.
  */
-export const HomeSettingsSetInputV1Schema = z.object({
+export const HomeSettingsSetInputV1Schema = lazyZodSchema(() => z.object({
   expectedRevision: z.number().int().min(0),
   values: z.record(z.string().min(1), HomeSettingValueV1Schema.nullable()),
   secrets: z.record(z.string().min(1), HomeSettingSecretWriteV1Schema).optional(),
@@ -123,11 +126,11 @@ export const HomeSettingsSetInputV1Schema = z.object({
    * cannot be combined with `values` or `secrets`. Additive.
    */
   discardPendingRestart: z.literal(true).optional(),
-}).strict();
+}).strict());
 
 export type HomeSettingsSetInputV1 = z.infer<typeof HomeSettingsSetInputV1Schema>;
 
-export const HomeSettingsInvalidReasonV1Schema = z.enum([
+export const HomeSettingsInvalidReasonV1Schema = lazyZodSchema(() => z.enum([
   'invalid_type',
   'out_of_bounds',
   'unknown_key',
@@ -136,15 +139,15 @@ export const HomeSettingsInvalidReasonV1Schema = z.enum([
   'not_secret',
   /** The value is required by another stored value (e.g. a retention domain's days once it deletes). */
   'required',
-]);
+]));
 export type HomeSettingsInvalidReasonV1 = z.infer<typeof HomeSettingsInvalidReasonV1Schema>;
 
 /** The one typed refusal of a settings write: the first failing key and why. */
-export const HomeSettingsInvalidErrorV1Schema = z.object({
+export const HomeSettingsInvalidErrorV1Schema = lazyZodSchema(() => z.object({
   error: z.literal('home_settings_invalid'),
   key: z.string().min(1),
   reason: HomeSettingsInvalidReasonV1Schema,
-}).strict();
+}).strict());
 
 export type HomeSettingsInvalidErrorV1 = z.infer<typeof HomeSettingsInvalidErrorV1Schema>;
 
@@ -154,10 +157,10 @@ export type HomeSettingsInvalidErrorV1 = z.infer<typeof HomeSettingsInvalidError
  * configured, whether the link a mail must carry can be built, and whether the stored password can
  * still be opened. Ready means both transport and link.
  */
-export const HomeMailDeliveryGetInputV1Schema = z.object({}).strict();
+export const HomeMailDeliveryGetInputV1Schema = lazyZodSchema(() => z.object({}).strict());
 export type HomeMailDeliveryGetInputV1 = z.infer<typeof HomeMailDeliveryGetInputV1Schema>;
 
-export const HomeMailDeliveryReadinessV1Schema = z.object({
+export const HomeMailDeliveryReadinessV1Schema = lazyZodSchema(() => z.object({
   transportConfigured: z.boolean(),
   linkTargetBuildable: z.boolean(),
   /** Where links in emails open (the application origin), when one is configured. */
@@ -165,23 +168,23 @@ export const HomeMailDeliveryReadinessV1Schema = z.object({
   ready: z.boolean(),
   /** The stored SMTP password exists but the server can no longer open it. */
   passwordUnreadable: z.boolean(),
-}).strict();
+}).strict());
 
 export type HomeMailDeliveryReadinessV1 = z.infer<typeof HomeMailDeliveryReadinessV1Schema>;
 
-export const HomeMailDeliveryTestInputV1Schema = z.object({
+export const HomeMailDeliveryTestInputV1Schema = lazyZodSchema(() => z.object({
   to: z.string().trim().min(3).max(320).email(),
-}).strict();
+}).strict());
 
 export type HomeMailDeliveryTestInputV1 = z.infer<typeof HomeMailDeliveryTestInputV1Schema>;
 
 /** A failure carries its class only, never transport detail or credentials. */
-export const HomeMailDeliveryTestResultV1Schema = z.discriminatedUnion('status', [
+export const HomeMailDeliveryTestResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('sent') }).strict(),
   z.object({
     status: z.literal('failed'),
     reason: z.enum(['not_configured', 'password_unreadable', 'render_failed', 'transport_failed']),
   }).strict(),
-]);
+]));
 
 export type HomeMailDeliveryTestResultV1 = z.infer<typeof HomeMailDeliveryTestResultV1Schema>;

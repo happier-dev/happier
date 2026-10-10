@@ -1,13 +1,16 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionListFilterV1Schema, type SessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
-import { WidgetInstanceRefV1Schema as InstanceRefSchema, WidgetInstanceV1Schema as InstanceSchema, WidgetInputBindingsV1Schema as BindingsSchema, type WidgetInstanceRefV1 } from '../widgets/widgetInstanceV1.js';
+import { WidgetInstanceRefV1Schema as InstanceRefSchema, WidgetInstanceV1Schema as InstanceSchema, WidgetInputBindingsV1Schema as BindingsSchema, resetWidgetInputBindingsV1, setWidgetInputBindingsV1, type WidgetInstanceRefV1 } from '../widgets/widgetInstanceV1.js';
+import { InputPathSchema } from '../inputs/inputFields.js';
 const WidgetInstanceRefV1Schema = z.lazy(() => InstanceRefSchema);
 const WidgetInstanceV1Schema = z.lazy(() => InstanceSchema);
 const WidgetInputBindingsV1Schema = z.lazy(() => BindingsSchema);
 import { WidgetExpectedPresentationV1Schema, WidgetGridSizeV1Schema, WIDGET_SIZE_POLICY_V1 } from '../widgets/widgetPresentationV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { getWidgetSharedInputIssuesV1 } from '../widgets/widgetSharedInputAdmissionV1.js';
 
 /**
  * Boards (INT §5.1): a user's own arrangement of live work — sessions, workflow runs, workflows and
@@ -31,17 +34,17 @@ export type WorkBoardSectionV1 = typeof WORK_BOARD_SECTIONS_V1[number];
 export const WORK_BOARD_MODES_V1 = ['canvas', 'by_status'] as const;
 export type WorkBoardModeV1 = typeof WORK_BOARD_MODES_V1[number];
 
-const IdentifierSchema = z.string().trim().min(1);
+const IdentifierSchema = lazyZodSchema(() => z.string().trim().min(1));
 
 /** A typed reference to one item on a Home. The same id on two Homes is two items. */
-export const BoardItemRefV1Schema = z.object({
+export const BoardItemRefV1Schema = lazyZodSchema(() => z.object({
     kind: z.enum(WORK_BOARD_ITEM_KINDS_V1),
     qualifiedId: z.object({
         /** The Home's portable identity (its server identity id, or its profile id when it has none). */
         serverId: IdentifierSchema,
         id: IdentifierSchema,
     }).strict(),
-}).strict();
+}).strict());
 const StoredBoardItemRefV1Schema = createStoredReadSchema(BoardItemRefV1Schema);
 export type BoardItemRefV1 = Readonly<{
     kind: WorkBoardItemKindV1;
@@ -68,20 +71,19 @@ export function readWorkBoardItemKeyV1(key: string): BoardItemRefV1 | null {
     return ref.success ? ref.data : null;
 }
 
-export const WorkBoardPositionV1Schema = z.object({
+export const WorkBoardPositionV1Schema = lazyZodSchema(() => z.object({
     x: z.number().finite(),
     y: z.number().finite(),
-}).strict();
+}).strict());
 export type WorkBoardPositionV1 = Readonly<{ x: number; y: number }>;
 
-export const WorkBoardWidgetSizeV1Schema = WidgetGridSizeV1Schema;
-const defaultWidgetSize = WIDGET_SIZE_POLICY_V1.workBoard.defaultSize;
-export const WorkBoardWidgetPlacementV1Schema = z.object({
+export const WorkBoardWidgetSizeV1Schema = lazyZodSchema(() => WidgetGridSizeV1Schema);
+export const WorkBoardWidgetPlacementV1Schema = lazyZodSchema(() => z.object({
     kind: z.literal('widget'), ref: WidgetInstanceRefV1Schema,
-    instance: WidgetInstanceV1Schema, size: WorkBoardWidgetSizeV1Schema.default(defaultWidgetSize),
+    instance: WidgetInstanceV1Schema, size: WorkBoardWidgetSizeV1Schema.default(WIDGET_SIZE_POLICY_V1.workBoard.defaultSize),
     frameStyle: z.enum(['card', 'plain']).optional(),
 }).strict().refine(value => value.ref.surface.owner.kind === 'workBoard' && value.ref.instanceId === value.instance.id,
-    'Widget placement must name its configured WorkBoard instance');
+    'Widget placement must name its configured WorkBoard instance'));
 export type WorkBoardWidgetPlacementV1 = z.infer<typeof WorkBoardWidgetPlacementV1Schema>;
 
 /** Qualified widget keys coexist with, and never change, existing work reference keys. */
@@ -99,17 +101,17 @@ export function readWorkBoardWidgetKeyV1(key: string): WidgetInstanceRefV1 | nul
     return parsed.success ? parsed.data : null;
 }
 export class WorkBoardWidgetMutationErrorV1 extends Error {
-    constructor(readonly code: 'widget_instance_not_found' | 'widget_instance_already_exists' | 'widget_instance_changed' | 'widget_placement_changed' | 'widget_placement_unsupported') {
+    constructor(readonly code: 'widget_instance_not_found' | 'widget_instance_already_exists' | 'widget_instance_changed' | 'widget_placement_changed' | 'widget_placement_unsupported' | 'widget_private_connection_selection' | 'widget_shared_resource_input_literal') {
         super(code); this.name = 'WorkBoardWidgetMutationErrorV1';
     }
 }
 
-export const WorkBoardSourceV1Schema = z.object({
+export const WorkBoardSourceV1Schema = lazyZodSchema(() => z.object({
     sections: z.array(z.enum(WORK_BOARD_SECTIONS_V1)).optional(),
     /** An inline Sessions filter (there is no separate saved-filter entity). */
     filter: SessionListFilterV1Schema.optional(),
     picked: z.array(BoardItemRefV1Schema).default([]),
-}).strict();
+}).strict());
 export type WorkBoardSourceV1 = Readonly<{
     sections?: readonly WorkBoardSectionV1[];
     filter?: SessionListFilterV1;
@@ -238,7 +240,7 @@ function normalizeWorkBoardV1(board: WorkBoardV1): WorkBoardV1 {
     };
 }
 
-const WorkBoardFieldsV1Schema = z.object({
+const WorkBoardFieldsV1Schema = lazyZodSchema(() => z.object({
     id: IdentifierSchema,
     name: z.string().trim().min(1),
     source: WorkBoardSourceV1Schema.extend({
@@ -253,7 +255,7 @@ const WorkBoardFieldsV1Schema = z.object({
     pinnedInSessions: z.boolean().default(false),
     widgets: z.array(WorkBoardWidgetPlacementV1Schema).optional(),
     itemOrder: z.array(z.string()).optional(),
-}).strict();
+}).strict());
 
 function validateWorkBoardWidgetsV1(board: Pick<WorkBoardV1, 'id' | 'widgets'>, context: z.RefinementCtx): void {
     const keys = new Set<string>();
@@ -268,9 +270,9 @@ function validateWorkBoardWidgetsV1(board: Pick<WorkBoardV1, 'id' | 'widgets'>, 
     }
 }
 /** Closed output contract over the canonical normalized Board shape. */
-export const WorkBoardV1StrictSchema = WorkBoardFieldsV1Schema
+export const WorkBoardV1StrictSchema = lazyZodSchema(() => WorkBoardFieldsV1Schema
     .superRefine(validateWorkBoardWidgetsV1)
-    .transform((board): WorkBoardV1 => normalizeWorkBoardV1(board));
+    .transform((board): WorkBoardV1 => normalizeWorkBoardV1(board)));
 /** Stored Board reads drop extra fields while retaining the canonical validation and normalization. */
 export const WorkBoardV1Schema = createStoredReadSchema(WorkBoardFieldsV1Schema
     .extend({ source: StoredWorkBoardSourceV1Schema })
@@ -290,7 +292,7 @@ export function resolveWorkBoardItemOrderV1(board: WorkBoardV1): string[] {
  * the collection. It is kept in `unreadable` exactly as stored — not shown, written back
  * untouched, and re-tried on every read — and is never reinterpreted as "no boards".
  */
-export const WorkBoardsV1Schema = z.object({
+export const WorkBoardsV1Schema = lazyZodSchema(() => z.object({
     v: z.literal(1).default(1),
     boards: z.array(z.unknown()).default([]),
     unreadable: z.array(z.unknown()).optional(),
@@ -307,7 +309,7 @@ export const WorkBoardsV1Schema = z.object({
         boards: dedupeBy(boards, (board) => board.id),
         ...(unreadable.length > 0 ? { unreadable } : {}),
     };
-});
+}));
 export type WorkBoardsV1 = Readonly<{
     v: 1;
     boards: readonly WorkBoardV1[];
@@ -406,13 +408,13 @@ export type WorkBoardIntentV1 =
         membership?: WorkBoardMembershipV1;
     }>;
 
-const WorkBoardMembershipV1Schema = z.object({
+const WorkBoardMembershipV1Schema = lazyZodSchema(() => z.object({
     liveItemKeys: z.array(z.string()),
     unavailableServerIds: z.array(IdentifierSchema),
-}).strict();
+}).strict());
 
 const widgetTarget = { boardId: IdentifierSchema, ref: WidgetInstanceRefV1Schema };
-export const WorkBoardWidgetIntentV1Schema = z.discriminatedUnion('kind', [
+export const WorkBoardWidgetIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     z.object({ ...widgetTarget, kind: z.literal('widget_add'), instance: WidgetInstanceV1Schema,
         size: WorkBoardWidgetSizeV1Schema.optional(), frameStyle: z.enum(['card', 'plain']).optional(),
         toIndex: z.number().int().nonnegative().optional(), nativeIndex: z.number().int().nonnegative().optional(),
@@ -424,12 +426,13 @@ export const WorkBoardWidgetIntentV1Schema = z.discriminatedUnion('kind', [
     z.object({ ...widgetTarget, kind: z.literal('widget_size'), size: WorkBoardWidgetSizeV1Schema }).strict(),
     z.object({ ...widgetTarget, kind: z.literal('widget_frame'), frameStyle: z.enum(['card', 'plain']).nullable() }).strict(),
     z.object({ ...widgetTarget, kind: z.literal('widget_rename'), displayName: IdentifierSchema.nullable() }).strict(),
-    z.object({ ...widgetTarget, kind: z.literal('widget_inputs'), bindings: WidgetInputBindingsV1Schema }).strict(),
-]);
+    z.object({ ...widgetTarget, kind: z.literal('widget_inputs'), bindings: WidgetInputBindingsV1Schema, paths: z.array(InputPathSchema).optional() }).strict(),
+    z.object({ ...widgetTarget, kind: z.literal('widget_inputs_reset'), paths: z.array(InputPathSchema).optional() }).strict(),
+]));
 export type WorkBoardWidgetIntentV1 = z.infer<typeof WorkBoardWidgetIntentV1Schema>;
 
 /** Wire validation shares the UI owner's intent vocabulary, rather than a second edit model. */
-export const WorkBoardIntentV1Schema = z.discriminatedUnion('kind', [
+export const WorkBoardIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     ...WorkBoardWidgetIntentV1Schema.options,
     z.object({ kind: z.literal('create'), board: z.object({
         id: IdentifierSchema, name: z.string().trim().min(1),
@@ -455,7 +458,7 @@ export const WorkBoardIntentV1Schema = z.discriminatedUnion('kind', [
         positionsByItemRef: z.record(z.string(), WorkBoardPositionV1Schema),
         membership: WorkBoardMembershipV1Schema.optional(),
     }).strict(),
-]);
+]));
 
 export type WorkBoardIntentResultV1 =
     | Readonly<{ status: 'applied'; boards: WorkBoardsV1 }>
@@ -473,9 +476,9 @@ function replaceBoard(
     return { status: 'applied', boards: { ...boards, boards: next } };
 }
 
-export function applyWorkBoardIntentV1(boards: WorkBoardsV1, intent: WorkBoardIntentV1): WorkBoardIntentResultV1 {
+export function applyWorkBoardIntentV1(boards: WorkBoardsV1, intent: WorkBoardIntentV1, options: Readonly<{ shared?: boolean }> = {}): WorkBoardIntentResultV1 {
     if ('ref' in intent && intent.kind.startsWith('widget_')) {
-        return applyWorkBoardWidgetIntentV1(boards, intent as WorkBoardWidgetIntentV1);
+        return applyWorkBoardWidgetIntentV1(boards, intent as WorkBoardWidgetIntentV1, options);
     }
     switch (intent.kind) {
         case 'create':
@@ -536,7 +539,7 @@ export function applyWorkBoardIntentV1(boards: WorkBoardsV1, intent: WorkBoardIn
     throw new Error('Unsupported Board intent');
 }
 
-function applyWorkBoardWidgetIntentV1(boards: WorkBoardsV1, intent: WorkBoardWidgetIntentV1): WorkBoardIntentResultV1 {
+function applyWorkBoardWidgetIntentV1(boards: WorkBoardsV1, intent: WorkBoardWidgetIntentV1, options: Readonly<{ shared?: boolean }>): WorkBoardIntentResultV1 {
     if (intent.ref.surface.owner.kind !== 'workBoard' || intent.ref.surface.owner.boardId !== intent.boardId) {
         throw new WorkBoardWidgetMutationErrorV1('widget_placement_unsupported');
     }
@@ -556,7 +559,9 @@ function applyWorkBoardWidgetIntentV1(boards: WorkBoardsV1, intent: WorkBoardWid
         if (intent.kind === 'widget_add') {
             if (current) throw new WorkBoardWidgetMutationErrorV1('widget_instance_already_exists');
             if (intent.instance.id !== intent.ref.instanceId) throw new WorkBoardWidgetMutationErrorV1('widget_placement_unsupported');
-            widgets.push({ kind: 'widget', ref: intent.ref, instance: intent.instance, size: intent.size ?? defaultWidgetSize,
+            const issue = options.shared ? getWidgetSharedInputIssuesV1(intent.instance)[0] : undefined;
+            if (issue) throw new WorkBoardWidgetMutationErrorV1(issue.reasonCode);
+            widgets.push({ kind: 'widget', ref: intent.ref, instance: intent.instance, size: intent.size ?? WIDGET_SIZE_POLICY_V1.workBoard.defaultSize,
                 ...(intent.frameStyle ? { frameStyle: intent.frameStyle } : {}) });
             insert(intent.nativeIndex, intent.toIndex);
             return { ...board, widgets, itemOrder, positionsByItemRef: { ...board.positionsByItemRef,
@@ -585,7 +590,14 @@ function applyWorkBoardWidgetIntentV1(boards: WorkBoardsV1, intent: WorkBoardWid
                 const { displayName: _old, ...rest } = current.instance;
                 widgets[index] = { ...current, instance: { ...rest, ...(intent.displayName ? { displayName: intent.displayName } : {}) } }; break;
             }
-            case 'widget_inputs': widgets[index] = { ...current, instance: { ...current.instance, bindings: intent.bindings } }; break;
+            case 'widget_inputs':
+            case 'widget_inputs_reset': {
+                const instance = { ...current.instance, bindings: intent.kind === 'widget_inputs_reset'
+                    ? resetWidgetInputBindingsV1(current.instance.bindings, intent.paths) : setWidgetInputBindingsV1(current.instance.bindings, intent.bindings, intent.paths) };
+                const issue = options.shared ? getWidgetSharedInputIssuesV1(instance)[0] : undefined;
+                if (issue) throw new WorkBoardWidgetMutationErrorV1(issue.reasonCode);
+                widgets[index] = { ...current, instance }; break;
+            }
         }
         return { ...board, widgets, itemOrder };
     });

@@ -44,6 +44,125 @@ function createUnconnectedViewerWidgetResolver() {
 }
 
 describe('current Widget field options admission', () => {
+    it('retains declared static options when admitting a host app-read input', async () => {
+        const resolver = createWidgetActionInputResolverV1({
+            readDescriptor: async () => ({ inputs: { fields: [{ path: 'query', title: 'Usage', widget: 'json',
+                required: true, inputType: { hostType: 'usageQuery' }, options: [{ value: { metric: 'cost' }, label: 'Cost' }] }] } }),
+            readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+            validateValue: async () => ({ status: 'valid' }),
+            readInputType: async () => { throw new Error('Host values are not plugin identities'); },
+            resolveOptions: async () => { throw new Error('Static options need no Resource'); },
+        });
+        const request = { ref: { surface: { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } }, instanceId: 'copy' },
+            instance: { v: 1 as const, id: 'copy', definition: { kind: 'builtin' as const, id: 'usage' },
+                bindings: { query: { kind: 'value' as const, value: { metric: 'tokens' } } } }, context: {} };
+        expect(await resolver.resolve(request)).toMatchObject({ status: 'invalid', fields: [{ path: 'query', reasonCode: 'widget_input_option_unavailable' }] });
+        expect(await resolver.resolve({ ...request, instance: { ...request.instance, bindings: {
+            query: { kind: 'value', value: { metric: 'cost' } },
+        } } })).toEqual({ status: 'ready', input: { query: { metric: 'cost' } } });
+        expect(await resolver.resolve({ ...request, instance: { ...request.instance, bindings: {
+            query: { kind: 'value', value: { metric: 'cost', accountId: 'forged' } },
+        } } })).toMatchObject({ status: 'invalid', fields: [{ path: 'query', reasonCode: 'input_type_value_invalid' }] });
+    });
+    it('validates host Workspace values without discovering a plugin type or inventing options', async () => {
+        const resolver = createWidgetActionInputResolverV1({
+            readDescriptor: async () => ({ inputs: { fields: [{ path: 'checkout', title: 'Checkout', widget: 'json',
+                required: true, inputType: { hostType: 'workspace' } }] } }),
+            readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+            validateValue: async () => ({ status: 'valid' }),
+            readInputType: async () => { throw new Error('Host values are not plugin identities'); },
+            resolveOptions: async () => { throw new Error('Workspace schema does not declare an options inventory'); },
+        });
+        const checkout = { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const request = { ref: { surface: { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } }, instanceId: 'copy' },
+            instance: { v: 1 as const, id: 'copy', definition: { kind: 'builtin' as const, id: 'project_code' },
+                bindings: { checkout: { kind: 'value' as const, value: checkout } } }, context: {} };
+        expect(await resolver.resolve(request)).toEqual({ status: 'ready', input: { checkout } });
+        expect(await resolver.resolve({ ...request, instance: { ...request.instance, bindings: {
+            checkout: { kind: 'value', value: { ...checkout, rootPath: 42 } },
+        } } })).toMatchObject({ status: 'invalid', fields: [{ path: 'checkout', reasonCode: 'input_type_value_invalid' }] });
+    });
+    it('follows group pins before surface context while keeping child pins and exact target admission', async () => {
+        const resolver = createWidgetActionInputResolverV1({
+            readDescriptor: async () => ({ inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] } }),
+            readContext: async () => ({ session: [{ serverId: 'home', sessionId: 'surface' }] }),
+            readGroupBindings: async () => ({ session: { kind: 'value', value: { serverId: 'home', sessionId: 'group' } } }),
+            readViewerValues: async () => ({ values: {} }),
+            validateValue: async (_field, value) => typeof value === 'object' && value !== null && !Array.isArray(value) && value.sessionId === 'denied'
+                ? { status: 'denied', reasonCode: 'widget_session_access_denied' } : { status: 'valid' },
+            resolveOptions: async () => [],
+        });
+        const request = { ref: { surface: { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } }, instanceId: 'copy' },
+            instance: { v: 1 as const, id: 'copy', definition: { kind: 'builtin' as const, id: 'changes' },
+                bindings: { session: { kind: 'context' as const, slot: 'session' } } }, context: {} };
+        expect(await resolver.resolve(request)).toEqual({ status: 'ready', input: { session: { serverId: 'home', sessionId: 'group' } } });
+        expect(await resolver.resolve({ ...request, instance: { ...request.instance, bindings: {
+            session: { kind: 'value', value: { serverId: 'home', sessionId: 'child' } },
+        } } })).toEqual({ status: 'ready', input: { session: { serverId: 'home', sessionId: 'child' } } });
+        expect(await resolver.resolve({ ...request, instance: { ...request.instance, bindings: {
+            session: { kind: 'value', value: { serverId: 'home', sessionId: 'denied' } },
+        } } })).toMatchObject({ status: 'denied' });
+    });
+    it('inherits only a declared viewer purpose and never falls back from a missing group context slot', async () => {
+        let group = { connection: { kind: 'viewer' as const, purpose: 'read' } };
+        const selected = { service, accountId: 'mine' };
+        const resolver = createWidgetActionInputResolverV1({
+            readDescriptor: async () => ({ ...viewerDescriptor, inputs: { fields: viewerDescriptor.inputs!.fields.filter(field => field.path === 'connection') },
+                inputSchema: { type: 'object', properties: { connection: viewerDescriptor.inputSchema!.properties!.connection! }, required: ['connection'], additionalProperties: false } }),
+            readContext: async () => ({ connection: [selected] }), readGroupBindings: async () => group,
+            readViewerValues: async request => ({ values: request.instance.bindings.connection?.kind === 'viewer' ? { connection: selected } : {} }),
+            validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+        });
+        const request = { ref: { surface: { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } }, instanceId: 'copy' },
+            instance: { v: 1 as const, id: 'copy', definition: { kind: 'installed' as const, surface: consumer },
+                bindings: { connection: { kind: 'context' as const, slot: 'connection' } } }, context: {}, admission: 'configuration' as const };
+        expect(await resolver.resolve(request)).toEqual({ status: 'ready', input: {} });
+        group = { connection: { kind: 'viewer', purpose: 'forged' } };
+        expect(await resolver.resolve(request)).toMatchObject({ status: 'unavailable', fields: [{ reasonCode: 'widget_viewer_purpose_undeclared' }] });
+        const missing = createWidgetActionInputResolverV1({
+            readDescriptor: async () => ({ inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] } }),
+            readContext: async () => ({ session: ['surface'] }), readGroupBindings: async () => ({ session: { kind: 'context', slot: 'missing' } }),
+            readViewerValues: async () => ({ values: {} }), validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+        });
+        expect(await missing.resolve({ ...request, instance: { ...request.instance, bindings: { session: { kind: 'context', slot: 'session' } } } }))
+            .toMatchObject({ status: 'selection_required', fields: [{ reasonCode: 'widget_context_missing' }] });
+    });
+    it('refuses an own-context binding before a group can replace it with confidential viewer values', async () => {
+        const selected = { service, accountId: 'mine' };
+        const resolver = createWidgetActionInputResolverV1({
+            readDescriptor: async () => ({ ...viewerDescriptor, inputs: { fields: [{ ...viewerDescriptor.inputs!.fields[0]!, contextMode: 'own' }] },
+                inputSchema: { type: 'object', properties: { connection: viewerDescriptor.inputSchema!.properties!.connection! },
+                    required: ['connection'], additionalProperties: false } }),
+            readContext: async () => ({}), readGroupBindings: async () => ({ connection: { kind: 'viewer', purpose: 'read' } }),
+            readViewerValues: async request => ({ values: request.instance.bindings.connection?.kind === 'viewer' ? { connection: selected } : {} }),
+            validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [{ value: selected }],
+        });
+        const request = { ref: { surface: { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } }, instanceId: 'copy' },
+            instance: { v: 1 as const, id: 'copy', definition: { kind: 'installed' as const, surface: consumer },
+                bindings: { connection: { kind: 'context' as const, slot: 'connection' } } }, context: {} };
+        expect(await resolver.resolve(request)).toMatchObject({ status: 'invalid', fields: [{ path: 'connection', reasonCode: 'widget_context_binding_forbidden' }] });
+        expect(request.instance.bindings.connection).toEqual({ kind: 'context', slot: 'connection' });
+    });
+    it('admits viewer configuration from its current Resource declaration without an author connection', async () => {
+        let resources = [{ id: consumer.localId, pluginId: consumer.pluginId, resourceKind: 'config' as const, scope: 'global' as const,
+            connectedAccountPurposes: [{ purpose: 'read', serviceRefs: [service] }] }];
+        const resolver = createWidgetActionInputResolverV1({
+            readDescriptor: async () => ({ ...viewerDescriptor, resourceDeclarations: resources }),
+            readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+            validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [{ value: 'current' }],
+        });
+        const request = { ref: { surface: { serverId: 'home', accountId: 'owner', owner: { kind: 'project' as const, projectId: 'project' } }, instanceId: 'copy' },
+            instance: { v: 1 as const, id: 'copy', definition: { kind: 'installed' as const, surface: { pluginId: consumer.pluginId, localId: 'widget' } },
+                bindings: { connection: { kind: 'viewer' as const, purpose: 'read' }, choice: { kind: 'value' as const, value: 'current' } } }, context: {} };
+        expect(await resolver.resolve({ ...request, admission: 'configuration' })).toEqual({ status: 'ready', input: { choice: 'current' } });
+        expect(await resolver.resolve({ ...request, admission: 'execution' })).toMatchObject({ status: 'selection_required' });
+        expect(await resolver.resolve({ ...request, admission: 'configuration', instance: { ...request.instance,
+            bindings: { ...request.instance.bindings, connection: { kind: 'viewer', purpose: 'forged' } } } }))
+            .toMatchObject({ status: 'unavailable', fields: [{ path: 'connection', reasonCode: 'widget_viewer_purpose_undeclared' }] });
+        resources = [];
+        expect(await resolver.resolve({ ...request, admission: 'configuration' }))
+            .toMatchObject({ status: 'unavailable', fields: [{ path: 'connection', reasonCode: 'widget_viewer_purpose_authority_unavailable' }] });
+    });
     it('admits declared viewer intent without a connection only for configuration, preserving execution and other value admission', async () => {
         const { resolver, removeResource, setDescriptor } = createUnconnectedViewerWidgetResolver();
         const request = { ref: { surface: { serverId: 'home', accountId: 'viewer', owner: { kind: 'sessionBoard' as const, sessionId: 'shared' } }, instanceId: 'copy' },
