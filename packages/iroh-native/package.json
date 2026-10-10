@@ -6,24 +6,45 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./package.json": "./package.json",
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "react-native": "./dist/index.js",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./node": {
+      "happier-source": "./src/nodeNative.ts",
       "types": "./dist/nodeNative.d.ts",
       "import": "./dist/nodeNative.js",
       "default": "./dist/nodeNative.js"
     },
     "./test-controller": {
+      "happier-source": "./src/testController.ts",
       "types": "./dist/testController.d.ts",
       "import": "./dist/testController.js",
       "default": "./dist/testController.js"
     }
   },
-  "files": ["dist", "native", "ios/HappierIrohNativeModule.swift", "ios/HappierIrohNative.podspec", "android/build.gradle", "android/src", "rust-toolchain.toml", "rust/Cargo.toml", "rust/Cargo.lock", "rust/happier-iroh-core", "rust/happier-iroh-native", "rust/happier-iroh-node", "scripts", "expo-module.config.json", "package.json", "README.md"],
+  "files": [
+    "dist",
+    "native",
+    "ios/HappierIrohNativeModule.swift",
+    "ios/HappierIrohNative.podspec",
+    "android/build.gradle",
+    "android/src",
+    "rust-toolchain.toml",
+    "rust/Cargo.toml",
+    "rust/Cargo.lock",
+    "rust/happier-iroh-core",
+    "rust/happier-iroh-native",
+    "rust/happier-iroh-node",
+    "scripts",
+    "expo-module.config.json",
+    "package.json",
+    "README.md"
+  ],
   "scripts": {
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "build:native": "node scripts/build-node-addon.mjs",
@@ -49,8 +70,20 @@
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
   },
-  "dependencies": { "@happier-dev/protocol": "0.0.0" },
-  "devDependencies": { "typescript": "^5.9.2", "vitest": "^3.2.4", "expo-modules-core": "55.0.20" },
-  "peerDependencies": { "expo": "*" },
-  "peerDependenciesMeta": { "expo": { "optional": true } }
+  "dependencies": {
+    "@happier-dev/protocol": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "expo-modules-core": "55.0.20"
+  },
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
+  }
 }

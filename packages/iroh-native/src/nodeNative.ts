@@ -23,7 +23,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 import { classifyIrohNativeErrorCode, IrohError } from './errors.js';
-export { MACHINE_ALPN, MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from './descriptor.js';
+export {
+  MACHINE_ALPN,
+  MACHINE_HTTP_LOCAL_CAPABILITY_HEADER,
+} from './descriptor.js';
 export { classifyIrohHomeCarrierFailure, IrohError } from './errors.js';
 export type { IrohHomeCarrierFailureClassification } from './errors.js';
 export {
@@ -35,7 +38,10 @@ export type { IrohRelayEnvConfig } from './relayConfig.js';
 export type { IrohRelayPolicy } from './types.js';
 export type { NativeIrohModule } from './HappierIrohNative.types.js';
 export { createNodeIrohHomeTunnelSession } from './nodeHomeTunnelSession.js';
-export type { NodeIrohHomeTunnelLease, NodeIrohHomeTunnelSession } from './nodeHomeTunnelSession.js';
+export type {
+  NodeIrohHomeTunnelLease,
+  NodeIrohHomeTunnelSession,
+} from './nodeHomeTunnelSession.js';
 import {
   IROH_NODE_NATIVE_EXPORTS,
   type IrohNodeAcceptorStarted,
@@ -86,7 +92,10 @@ export type IrohNodeTarget = (typeof SUPPORTED_IROH_NODE_TARGETS)[number];
  * chosen at build time by the host (one host has exactly one libc); see
  * `scripts/build-node-addon.mjs --musl`.
  */
-export function resolveIrohNodeAddonArtifactName(platform: string, arch: string): string {
+export function resolveIrohNodeAddonArtifactName(
+  platform: string,
+  arch: string,
+): string {
   const target = `${platform}-${arch}`;
   if (!(SUPPORTED_IROH_NODE_TARGETS as readonly string[]).includes(target)) {
     throw new Error(
@@ -106,11 +115,30 @@ export function resolveDefaultIrohNodePackageRoot({
   pathExists?: (path: string) => boolean;
 }> = {}): string {
   const modulePackageRoot = dirname(dirname(fileURLToPath(moduleUrl)));
-  if (pathExists(join(modulePackageRoot, 'package.json'))) return modulePackageRoot;
+  if (pathExists(join(modulePackageRoot, 'package.json')))
+    return modulePackageRoot;
+
+  // A source-bundled Node host runs this module from a shared code chunk, not
+  // the addon package's dist directory. Resolve its physical sidecar package
+  // through Node's package owner before using Bun's executable-adjacent layout.
+  try {
+    return dirname(
+      createRequire(moduleUrl).resolve('@happier-dev/iroh-native/package.json'),
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'MODULE_NOT_FOUND' && code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED')
+      throw error;
+  }
 
   // Bun-compiled modules have a virtual module URL. Their native sidecar is
   // deliberately staged beside the executable under the ordinary package root.
-  return join(dirname(executablePath), 'node_modules', '@happier-dev', 'iroh-native');
+  return join(
+    dirname(executablePath),
+    'node_modules',
+    '@happier-dev',
+    'iroh-native',
+  );
 }
 
 export function resolveIrohNodeAddonPath(
@@ -118,7 +146,11 @@ export function resolveIrohNodeAddonPath(
   platform: string = process.platform,
   arch: string = process.arch,
 ): string {
-  return join(packageRoot, 'native', resolveIrohNodeAddonArtifactName(platform, arch));
+  return join(
+    packageRoot,
+    'native',
+    resolveIrohNodeAddonArtifactName(platform, arch),
+  );
 }
 
 function requireNodeAddon(addonPath: string): unknown {
@@ -139,7 +171,9 @@ function readAddonExports(candidate: unknown): IrohNodeNativeAddon | null {
  * Loads and surface-validates the raw addon at `addonPath`. Throws when the
  * file cannot be loaded or does not expose the full lifecycle surface.
  */
-export function loadIrohNodeNativeAddon(addonPath: string): IrohNodeNativeAddon {
+export function loadIrohNodeNativeAddon(
+  addonPath: string,
+): IrohNodeNativeAddon {
   const candidate = requireNodeAddon(addonPath);
   const addon = readAddonExports(candidate);
   if (!addon) {
@@ -181,7 +215,11 @@ export function loadIrohNodeNative(
       addonPath,
     };
   }
-  return { available: true, native: createIrohNodeNativeModule(addon), addonPath };
+  return {
+    available: true,
+    native: createIrohNodeNativeModule(addon),
+    addonPath,
+  };
 }
 
 /** Typed failure of one C ABI lifecycle operation. */
@@ -189,7 +227,11 @@ export class IrohNativeOperationError extends IrohError {
   /** Exact C ABI error code, preserved for diagnostics. */
   readonly nativeCode: string;
 
-  constructor(nativeCode: string, message: string, options?: { cause?: unknown }) {
+  constructor(
+    nativeCode: string,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
     super(classifyIrohNativeErrorCode(nativeCode), message, options);
     this.name = 'IrohNativeOperationError';
     this.nativeCode = nativeCode;
@@ -205,14 +247,27 @@ function parseEnvelope(raw: string): IrohNodeEnvelope {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new IrohError('unknown', 'Iroh native addon returned a non-JSON response');
+    throw new IrohError(
+      'unknown',
+      'Iroh native addon returned a non-JSON response',
+    );
   }
   if (typeof parsed !== 'object' || parsed === null) {
-    throw new IrohError('unknown', 'Iroh native addon returned a malformed response envelope');
+    throw new IrohError(
+      'unknown',
+      'Iroh native addon returned a malformed response envelope',
+    );
   }
-  const envelope = parsed as { ok?: unknown; result?: unknown; error?: unknown };
+  const envelope = parsed as {
+    ok?: unknown;
+    result?: unknown;
+    error?: unknown;
+  };
   if (typeof envelope.ok !== 'boolean') {
-    throw new IrohError('unknown', 'Iroh native addon returned a response without an ok flag');
+    throw new IrohError(
+      'unknown',
+      'Iroh native addon returned a response without an ok flag',
+    );
   }
   if (envelope.ok) {
     return { ok: true, result: 'result' in envelope ? envelope.result : null };
@@ -221,22 +276,36 @@ function parseEnvelope(raw: string): IrohNodeEnvelope {
     typeof envelope.error === 'object' && envelope.error !== null
       ? (envelope.error as { code?: unknown; message?: unknown })
       : null;
-  if (!error || typeof error.code !== 'string' || typeof error.message !== 'string') {
-    throw new IrohError('unknown', 'Iroh native addon returned a malformed error envelope');
+  if (
+    !error ||
+    typeof error.code !== 'string' ||
+    typeof error.message !== 'string'
+  ) {
+    throw new IrohError(
+      'unknown',
+      'Iroh native addon returned a malformed error envelope',
+    );
   }
   return { ok: false, nativeCode: error.code, message: error.message };
 }
 
 async function callOperation(response: Promise<string>): Promise<unknown> {
   const envelope = parseEnvelope(await response);
-  if (!envelope.ok) throw new IrohNativeOperationError(envelope.nativeCode, envelope.message);
+  if (!envelope.ok)
+    throw new IrohNativeOperationError(envelope.nativeCode, envelope.message);
   return envelope.result;
 }
 
-async function requireNullResult(result: Promise<unknown>, operation: string): Promise<void> {
+async function requireNullResult(
+  result: Promise<unknown>,
+  operation: string,
+): Promise<void> {
   const value = await result;
   if (value !== null) {
-    throw new IrohError('unknown', `Iroh native ${operation} returned an unexpected result payload`);
+    throw new IrohError(
+      'unknown',
+      `Iroh native ${operation} returned an unexpected result payload`,
+    );
   }
 }
 
@@ -251,34 +320,50 @@ function requireRecord(value: unknown, what: string): Record<string, unknown> {
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) {
-    throw new IrohError('unknown', `Iroh native response field ${field} must be a non-empty string`);
+    throw new IrohError(
+      'unknown',
+      `Iroh native response field ${field} must be a non-empty string`,
+    );
   }
   return value;
 }
 
 function requireBoolean(value: unknown, field: string): boolean {
   if (typeof value !== 'boolean') {
-    throw new IrohError('unknown', `Iroh native response field ${field} must be a boolean`);
+    throw new IrohError(
+      'unknown',
+      `Iroh native response field ${field} must be a boolean`,
+    );
   }
   return value;
 }
 
 function requireNumber(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new IrohError('unknown', `Iroh native response field ${field} must be a finite number`);
+    throw new IrohError(
+      'unknown',
+      `Iroh native response field ${field} must be a finite number`,
+    );
   }
   return value;
 }
 
 function requireStringArray(value: unknown, field: string): readonly string[] {
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
-    throw new IrohError('unknown', `Iroh native response field ${field} must be a string array`);
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== 'string')
+  ) {
+    throw new IrohError(
+      'unknown',
+      `Iroh native response field ${field} must be a string array`,
+    );
   }
   return value;
 }
 
 function requireObservedPath(value: unknown): IrohObservedPath {
-  if (value === 'direct' || value === 'relay' || value === 'unknown') return value;
+  if (value === 'direct' || value === 'relay' || value === 'unknown')
+    return value;
   throw new IrohError(
     'unknown',
     'Iroh native response field observedPath must be direct, relay, or unknown',
@@ -287,7 +372,10 @@ function requireObservedPath(value: unknown): IrohObservedPath {
 
 function requireIrohCarrier(value: unknown): 'iroh' {
   if (value === 'iroh') return value;
-  throw new IrohError('unknown', 'Iroh native response field carrier must be "iroh"');
+  throw new IrohError(
+    'unknown',
+    'Iroh native response field carrier must be "iroh"',
+  );
 }
 
 function requireLoopbackHttpOrigin(value: unknown): string {
@@ -295,10 +383,10 @@ function requireLoopbackHttpOrigin(value: unknown): string {
   try {
     const parsed = new URL(origin);
     if (
-      parsed.protocol === 'http:'
-      && isLoopbackHostname(parsed.hostname)
-      && parsed.pathname === '/'
-      && parsed.search === ''
+      parsed.protocol === 'http:' &&
+      isLoopbackHostname(parsed.hostname) &&
+      parsed.pathname === '/' &&
+      parsed.search === ''
     ) {
       return origin;
     }
@@ -313,7 +401,10 @@ function requireLoopbackHttpOrigin(value: unknown): string {
 
 function validateTunnelIdentityFields(record: Record<string, unknown>) {
   return {
-    homeServerIdentityId: requireString(record.homeServerIdentityId, 'homeServerIdentityId'),
+    homeServerIdentityId: requireString(
+      record.homeServerIdentityId,
+      'homeServerIdentityId',
+    ),
     runtimeOrigin: requireLoopbackHttpOrigin(record.runtimeOrigin),
     carrier: requireIrohCarrier(record.carrier),
     observedPath: requireObservedPath(record.observedPath),
@@ -339,22 +430,41 @@ function validateAcceptorStatus(result: unknown): IrohNodeAcceptorStatus {
     lastPath = {
       observedPath: requireObservedPath(path.observedPath),
       isRelay: requireBoolean(path.isRelay, 'isRelay'),
-      remoteEndpointId: requireString(path.remoteEndpointId, 'remoteEndpointId'),
+      remoteEndpointId: requireString(
+        path.remoteEndpointId,
+        'remoteEndpointId',
+      ),
       atMs: requireNumber(path.atMs, 'atMs'),
     };
   }
   return {
     running: requireBoolean(record.running, 'running'),
-    connectionsAccepted: requireNumber(record.connectionsAccepted, 'connectionsAccepted'),
-    connectionsActive: requireNumber(record.connectionsActive, 'connectionsActive'),
+    connectionsAccepted: requireNumber(
+      record.connectionsAccepted,
+      'connectionsAccepted',
+    ),
+    connectionsActive: requireNumber(
+      record.connectionsActive,
+      'connectionsActive',
+    ),
     streamsAccepted: requireNumber(record.streamsAccepted, 'streamsAccepted'),
     ...(record.streamsActive === undefined
       ? {}
-      : { streamsActive: requireNumber(record.streamsActive, 'streamsActive') }),
+      : {
+          streamsActive: requireNumber(record.streamsActive, 'streamsActive'),
+        }),
     streamsRejected: requireNumber(record.streamsRejected, 'streamsRejected'),
     ...(record.lastErrorCode === undefined
       ? {}
-      : { lastErrorCode: record.lastErrorCode === null ? null : requireString(record.lastErrorCode, 'lastErrorCode') as IrohNodeAcceptorStatus['lastErrorCode'] }),
+      : {
+          lastErrorCode:
+            record.lastErrorCode === null
+              ? null
+              : (requireString(
+                  record.lastErrorCode,
+                  'lastErrorCode',
+                ) as IrohNodeAcceptorStatus['lastErrorCode']),
+        }),
     lastPath,
   };
 }
@@ -368,58 +478,113 @@ function validateAcceptorStarted(result: unknown): IrohNodeAcceptorStarted {
   };
 }
 
-function validateMachineTunnelStarted(result: unknown): IrohNodeMachineTunnelStarted {
+function validateMachineTunnelStarted(
+  result: unknown,
+): IrohNodeMachineTunnelStarted {
   const record = requireRecord(result, 'startMachineTunnel result');
-  const localCapability = record.localCapability === null || record.localCapability === undefined
-    ? undefined
-    : requireString(record.localCapability, 'localCapability');
-  if (localCapability !== undefined && !/^[0-9a-f]{64}$/.test(localCapability)) {
-    throw new IrohError('unknown', 'Iroh native response field localCapability must be 64 lowercase hexadecimal characters');
+  const localCapability =
+    record.localCapability === null || record.localCapability === undefined
+      ? undefined
+      : requireString(record.localCapability, 'localCapability');
+  if (
+    localCapability !== undefined &&
+    !/^[0-9a-f]{64}$/.test(localCapability)
+  ) {
+    throw new IrohError(
+      'unknown',
+      'Iroh native response field localCapability must be 64 lowercase hexadecimal characters',
+    );
   }
   return {
     machineTunnelId: requireString(record.machineTunnelId, 'machineTunnelId'),
     endpointHandle: requireString(record.endpointHandle, 'endpointHandle'),
     localPort: requireNumber(record.localPort, 'localPort'),
     ...(localCapability === undefined ? {} : { localCapability }),
-    connectionActive: requireBoolean(record.connectionActive, 'connectionActive'),
-    remoteEndpointId: requireString(record.remoteEndpointId, 'remoteEndpointId'),
+    connectionActive: requireBoolean(
+      record.connectionActive,
+      'connectionActive',
+    ),
+    remoteEndpointId: requireString(
+      record.remoteEndpointId,
+      'remoteEndpointId',
+    ),
     observedPath: requireObservedPath(record.observedPath),
     startedAtMs: requireNumber(record.startedAtMs, 'startedAtMs'),
-    lastErrorCode: record.lastErrorCode === null ? null : requireString(record.lastErrorCode, 'lastErrorCode') as IrohNodeMachineTunnelStarted['lastErrorCode'],
+    lastErrorCode:
+      record.lastErrorCode === null
+        ? null
+        : (requireString(
+            record.lastErrorCode,
+            'lastErrorCode',
+          ) as IrohNodeMachineTunnelStarted['lastErrorCode']),
   };
 }
 
-function validateMachineHttpTunnelStarted(result: unknown): IrohNodeMachineHttpTunnelStarted {
+function validateMachineHttpTunnelStarted(
+  result: unknown,
+): IrohNodeMachineHttpTunnelStarted {
   const record = requireRecord(result, 'startMachineHttpTunnel result');
-  const localCapability = requireString(record.localCapability, 'localCapability');
+  const localCapability = requireString(
+    record.localCapability,
+    'localCapability',
+  );
   if (!/^[0-9a-f]{64}$/.test(localCapability)) {
-    throw new IrohError('unknown', 'Iroh native response field localCapability must be 64 lowercase hexadecimal characters');
+    throw new IrohError(
+      'unknown',
+      'Iroh native response field localCapability must be 64 lowercase hexadecimal characters',
+    );
   }
   return {
     machineTunnelId: requireString(record.machineTunnelId, 'machineTunnelId'),
     endpointHandle: requireString(record.endpointHandle, 'endpointHandle'),
     localPort: requireNumber(record.localPort, 'localPort'),
     localCapability,
-    connectionActive: requireBoolean(record.connectionActive, 'connectionActive'),
-    remoteEndpointId: requireString(record.remoteEndpointId, 'remoteEndpointId'),
+    connectionActive: requireBoolean(
+      record.connectionActive,
+      'connectionActive',
+    ),
+    remoteEndpointId: requireString(
+      record.remoteEndpointId,
+      'remoteEndpointId',
+    ),
     observedPath: requireObservedPath(record.observedPath),
     startedAtMs: requireNumber(record.startedAtMs, 'startedAtMs'),
-    lastErrorCode: record.lastErrorCode === null ? null : requireString(record.lastErrorCode, 'lastErrorCode') as IrohNodeMachineHttpTunnelStarted['lastErrorCode'],
+    lastErrorCode:
+      record.lastErrorCode === null
+        ? null
+        : (requireString(
+            record.lastErrorCode,
+            'lastErrorCode',
+          ) as IrohNodeMachineHttpTunnelStarted['lastErrorCode']),
   };
 }
 
-function validateMachineTunnelStatus(result: unknown): IrohNodeMachineTunnelStatus | null {
+function validateMachineTunnelStatus(
+  result: unknown,
+): IrohNodeMachineTunnelStatus | null {
   if (result === null) return null;
   const record = requireRecord(result, 'getMachineTunnelStatus result');
   return {
     machineTunnelId: requireString(record.machineTunnelId, 'machineTunnelId'),
     endpointHandle: requireString(record.endpointHandle, 'endpointHandle'),
     localPort: requireNumber(record.localPort, 'localPort'),
-    connectionActive: requireBoolean(record.connectionActive, 'connectionActive'),
-    remoteEndpointId: requireString(record.remoteEndpointId, 'remoteEndpointId'),
+    connectionActive: requireBoolean(
+      record.connectionActive,
+      'connectionActive',
+    ),
+    remoteEndpointId: requireString(
+      record.remoteEndpointId,
+      'remoteEndpointId',
+    ),
     observedPath: requireObservedPath(record.observedPath),
     startedAtMs: requireNumber(record.startedAtMs, 'startedAtMs'),
-    lastErrorCode: record.lastErrorCode === null ? null : requireString(record.lastErrorCode, 'lastErrorCode') as IrohNodeMachineTunnelStatus['lastErrorCode'],
+    lastErrorCode:
+      record.lastErrorCode === null
+        ? null
+        : (requireString(
+            record.lastErrorCode,
+            'lastErrorCode',
+          ) as IrohNodeMachineTunnelStatus['lastErrorCode']),
     streamsOpened: requireNumber(record.streamsOpened, 'streamsOpened'),
   };
 }
@@ -428,7 +593,10 @@ function validateEndpointCreated(result: unknown): IrohNodeEndpointCreated {
   const record = requireRecord(result, 'createEndpoint result');
   const relayMode = record.relayMode;
   if (relayMode !== 'disabled' && relayMode !== 'custom') {
-    throw new IrohError('unknown', 'Iroh native response field relayMode must be disabled or custom');
+    throw new IrohError(
+      'unknown',
+      'Iroh native response field relayMode must be disabled or custom',
+    );
   }
   const relayPolicy = requireRelayPolicy(record.relayPolicy);
   return {
@@ -443,12 +611,17 @@ function validateEndpointCreated(result: unknown): IrohNodeEndpointCreated {
 
 function requireRelayPolicy(value: unknown): 'automatic' | 'disabled' {
   if (value !== 'automatic' && value !== 'disabled') {
-    throw new IrohError('unknown', 'Iroh native response field relayPolicy must be automatic or disabled');
+    throw new IrohError(
+      'unknown',
+      'Iroh native response field relayPolicy must be automatic or disabled',
+    );
   }
   return value;
 }
 
-function validateEndpointStatus(result: unknown): IrohNodeEndpointStatus | null {
+function validateEndpointStatus(
+  result: unknown,
+): IrohNodeEndpointStatus | null {
   if (result === null) return null;
   const record = requireRecord(result, 'getEndpointStatus result');
   return {
@@ -458,7 +631,10 @@ function validateEndpointStatus(result: unknown): IrohNodeEndpointStatus | null 
     relayMode: requireString(record.relayMode, 'relayMode'),
     relayUrls: requireStringArray(record.relayUrls, 'relayUrls'),
     capProfile: requireString(record.capProfile, 'capProfile'),
-    directAddresses: requireStringArray(record.directAddresses, 'directAddresses'),
+    directAddresses: requireStringArray(
+      record.directAddresses,
+      'directAddresses',
+    ),
     active: requireBoolean(record.active, 'active'),
   };
 }
@@ -469,7 +645,10 @@ function validateTunnelStatus(result: unknown): IrohNodeTunnelStatus | null {
   return {
     tunnelId: requireString(record.tunnelId, 'tunnelId'),
     ...validateTunnelIdentityFields(record),
-    connectionActive: requireBoolean(record.connectionActive, 'connectionActive'),
+    connectionActive: requireBoolean(
+      record.connectionActive,
+      'connectionActive',
+    ),
     streamsOpened: requireNumber(record.streamsOpened, 'streamsOpened'),
     endpointHandle: requireString(record.endpointHandle, 'endpointHandle'),
   };
@@ -479,7 +658,9 @@ function validateTunnelStatus(result: unknown): IrohNodeTunnelStatus | null {
 
 function serializeRequest(request: Record<string, unknown>): string {
   return JSON.stringify(
-    Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)),
+    Object.fromEntries(
+      Object.entries(request).filter(([, value]) => value !== undefined),
+    ),
   );
 }
 
@@ -488,21 +669,39 @@ function serializeRequest(request: Record<string, unknown>): string {
  * addon remains the only runtime owner; this factory adds typing, envelope
  * validation, and typed errors exclusively.
  */
-export function createIrohNodeNativeModule(addon: IrohNodeNativeAddon): NodeIrohNativeModule {
+export function createIrohNodeNativeModule(
+  addon: IrohNodeNativeAddon,
+): NodeIrohNativeModule {
   return {
     getAvailability: () => addon.getAvailability(),
     createEndpoint: async (request: IrohNodeCreateEndpointRequest) =>
-      validateEndpointCreated(await callOperation(addon.createEndpoint(serializeRequest({ ...request })))),
+      validateEndpointCreated(
+        await callOperation(
+          addon.createEndpoint(serializeRequest({ ...request })),
+        ),
+      ),
     startHomeAcceptor: async (request: IrohNodeStartHomeAcceptorRequest) =>
-      validateAcceptorStarted(await callOperation(addon.startHomeAcceptor(serializeRequest({ ...request })))),
+      validateAcceptorStarted(
+        await callOperation(
+          addon.startHomeAcceptor(serializeRequest({ ...request })),
+        ),
+      ),
     stopHomeAcceptor: async (request: IrohNodeEndpointHandleRequest) => {
       await requireNullResult(
-        callOperation(addon.stopHomeAcceptor(serializeRequest({ endpointHandle: request.endpointHandle }))),
+        callOperation(
+          addon.stopHomeAcceptor(
+            serializeRequest({ endpointHandle: request.endpointHandle }),
+          ),
+        ),
         'stopHomeAcceptor',
       );
     },
     ensureHomeTunnel: async (request: IrohNodeEnsureHomeTunnelRequest) =>
-      validateTunnelStarted(await callOperation(addon.ensureHomeTunnel(serializeRequest({ ...request })))),
+      validateTunnelStarted(
+        await callOperation(
+          addon.ensureHomeTunnel(serializeRequest({ ...request })),
+        ),
+      ),
     releaseHomeTunnel: async (tunnelId: string) => {
       await requireNullResult(
         callOperation(addon.releaseHomeTunnel(serializeRequest({ tunnelId }))),
@@ -511,57 +710,114 @@ export function createIrohNodeNativeModule(addon: IrohNodeNativeAddon): NodeIroh
     },
     shutdownEndpoint: async (request: IrohNodeEndpointHandleRequest) => {
       const result = await callOperation(
-        addon.shutdownEndpoint(serializeRequest({ endpointHandle: request.endpointHandle })),
+        addon.shutdownEndpoint(
+          serializeRequest({ endpointHandle: request.endpointHandle }),
+        ),
       );
       if (result !== null) {
-        requireBoolean(requireRecord(result, 'shutdownEndpoint result').stopped, 'stopped');
+        requireBoolean(
+          requireRecord(result, 'shutdownEndpoint result').stopped,
+          'stopped',
+        );
       }
     },
     getEndpointStatus: async (endpointHandle: string) =>
-      validateEndpointStatus(await callOperation(addon.getEndpointStatus(serializeRequest({ endpointHandle })))),
+      validateEndpointStatus(
+        await callOperation(
+          addon.getEndpointStatus(serializeRequest({ endpointHandle })),
+        ),
+      ),
     getTunnelStatus: async (tunnelId: string) =>
-      validateTunnelStatus(await callOperation(addon.getTunnelStatus(serializeRequest({ tunnelId })))),
-    startMachineAcceptor: async (request: IrohNodeStartMachineAcceptorRequest) =>
-      validateAcceptorStarted(await callOperation(addon.startMachineAcceptor(serializeRequest({ ...request })))),
+      validateTunnelStatus(
+        await callOperation(
+          addon.getTunnelStatus(serializeRequest({ tunnelId })),
+        ),
+      ),
+    startMachineAcceptor: async (
+      request: IrohNodeStartMachineAcceptorRequest,
+    ) =>
+      validateAcceptorStarted(
+        await callOperation(
+          addon.startMachineAcceptor(serializeRequest({ ...request })),
+        ),
+      ),
     stopMachineAcceptor: async (request: IrohNodeEndpointHandleRequest) => {
-      await requireNullResult(callOperation(addon.stopMachineAcceptor(serializeRequest({ ...request }))), 'stopMachineAcceptor');
+      await requireNullResult(
+        callOperation(
+          addon.stopMachineAcceptor(serializeRequest({ ...request })),
+        ),
+        'stopMachineAcceptor',
+      );
     },
     getMachineAcceptorStatus: async (endpointHandle: string) => {
-      const result = await callOperation(addon.getMachineAcceptorStatus(serializeRequest({ endpointHandle })));
+      const result = await callOperation(
+        addon.getMachineAcceptorStatus(serializeRequest({ endpointHandle })),
+      );
       return result === null ? null : validateAcceptorStatus(result);
     },
     startMachineTunnel: async (request: IrohNodeStartMachineTunnelRequest) => {
-      const result = validateMachineTunnelStarted(await callOperation(addon.startMachineTunnel(serializeRequest({ ...request }))));
+      const result = validateMachineTunnelStarted(
+        await callOperation(
+          addon.startMachineTunnel(serializeRequest({ ...request })),
+        ),
+      );
       if (request.nativeHttpLease && result.localCapability !== undefined) {
-        await requireNullResult(callOperation(addon.stopMachineTunnel(serializeRequest({ machineTunnelId: result.machineTunnelId }))), 'stopMachineTunnel');
-        throw new IrohError('unknown', 'Guest HTTP lease must not disclose a native capability');
+        await requireNullResult(
+          callOperation(
+            addon.stopMachineTunnel(
+              serializeRequest({ machineTunnelId: result.machineTunnelId }),
+            ),
+          ),
+          'stopMachineTunnel',
+        );
+        throw new IrohError(
+          'unknown',
+          'Guest HTTP lease must not disclose a native capability',
+        );
       }
       return result;
     },
-    startMachineHttpTunnel: async (request: IrohNodeStartMachineHttpTunnelRequest) => {
+    startMachineHttpTunnel: async (
+      request: IrohNodeStartMachineHttpTunnelRequest,
+    ) => {
       const { handshakeProvider, ...serialized } = request;
       if (!handshakeProvider) {
         return validateMachineHttpTunnelStarted(
-          await callOperation(addon.startMachineHttpTunnel(serializeRequest(serialized))),
+          await callOperation(
+            addon.startMachineHttpTunnel(serializeRequest(serialized)),
+          ),
         );
       }
       return validateMachineHttpTunnelStarted(
-        await callOperation(addon.startMachineHttpTunnel(
-          serializeRequest(serialized),
-          async () => {
-            const handshakeJson = await handshakeProvider();
-            if (typeof handshakeJson !== 'string') {
-              throw new TypeError('Iroh machine handshake provider must resolve to a string');
-            }
-            return handshakeJson;
-          },
-        )),
+        await callOperation(
+          addon.startMachineHttpTunnel(
+            serializeRequest(serialized),
+            async () => {
+              const handshakeJson = await handshakeProvider();
+              if (typeof handshakeJson !== 'string') {
+                throw new TypeError(
+                  'Iroh machine handshake provider must resolve to a string',
+                );
+              }
+              return handshakeJson;
+            },
+          ),
+        ),
       );
     },
     stopMachineTunnel: async (machineTunnelId: string) => {
-      await requireNullResult(callOperation(addon.stopMachineTunnel(serializeRequest({ machineTunnelId }))), 'stopMachineTunnel');
+      await requireNullResult(
+        callOperation(
+          addon.stopMachineTunnel(serializeRequest({ machineTunnelId })),
+        ),
+        'stopMachineTunnel',
+      );
     },
     getMachineTunnelStatus: async (machineTunnelId: string) =>
-      validateMachineTunnelStatus(await callOperation(addon.getMachineTunnelStatus(serializeRequest({ machineTunnelId })))),
+      validateMachineTunnelStatus(
+        await callOperation(
+          addon.getMachineTunnelStatus(serializeRequest({ machineTunnelId })),
+        ),
+      ),
   };
 }
