@@ -33,15 +33,15 @@ export type ManagedMachineCreationProgress =
         operationObservation?: ActionOperationObservation; retryInstallationAvailable?: boolean;
         environmentSetup?: NonNullable<ManagedMachineV1['environmentSetup']>; retrySetupAvailable?: boolean }>;
 
-export type NewSessionManagedCreationResult =
+export type ManagedMachineCreationResult =
     | Readonly<{ kind: 'enrolled'; machine: ManagedMachineV1 & { enrolledMachineId: string } }>
     | Readonly<{ kind: 'pending'; managedId: string }>
     | Readonly<{ kind: 'delete_requested'; managedId: string }>
     | Readonly<{ kind: 'failed'; code: string }>;
 
 /** Receipt fields disclose consequences; only the strict reviewed effect enters admission. */
-export function buildNewSessionManagedAcquireInput(
-    draft: ManagedMachineSelectionDraft,
+export function buildManagedMachineAcquireInput(
+    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt'>,
     agentStart?: ManagedAcquireAgentStartV1,
 ): ManagedAcquireInputV1 {
     const reviewed = draft.selection.kind === 'one-off'
@@ -52,9 +52,9 @@ export function buildNewSessionManagedAcquireInput(
     return ManagedAcquireInputV1Schema.parse({ ...reviewed, ...(agentStart ? { agentStart } : {}) });
 }
 
-/** Explicit Send joins the admitted controller operation, then reads the actual enrolled target. */
-export async function runNewSessionManagedCreation(input: Readonly<{
-    draft: ManagedMachineSelectionDraft;
+/** Explicit Run/Send joins the admitted controller operation, then reads the actual enrolled target. */
+export async function runManagedMachineCreation(input: Readonly<{
+    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt'> & Partial<Pick<ManagedMachineSelectionDraft, 'archiveEffect'>>;
     acquisition: ManagedMachineAcquisitionDraft;
     agentStart?: ManagedAcquireAgentStartV1;
     scope: ServerAccountScope;
@@ -67,12 +67,12 @@ export async function runNewSessionManagedCreation(input: Readonly<{
     onProgress: (value: ManagedMachineCreationProgress) => void;
     onApprovalPending: (value: ActionApprovalRegistration) => void;
     executeAction?: ReturnType<typeof createFrontDoorActionExecute>;
-}>): Promise<NewSessionManagedCreationResult> {
+}>): Promise<ManagedMachineCreationResult> {
     const execute = input.executeAction ?? createFrontDoorActionExecute();
     let acquisition = input.acquisition;
     let observedOperation: ActionOperationSnapshotV1 | undefined;
     let setupMachine: ManagedMachineV1 | undefined;
-    const fail = (code: string, retryInstallationAvailable?: boolean): NewSessionManagedCreationResult => {
+    const fail = (code: string, retryInstallationAvailable?: boolean): ManagedMachineCreationResult => {
         const setup = setupMachine ? managedCreationSetup(setupMachine) : null;
         if (input.isCurrent()) input.onProgress({ kind: 'failed', code,
             ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}),
@@ -86,7 +86,7 @@ export async function runNewSessionManagedCreation(input: Readonly<{
     const current = () => input.isCurrent() && !input.signal.aborted;
     if (!current()) return fail('continuation_retired');
     if (!sameStrictJsonValue(acquisition.selection, input.draft.selection)) return fail('request_conflict');
-    if (input.draft.archiveEffect !== 'keep' && !input.draft.receipt.retentionCapabilities.supportedIntents.includes(input.draft.archiveEffect)) {
+    if (input.draft.archiveEffect && input.draft.archiveEffect !== 'keep' && !input.draft.receipt.retentionCapabilities.supportedIntents.includes(input.draft.archiveEffect)) {
         return fail('native_intent_unsupported');
     }
     if (!acquisition.managedId && (input.draft.receipt.optionStatus !== 'current'
@@ -137,7 +137,7 @@ export async function runNewSessionManagedCreation(input: Readonly<{
         const actionId = input.retryInstallation ? 'machines.managed.bootstrap.retry' as const : 'machines.managed.acquire' as const;
         const actionInput = input.retryInstallation && alreadyAdmitted
             ? { homeId: alreadyAdmitted.homeId, managedId: alreadyAdmitted.id, expectedIntentRevision: alreadyAdmitted.intentRevision }
-            : buildNewSessionManagedAcquireInput(input.draft, input.agentStart);
+            : buildManagedMachineAcquireInput(input.draft, input.agentStart);
         const accepted = await awaitActionApprovalResult<ManagedAcceptedV1, { kind: 'accepted'; value: ManagedAcceptedV1 } | { kind: 'failed'; code: string }>({
             signal: input.signal,
             execute: async callbacks => {

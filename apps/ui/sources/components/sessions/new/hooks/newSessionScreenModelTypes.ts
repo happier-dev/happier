@@ -12,7 +12,7 @@ import type {
 } from '@/components/sessions/new/components/NewSessionWizard';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
-import type { ManagedMachineCreationProgress } from '@/components/sessions/new/modules/newSessionManagedCreation';
+import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 import type { ComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
 import type { SessionInstructionsAuthoringDraft, SessionInstructionsAuthoringResult } from '@/sync/ops/promptLibrary/sessionInstructions';
 import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';

@@ -16,7 +16,7 @@ import { MachinePoolListOutputV1Schema } from '@happier-dev/protocol/machines/po
 import { AutomationTriggerDetailSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { createWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
-import { runNewSessionManagedCreation } from './newSessionManagedCreation';
+import { runManagedMachineCreation } from '@/components/settings/machines/managed/managedMachineCreation';
 import { bindNewManagedMachineCreationScope } from '@/sync/ops/actions/managedCreationScopeBinding';
 
 const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} };
@@ -183,7 +183,7 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
     const progress: unknown[] = [];
     const run = (options: Readonly<{ retryInstallation?: boolean; setupRecovery?: 'retry' | 'skip' | 'delete';
         reviewDelete?: (census: MachineReferenceCensusV1) => Promise<boolean>;
-        acquisition?: ManagedMachineAcquisitionDraft; draft?: typeof draft; agentStart?: ManagedAcquireAgentStartV1 }> = {}) => runNewSessionManagedCreation({
+        acquisition?: ManagedMachineAcquisitionDraft; draft?: typeof draft; agentStart?: ManagedAcquireAgentStartV1 }> = {}) => runManagedMachineCreation({
         draft: options.draft ?? draft, acquisition: options.acquisition ?? acquisition, scope: { serverId: 'server', accountId: 'account' },
         signal: new AbortController().signal, isCurrent: input.current ?? (() => true),
         executeAction: createFrontDoorActionExecute(input.denyCrossMachine ? {

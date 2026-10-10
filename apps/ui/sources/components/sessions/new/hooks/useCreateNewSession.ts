@@ -142,7 +142,7 @@ import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import { persistCreatedSessionAuthoringOrigin } from '@/components/sessions/new/modules/newSessionAuthoringOrigin';
 import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { managedMachineCreationIntent } from '@/sync/domains/state/newSessionManagedMachineDraft';
-import { runNewSessionManagedCreation, type ManagedMachineCreationProgress } from '@/components/sessions/new/modules/newSessionManagedCreation';
+import { runManagedMachineCreation, type ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 import { bindNewManagedMachineCreationScope } from '@/sync/ops/actions/managedCreationScopeBinding';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -677,7 +677,7 @@ export function useCreateNewSession(params: Readonly<{
                     reportAfterCreatedSettlement({ status: 'rejected' });
                     return;
                 }
-                const result = await runNewSessionManagedCreation({
+                const result = await runManagedMachineCreation({
                     draft: managedDraft, acquisition, scope, signal: cancellation.signal, isCurrent,
                     ...(!acquisition.managedId && submitted.authoringDraft ? {
                         agentStart: buildManagedAcquireAgentStartV1FromAuthoringDraft({
