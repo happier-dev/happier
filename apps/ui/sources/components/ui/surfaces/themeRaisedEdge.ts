@@ -3,6 +3,8 @@ import {
     resolveHappierRaisedEdge,
     type HappierRaisedEdge,
     type HappierRaisedEdgeState,
+    resolveHappierSurfaceFinish,
+    type HappierSurfaceFinishRole,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { shadowLevelStyle, type ShadowLevels } from '@/shadowElevation';
@@ -12,7 +14,23 @@ type RaisedEdgeTheme = Readonly<{ dark: boolean; colors: Readonly<{ edge: Raised
 type RaisedControlTheme = Readonly<{ dark: boolean; colors: Readonly<{ edge: RaisedEdgeColors; shadowLevels: ShadowLevels }> }>;
 
 /** A border role that has a raised twin in `theme.colors.edge` (the gloss and the fill are not border roles). */
-export type ThemeRaisedEdgeRole = Exclude<keyof RaisedEdgeColors, 'gloss' | 'fill' | 'cardFill' | 'floatingFill' | 'rimHi' | 'rimMid' | 'sheen'>;
+export type ThemeRaisedEdgeRole = Exclude<keyof RaisedEdgeColors, 'gloss' | 'fill' | 'cardFill' | 'floatingFill' | 'rimHi' | 'rimMid' | 'sheen' | 'finishGradient' | 'primaryFinishGradient' | 'secondaryFinishGradient'>;
+
+export function resolveThemeSurfaceFinish(theme: RaisedEdgeTheme & Readonly<{
+    finish?: 'flat' | 'soft';
+    parts?: Partial<Record<HappierSurfaceFinishRole, Readonly<{ finish?: 'flat' | 'soft' }>>>;
+}>, role: HappierSurfaceFinishRole, state?: HappierRaisedEdgeState, nested = false) {
+    return resolveHappierSurfaceFinish({
+        role, finish: theme.finish, parts: theme.parts, state, nested,
+        gradients: {
+            card: theme.colors.edge.finishGradient,
+            floating: theme.colors.edge.finishGradient,
+            composer: theme.colors.edge.finishGradient,
+            primaryButton: theme.colors.edge.primaryFinishGradient,
+            secondaryButton: theme.colors.edge.secondaryFinishGradient,
+        },
+    });
+}
 
 /**
  * The raised edge of a surface drawn with `border.<role>` (or `state.danger.border` for `danger`) in

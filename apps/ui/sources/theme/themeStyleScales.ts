@@ -2,16 +2,19 @@ import { deriveHappierRadiusScale, HAPPIER_RADIUS_BASE_PX } from '@happier-dev/p
 import { Platform } from 'react-native';
 
 /**
- * The style scales every theme carries: the radius scale, spacing, the radius of the five session parts,
- * the transcript rhythm and the theme-held font families. The default of each table is exactly what the
- * app rendered before these became theme values; the full app always uses the defaults. The embed
- * (plan 04 §4.7, `EmbedStyleV1`) selects other steps through `applyThemeRuntimeSelection`'s `style`.
+ * The style scales every theme carries: radii, spacing, per-part finish, transcript rhythm and font
+ * families. Device finish settings and the embed's `EmbedStyleV1` enter this one resolver through
+ * `applyThemeRuntimeSelection`'s `style`; absent part choices inherit the global finish.
  */
 
 export type ThemeRadiusScaleName = 'sharp' | 'soft' | 'round';
 export type ThemeDensityName = 'compact' | 'comfortable';
 export type ThemeRadiusStep = 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard';
-export type ThemePartName = 'userBubble' | 'composer' | 'toolCard' | 'approvalCard' | 'codeBlock';
+export type ThemeSurfaceFinish = 'flat' | 'soft';
+export type ThemePartName = 'userBubble' | 'composer' | 'toolCard' | 'approvalCard' | 'codeBlock' | 'card' | 'floating' | 'primaryButton' | 'secondaryButton';
+export const THEME_SURFACE_FINISH_ROLES = ['card', 'floating', 'composer', 'primaryButton', 'secondaryButton'] as const satisfies readonly ThemePartName[];
+export type ThemeSurfaceFinishRole = typeof THEME_SURFACE_FINISH_ROLES[number];
+export type ThemeSurfaceFinishOverrides = Readonly<Partial<Record<ThemeSurfaceFinishRole, ThemeSurfaceFinish>>>;
 
 type RadiusScale = Readonly<Record<ThemeRadiusStep, number>>;
 
@@ -39,6 +42,10 @@ const PART_RADIUS_STEPS: Readonly<Record<ThemePartName, ThemeRadiusStep>> = {
     toolCard: 'md',
     approvalCard: 'xl',
     codeBlock: 'lg',
+    card: 'xl',
+    floating: 'lg',
+    primaryButton: 'md',
+    secondaryButton: 'md',
 };
 
 /** Android draws the composer stack 4 px rounder than its step. */
@@ -55,7 +62,8 @@ const DENSITY_SCALES: Readonly<Record<ThemeDensityName, Readonly<{ margins: Marg
 export type ThemeStyleSelection = Readonly<{
     radius?: ThemeRadiusScaleName;
     density?: ThemeDensityName;
-    parts?: Readonly<Partial<Record<ThemePartName, Readonly<{ radius?: ThemeRadiusStep }>>>>;
+    finish?: ThemeSurfaceFinish;
+    parts?: Readonly<Partial<Record<ThemePartName, Readonly<{ radius?: ThemeRadiusStep; finish?: ThemeSurfaceFinish }>>>>;
     /** A font family name; `null`/absent keeps the Happier family. */
     fontFamily?: string | null;
     monoFontFamily?: string | null;
@@ -64,7 +72,8 @@ export type ThemeStyleSelection = Readonly<{
 export type ThemeStyleScales = Readonly<{
     borderRadius: RadiusScale;
     margins: Margins;
-    parts: Readonly<Record<ThemePartName, Readonly<{ radius: number }>>>;
+    finish: ThemeSurfaceFinish;
+    parts: Readonly<Record<ThemePartName, Readonly<{ radius: number; finish: ThemeSurfaceFinish }>>>;
     transcript: Readonly<{ messageGap: number }>;
     typography: Readonly<{ fontFamily: string | null; monoFontFamily: string | null }>;
 }>;
@@ -79,15 +88,17 @@ function normalizeFamily(value: string | null | undefined): string | null {
 export function resolveThemeStyleScales(selection: ThemeStyleSelection | null = null): ThemeStyleScales {
     const borderRadius = RADIUS_SCALES[selection?.radius ?? 'soft'];
     const density = DENSITY_SCALES[selection?.density ?? 'comfortable'];
+    const finish = selection?.finish ?? 'soft';
     const parts = Object.fromEntries(PART_NAMES.map((part) => {
         const step = selection?.parts?.[part]?.radius ?? PART_RADIUS_STEPS[part];
         const extra = part === 'composer' ? ANDROID_COMPOSER_RADIUS_EXTRA : 0;
-        return [part, { radius: borderRadius[step] + extra }];
-    })) as Record<ThemePartName, { radius: number }>;
+        return [part, { radius: borderRadius[step] + extra, finish: selection?.parts?.[part]?.finish ?? finish }];
+    })) as Record<ThemePartName, { radius: number; finish: ThemeSurfaceFinish }>;
 
     return {
         borderRadius,
         margins: density.margins,
+        finish,
         parts,
         transcript: density.transcript,
         typography: {
@@ -99,10 +110,25 @@ export function resolveThemeStyleScales(selection: ThemeStyleSelection | null = 
 
 export const DEFAULT_THEME_STYLE_SCALES = resolveThemeStyleScales();
 
+/** Device selection enters the same part resolver as embed styles; absent role values inherit. */
+export function themeStyleSelectionFromSurfaceFinish(settings: Readonly<{
+    uiSurfaceFinish?: ThemeSurfaceFinish;
+    uiSurfaceFinishOverrides?: ThemeSurfaceFinishOverrides;
+}>): ThemeStyleSelection {
+    return {
+        finish: settings.uiSurfaceFinish ?? 'soft',
+        parts: Object.fromEntries(THEME_SURFACE_FINISH_ROLES.flatMap(role => {
+            const finish = settings.uiSurfaceFinishOverrides?.[role];
+            return finish ? [[role, { finish }]] : [];
+        })),
+    };
+}
+
 function readScales(theme: ThemeStyleScales): ThemeStyleScales {
     return {
         borderRadius: theme.borderRadius,
         margins: theme.margins,
+        finish: theme.finish,
         parts: theme.parts,
         transcript: theme.transcript,
         typography: theme.typography,
@@ -119,6 +145,7 @@ export function applyThemeStyleScales<T extends ThemeStyleScales>(theme: T, scal
         ...theme,
         borderRadius: scales.borderRadius,
         margins: scales.margins,
+        finish: scales.finish,
         parts: scales.parts,
         transcript: scales.transcript,
         typography: scales.typography,

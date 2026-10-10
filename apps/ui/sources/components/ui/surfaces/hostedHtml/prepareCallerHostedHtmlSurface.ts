@@ -9,6 +9,7 @@ import {
     type PluginUiHostMethodV1,
     type NormalizedUiSurfaceCapabilityRequestV1,
     type UiSurfaceExecutableApprovalKeyV1,
+    type PluginHostedHtmlSourceV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { buildHostedHtmlDocument } from '@/components/plugins/hostedWeb/buildHostedHtmlDocument';
@@ -18,7 +19,7 @@ export type PreparedCallerHostedHtmlSurface =
         kind: 'admitted';
         /** Raw authored source for HostedFrameHost, which installs the shell once. */
         frameSource: Readonly<{
-            html: string;
+            bundle: PluginHostedHtmlSourceV1;
             networkOrigins: NormalizedUiSurfaceCapabilityRequestV1['networkOrigins'];
         }>;
         /** Audit/review rendering of the exact host shell; never rewrap this value. */
@@ -93,21 +94,29 @@ export function prepareCallerHostedHtmlSurface(input: Readonly<{
         requestedCapabilitiesDigest,
     });
     if (!approval.success) return Object.freeze({ kind: 'rejected', code: 'approval_scope_invalid' });
-    return Object.freeze({
-        kind: 'admitted',
-        frameSource: Object.freeze({
-            html: source.data.html,
-            networkOrigins: admission.capabilities.networkOrigins,
-        }),
-        document: buildHostedHtmlDocument(
-            source.data.html,
+    let document: string;
+    try {
+        document = buildHostedHtmlDocument(
+            source.data,
             {
                 identity: input.frameIdentity,
                 frameOrigin: 'null',
                 hostOrigin: input.hostOrigin,
             },
             { networkOrigins: admission.capabilities.networkOrigins },
-        ),
+        );
+    } catch {
+        // A structurally valid bundle can still reference missing or invalid
+        // local assets. Keep that authored-content failure at this boundary.
+        return Object.freeze({ kind: 'rejected', code: 'source_invalid' });
+    }
+    return Object.freeze({
+        kind: 'admitted',
+        frameSource: Object.freeze({
+            bundle: source.data,
+            networkOrigins: admission.capabilities.networkOrigins,
+        }),
+        document,
         advertisedHostMethods: admission.advertisedHostMethods,
         capabilityManifest: Object.freeze({
             version: 1 as const,

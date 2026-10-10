@@ -26,12 +26,20 @@ export interface ItemRowActionsProps {
      * than the window (e.g. a resizable sidebar header).
      */
     layoutWidthPx?: number | null;
+    /** Every action lives behind ⋯ at any width: a row whose trailing edge holds one control beside its menu. */
+    overflowOnly?: boolean;
     overflowTriggerTestID?: string;
     overflowTriggerAccessibilityLabel?: string;
     /** A mounted overflow control may own domain shortcuts; descendant text entry is untouched. */
     onOverflowTriggerKeyDown?: (key: string) => boolean;
     /** Replaces one open menu section without mounting custom content while the menu is shut. */
     renderOverflowSection?: (section: Readonly<{ id: string; title: string }>) => React.ReactNode | undefined;
+    /** Presents the same open menu contents in a domain-owned surface, such as a phone sheet. */
+    renderOverflowSurface?: (props: Readonly<{ children: React.ReactNode; onRequestClose: () => void }>) => React.ReactNode;
+    /** A wider menu for rows with inline controls (a group's Width, Frame, Dividers); default 260. */
+    overflowMaxWidthCap?: number;
+    /** A taller menu where every entry should show without scrolling; default 280. */
+    overflowMaxHeightCap?: number;
     renderOverflowTrigger?: (props: Readonly<{
         open: boolean;
         toggle: () => void;
@@ -104,7 +112,8 @@ export function ItemRowActions(props: ItemRowActionsProps) {
         && props.layoutWidthPx > 0
             ? props.layoutWidthPx
             : windowWidth;
-    const compact = widthForCompact < (props.compactThreshold ?? ITEM_ROW_ACTIONS_COMPACT_THRESHOLD_PX);
+    const compact = props.overflowOnly === true
+        || widthForCompact < (props.compactThreshold ?? ITEM_ROW_ACTIONS_COMPACT_THRESHOLD_PX);
     const [uncontrolledShowOverflow, setUncontrolledShowOverflow] = React.useState(false);
     const showOverflow = props.overflowOpen ?? uncontrolledShowOverflow;
     const onOverflowOpenChange = props.onOverflowOpenChange;
@@ -172,6 +181,8 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 onPress: onPress ? () => closeThen(onPress) : undefined,
                 disabled: action.disabled,
                 selected: action.selected,
+                // Icon and words together: a destructive row is never ink text beside a rose glyph.
+                destructive: action.destructive,
             };
         });
     }, [closeThen, overflowActions, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
@@ -324,6 +335,14 @@ export function ItemRowActions(props: ItemRowActionsProps) {
         const accessibilityLabel = props.overflowTriggerAccessibilityLabel ?? t('common.moreActions');
         const accessibilityHint = t('common.moreActionsHint');
         const toggleOverflow = () => setShowOverflow((v) => !v);
+        const onRequestClose = () => setShowOverflow(false);
+        const content = showOverflow ? overflowActionSections.map((section, index) => {
+            const custom = props.renderOverflowSection?.(section);
+            const separated = index > 0 && section.title.length === 0;
+            return <React.Fragment key={section.id}>{custom === undefined
+                ? <ActionListSection title={section.title} actions={section.actions} separatorAbove={separated} />
+                : custom}</React.Fragment>;
+        }) : null;
 
         return (
             <View key="overflow" style={{ position: 'relative' }}>
@@ -346,7 +365,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                                     return [
                                         styles.actionControl,
                                         actionControlFrame,
-                                        showOverflow ? { opacity: 0 } : null,
+                                        showOverflow && !props.renderOverflowSurface ? { opacity: 0 } : null,
                                         actionFocusRing(webState.focused, theme.colors.border.focus),
                                     ];
                                 }}
@@ -374,18 +393,18 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                         )}
                 </View>
 
-                {showOverflow ? (
+                {showOverflow && props.renderOverflowSurface ? props.renderOverflowSurface({ children: content, onRequestClose }) : showOverflow ? (
                     <Popover
                         open={showOverflow}
                         anchorRef={overflowAnchorRef}
                         placement={overflowPlacement}
                         gap={10}
-                        maxHeightCap={280}
-                        maxWidthCap={260}
+                        maxHeightCap={props.overflowMaxHeightCap ?? 280}
+                        maxWidthCap={props.overflowMaxWidthCap ?? 260}
                         edgePadding={{ vertical: 8, horizontal: 8 }}
                         portal={overflowPortal}
                         boundaryRef={props.popoverBoundaryRef}
-                        onRequestClose={() => setShowOverflow(false)}
+                        onRequestClose={onRequestClose}
                         backdrop={{
                             effect: 'blur',
                             blurOnWeb: Platform.OS === 'web' ? { px: 3, tintColor: blurTintOnWeb } : undefined,
@@ -401,12 +420,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                                 edgeFades={{ top: true, bottom: true, size: 24 }}
                                 edgeIndicators={true}
                             >
-                                {overflowActionSections.map((section) => {
-                                    const custom = props.renderOverflowSection?.(section);
-                                    return <React.Fragment key={section.id}>{custom === undefined
-                                        ? <ActionListSection title={section.title} actions={section.actions} />
-                                        : custom}</React.Fragment>;
-                                })}
+                                {content}
                             </FloatingOverlay>
                         )}
                     </Popover>

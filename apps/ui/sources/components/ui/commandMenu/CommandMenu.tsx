@@ -69,6 +69,7 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
                 id: item.id,
                 label: item.label,
                 subtitle: item.description,
+                onHighlight: item.onHighlight,
                 content: item.renderRow ? item.renderRow() : (
                     <CommandMenuRow
                         label={item.label}
@@ -80,14 +81,21 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
             });
         }
 
-        return groups.map((g, index) => ({
+        return [...(props.leadingEmptyGroup ? [{
+            kind: 'static' as const,
+            id: props.leadingEmptyGroup.title,
+            title: props.leadingEmptyGroup.title,
+            options: [],
+            resultHint: props.leadingEmptyGroup.hint,
+            virtualization: 'never' as const,
+        }] : []), ...groups.map((g, index) => ({
             kind: 'static' as const,
             id: g.group ?? `section-${index}`,
             title: g.group,
             options: g.options,
             virtualization: 'never' as const,
-        }));
-    }, [items, testID]);
+        }))];
+    }, [items, testID, props.leadingEmptyGroup]);
 
     const rootStep = React.useMemo<SelectionListStep>(() => ({
         id: COMMAND_MENU_ROOT_STEP_ID,
@@ -118,6 +126,7 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
             maxHeight={maxHeight}
             maxWidth={maxWidth}
             placement={placement}
+            flip={props.flip}
             gap={gap}
             boundaryRef={boundaryRef}
             keyboardBottomInset={keyboardBottomInset}

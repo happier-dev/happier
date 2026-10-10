@@ -2,9 +2,8 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
-import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
-
-type FindMarkStyle = Readonly<{ backgroundColor: string; color?: string; borderRadius?: number; boxShadow?: string }>;
+import { HappierFindHighlightedText, type FindMarkStyle, type FindTextRange } from '@happier-dev/plugin-ui/presentation';
+export { sliceFindRanges } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The two marks of every Find surface (Find lab `mark.fd-m`): every match is a soft tint that keeps the text's
@@ -32,38 +31,6 @@ function resolveFindMarkStyles(theme: ReturnType<typeof useUnistyles>['theme']):
 export function FindHighlightedText(props: Readonly<{ text: string; ranges?: readonly FindTextRange[]; selectable?: boolean }>) {
     const { theme } = useUnistyles();
     const marks = React.useMemo(() => resolveFindMarkStyles(theme), [theme]);
-    if (!props.ranges?.length) return props.text;
-    const events = new Map<number, { all: number; current: number }>([[0, { all: 0, current: 0 }], [props.text.length, { all: 0, current: 0 }]]);
-    const addEvent = (offset: number, delta: number, current: boolean) => {
-        const event = events.get(offset) ?? { all: 0, current: 0 };
-        event.all += delta;
-        if (current) event.current += delta;
-        events.set(offset, event);
-    };
-    for (const range of props.ranges) {
-        const start = Math.max(0, Math.min(props.text.length, range.start));
-        const end = Math.max(0, Math.min(props.text.length, range.end));
-        if (end <= start) continue;
-        addEvent(start, 1, range.current);
-        addEvent(end, -1, range.current);
-    }
-    const positions = [...events.keys()].sort((a, b) => a - b);
-    let active = 0;
-    let activeCurrent = 0;
-    return <>{positions.slice(0, -1).map((start, index) => {
-        const event = events.get(start)!;
-        active += event.all;
-        activeCurrent += event.current;
-        const end = positions[index + 1]!;
-        if (end <= start) return null;
-        const text = props.text.slice(start, end);
-        const current = activeCurrent > 0;
-        return active > 0 ? <Text key={start} useDefaultTypography={false} selectable={props.selectable} testID={current ? 'find-match-current' : 'find-match-all'}
-            style={current ? marks.current : marks.all}>{text}</Text> : text;
-    })}</>;
-}
-
-export function sliceFindRanges(ranges: readonly FindTextRange[] | undefined, start: number, length: number) {
-    return ranges?.filter((range) => range.end > start && range.start < start + length)
-        .map((range) => ({ start: Math.max(0, range.start - start), end: Math.min(length, range.end - start), current: range.current }));
+    return <HappierFindHighlightedText {...props} marks={marks} renderMatch={({ key, text, current, style, selectable }) =>
+        <Text key={key} useDefaultTypography={false} selectable={selectable} testID={current ? 'find-match-current' : 'find-match-all'} style={style}>{text}</Text>} />;
 }

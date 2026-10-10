@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, resolveHappierFocusRingVisible, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -24,6 +24,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
 }>) {
     const { filter } = props;
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     const anchorRef = React.useRef<View>(null);
     const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false);
@@ -55,16 +56,19 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                 label: option.label,
                 ...(option.subtitle ? { subtitle: option.subtitle } : {}),
                 ...(option.icon ? { icon: option.icon } : {}),
+                ...(option.accessory ? { rightAccessory: option.accessory } : {}),
                 ...(option.disabled ? { disabled: true } : {}),
                 testID: `${testID}:${option.id}`,
             })),
         }],
     } : null, [filter.id, filter.options, testID]);
     const { onChange } = filter;
+    const multiple = filter.selectedIds !== undefined;
     const handleSelect = React.useCallback((id: string) => {
-        setOpen(false);
+        // Several choices stay open: each row toggles until the viewer is done.
+        if (!multiple) setOpen(false);
         onChange?.(id);
-    }, [onChange, setOpen]);
+    }, [multiple, onChange, setOpen]);
 
     return (
         <>
@@ -83,7 +87,9 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     onPress={() => (clearable ? filter.onClear?.() : setOpen(!open))}
                     style={(state) => [
                         styles.chip,
+                        filter.active ? { borderColor: theme.colors.text.link } : null,
                         state.pressed ? styles.chipPressed : null,
+                        { backgroundColor: paintColor(state.pressed ? theme.colors.surface.pressed : theme.colors.surface.base) },
                         focusRingStyle({
                             focused: resolveHappierFocusRingVisible(state.focused),
                             color: theme.colors.border.focus,
@@ -91,14 +97,17 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     ]}
                 >
                     {leading}
-                    <Text style={[styles.label, filter.muted ? styles.labelMuted : null]} numberOfLines={1}>{valueLabel}</Text>
+                    {filter.showLabel ? <Text style={[styles.label, styles.labelMuted, styles.name]} numberOfLines={1}>{filter.label}</Text> : null}
+                    <Text style={[styles.label, filter.muted ? styles.labelMuted : null, filter.active ? { color: theme.colors.text.link } : null]} numberOfLines={1}>{valueLabel}</Text>
                     {filter.count !== undefined ? <Text style={[styles.label, styles.labelMuted, styles.count]}>{filter.count}</Text> : null}
                     {filter.presence ? (
                         <View
                             style={[styles.dot, {
                                 backgroundColor: filter.presence === 'online'
                                     ? theme.colors.status.connected
-                                    : theme.colors.status.disconnected,
+                                    : filter.presence === 'attention'
+                                        ? theme.colors.state.warning.foreground
+                                        : theme.colors.status.disconnected,
                             }]}
                         />
                     ) : null}
@@ -125,7 +134,9 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                                 <SelectionList
                                     testID={`${testID}.list`}
                                     rootStep={optionsStep}
-                                    selectedOptionId={filter.selectedId ?? null}
+                                    {...(filter.selectedIds
+                                        ? { selection: { kind: 'multiple' as const, selectedIds: filter.selectedIds } }
+                                        : { selectedOptionId: filter.selectedId ?? null })}
                                     onSelect={handleSelect}
                                     onRequestClose={close}
                                     listAccessibilityLabel={filter.label}
@@ -199,6 +210,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     labelMuted: {
         color: theme.colors.text.secondary,
+    },
+    name: {
+        flexShrink: 0,
+        ...Typography.default(),
     },
     count: {
         flexShrink: 0,

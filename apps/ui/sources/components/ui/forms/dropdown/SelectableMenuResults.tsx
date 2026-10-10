@@ -8,7 +8,6 @@ import { ItemGroupSelectionContext } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
 import type { SelectableMenuCategory, SelectableMenuItem } from './selectableMenuTypes';
 import { Text } from '@/components/ui/text/Text';
-import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import type { ScrollItemLayoutHandler } from '@/components/ui/scroll/useScrollRectIntoView';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 
@@ -202,11 +201,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         letterSpacing: -0.2,
         ...Typography.default(),
     },
+    // A group label is sentence case, quiet and on the rows' text edge ("Ask an agent to"): never an
+    // uppercase eyebrow over a menu.
     categoryTitle: {
+        ...Typography.default('semiBold'),
+        fontSize: 12,
+        lineHeight: 16,
         paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 8,
-        color: theme.colors.input.placeholder,
+        paddingTop: 12,
+        paddingBottom: 4,
+        color: theme.colors.text.secondary,
     },
     itemRowPressable: {
         alignSelf: 'stretch',
@@ -214,12 +218,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: MENU_ROW_METRICS.radiusPx,
     },
 
+    // The submenu anchors to the whole row, so it opens beside its parent menu (to the right, or to
+    // the left when there is no room) and never on top of it.
     submenuAnchor: {
         position: 'absolute',
         top: 0,
-        right: -2,
+        right: 0,
         bottom: 0,
-        width: 4,
+        left: 0,
     },
 }));
 
@@ -422,9 +428,9 @@ export function SelectableMenuResults(props: {
                 return (
                     <View key={category.id}>
                         {showCategoryTitles && category.title.trim().length > 0 ? (
-                            <Eyebrow style={styles.categoryTitle}>
+                            <Text style={styles.categoryTitle} accessibilityRole="header">
                                 {category.title}
-                            </Eyebrow>
+                            </Text>
                         ) : null}
                         {categoryItems}
                     </View>

@@ -22,6 +22,11 @@ export interface MeterBarProps {
     trackColor?: string;
     /** A host surface may bind an existing neutral text fill instead of a state tint. */
     fillColor?: string;
+    /** Optional visible floor for positive fills; zero remains empty. */
+    minimumVisibleFraction?: number;
+    fillOpacity?: number;
+    /** A projected share is drawn hatched; measured fills stay solid. */
+    fillPattern?: 'solid' | 'hatched';
     /**
      * When the bar reports progress (not a capacity), its accessible name. The bar then exposes
      * `progressbar` semantics with the fill as a 0–100 value.
@@ -68,6 +73,9 @@ export const MeterBar = React.memo<MeterBarProps>((props) => {
                 theme={presentationTheme}
                 height={height}
                 fillColor={fillColor}
+                minimumVisibleFraction={fill > 0 ? props.minimumVisibleFraction : undefined}
+                fillOpacity={props.fillOpacity}
+                fillPattern={props.fillPattern}
                 trackColor={trackColor}
                 style={{ width: '100%' }}
             />

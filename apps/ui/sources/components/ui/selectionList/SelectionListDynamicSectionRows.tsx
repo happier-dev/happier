@@ -17,7 +17,8 @@
 
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -38,6 +39,7 @@ import {
 import type { SelectionListGridRowPlacement } from './selectionListGridRowModel';
 import type { SectionRenderPlan } from './SelectionListRenderPlan';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
+import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import { SelectionListSkeletonRow } from './SelectionListSkeletonRow';
 import { SelectionListVirtualizedSection } from './SelectionListVirtualizedSection';
 import { SelectionListScrollOffsetFrame } from './SelectionListScrollOffsetFrame';
@@ -69,7 +71,6 @@ const dynamicRowStyles = StyleSheet.create((theme) => ({
     },
     emptyHintText: {
         color: theme.colors.text.secondary,
-        fontStyle: 'italic',
     },
     staleSection: {
         opacity: SELECTION_LIST_STALE_OPTIONS_OPACITY,
@@ -138,12 +139,14 @@ export function SelectionListErrorRow(props: Readonly<{
     testID: string | undefined;
     measureMode: boolean;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = dynamicRowStyles;
     const aria = props.measureMode
         ? {}
         : ({ role: 'alert', 'aria-live': 'polite' } as Record<string, unknown>);
     return (
-        <View testID={props.testID} style={styles.errorRow} {...aria}>
+        <View testID={props.testID} style={[styles.errorRow, { backgroundColor: paintColor(theme.colors.surface.pressedOverlay) }]} {...aria}>
             <Text style={styles.errorText}>{props.label}</Text>
         </View>
     );
@@ -320,6 +323,7 @@ function renderSelectionListSectionElement(
         <SelectionListSectionHeader
             testID={measureMode ? undefined : headerTestId}
             title={sectionPlan.title}
+            rightAccessory={renderSelectionListAccessory(sectionPlan.rightAccessory)}
             count={sectionPlan.count}
             action={measureMode ? undefined : sectionPlan.action}
             {...(headerRowIndex === undefined
@@ -455,6 +459,7 @@ function renderSelectionListSectionElement(
     const sectionForRender: SelectionListSection = {
         id: sectionPlan.id,
         title: sectionPlan.title,
+        rightAccessory: sectionPlan.rightAccessory,
         count: sectionPlan.count,
         action: sectionPlan.action,
         options: sectionPlan.options,

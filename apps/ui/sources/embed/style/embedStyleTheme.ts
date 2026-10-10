@@ -8,10 +8,9 @@ import { isValidThemeProfileColorValue } from '@/theme/profiles/themeProfileColo
 import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
 import { isThemeProfilePublicTokenId } from '@/theme/profiles/themeProfileTokenRegistry';
 import type { ThemeProfileColorOverrides, ThemeProfileMode, ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
-import type { ThemeRadiusStep, ThemeStyleSelection } from '@/theme/themeStyleScales';
+import type { ThemePartName, ThemeStyleSelection } from '@/theme/themeStyleScales';
 
-type EmbedPartName = 'userBubble' | 'composer' | 'toolCard' | 'approvalCard' | 'codeBlock';
-const EMBED_PART_NAMES: readonly EmbedPartName[] = ['userBubble', 'composer', 'toolCard', 'approvalCard', 'codeBlock'];
+const EMBED_PART_NAMES = ['userBubble', 'composer', 'toolCard', 'approvalCard', 'codeBlock', 'card', 'floating', 'primaryButton', 'secondaryButton'] as const satisfies readonly ThemePartName[];
 
 /** The embed's in-memory theme profile. It is never saved; `updatedAt` is fixed and the resolver keys on its overrides. */
 const EMBED_THEME_PROFILE_ID = 'embed';
@@ -54,8 +53,8 @@ function resolveThemePreference(mode: EmbedStyleV1['mode']): ThemePreference {
 function readPartSteps(parts: EmbedStyleV1['parts']): ThemeStyleSelection['parts'] {
     if (!parts) return undefined;
     const entries = EMBED_PART_NAMES.flatMap((part) => {
-        const radius: ThemeRadiusStep | undefined = parts[part]?.radius;
-        return radius ? [[part, { radius }] as const] : [];
+        const selection = parts[part];
+        return selection ? [[part, selection] as const] : [];
     });
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
@@ -86,6 +85,7 @@ export function resolveEmbedThemeApplication(style: EmbedStyleV1 | null): EmbedT
     const selection: ThemeStyleSelection = {
         ...(style?.radius ? { radius: style.radius } : {}),
         ...(style?.density ? { density: style.density } : {}),
+        ...(style?.finish ? { finish: style.finish } : {}),
         ...(readPartSteps(style?.parts) ? { parts: readPartSteps(style?.parts) } : {}),
         ...(fontFamily ? { fontFamily } : {}),
         ...(typography?.monoFontFamily?.trim() ? { monoFontFamily: typography.monoFontFamily.trim() } : {}),
@@ -127,7 +127,11 @@ export function mergeEmbedStyles(...layers: ReadonlyArray<EmbedStyleV1 | null | 
         }
         const colors = mergeColors(merged.colors, layer.colors);
         const typography: EmbedStyleV1['typography'] = merged.typography || layer.typography ? { ...merged.typography, ...layer.typography } : undefined;
-        const parts: EmbedStyleV1['parts'] = merged.parts || layer.parts ? { ...merged.parts, ...layer.parts } : undefined;
+        const parts: EmbedStyleV1['parts'] = merged.parts || layer.parts ? Object.fromEntries(EMBED_PART_NAMES.flatMap(part => {
+            const before = merged?.parts?.[part];
+            const next = layer.parts?.[part];
+            return before || next ? [[part, { ...before, ...next }]] : [];
+        })) : undefined;
         merged = {
             ...merged,
             ...layer,

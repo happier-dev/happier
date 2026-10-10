@@ -1,6 +1,7 @@
 export * from './treeDragDropTypes';
 export * from './entityDragDropTypes';
 export * from './entityDragDropRuntime';
+export * from './widgetLayoutEntityDrop';
 export * from './entityDragDropHooks';
 export * from './useEntityDragChooser';
 export * from './useEntityDragDomBinding';

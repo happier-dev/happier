@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -22,7 +23,7 @@ it('keeps a live caller frame connected across an equivalent parent render', asy
         createRequestController: () => ({ handleRequest: async () => null, dispose: () => undefined }),
         lifetime: { isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }) },
     };
-    const source = { kind: 'html', html: '<main>same document</main>' };
+    const source = artifactHtmlBundleFromBodyV1('<main>same document</main>');
     const requestedCapabilities = { hostMethods: ['context', 'watchContext'] };
     const render = () => <HostedHtmlSurfaceAdapter
         sessionId="session-a" title="same title" recordRevision="revision-a"
@@ -55,7 +56,7 @@ it('bootstraps caller HTML with the canonical host environment before reveal', a
     };
     await renderScreen(<HostedHtmlSurfaceAdapter
         sessionId="session-a" title="environment" recordRevision="revision-a"
-        approvalSubject="environment-source" source={{ kind: 'html', html: '<main>environment</main>' }}
+        approvalSubject="environment-source" source={artifactHtmlBundleFromBodyV1('<main>environment</main>')}
         requestedCapabilities={{ hostMethods: ['context', 'watchContext'] }}
         surfaceContext={{ kind: 'widget', sessionId: 'session-a', itemId: 'item-a', recordRevision: 'revision-a' }}
         runtime={runtime} testID="environment-html"

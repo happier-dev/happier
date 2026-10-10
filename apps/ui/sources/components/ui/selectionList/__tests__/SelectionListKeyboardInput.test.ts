@@ -54,6 +54,25 @@ describe('SelectionListKeyboardInput (R14 extracted)', () => {
         expect(onActivate).not.toHaveBeenCalled();
     });
 
+    it('does NOT dispatch or close on Escape while the event reports composing=true (IME guard)', () => {
+        const keyboard = makeKeyboardStub(true);
+        const onRequestClose = vi.fn();
+        const preventDefault = vi.fn();
+        const handler = createSelectionListKeyPressHandler({
+            keyboard,
+            isComposing: false,
+            focusedOptionId: null,
+            onActivate: vi.fn(),
+            canPopStep: false,
+            inputValue: '',
+            onRequestClose,
+        });
+        handler({ key: 'Escape', isComposing: true, preventDefault });
+        expect(keyboard.handleKey).not.toHaveBeenCalled();
+        expect(onRequestClose).not.toHaveBeenCalled();
+        expect(preventDefault).not.toHaveBeenCalled();
+    });
+
     it('honors the stale-closure bypass when event=composing-false but state=composing-true and key is Enter on a focused option', () => {
         const keyboard = makeKeyboardStub(false);
         const onActivate = vi.fn();

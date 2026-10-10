@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -130,6 +131,8 @@ type TabBadgeProps =
  * counts, dots, and git diff chips share spacing, capping, and theme tokens.
  */
 export function TabBadge(props: TabBadgeProps): React.ReactElement {
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     if (props.variant === 'dot') {
         return (
             <View
@@ -153,6 +156,7 @@ export function TabBadge(props: TabBadgeProps): React.ReactElement {
                     styles.countBadge,
                     props.size === 'compact' ? styles.countBadgeCompact : null,
                     props.tone === 'neutral' ? (props.size === 'compact' ? styles.countBadgeNeutralCompact : styles.countBadgeNeutral) : null,
+                    props.size === 'compact' && props.tone === 'neutral' ? { backgroundColor: paintColor(theme.colors.surface.elevated) } : null,
                     props.style ?? null,
                 ]}
             >
@@ -169,7 +173,7 @@ export function TabBadge(props: TabBadgeProps): React.ReactElement {
             accessible={false}
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
-            style={[styles.diffChip, props.size === 'compact' ? styles.diffChipCompact : null, props.style]}
+            style={[styles.diffChip, props.size === 'compact' ? styles.diffChipCompact : null, { backgroundColor: paintColor(theme.colors.surface.base) }, props.style]}
         >
             {showLines ? (
                 <>

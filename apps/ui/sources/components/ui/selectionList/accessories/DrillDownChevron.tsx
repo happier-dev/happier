@@ -14,7 +14,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 /**
  * F3 — Narrow boundary type for the cross-platform stopPropagation pattern.
- * Mirrors `PathFavoriteToggleButton`'s helper so we can call the DOM-only
+ * Mirrors `FavoriteToggleButton`'s helper so we can call the DOM-only
  * `stopImmediatePropagation` on the underlying native event without leaking
  * `any`. Optional fields keep the contract permissive for non-event callers
  * (programmatic invocation, tests).
@@ -46,7 +46,7 @@ export type DrillDownChevronProps = Readonly<{
  *
  * F3 — the inner Pressable's onPress wrapper stops propagation before
  * invoking the user-supplied `onPress`. This is the same pattern used by
- * `PathFavoriteToggleButton` (the other interactive accessory rendered
+ * `FavoriteToggleButton` (the other interactive accessory rendered
  * inside `Item.rightElement`). Without this, pressing the chevron on a
  * directory row in `PathSelectionList` would also commit the row's path.
  */

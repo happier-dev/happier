@@ -21,14 +21,18 @@ export type FilesystemBrowserProps = FilesystemBrowserListProps & Readonly<{
 export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactElement {
     const retryLabel = props.retryLabel ?? props.inlineRetryLabel;
     const centeredLoadingLabel = props.loadingLabelCentered ?? props.loadingLabel;
+    const retainListComposition = (state: React.ReactElement) => props.listHeader || props.listFooter || props.listEmpty
+        ? <FilesystemBrowserList {...props} listEmpty={props.listEmpty ?? state} /> : state;
+
+    if (props.listEmpty && props.nodes.length === 0) return retainListComposition(props.listEmpty);
 
     // The browser's root states are the shared state composition, sized by the pane or modal around it.
     if (props.rootLoading && props.nodes.length === 0) {
-        return <SurfaceStateCard testID={props.loadingTestID} kind="loading" title={centeredLoadingLabel} />;
+        return retainListComposition(<SurfaceStateCard testID={props.loadingTestID} kind="loading" title={centeredLoadingLabel} />);
     }
 
     if (props.rootError && props.nodes.length === 0) {
-        return (
+        return retainListComposition(
             <SurfaceStateCard
                 testID={props.errorTestID}
                 kind="error"
@@ -41,7 +45,7 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
     }
 
     if (props.nodes.length === 0) {
-        return (
+        return retainListComposition(
             <SurfaceStateCard
                 testID={props.emptyTestID}
                 kind="empty"

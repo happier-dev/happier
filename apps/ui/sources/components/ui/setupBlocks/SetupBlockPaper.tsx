@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -38,6 +39,9 @@ export function SetupBlockPaper(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const card = props.layout === 'card';
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const paperColor = props.appearance === 'dashed' ? 'transparent' : props.appearance === 'tile' ? theme.colors.surface.sectionTint : theme.colors.surface.base;
     return (
         <View
             testID={props.testID}
@@ -47,6 +51,7 @@ export function SetupBlockPaper(props: Readonly<{
                 props.appearance === 'dashed' ? styles.dashed : null,
                 props.appearance === 'tile' ? styles.tile : null,
                 props.appearance === 'tile' && props.highlighted ? styles.tileHighlighted : null,
+                { backgroundColor: materialColor(paperColor) },
             ]}
         >
             {props.children}

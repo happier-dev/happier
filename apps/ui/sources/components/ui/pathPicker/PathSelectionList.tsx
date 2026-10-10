@@ -43,7 +43,7 @@ import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { listMachineFileBrowserDirectoryEntries } from '@/sync/domains/input/machineFileBrowser';
 import { t } from '@/text';
 
-import { PathFavoriteToggleButton } from './PathFavoriteToggleButton';
+import { FavoriteToggleButton } from '@/components/ui/buttons/FavoriteToggleButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     createPathSelectionInputBehavior,
@@ -351,9 +351,9 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         (absolutePath: string, optionTestIdPrefix: string) => {
             if (!isFavorite || !onToggleFavorite) return undefined;
             return (
-                <PathFavoriteToggleButton
+                <FavoriteToggleButton
                     testID={`${optionTestIdPrefix}:favorite-toggle`}
-                    path={absolutePath}
+                    id={absolutePath}
                     isFavorite={isFavorite(absolutePath)}
                     addLabel={favoriteAddLabel}
                     removeLabel={favoriteRemoveLabel}
@@ -532,9 +532,9 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                             const currentOnToggleFavorite = onToggleFavoriteRef.current;
                             const favoriteAccessory = currentIsFavorite && currentOnToggleFavorite
                                 ? (
-                                    <PathFavoriteToggleButton
+                                    <FavoriteToggleButton
                                         testID={`${optionTestIdPrefix}:favorite-toggle`}
-                                        path={entry.path}
+                                        id={entry.path}
                                         isFavorite={currentIsFavorite(entry.path)}
                                         addLabel={favoriteAddLabelRef.current}
                                         removeLabel={favoriteRemoveLabelRef.current}

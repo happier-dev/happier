@@ -21,7 +21,8 @@ import { ItemGroupRowPositionProvider } from './ItemGroupRowPosition';
 import { countSelectableItems } from './ItemGroup.selectableCount';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
-import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
+import { resolveThemeRaisedEdge, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
+import { GlassSurface, renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
 import { projectPluginUiHostPalette } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { ItemGroupColumns } from './ItemGroupColumns';
 import {
@@ -56,6 +57,8 @@ export { withItemGroupDividers } from './ItemGroup.dividers';
 export { HappierItemGroupSelectionContext as ItemGroupSelectionContext } from '@happier-dev/plugin-ui/presentation';
 
 export interface ItemGroupProps {
+    /** A containing sheet may already own this section's header and spacing. */
+    header?: 'section' | 'none';
     title?: string | React.ReactNode;
     /**
      * What this section is about, read before its rows. Page presentation renders it under the
@@ -64,6 +67,8 @@ export interface ItemGroupProps {
     description?: string;
     /** A compact section-level action (e.g. "Check now", "Add"), aligned with the section title. */
     action?: React.ReactNode;
+    /** The shared header's fit-aware inline default, or its narrow-page adaptive layout. */
+    actionLayout?: HappierPageSectionHeaderProps['actionLayout'];
     /**
      * A short live fact read with the title and set beside it ("Machines ● 2 online · ● 1 offline").
      * Page sections only; it never replaces the description.
@@ -76,6 +81,7 @@ export interface ItemGroupProps {
     titleLeading?: React.ReactNode;
     children: React.ReactNode;
     accessibilityRole?: 'radiogroup';
+    /** The group's accessible name; a string title is the default. */
     accessibilityLabel?: string;
     style?: StyleProp<ViewStyle>;
     headerStyle?: StyleProp<ViewStyle>;
@@ -291,7 +297,7 @@ const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(prop
         );
     }
     return (
-        <View
+        <GlassSurface surfaceGroup="content" nested finishRole="card"
             accessibilityRole={Platform.OS === 'web' ? undefined : props.accessibilityRole}
             accessibilityLabel={props.accessibilityLabel}
             aria-label={Platform.OS === 'web' ? props.accessibilityLabel : undefined}
@@ -320,7 +326,7 @@ const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(prop
             ]}>
                 {withItemGroupDividers(props.children, virtualizedSegment)}
             </View>
-        </View>
+        </GlassSurface>
     );
 });
 
@@ -356,6 +362,8 @@ const ItemGroupPageSheetBody = React.memo(function ItemGroupPageSheetBody(props:
         >
             <HappierPageSheet
                 colors={colors}
+                gradient={resolveThemeSurfaceFinish(theme, 'card')}
+                renderMaterialSurface={renderThemeMaterialSurface}
                 // App callers pass React Native layout styles; the shared sheet keeps its own look under them.
                 style={[
                     styles.pageSheet,
@@ -483,7 +491,7 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
             accessibilityLabel={props.accessibilityLabel}
             aria-label={Platform.OS === 'web' ? props.accessibilityLabel : undefined}
         >
-            <View
+            <GlassSurface surfaceGroup="content" nested enabled={!isGrid} solidColor={isGrid ? 'transparent' : undefined} finishRole={isGrid ? null : 'card'}
                 style={[
                     // Collapsed to one column the group IS the single shared card,
                     // so the chrome sits here — on a View that exists in both
@@ -515,7 +523,7 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
                                 key={row.key ?? `item-group-cell-${index}`}
                                 style={[styles.columnCell, cellStyle]}
                             >
-                                <View style={isGrid ? styles.columnCardOuter : styles.contentContainerInner}>
+                                <GlassSurface surfaceGroup="content" nested enabled={isGrid} solidColor={isGrid ? undefined : 'transparent'} finishRole={isGrid ? 'card' : null} style={isGrid ? styles.columnCardOuter : styles.contentContainerInner}>
                                     <ItemGroupRowPositionProvider
                                         value={isGrid
                                             ? { isFirst: true, isLast: true }
@@ -523,12 +531,12 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
                                     >
                                         {React.cloneElement(row, { showDivider } as ItemGroupRowProps)}
                                     </ItemGroupRowPositionProvider>
-                                </View>
+                                </GlassSurface>
                             </View>
                         );
                     })}
                 </ItemGroupColumns>
-            </View>
+            </GlassSurface>
         </View>
     );
 });
@@ -545,6 +553,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         title,
         description,
         action,
+        actionLayout,
         titleAccessory,
         titleLeading,
         children,
@@ -562,6 +571,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         surface = 'sheet',
         density,
     } = props;
+    const resolvedAccessibilityLabel = accessibilityLabel ?? (typeof title === 'string' ? title : undefined);
     const resolvedContainerStyle = contained ? [styles.containedContent, containerStyle] : containerStyle;
 
     const wantsColumns = (columns ?? 1) > 1;
@@ -570,7 +580,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     }
     resolveHappierItemGroupConstraints({
         role: accessibilityRole,
-        accessibilityLabel,
+        accessibilityLabel: resolvedAccessibilityLabel,
         columns: columns ?? 1,
         virtualized: Boolean(virtualizedSegment),
     });
@@ -586,7 +596,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         <View style={[styles.wrapper, style]}>
             <View style={[styles.container, contained ? styles.containedContainer : null, constrainToContentWidth ? { maxWidth } : undefined]}>
                 {/* Header */}
-                {isPage && (title || description || action) ? (
+                {props.header === 'none' ? null : isPage && (title || description || action) ? (
                     <HappierPageSectionHeader
                         title={(titleAccessory || titleLeading) && typeof title === 'string' ? (
                             <View style={styles.pageTitleRow}>
@@ -597,6 +607,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         ) : title}
                         description={description}
                         action={action ?? undefined}
+                        actionLayout={actionLayout}
                         insetPx={contained ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + PAGE_LIST_METRICS.headingOpticalInsetPx}
                         renderText={(input) => input.role === 'sectionTitle'
                             ? <Text accessibilityRole="header" style={[styles.pageTitle, titleStyle]}>{input.text}</Text>
@@ -627,12 +638,12 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                 <SectionItemDensityProvider value={density}>
                     <HappierItemGroupBehavior
                         accessibilityRole={accessibilityRole}
-                        accessibilityLabel={accessibilityLabel}
+                        accessibilityLabel={resolvedAccessibilityLabel}
                         selectableItemCount={selectableItemCount}
                         renderContent={(projectedChildren) => wantsColumns ? (
                             <ItemGroupColumnedBody
                                 columns={columns ?? 1}
-                                accessibilityLabel={accessibilityLabel}
+                                accessibilityLabel={resolvedAccessibilityLabel}
                                 containerStyle={resolvedContainerStyle}
                                 contentMarginPx={contained ? 0 : undefined}
                             >
@@ -641,7 +652,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         ) : isPage && surface === 'sheet' ? (
                             <ItemGroupPageSheetBody
                                 accessibilityRole={accessibilityRole}
-                                accessibilityLabel={accessibilityLabel}
+                                accessibilityLabel={resolvedAccessibilityLabel}
                                 virtualizedSegment={virtualizedSegment}
                                 containerStyle={resolvedContainerStyle}
                                 clipContent={clipContent}
@@ -651,7 +662,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         ) : (
                             <ItemGroupSharedCardBody
                                 accessibilityRole={accessibilityRole}
-                                accessibilityLabel={accessibilityLabel}
+                                accessibilityLabel={resolvedAccessibilityLabel}
                                 virtualizedSegment={virtualizedSegment}
                                 containerStyle={resolvedContainerStyle}
                                 clipContent={clipContent}

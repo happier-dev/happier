@@ -37,7 +37,7 @@ const STRATEGIES = [
     { id: 'retired', title: 'Least used', disabled: true },
 ];
 
-type TriggerOverrides = Readonly<{ showSelectedDetail?: boolean; subtitle?: string }>;
+type TriggerOverrides = Readonly<{ showSelectedDetail?: boolean; subtitle?: string; itemProps?: Readonly<{ accessoryLayout?: 'inline' | 'stacked' | 'adaptive' }> }>;
 
 async function renderField(params: Readonly<{
     presentation?: 'page' | 'grouped';
@@ -95,11 +95,11 @@ describe('DropdownMenu page field', () => {
         expect(texts).toContain('Choose…');
     });
 
-    it('falls back to the value and a chevron on phone widths, moved below the label when the row is narrow', async () => {
+    it('keeps the selected value in its field on phone widths, moved below the label when the row is narrow', async () => {
         viewport.width = 390;
         viewport.height = 844;
         const { texts, hasFieldBox, screen } = await renderField({ selectedId: 'round-robin' });
-        expect(hasFieldBox).toBe(false);
+        expect(hasFieldBox).toBe(true);
         expect(texts).toContain('Round robin');
 
         // The row measures its width (R9): a phone-width row stacks the value under the label instead of
@@ -123,5 +123,14 @@ describe('DropdownMenu page field', () => {
         expect(hasFieldBox).toBe(false);
         expect(texts).not.toContain('Choose…');
         expect(texts.filter((text) => text === 'Round robin')).toHaveLength(1);
+    });
+
+    it('spans the row with a field its row stacks under the label, and keeps its own width beside it', async () => {
+        const { HappierFieldBoxTrigger } = await import('@happier-dev/plugin-ui/presentation');
+        const stacked = await renderField({ selectedId: null, trigger: { itemProps: { accessoryLayout: 'stacked' } } });
+        expect(stacked.screen.findAllByType(HappierFieldBoxTrigger)[0]!.props.span).toBe('row');
+        standardCleanup();
+        const inline = await renderField({ selectedId: null, trigger: { itemProps: { accessoryLayout: 'inline' } } });
+        expect(inline.screen.findAllByType(HappierFieldBoxTrigger)[0]!.props.span).not.toBe('row');
     });
 });

@@ -1,4 +1,5 @@
 import { EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS } from '../tokens/themeColorTokenDefinitions';
+import type { TranslationKeyNoParams } from '@/text';
 import { getBaseTheme } from './baseThemeCatalog';
 import { readThemeProfilePathValue, type ThemeProfilePath } from './themeProfilePathAccess';
 import type { ThemeProfileMode, ThemeProfilePublicTokenId } from './themeProfileTypes';
@@ -17,6 +18,8 @@ export type ThemeProfileTokenDefinition = Readonly<{
     group: string;
     label: string;
     description: string;
+    labelKey?: TranslationKeyNoParams;
+    descriptionKey?: TranslationKeyNoParams;
     editable: true;
     exportable: true;
     valueKind: ThemeProfileTokenValueKind;
@@ -30,6 +33,8 @@ export const THEME_PROFILE_TOKEN_DEFINITIONS: readonly ThemeProfileTokenDefiniti
     group: definition.group,
     label: definition.label,
     description: definition.description,
+    ...('labelKey' in definition ? { labelKey: definition.labelKey } : {}),
+    ...('descriptionKey' in definition ? { descriptionKey: definition.descriptionKey } : {}),
     editable: true,
     exportable: true,
     valueKind: definition.valueKind,

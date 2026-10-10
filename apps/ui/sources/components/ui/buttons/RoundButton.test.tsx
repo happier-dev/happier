@@ -4,10 +4,22 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { flattenTestStyle } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
 
 const { RoundButton, RoundButtonSizeScope } = await import('./RoundButton');
 
 describe('RoundButton', () => {
+    it('keeps primary and disabled controls translucent with readable ink in glass', async () => {
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="floating" translucentColor="rgba(235, 230, 225, 0.1)" resolveMaterialColor={(input) => input.translucentColor ?? input.color}>
+            <RoundButton title="Add widget" testID="glass-primary" />
+            <RoundButton title="Unavailable" disabled testID="glass-disabled" />
+        </HappierMaterialRoleProvider>);
+        for (const id of ['glass-primary', 'glass-disabled']) {
+            const pill = screen.findByTestId(id)!.findAll(node => String(node.type) === 'Animated.View')[0]!;
+            expect(flattenTestStyle(pill.props.style).backgroundColor).toBe('rgba(235, 230, 225, 0.1)');
+        }
+    });
     it('forwards the press event to modifier-aware actions', async () => {
         const onPress = vi.fn();
         const event = { nativeEvent: { metaKey: true } };

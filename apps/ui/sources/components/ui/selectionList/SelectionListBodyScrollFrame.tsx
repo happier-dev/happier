@@ -26,6 +26,7 @@ import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollR
 import { SELECTION_LIST_KEYBOARD_SCROLL_MARGIN_PX } from './_constants';
 import { SelectionListScrollIntoViewContext } from './SelectionListScrollIntoViewContext';
 import type { SelectionListContainerA11yProps } from './buildSelectionListOptionA11yProps';
+import type { SelectionListProps } from './_types';
 
 const styles = StyleSheet.create(() => ({
     body: {
@@ -67,6 +68,7 @@ const styles = StyleSheet.create(() => ({
 }));
 
 export function SelectionListBodyScrollFrame(props: Readonly<{
+    surface?: SelectionListProps['surface'];
     bodyTestId: string;
     scrollTestId: string;
     fadeHostTestId: string;
@@ -92,7 +94,8 @@ export function SelectionListBodyScrollFrame(props: Readonly<{
         animated: false,
     });
     const { theme } = useUnistyles();
-    const fadeColor = theme.colors.surface.base;
+    // A bare picker does not know or paint the host's surface, including at the scrolling edge.
+    const fadeColor = props.surface === 'none' ? 'transparent' : theme.colors.surface.base;
     return (
         <View
             testID={props.bodyTestId}

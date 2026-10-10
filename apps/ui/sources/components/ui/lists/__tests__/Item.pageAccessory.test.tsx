@@ -100,6 +100,29 @@ describe('Item adaptive accessory', () => {
         return { nativeEvent: { layout: { x: 0, y: 0, width, height: 48 } } };
     }
 
+    it('recomposes a page operation below its label on phones while keeping the action reachable', async () => {
+        const { Item } = await import('../Item');
+        const { ListPresentationProvider } = await import('../listPresentation');
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const { act } = await import('react-test-renderer');
+        const onPress = vi.fn();
+        const screen = await renderScreen(<ListPresentationProvider value="page">
+            <Item title="Add your phone" rightElementOutsidePressable accessoryLayout="inline"
+                rightElement={<RoundButton title="Show QR code" testID="phone-action" onPress={onPress} />} />
+        </ListPresentationProvider>);
+        let ancestor: ReactTestInstance | null = hostByTestID(screen, 'phone-action');
+        const measurements: ReactTestInstance[] = [];
+        while (ancestor) {
+            if (typeof ancestor.type === 'string' && typeof ancestor.props.onLayout === 'function') measurements.push(ancestor);
+            ancestor = ancestor.parent;
+        }
+        expect(measurements.at(-1), 'page operation rows measure their available width').toBeDefined();
+        await act(async () => { measurements.at(-1)!.props.onLayout(layoutEvent(358)); });
+        expect(flattenTestStyle(accessorySection(hostByTestID(screen, 'phone-action')).props.style).maxWidth).toBe('100%');
+        screen.pressByTestId('phone-action');
+        expect(onPress).toHaveBeenCalledOnce();
+    });
+
     it.each(['page', 'grouped'] as const)('moves a control beneath the label when it is wider than its half of a wide %s row', async (presentation) => {
         const { Item } = await import('../Item');
         const { ListPresentationProvider } = await import('../listPresentation');
@@ -176,6 +199,22 @@ describe('Item adaptive accessory', () => {
 });
 
 describe('Item leading mark on a page', () => {
+    it('keeps a stacked field label beside its reserved leading slot, without inserting a blank row', async () => {
+        const { Item } = await import('../Item');
+        const { ItemGroup } = await import('../ItemGroup');
+        const { ListPresentationProvider } = await import('../listPresentation');
+        const { View } = await import('react-native');
+        const screen = await renderScreen(<ListPresentationProvider value="page"><ItemGroup>
+            <Item title="Logo" leftElement={<View testID="logo" />} />
+            <Item title={<View testID="description-label" />} accessoryLayout="stacked" rightElement={<View testID="description-input" />} />
+        </ItemGroup></ListPresentationProvider>);
+        const center = nearestHostView(hostByTestID(screen, 'description-label'));
+        const labelBand = nearestHostView(center);
+        expect(flattenTestStyle(labelBand.props.style).flexDirection).toBe('row');
+        const reserved = labelBand.children.find(node => typeof node !== 'string'
+            && node.props.accessibilityElementsHidden === true);
+        expect(reserved, 'the leading reservation remains beside the label').toBeDefined();
+    });
     async function leadingBox(presentation: 'page' | 'grouped') {
         const { Item } = await import('../Item');
         const { ListPresentationProvider } = await import('../listPresentation');
@@ -196,12 +235,11 @@ describe('Item leading mark on a page', () => {
         expect(box.minWidth as number).toBeLessThan(36);
     });
 
-    it('lets an oversized identity mark fit outside page presentation too', async () => {
+    it('keeps the fixed glyph box outside page presentation (menus, pickers)', async () => {
         vi.resetModules();
         const box = await leadingBox('grouped');
-        expect(box.width).toBe('auto');
-        expect(box.height).toBe('auto');
-        expect(typeof box.minWidth).toBe('number');
-        expect(box.minWidth as number).toBeLessThan(36);
+        const { ITEM_ICON_BOX_SIZE } = await import('../itemDensityMetrics');
+        expect(box.width).toBe(ITEM_ICON_BOX_SIZE.cozy);
+        expect(box.height).toBe(ITEM_ICON_BOX_SIZE.cozy);
     });
 });

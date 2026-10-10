@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Pressable, StyleProp, View, ViewStyle } from 'react-native';
+import { Platform, StyleProp, View, ViewStyle } from 'react-native';
+import { HappierPressable, type HappierPressableProps, HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle, happierMaterialGradient, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -7,6 +8,7 @@ import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { Theme } from '@/theme';
+import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 
 const stylesheet = StyleSheet.create((theme) => ({
   root: {
@@ -37,7 +39,7 @@ export const PrimaryCircleIconButton = React.memo(
       accessibilityLabel: string;
       accessibilityHint?: string;
       accessibilityState?: { disabled?: boolean } & Record<string, unknown>;
-      hitSlop?: any;
+      hitSlop?: HappierPressableProps['hitSlop'];
       onPress?: () => void;
       style?: StyleProp<ViewStyle>;
       children?: React.ReactNode;
@@ -45,6 +47,7 @@ export const PrimaryCircleIconButton = React.memo(
   ) => {
     const { theme: currentTheme } = useUnistyles();
     const theme = props.appearance ?? currentTheme;
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
 
     const computedDisabled = Boolean(props.disabled || props.loading || !props.onPress);
@@ -52,43 +55,51 @@ export const PrimaryCircleIconButton = React.memo(
     const backgroundColor = props.active
       ? (primary?.background ?? theme.colors.surface.inset ?? theme.colors.surface.base)
       : (primary?.disabled ?? theme.colors.border.default);
-    const tintColor = primary?.tint ?? theme.colors.text.primary;
+    const tintColor = paintColor(primary?.tint ?? theme.colors.text.primary, theme.colors.text.primary);
 
     return (
       <View style={[styles.root, props.style]}>
-        <Pressable
+        <HappierPressable
           testID={props.testID}
           accessibilityRole="button"
           accessibilityLabel={props.accessibilityLabel}
           accessibilityHint={props.accessibilityHint}
-          accessibilityState={{ ...(props.accessibilityState ?? {}), disabled: computedDisabled }}
+          busy={props.loading || props.accessibilityState?.busy === true}
+          selected={props.accessibilityState?.selected === true}
+          expanded={typeof props.accessibilityState?.expanded === 'boolean' ? props.accessibilityState.expanded : undefined}
+          checked={typeof props.accessibilityState?.checked === 'boolean' ? props.accessibilityState.checked : undefined}
           hitSlop={props.hitSlop}
           disabled={computedDisabled}
-          onPress={props.onPress}
-          style={({ pressed }) => [
+          onPress={() => { props.onPress?.(); }}
+          style={({ pressed, focused }) => [
             styles.inner,
             {
               borderRadius: 16,
-              backgroundColor,
+              backgroundColor: paintColor(backgroundColor),
               opacity: pressed ? motionTokens.press.opacity : 1,
               overflow: 'hidden',
+              ...(Platform.OS === 'web' && !primary?.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: computedDisabled || !props.active }), !theme.dark) : null),
             },
           ]}
         >
+          {({ pressed, focused }) => <>
           {props.active && primary?.gradient ? (
             <GradientSurface
-              fallbackColor={backgroundColor}
-              gradient={primary.gradient}
+              fallbackColor={paintColor(backgroundColor)}
+              gradient={props.active ? happierMaterialGradient(primary?.gradient, paintColor) : undefined}
+              overlay={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: computedDisabled || !props.active })}
+              clipToPaddingBox={!theme.dark}
               borderRadius={16}
               style={StyleSheet.absoluteFillObject}
             />
-          ) : null}
+          ) : <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: computedDisabled || !props.active })} borderRadius={16} />}
           {props.loading ? (
             <ActivitySpinner size="small" color={tintColor} />
           ) : (
             normalizeNodeForView(props.children)
           )}
-        </Pressable>
+          </>}
+        </HappierPressable>
       </View>
     );
   },

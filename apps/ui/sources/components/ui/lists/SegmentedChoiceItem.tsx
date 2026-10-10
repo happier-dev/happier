@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveHappierSegmentedChoiceRow } from '@happier-dev/plugin-ui/presentation';
 
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 
@@ -30,6 +31,7 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
     /** Prefix for per-option test ids (`${testIDPrefix}:${id}`). */
     testIDPrefix?: string;
     accessoryLayout?: ItemProps['accessoryLayout'];
+    labelSize?: 'default' | 'field';
 }>;
 
 /**
@@ -40,17 +42,20 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
  * the one segmented control, whose default tab semantics belong to view switches.
  */
 export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItemProps<T>) {
-    const { options, value, onChange, testIDPrefix, disabled, accessoryLayout = 'adaptive', ...itemProps } = props;
-    const tabs = React.useMemo(() => options.map((option) => ({
-        id: option.id,
-        label: option.label,
-        icon: option.icon,
-        disabled: option.disabled === true || option.unavailableReason !== undefined,
-        unavailableReason: option.unavailableReason,
-    })), [options]);
+    const { options, value, onChange, testIDPrefix, disabled, accessoryLayout = 'adaptive', labelSize, ...itemProps } = props;
+    // The shared row rule (plugin-ui): which segments are unavailable and what the row says about them.
+    // Core keeps its own hosts (the page/menu `Item` and the sliding-thumb bar) over that one rule.
+    const row = React.useMemo(() => resolveHappierSegmentedChoiceRow({ options, value }), [options, value]);
+    const tabs = React.useMemo(() => row.segments.map((segment, index) => ({
+        id: segment.id,
+        label: segment.label,
+        icon: options[index]?.icon,
+        disabled: segment.disabled,
+        unavailableReason: segment.unavailableReason,
+    })), [options, row.segments]);
     const title = typeof itemProps.title === 'string' ? itemProps.title : undefined;
-    const description = options.find((option) => option.id === value)?.description ?? itemProps.subtitle;
-    const unavailableReasons = [...new Set(options.flatMap((option) => option.unavailableReason ? [option.unavailableReason] : []))];
+    const description = row.description ?? itemProps.subtitle;
+    const unavailableReasons = row.unavailableReasons;
     const subtitle = unavailableReasons.length === 0
         ? description
         : typeof description === 'string' || description == null
@@ -69,6 +74,7 @@ export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItem
                     activeTabId={value}
                     onSelectTab={onChange}
                     slidingThumb
+                    labelSize={labelSize}
                     segmentSizing={accessoryLayout === 'stacked' ? 'equal' : 'content'}
                     targetSize="platform"
                     disabled={disabled}

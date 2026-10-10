@@ -60,6 +60,7 @@ import { useHardwareKeyboard } from './useHardwareKeyboard';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { isHappierPageRowNarrow } from '@happier-dev/plugin-ui/presentation';
 import { SelectionListFilterChips } from './SelectionListFilterChips';
+import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
 
 const stylesheet = StyleSheet.create((theme) => ({
     // Filter chips, then the consumer's own trailing controls, inside the search field's suffix slot.
@@ -73,6 +74,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
         flexDirection: 'column',
     },
+    bareSurface: { backgroundColor: 'transparent' },
     containerFill: {
         flex: 1,
         minHeight: 0,
@@ -276,6 +278,8 @@ function sectionPlanRendersOptions(sectionPlan: SectionRenderPlan): boolean {
  * own unit tests.
  */
 export function SelectionList(props: SelectionListProps): React.ReactElement {
+    const containingSurface = useContainingGlassSurfaceGroup();
+    const surface = props.surface ?? (containingSurface === 'floating' ? 'none' : 'base');
     const selection = props.selection ?? {
         kind: 'single' as const,
         selectedId: props.selectedOptionId ?? null,
@@ -440,6 +444,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 // narrowed away as a search query.
                 filterQuery: currentStep.disableInputFilter === true ? '' : filterQuery,
                 dynamicSectionStates,
+                searchAcrossSections: currentStep.searchAcrossSections,
             });
             // Combobox-create: a step can synthesize an "act on current input"
             // row (e.g. "Create worktree '<typed>'"). Prepend it as a
@@ -453,7 +458,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             };
             return [inputRowSection, ...base];
         },
-        [currentStep.sections, currentStep.disableInputFilter, buildInputRow, dynamicSectionStates, inputValue, filterQuery],
+        [currentStep.sections, currentStep.disableInputFilter, currentStep.searchAcrossSections, buildInputRow, dynamicSectionStates, inputValue, filterQuery],
     );
     if (
         selection.kind === 'multiple'
@@ -1042,6 +1047,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     const useContentSizedFrame = fixedHeight === undefined && props.fillAvailableSpace !== true;
     const containerStyle: StyleProp<ViewStyle> = [
         styles.container,
+        surface === 'none' ? styles.bareSurface : null,
         props.fillAvailableSpace === true ? styles.containerFill : null,
         props.maxHeight !== undefined ? { maxHeight: props.maxHeight } : null,
         fixedHeight !== undefined ? { height: fixedHeight } : null,
@@ -1116,13 +1122,14 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     );
 
     const disableTransitions = props.disableTransitions === true || detectedReducedMotion;
+    const animateBodyHeight = measureNativeHeight || useContentSizedFrame;
     /**
      * Mount the measure mirror only when a consumer actually reads it: the
-     * measured-native container height, or the step-transition animator. With
-     * transitions off AND a non-measured height behavior nothing consumes a
-     * measurement, and the body mounts exactly once.
+     * measured-native container height, or the step-transition animator.
+     * A fixed-height or fill-available-space frame still slides between steps,
+     * but its height does not follow the rows and needs no measurement mirror.
      */
-    const renderMeasureHost = measureNativeHeight || !disableTransitions;
+    const renderMeasureHost = measureNativeHeight || (!disableTransitions && animateBodyHeight);
 
     const autoFocusInput = IS_WEB
         ? props.autoFocusInputOnWeb === true
@@ -1158,6 +1165,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             onLayout={measureNativeHeight ? measuredPopoverHeight.onHeaderLayout : undefined}
         >
             <SelectionListSearchHeader
+                style={surface === 'none' ? styles.bareSurface : undefined}
                 testID={selectionListTestId(resolvedTestId, 'header')}
                 inputTestID={props.inputTestID}
                 value={inputValue}
@@ -1203,6 +1211,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
 
     const listBody = (
         <SelectionListBody
+            surface={surface}
             step={currentStep}
             rootTestID={resolvedTestId}
             selectedOptionIds={selectedOptionIds}
@@ -1232,6 +1241,17 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     const body = props.contentState !== undefined ? (
         <View style={styles.content}>{props.contentState}</View>
     ) : listBody;
+    const transitioningBody = (
+        <SlideTransitionSwitch
+            contentKey={currentStep.id}
+            direction={direction}
+            blur={false}
+            preset="routine"
+            testID={selectionListTestId(resolvedTestId, 'transition')}
+        >
+            {body}
+        </SlideTransitionSwitch>
+    );
 
     const contentZone = (
             <View
@@ -1251,20 +1271,13 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                     // host above), and releases back to `auto` on
                     // completion. Reduced motion: snaps without animation.
                     <SelectionListAnimatedHeight
+                        enabled={animateBodyHeight}
                         stepKey={currentStep.id}
                         measuredContentHeight={measuredCurrentStepBodyHeight}
                         style={useContentSizedFrame ? styles.contentSizedAnimatedHeight : undefined}
                         testID={selectionListTestId(resolvedTestId, 'animatedHeight')}
                     >
-                        <SlideTransitionSwitch
-                            contentKey={currentStep.id}
-                            direction={direction}
-                            blur={false}
-                            preset="routine"
-                            testID={selectionListTestId(resolvedTestId, 'transition')}
-                        >
-                            {body}
-                        </SlideTransitionSwitch>
+                        {transitioningBody}
                     </SelectionListAnimatedHeight>
                 )}
             </View>

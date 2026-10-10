@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -77,7 +78,7 @@ const pluginRuntime: SessionPluginRuntimeState = {
     platform: 'web', pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1 }, pluginBrowserProjection: null,
 };
 
-const source = { kind: 'html', html: '<main>Same document</main>' };
+const source = artifactHtmlBundleFromBodyV1('<main>Same document</main>');
 const contextCapabilities = { hostMethods: ['context', 'watchContext'] };
 
 function CallerSurface(props: Readonly<{ runtime: SessionPluginRuntimeState; value: string; requestedCapabilities?: unknown }>) {
@@ -107,7 +108,7 @@ function readFrame(frame: Record<string, unknown>) {
 function prepare(requestedCapabilities: unknown, overrides: Record<string, unknown> = {}) {
     const prepared = prepareCallerHostedHtmlSurface({
         serverIdentityId: 'srv_home-a', accountId: 'account:srv_home-a', approvalSubject: 'item-a',
-        source: { kind: 'html', html: '<main>Same document</main>' }, requestedCapabilities,
+        source: artifactHtmlBundleFromBodyV1('<main>Same document</main>'), requestedCapabilities,
         admittedHostMethods: ['context', 'watchContext', 'readResource', 'watchResource', 'executeAction', 'notify'],
         frameIdentity: { instanceId: 'frame-a', mountNonce: 'nonce-a' }, hostOrigin: 'https://app.happier.dev',
         ...overrides,
@@ -222,7 +223,7 @@ describe('useSessionCallerHostedHtmlRuntime', () => {
             prepare(full.capabilityManifest.requested, { approvalSubject: 'item-b' }),
             prepare(full.capabilityManifest.requested, { accountId: 'account-b' }),
             prepare(full.capabilityManifest.requested, { serverIdentityId: 'srv_home-b' }),
-            prepare(full.capabilityManifest.requested, { source: { kind: 'html', html: '<main>Changed</main>' } }),
+            prepare(full.capabilityManifest.requested, { source: artifactHtmlBundleFromBodyV1('<main>Changed</main>') }),
         ]) expect(approved.isApproved(changed.approval, changed.approvalKey, changed.capabilityManifest.requested)).toBe(false);
         await act(async () => { approved.revoke(smaller.approval, smaller.approvalKey); });
         expect(hook.getCurrent()!.isApproved(full.approval, full.approvalKey, full.capabilityManifest.requested)).toBe(false);

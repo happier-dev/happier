@@ -2,6 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
+import { UnifiedDiffFoldToggleRow } from './happier/UnifiedDiffFoldToggleRow';
 import { installCodeDiffCommonModuleMocks } from './codeDiffTestHelpers';
 
 
@@ -66,6 +68,29 @@ vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () =>
 }));
 
 describe('DiffFilesListView', () => {
+    it('keeps the folded-lines control translucent while retaining expansion', async () => {
+        const onPressExpand = vi.fn();
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => 'rgba(0, 0, 0, 0.1)'}>
+            <UnifiedDiffFoldToggleRow hiddenCount={20} onPressExpand={onPressExpand} />
+        </HappierMaterialRoleProvider>);
+        const control = screen.findAll(node => typeof node.type === 'string' && typeof node.props.onPress === 'function')[0]!;
+        expect(flattenStyle(control.props.style).backgroundColor).toBe('rgba(0, 0, 0, 0.1)');
+        await act(async () => control.props.onPress());
+        expect(onPressExpand).toHaveBeenCalledOnce();
+    });
+    it('keeps file navigation coats translucent while preserving open actions and diff content', async () => {
+        const { DiffFilesListView } = await import('./DiffFilesListView');
+        const onOpenFile = vi.fn();
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => 'rgba(0, 0, 0, 0.1)'}>
+            <DiffFilesListView files={[{ key: 'glass', filePath: 'a.ts', added: 1, removed: 0, kind: 'new', unifiedDiff: '+exact\n' }]}
+                expandedKeys={new Set(['glass'])} onToggleExpanded={() => {}} canRenderInlineDiffs wrapLines showLineNumbers showPrefix onOpenFile={onOpenFile} />
+        </HappierMaterialRoleProvider>);
+        const open = screen.findByTestId('diff-files-open:glass')!;
+        for (const hovered of [false, true]) expect(flattenStyle(open.props.style({ hovered, pressed: false })).backgroundColor).toBe('rgba(0, 0, 0, 0.1)');
+        await act(async () => open.props.onPress());
+        expect(onOpenFile).toHaveBeenCalledWith('a.ts');
+        expect(diffViewerSpy).toHaveBeenCalledWith(expect.objectContaining({ unifiedDiff: '+exact\n' }));
+    });
     it('renders a virtualized file list when requested', async () => {
         const { DiffFilesListView } = await import('./DiffFilesListView');
         legendListMockState = null;

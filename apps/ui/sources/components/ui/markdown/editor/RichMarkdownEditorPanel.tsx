@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import { usePublishCodeEditorHandle } from '@/components/ui/code/editor/usePublishCodeEditorHandle';
@@ -88,6 +89,7 @@ function RichMarkdownEditorPanelImpl(props: Readonly<{
     onControllerChange?: (controller: MarkdownEditorController | null) => void;
 }>) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const surfaceRef = React.useRef<MarkdownEditorSurfaceRef | null>(null);
     const publishEditorHandle = usePublishCodeEditorHandle(props.editorRef);
 
@@ -201,7 +203,7 @@ function RichMarkdownEditorPanelImpl(props: Readonly<{
                         borderRadius: 10,
                         borderWidth: 1,
                         borderColor: theme.colors.border.default,
-                        backgroundColor: theme.colors.surface.inset,
+                        backgroundColor: paintColor(theme.colors.surface.inset),
                     }}
                 >
                     <Text

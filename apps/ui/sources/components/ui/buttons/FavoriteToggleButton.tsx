@@ -1,15 +1,13 @@
 /**
- * PathFavoriteToggleButton — small, standalone star toggle rendered as the
- * `rightAccessory` for path rows in `PathSelectionList` (favorites, recents,
- * and the dynamic IN THIS FOLDER section).
+ * FavoriteToggleButton — small, standalone star toggle for paths and prompts.
  *
  * Behavior:
  *   - One `star` glyph, filled (`weight="fill"`, theme
- *     `state.warning.foreground`) when the path is currently a favorite and
+ *     `state.warning.foreground`) when the item is currently a favorite and
  *     outline (`weight="regular"`, theme `text.tertiary`) when it is not.
  *     Weight is the load-bearing channel: colour repeats the state rather than
  *     carrying it, because `DESIGN.md` forbids signalling by colour alone.
- *   - Pressing the icon invokes `onToggle(path)` and STOPS propagation so the
+ *   - Pressing the icon invokes `onToggle(id)` and STOPS propagation so the
  *     enclosing row's `onSelect` does NOT fire.
  *   - 20×20 visual hit; effective hit area extended via `hitSlop` per the
  *     `make-interfaces-feel-better` minimum hit-area rule.
@@ -37,7 +35,7 @@ type PressEventWithStopImmediatePropagation = GestureResponderEvent & {
 // `react-native`'s typings only model `{ pressed: boolean }` for the
 // Pressable style callback, but RN-Web also passes `hovered` at runtime.
 // A narrow structural type covers both targets without `any`.
-type PathFavoritePressableState = Readonly<{
+type FavoritePressableState = Readonly<{
     pressed: boolean;
     hovered?: boolean;
 }>;
@@ -57,21 +55,21 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
-export type PathFavoriteToggleButtonProps = Readonly<{
-    /** Absolute path passed to `onToggle` when pressed. */
-    path: string;
-    /** Whether the path is currently a favorite. Drives the icon + label. */
+export type FavoriteToggleButtonProps = Readonly<{
+    /** Item identity passed to `onToggle` when pressed. */
+    id: string;
+    /** Whether the item is currently a favorite. Drives the icon + label. */
     isFavorite: boolean;
     /** Localized "Add to favorites" label (used when `isFavorite === false`). */
     addLabel: string;
     /** Localized "Remove from favorites" label (used when `isFavorite === true`). */
     removeLabel: string;
-    onToggle: (path: string) => void;
+    onToggle: (id: string) => void;
     testID?: string;
 }>;
 
-export function PathFavoriteToggleButton(
-    props: PathFavoriteToggleButtonProps,
+export function FavoriteToggleButton(
+    props: FavoriteToggleButtonProps,
 ): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -86,7 +84,7 @@ export function PathFavoriteToggleButton(
         if (nativeEvent && typeof nativeEvent.stopImmediatePropagation === 'function') {
             nativeEvent.stopImmediatePropagation();
         }
-        props.onToggle(props.path);
+        props.onToggle(props.id);
     }, [props]);
     const accessibilityLabel = props.isFavorite ? props.removeLabel : props.addLabel;
     const iconWeight: IconWeight = props.isFavorite ? 'fill' : 'regular';
@@ -104,7 +102,7 @@ export function PathFavoriteToggleButton(
             aria-pressed={props.isFavorite}
             onPress={handlePress}
             hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-            style={(state: PathFavoritePressableState) => [
+            style={(state: FavoritePressableState) => [
                 styles.pressable,
                 props.isFavorite ? styles.pressableActive : styles.pressableInactive,
                 state.hovered ? styles.pressableActive : null,

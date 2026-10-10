@@ -139,14 +139,8 @@ export function useOverlayPresence(visible: boolean, exitMs: number): Readonly<{
 export function useOverlayMotionAnimation(params: Readonly<{
     visible: boolean;
     preset: OverlayMotionPreset;
-    /**
-     * On web, animate opacity ONLY (no transform). A non-`none` `transform` creates a
-     * CSS "backdrop root" that defeats a descendant's `backdrop-filter` (glass blur),
-     * so a transform-animated overlay that wraps a glass surface must opt in to keep
-     * its web blur. Native is unaffected (its blur is not `backdrop-filter`) and keeps
-     * the full slide/scale motion.
-     */
-    disableTransformOnWeb?: boolean;
+    /** Web frames animate their unblurred content, leaving material paint and its ancestors still. */
+    elementRef?: React.RefObject<unknown>;
 }>): Readonly<{
     exitMs: number;
     progress: Animated.Value;
@@ -155,9 +149,12 @@ export function useOverlayMotionAnimation(params: Readonly<{
     const reducedMotion = useReducedMotionPreference();
     const progress = React.useRef(new Animated.Value(0)).current;
     const reducedMs = params.preset.reducedMotionFadeMs;
+    const webElementMotion = Platform.OS === 'web' && params.elementRef !== undefined;
+    useWebOverlayContentMotion(params, reducedMotion);
 
     // Each change animates from where the overlay is now, so a reversal mid-way turns around in place.
     React.useLayoutEffect(() => {
+        if (webElementMotion) return;
         Animated.timing(progress, {
             toValue: params.visible ? 1 : 0,
             duration: reducedMotion
@@ -166,7 +163,7 @@ export function useOverlayMotionAnimation(params: Readonly<{
             easing: motionTokens.easing.standard,
             useNativeDriver: Platform.OS !== 'web',
         }).start();
-    }, [params.preset.enterMs, params.preset.exitMs, params.visible, progress, reducedMotion, reducedMs]);
+    }, [params.preset.enterMs, params.preset.exitMs, params.visible, progress, reducedMotion, reducedMs, webElementMotion]);
 
     const opacity = progress.interpolate({
         inputRange: [0, 1],
@@ -185,20 +182,92 @@ export function useOverlayMotionAnimation(params: Readonly<{
         outputRange: [params.preset.fromTranslateY, 0],
     });
 
-    const omitTransform = params.disableTransformOnWeb === true && Platform.OS === 'web';
     const fadeOnly = reducedMotion && reducedMs > 0;
     return {
         exitMs: reducedMotion ? reducedMs : params.preset.exitMs,
         progress,
-        style: fadeOnly
+        style: webElementMotion
+            ? {}
+            : fadeOnly
             ? { opacity: progress }
-            : omitTransform
-            ? { opacity }
             : {
                 opacity,
                 transform: [{ translateX }, { translateY }, { scale }],
             },
     };
+}
+
+const GLASS_BACKDROP_SELECTOR = '[data-happy-glass-backdrop]';
+
+/** Keep the existing layout: descend only through material branches and move their content siblings. */
+function webOverlayContentTargets(element: HTMLElement): HTMLElement[] {
+    if (element.matches(GLASS_BACKDROP_SELECTOR)) return [];
+    if (!element.querySelector(GLASS_BACKDROP_SELECTOR)) return [element];
+    return Array.from(element.children).flatMap(child => child instanceof HTMLElement ? webOverlayContentTargets(child) : []);
+}
+
+type WebContentMotionTarget = {
+    animation: Animation | null;
+    opacity: string;
+    transform: string;
+    shownOpacity: string;
+    shownTransform: string;
+};
+
+function useWebOverlayContentMotion(params: Readonly<{
+    visible: boolean;
+    preset: OverlayMotionPreset;
+    elementRef?: React.RefObject<unknown>;
+}>, reducedMotion: boolean): void {
+    const targetsRef = React.useRef(new Map<HTMLElement, WebContentMotionTarget>());
+    const presetRef = React.useRef(params.preset);
+    presetRef.current = params.preset;
+    React.useLayoutEffect(() => {
+        if (Platform.OS !== 'web') return;
+        const element = params.elementRef?.current;
+        if (!element || typeof HTMLElement === 'undefined' || !(element instanceof HTMLElement)) return;
+        const preset = presetRef.current;
+        const fadeOnly = reducedMotion;
+        const duration = reducedMotion ? preset.reducedMotionFadeMs : params.visible ? preset.enterMs : preset.exitMs;
+        for (const target of webOverlayContentTargets(element)) {
+            let state = targetsRef.current.get(target);
+            if (!state) {
+                const authored = getComputedStyle(target);
+                state = {
+                    animation: null, opacity: target.style.opacity, transform: target.style.transform,
+                    shownOpacity: authored.opacity || '1', shownTransform: authored.transform || 'none',
+                };
+                targetsRef.current.set(target, state);
+            }
+            const shown = { opacity: state.shownOpacity, transform: state.shownTransform };
+            const hidden = {
+                opacity: fadeOnly ? '0' : String(preset.fromOpacity * Number(shown.opacity)),
+                transform: fadeOnly ? shown.transform
+                    : `translate(${preset.fromTranslateX}px, ${preset.fromTranslateY}px) scale(${preset.fromScale})${shown.transform !== 'none' ? ` ${shown.transform}` : ''}`,
+            };
+            // Read the current composited frame before cancelling or changing the resting styles.
+            const computed = state.animation?.playState === 'running' ? getComputedStyle(target) : null;
+            const from = computed ? { opacity: computed.opacity, transform: fadeOnly ? shown.transform : computed.transform } : params.visible ? hidden : shown;
+            state.animation?.cancel();
+            state.animation = null;
+            target.style.opacity = params.visible ? state.opacity : hidden.opacity;
+            target.style.transform = params.visible ? state.transform : hidden.transform;
+            if (duration > 0 && typeof target.animate === 'function') {
+                state.animation = target.animate([from, params.visible ? shown : hidden], {
+                    duration,
+                    easing: motionTokens.easingCss.standard,
+                });
+            }
+        }
+    }, [params.elementRef, params.visible, reducedMotion]);
+    React.useEffect(() => () => {
+        for (const [target, state] of targetsRef.current) {
+            state.animation?.cancel();
+            target.style.opacity = state.opacity;
+            target.style.transform = state.transform;
+        }
+        targetsRef.current.clear();
+    }, []);
 }
 
 type OverlayPanelMotionParams = Readonly<{
@@ -275,9 +344,9 @@ export function OverlayMotionFrame(props: Readonly<{
     direction?: OverlayMotionDirection;
     style?: StyleProp<ViewStyle>;
     pointerEvents?: 'box-none' | 'none' | 'auto' | 'box-only';
-    disableTransformOnWeb?: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
+    const elementRef = React.useRef<React.ComponentRef<typeof Animated.View>>(null);
     const preset = React.useMemo(() => resolveOverlayMotionPreset({
         kind: props.kind,
         direction: props.direction,
@@ -285,7 +354,7 @@ export function OverlayMotionFrame(props: Readonly<{
     const motion = useOverlayMotionAnimation({
         visible: props.visible,
         preset,
-        disableTransformOnWeb: props.disableTransformOnWeb,
+        elementRef,
     });
     const pointerEvents = resolveOverlayPointerEvents(
         props.pointerEvents ?? (props.visible ? 'auto' : 'none'),
@@ -293,6 +362,7 @@ export function OverlayMotionFrame(props: Readonly<{
 
     return (
         <Animated.View
+            ref={elementRef}
             pointerEvents={pointerEvents.nativePointerEvents}
             // The final style retains the old prop's precedence over caller/motion styles.
             style={[props.style, motion.style, pointerEvents.webStyle]}

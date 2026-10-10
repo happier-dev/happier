@@ -52,10 +52,9 @@ function rowDividers(screen: Screen, rowTestIds: readonly string[]): Array<strin
 }
 
 function sheetSeparators(sheet: ReactTestInstance): ReactTestInstance[] {
-    // A group separator is a direct child of the sheet's view (row hairlines live inside rows).
-    const view = sheet.findAll((node) => typeof node.type === 'string')[0]!;
-    return view.children.filter((child): child is ReactTestInstance => typeof child !== 'string'
-        && child.props.role === 'separator');
+    // Group separation is observable by its published colour, independently of material wrappers.
+    return sheet.findAll((node) => typeof node.type === 'string' && node.props.role === 'separator'
+        && flattenTestStyle(node.props.style).backgroundColor === sheet.props.colors.groupDivider);
 }
 
 async function importModules() {

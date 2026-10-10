@@ -43,6 +43,7 @@ import {
     type SelectionListGridRowModel,
 } from './selectionListGridRowModel';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
+import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import {
     collectVirtualizationEligibleSectionIds,
     maybeWarnAboutMultipleVirtualizedSections,
@@ -51,6 +52,7 @@ import { selectionListTestId } from './_shared';
 import type { SectionRenderPlan } from './SelectionListRenderPlan';
 import type {
     SelectionListOption,
+    SelectionListLazyVisual,
     SelectionListPagination,
     SelectionListSectionAction,
     SelectionListStep,
@@ -113,6 +115,7 @@ export type SelectionListBodyVirtualizedItem =
           rowKey: string;
           sectionId: string;
           title?: string;
+          rightAccessory?: SelectionListLazyVisual;
           count?: number;
           action?: SelectionListSectionAction;
           isStale: boolean;
@@ -195,6 +198,7 @@ export function flattenRenderPlanForVirtualizedList(
             rowKey: `${sectionPlan.id}::header`,
             sectionId: sectionPlan.id,
             title: sectionPlan.title,
+            rightAccessory: sectionPlan.rightAccessory,
             count: sectionPlan.count,
             action: sectionPlan.action,
             isStale,
@@ -477,6 +481,7 @@ function renderVirtualizedListRow(
                 <SelectionListSectionHeader
                     testID={measureMode ? undefined : headerTestId}
                     title={item.title}
+                    rightAccessory={renderSelectionListAccessory(item.rightAccessory)}
                     count={item.count}
                     action={measureMode ? undefined : item.action}
                     {...(measureMode || headerRowIndex === undefined
@@ -849,6 +854,7 @@ function renderDirectVirtualizedSourceItem(
                     testID={ctx.measureMode ? undefined : headerTestId}
                     title={header.title}
                     count={header.count}
+                    rightAccessory={renderSelectionListAccessory(header.rightAccessory)}
                 />
             </View>
         );

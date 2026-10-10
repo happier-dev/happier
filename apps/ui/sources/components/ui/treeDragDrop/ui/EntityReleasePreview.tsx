@@ -23,6 +23,8 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
+import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
+import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 
 /**
  * Happier core's binding of the ONE release preview, grip and staged-move dock
@@ -92,12 +94,15 @@ export function EntityReleasePreviewCard(props: Readonly<{
 }>): React.ReactElement {
     const colors = useEntityReleasePreviewColors();
     const reducedMotion = useReducedMotionPreference();
+    const { theme } = useUnistyles();
     return (
         <HappierReleasePreviewCard
             {...props}
             colors={colors}
             host={CORE_RELEASE_PREVIEW_HOST}
             reducedMotion={reducedMotion}
+            gradient={resolveThemeSurfaceFinish(theme, 'floating')}
+            renderMaterialSurface={renderThemeMaterialSurface}
         />
     );
 }
@@ -105,7 +110,8 @@ export function EntityReleasePreviewCard(props: Readonly<{
 export function EntityReleaseOutcomePill(props: Readonly<{ outcome: HappierReleaseOutcome; testID?: string }>): React.ReactElement {
     const colors = useEntityReleasePreviewColors();
     const reducedMotion = useReducedMotionPreference();
-    return <HappierReleaseOutcomePill {...props} colors={colors} host={CORE_RELEASE_PREVIEW_HOST} reducedMotion={reducedMotion} />;
+    const { theme } = useUnistyles();
+    return <HappierReleaseOutcomePill {...props} colors={colors} host={CORE_RELEASE_PREVIEW_HOST} reducedMotion={reducedMotion} gradient={resolveThemeSurfaceFinish(theme, 'floating')} renderMaterialSurface={renderThemeMaterialSurface} />;
 }
 
 /** Where a staged-move dock sits: over its list's foot, so the list never grows when a move starts. */
@@ -118,7 +124,8 @@ export function EntityStagedMoveDock(props: Readonly<{
 }>): React.ReactElement {
     const colors = useEntityReleasePreviewColors();
     const reducedMotion = useReducedMotionPreference();
-    return <HappierStagedMoveDock {...props} colors={colors} host={CORE_RELEASE_PREVIEW_HOST} reducedMotion={reducedMotion} />;
+    const { theme } = useUnistyles();
+    return <HappierStagedMoveDock {...props} colors={colors} host={CORE_RELEASE_PREVIEW_HOST} reducedMotion={reducedMotion} gradient={resolveThemeSurfaceFinish(theme, 'floating')} renderMaterialSurface={renderThemeMaterialSurface} />;
 }
 
 function useEntityDragGripColors() {

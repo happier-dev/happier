@@ -8,11 +8,41 @@ import type { FindController, HappierFindBarProps } from '@happier-dev/plugin-ui
 import { KeyboardShortcutProvider, useFindSurfaceRegistration, useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { storage } from '@/sync/domains/state/storage';
 import { FindBar } from './FindBar';
+import { FindBarPlacement } from './FindBarPlacement';
 
 // Exercise the actual RNW input and browser propagation, rather than the node host shim.
 vi.mock('react-native', async () => await import('react-native-web'));
 
 describe('core Find field keyboard ownership', () => {
+    it('recomposes phone-width web controls and keeps the query when resized wide', async () => {
+        const width = vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(390);
+        const height = vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(844);
+        const container = document.createElement('div'); document.body.appendChild(container);
+        const root = createRoot(container);
+        const resize = async () => { await act(async () => { window.dispatchEvent(new Event('resize')); }); };
+        function Surface() {
+            const [query, setQuery] = React.useState('needle');
+            return <FindBarPlacement>{(presentation) => <FindBar testID="responsive-find"
+                query={query} onQueryChange={setQuery} options={{ matchCase: false, regex: false }}
+                onOptionsChange={() => {}} status={{ kind: 'idle' }} capabilities={{ regex: true, stop: false }}
+                onStep={() => {}} onStop={() => {}} onClose={() => {}} surfaceLabel="Find in file"
+                presentation={presentation} />}</FindBarPlacement>;
+        }
+        try {
+            await resize();
+            await act(async () => { root.render(<KeyboardShortcutProvider handlers={{}}><Surface /></KeyboardShortcutProvider>); });
+            expect(container.querySelector('[data-testid="responsive-find.options"]')).not.toBeNull();
+            expect(container.querySelector('[data-testid="responsive-find.matchCase"]')).toBeNull();
+            width.mockReturnValue(1440);
+            await resize();
+            expect(container.querySelector('[data-testid="responsive-find.options"]')).toBeNull();
+            expect(container.querySelector('[data-testid="responsive-find.matchCase"]')).not.toBeNull();
+            expect(container.querySelector<HTMLInputElement>('[data-testid="responsive-find.input"]')?.value).toBe('needle');
+        } finally {
+            await act(async () => { root.unmount(); }); container.remove(); width.mockRestore(); height.mockRestore(); await resize();
+        }
+    });
+
     it('routes a committed native submit through current preferences without dispatching the keyPress twice', async () => {
         const originalSettings = storage.getState().settings;
         storage.setState({ settings: { ...originalSettings, keyboardShortcutsV2Enabled: true,

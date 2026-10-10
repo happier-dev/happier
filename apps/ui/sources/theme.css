@@ -144,6 +144,14 @@ html[data-happier-input-modality="pointer"] :focus {
     }
 }
 
+/* Route modals share BaseModal's 100000 layer, above body-portaled companions
+   (Voice 80000, pet 90000). Keep the drawer and its backdrop together so a
+   transparent route cannot leave shell controls interactive through its scrim. */
+body > [data-vaul-overlay],
+body > [data-vaul-drawer] {
+    z-index: 100000;
+}
+
 /* Expo Router / Vaul route modal backdrop.
    Expo Router owns this element outside BaseModal, but it exposes a CSS variable
    for the overlay color and stable Vaul data attributes for the backdrop node. */

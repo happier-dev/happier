@@ -35,6 +35,21 @@ function makeOption(expandedContent: SelectionListLazyVisual): SelectionListOpti
 const staticExpanded = <View testID={EXPANDED_TEST_ID} />;
 
 describe('SelectionListOptionRow expandedContent', () => {
+    it('preserves the plain accessible label while rendering a lazy rich title and suppresses a replaced snippet only when expanded', async () => {
+        const option: SelectionListOption = { id: 'file', label: 'src/file.ts:4', accessibilityLabel: 'src/file.ts:4',
+            labelContent: () => <View testID="file-label" />, subtitleContent: () => <View testID="file-snippet" />,
+            expandedContent: staticExpanded, hideSubtitleWhenExpanded: true };
+        const screen = await renderScreen(<PlanOptionRow option={option} rootTestID="files" stepId="root"
+            isSelected isFocused={false} onSelect={() => {}} onPushStep={() => {}} />);
+        expect(screen.findByTestId('file-label')).not.toBeNull();
+        expect(screen.findByTestId('file-snippet')).toBeNull();
+        expect(screen.findByTestId(EXPANDED_TEST_ID)).not.toBeNull();
+        expect(screen.findAllByTestId('files:root:option:file').some(node => node.props.accessibilityLabel === option.label)).toBe(true);
+        await screen.update(<PlanOptionRow option={option} rootTestID="files" stepId="root"
+            isSelected={false} isFocused onSelect={() => {}} onPushStep={() => {}} />);
+        expect(screen.findByTestId('file-snippet')).not.toBeNull();
+        expect(screen.findByTestId(EXPANDED_TEST_ID)).toBeNull();
+    });
     it('renders the expanded content for the selected option OUTSIDE the row pressable', async () => {
         const screen = await renderScreen(<PlanOptionRow
             option={makeOption(staticExpanded)}

@@ -10,18 +10,37 @@ const TODAY_BORDER_RADIUS = { sm: 6, md: 8, lg: 10, xl: 14, xxl: 18, modalCard: 
 const TODAY_MARGINS = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24 };
 
 describe('theme style scales', () => {
+    it('defaults to soft and lets each surface inherit or override the global finish without moving radii', () => {
+        const defaults = resolveThemeStyleScales();
+        expect(defaults.finish).toBe('soft');
+        const flat = resolveThemeStyleScales({ finish: 'flat', parts: { floating: { finish: 'soft' }, composer: { radius: 'xxl', finish: 'soft' } } });
+        expect(flat.finish).toBe('flat');
+        expect(flat.parts.card.finish).toBe('flat');
+        expect(flat.parts.primaryButton.finish).toBe('flat');
+        expect(flat.parts.secondaryButton.finish).toBe('flat');
+        expect(flat.parts.floating.finish).toBe('soft');
+        expect(flat.parts.composer).toEqual({ radius: flat.borderRadius.xxl, finish: 'soft' });
+        expect(flat.parts.card.radius).toBe(defaults.parts.card.radius);
+        expect(applyThemeStyleScales(lightTheme, defaults)).toBe(lightTheme);
+        const styled = applyThemeStyleScales(lightTheme, flat);
+        expect(applyThemeStyleScales(styled, resolveThemeStyleScales({ finish: 'flat', parts: { floating: { finish: 'soft' }, composer: { radius: 'xxl', finish: 'soft' } } }))).toBe(styled);
+    });
     it('keeps every default equal to the values the app renders today', () => {
         const scales = resolveThemeStyleScales();
 
         expect(scales.borderRadius).toEqual(TODAY_BORDER_RADIUS);
         expect(scales.margins).toEqual(TODAY_MARGINS);
         expect(scales.parts).toEqual({
-            userBubble: { radius: 14 },
+            userBubble: { radius: 14, finish: 'soft' },
             // The composer stack: 14, 18 on Android (the test platform is not Android).
-            composer: { radius: 14 },
-            toolCard: { radius: 8 },
-            approvalCard: { radius: 14 },
-            codeBlock: { radius: 10 },
+            composer: { radius: 14, finish: 'soft' },
+            toolCard: { radius: 8, finish: 'soft' },
+            approvalCard: { radius: 14, finish: 'soft' },
+            codeBlock: { radius: 10, finish: 'soft' },
+            card: { radius: 14, finish: 'soft' },
+            floating: { radius: 10, finish: 'soft' },
+            primaryButton: { radius: 8, finish: 'soft' },
+            secondaryButton: { radius: 8, finish: 'soft' },
         });
         expect(scales.transcript).toEqual({ messageGap: 22 });
         expect(scales.typography).toEqual({ fontFamily: null, monoFontFamily: null });

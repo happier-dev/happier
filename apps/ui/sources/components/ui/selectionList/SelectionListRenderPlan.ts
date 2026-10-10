@@ -17,6 +17,7 @@ import { SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS } from './_constants';
 import { filterSelectionListSections } from './filterSelectionListSections';
 import type {
     SelectionListOption,
+    SelectionListLazyVisual,
     SelectionListSectionAction,
     SelectionListSectionDescriptor,
     SelectionListVirtualizationMode,
@@ -26,6 +27,7 @@ import type { DynamicSectionState } from './useSelectionListDynamicSections';
 export type SectionRenderPlan = Readonly<{
     id: string;
     title?: string;
+    rightAccessory?: SelectionListLazyVisual;
     count?: number;
     action?: SelectionListSectionAction;
     options: ReadonlyArray<SelectionListOption>;
@@ -221,6 +223,7 @@ export function synthesizeSelectionListRenderPlan(
             plan.push({
                 id: filtered.id,
                 title: filtered.title,
+                rightAccessory: filtered.rightAccessory,
                 count: filtered.count,
                 action: filtered.action,
                 options: filtered.options,
@@ -238,6 +241,7 @@ export function synthesizeSelectionListRenderPlan(
         const baseEntry = {
             id: descriptor.id,
             title: descriptor.title,
+            rightAccessory: descriptor.rightAccessory,
             virtualization: descriptor.virtualization,
         } as const;
         switch (state.status) {

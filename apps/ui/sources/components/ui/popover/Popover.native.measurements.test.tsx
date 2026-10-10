@@ -1,9 +1,9 @@
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
-import { flattenTestStyle as flattenStyle, findPopoverContentView } from '@/dev/testkit/harness/popoverHarness';
+import { flattenTestStyle as flattenStyle, findPopoverContentView, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
@@ -17,6 +17,14 @@ installPopoverCommonModuleMocks({
             useWindowDimensions: () => ({ width: 1000, height: 800 }),
         });
     },
+});
+
+let restorePopoverGlobals: (() => void) | undefined;
+beforeEach(() => {
+    restorePopoverGlobals = withPopoverWebGlobals();
+});
+afterEach(() => {
+    restorePopoverGlobals?.();
 });
 
 function readNumericStyle(style: Record<string, unknown>, key: string): number {
@@ -62,6 +70,7 @@ describe('Popover (native measurements)', () => {
                         anchorRef={anchorRef}
                         portal={{ native: true }}
                         placement="bottom"
+                        flip={false}
                         gap={0}
                         maxHeightCap={320}
                         onRequestClose={() => {}}
@@ -74,7 +83,7 @@ describe('Popover (native measurements)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -118,6 +127,7 @@ describe('Popover (native measurements)', () => {
                         anchorRef={anchorRef}
                         portal={{ native: true }}
                         placement="bottom"
+                        flip={false}
                         gap={0}
                         maxHeightCap={320}
                         onRequestClose={() => {}}
@@ -130,7 +140,7 @@ describe('Popover (native measurements)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -173,6 +183,7 @@ describe('Popover (native measurements)', () => {
                         anchorRef={anchorRef}
                         portal={{ native: true }}
                         placement="bottom"
+                        flip={false}
                         gap={0}
                         maxHeightCap={320}
                         onRequestClose={() => {}}
@@ -185,7 +196,7 @@ describe('Popover (native measurements)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -229,6 +240,7 @@ describe('Popover (native measurements)', () => {
                         anchorRef={anchorRef}
                         portal={{ native: true }}
                         placement="bottom"
+                        flip={false}
                         gap={0}
                         maxHeightCap={320}
                         onRequestClose={() => {}}
@@ -241,7 +253,7 @@ describe('Popover (native measurements)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6 });
+            await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);

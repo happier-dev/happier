@@ -455,9 +455,11 @@ describe('SegmentedTabBar', () => {
         const activeFlat = flattenStyle(requireTabSurface(screen, 'seg:beta').props.style);
         expect(activeFlat.backgroundColor).toBe(theme.colors.surface.base);
         expect(flattenStyle(screen.findByTestId('seg:beta')?.props.style).backgroundColor).toBeUndefined();
-        expect(screen.findByTestId('seg:beta')?.findByType('LinearGradient' as never).props.colors).toEqual(
-            theme.colors.segmentedControl.activeGradient?.colors,
-        );
+        const gradientPaint = screen.findByTestId('seg:beta')?.findAllByType('View' as never)
+            .map(node => flattenStyle(node.props.style)).find(style => typeof style.backgroundImage === 'string');
+        for (const color of theme.colors.segmentedControl.activeGradient?.colors ?? []) {
+            expect(gradientPaint?.backgroundImage).toContain(color);
+        }
 
         // Inactive tabs should NOT have the active background color.
         for (const testID of ['seg:alpha', 'seg:gamma'] as const) {

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -15,9 +16,10 @@ export function ReviewCommentInlineComposer(props: {
     onDelete?: () => void;
 }) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: paintColor(theme.colors.surface.elevated ?? theme.colors.surface.base) }]}>
             <TextInput
                 value={props.value}
                 onChangeText={props.onChange}
@@ -28,16 +30,16 @@ export function ReviewCommentInlineComposer(props: {
             />
             <View style={styles.actions}>
                 {props.onDelete ? (
-                    <Pressable onPress={props.onDelete} style={styles.dangerButton}>
+                    <Pressable onPress={props.onDelete} style={[styles.dangerButton, { backgroundColor: paintColor(theme.colors.surface.pressed) }]}>
                         <Text style={styles.dangerText}>{t('common.delete')}</Text>
                     </Pressable>
                 ) : null}
                 <View style={{ flex: 1 }} />
-                <Pressable onPress={props.onCancel} style={styles.secondaryButton}>
+                <Pressable onPress={props.onCancel} style={[styles.secondaryButton, { backgroundColor: paintColor(theme.colors.surface.pressed ?? theme.colors.surface.base) }]}>
                     <Text style={styles.secondaryText}>{t('common.cancel')}</Text>
                 </Pressable>
-                <Pressable onPress={props.onSave} style={styles.primaryButton}>
-                    <Text style={styles.primaryText}>{t('common.save')}</Text>
+                <Pressable onPress={props.onSave} style={[styles.primaryButton, { backgroundColor: paintColor(theme.colors.button?.primary?.background ?? theme.colors.text.primary) }]}>
+                    <Text style={[styles.primaryText, { color: paintColor(theme.colors.button?.primary?.tint ?? theme.colors.surface.base, theme.colors.text.primary) }]}>{t('common.save')}</Text>
                 </Pressable>
             </View>
         </View>

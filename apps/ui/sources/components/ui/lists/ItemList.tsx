@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { ScrollView, View, StyleProp, ViewStyle, Platform, ScrollViewProps } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { ScrollView, View, StyleProp, ViewStyle, Platform, ScrollViewProps, StyleSheet as RNStyleSheet } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { PopoverScrollSourceProvider } from '@/components/ui/popover';
@@ -11,6 +11,8 @@ import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
+import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
+import { useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 const BASE_CONTENT_PADDING_BOTTOM = Platform.select({ ios: 34, default: 16 }) ?? 16;
 
@@ -18,7 +20,6 @@ export interface ItemListProps extends ScrollViewProps {
     children: React.ReactNode;
     style?: StyleProp<ViewStyle>;
     containerStyle?: StyleProp<ViewStyle>;
-    insetGrouped?: boolean;
     /**
      * `page` makes this list a configuration page: paper background, and every `ItemGroup`/`Item` below
      * it uses the page anatomy (the default). Non-page lists opt into `grouped`.
@@ -26,6 +27,8 @@ export interface ItemListProps extends ScrollViewProps {
     presentation?: ListPresentation;
     /** A page's column: the reading measure (default), or `wide` for a grid or dashboard page. */
     pageColumn?: PageColumn;
+    /** A notice already explains a cause on this page; repeated section states may defer to it. */
+    pageNoticeActive?: boolean;
     onWheel?: (event: unknown) => void;
     /** Use the shared native keyboard owner for forms with focusable fields. */
     keyboardAware?: boolean;
@@ -64,6 +67,9 @@ function isRefObject<T>(ref: React.ForwardedRef<T>): ref is React.MutableRefObje
 
 export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((props, ref) => {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialRole = useContainingHappierMaterialRole();
+    const paintColor = useHappierMaterialColorResolver();
     const internalRef = React.useRef<ScrollView>(null);
     const isInsideModalBoundary = useIsInsideModalBoundary();
     // When the floating tab bar overlays this screen, extend the bottom padding so
@@ -74,11 +80,12 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
         children,
         style,
         containerStyle,
-        insetGrouped = true,
         presentation = 'page',
         pageColumn = 'reading',
+        pageNoticeActive = false,
         onWheel,
         keyboardAware = false,
+        innerViewRef,
         ...scrollViewProps
     } = props;
 
@@ -87,10 +94,10 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     const rawOnWheel = onWheel;
     const installWebModalWheelFix = isWeb && isInsideModalBoundary && rawOnWheel == null;
 
-    // Override background for non-inset grouped lists on iOS
-    const backgroundStyle = presentation === 'page' || (isIOS && !insetGrouped)
-        ? styles.pageBackground
-        : styles.groupedBackground;
+    const backgroundStyle = materialRole === undefined
+        ? presentation === 'page' ? styles.pageBackground : styles.groupedBackground
+        : { backgroundColor: paintColor(presentation === 'page' ? theme.colors.surface.base : theme.colors.background.canvas, 'transparent') };
+    const authoredBackground = RNStyleSheet.flatten(style)?.backgroundColor;
 
     const { onScroll, onLayout, onContentSizeChange, ...restScrollViewProps } = scrollViewProps;
     const tracker = React.useMemo(() => createScrollViewNearViewportTracker(internalRef, scrollViewProps.horizontal === true), [scrollViewProps.horizontal]);
@@ -103,8 +110,13 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
 
     const setRefs = React.useCallback((node: ScrollView | null) => {
         internalRef.current = node;
+        // RNW ignores innerViewRef, but exposes its actual content node through this API.
+        // Keep the native forwarder below; on web the returned host node implements View's ref API.
+        if (isWeb && innerViewRef) {
+            setForwardedRef(innerViewRef, (node?.getInnerViewNode() ?? null) as View | null);
+        }
         setForwardedRef(ref, node);
-    }, [ref]);
+    }, [innerViewRef, isWeb, ref]);
 
     const scrollProps = {
         ref: setRefs,
@@ -112,6 +124,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
             styles.container,
             backgroundStyle,
             style,
+            materialRole !== undefined && typeof authoredBackground === 'string' ? { backgroundColor: paintColor(authoredBackground, 'transparent') } : null,
         ],
         contentContainerStyle: [
             styles.contentContainer,
@@ -122,6 +135,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
             ? scrollViewProps.showsVerticalScrollIndicator
             : true,
         contentInsetAdjustmentBehavior: (isIOS && !isWeb) ? 'automatic' as const : undefined,
+        ...(!isWeb && innerViewRef ? { innerViewRef } : {}),
         ...restScrollViewProps,
         onScroll: (event: Parameters<NonNullable<ScrollViewProps['onScroll']>>[0]) => {
             tracker.onScroll(event);
@@ -133,15 +147,18 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
             ? ({ onWheel: wheelScrollHandlers.onWheel } as any)
             : (rawOnWheel ? ({ onWheel: rawOnWheel } as any) : {})),
     };
+    const content = presentation === 'page' ? (
+        <RoundButtonSizeScope size="normal">{children}</RoundButtonSizeScope>
+    ) : children;
     const scrollContent = keyboardAware ? (
-        <KeyboardAwareScrollView {...scrollProps}>{children}</KeyboardAwareScrollView>
+        <KeyboardAwareScrollView {...scrollProps}>{content}</KeyboardAwareScrollView>
     ) : (
-        <ScrollView {...scrollProps}>{children}</ScrollView>
+        <ScrollView {...scrollProps}>{content}</ScrollView>
     );
 
     return (
         <PopoverScrollSourceProvider scrollSourceRef={internalRef}>
-            <ListPresentationProvider value={presentation}>
+            <ListPresentationProvider value={presentation} pageNoticeActive={pageNoticeActive}>
                 <PageColumnProvider value={pageColumn}>
                     <PluginUiScrollActivityProvider tracker={tracker}>{scrollContent}</PluginUiScrollActivityProvider>
                 </PageColumnProvider>
@@ -152,34 +169,33 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
 
 ItemList.displayName = 'ItemList';
 
-export const ItemListStatic = React.memo<Omit<ItemListProps, keyof ScrollViewProps> & {
+export interface ItemListStaticProps {
     children: React.ReactNode;
     style?: StyleProp<ViewStyle>;
     containerStyle?: StyleProp<ViewStyle>;
-    insetGrouped?: boolean;
-}>((props) => {
+    /** Static lists are picker/menu content, not page scroll owners. */
+    presentation?: 'grouped';
+}
+
+export const ItemListStatic = React.memo<ItemListStaticProps>((props) => {
+    const { theme } = useUnistyles();
+    const materialRole = useContainingHappierMaterialRole();
+    const paintColor = useHappierMaterialColorResolver();
     const {
         children,
         style,
         containerStyle,
-        insetGrouped = true
+        presentation = 'grouped',
     } = props;
-
-    const isIOS = Platform.OS === 'ios';
-
-    // Override background for non-inset grouped lists on iOS
-    const backgroundStyle = (isIOS && !insetGrouped) ? stylesheet.pageBackground : stylesheet.groupedBackground;
+    const authoredBackground = RNStyleSheet.flatten(style)?.backgroundColor;
 
     return (
-        <View 
-            style={[
-                backgroundStyle,
-                style
-            ]}
-        >
-            <View style={containerStyle}>
-                {children}
+        <ListPresentationProvider value={presentation}>
+            <View style={[materialRole === undefined ? stylesheet.groupedBackground : { backgroundColor: paintColor(theme.colors.background.canvas, 'transparent') }, style, materialRole !== undefined && typeof authoredBackground === 'string' ? { backgroundColor: paintColor(authoredBackground, 'transparent') } : null]}>
+                <View style={containerStyle}>
+                    {children}
+                </View>
             </View>
-        </View>
+        </ListPresentationProvider>
     );
 });

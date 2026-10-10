@@ -8,6 +8,7 @@ import { installSettingsViewCommonModuleMocks } from '@/components/settings/sett
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const route = vi.hoisted(() => ({ pathname: '/settings/server/add' }));
+const navigation = vi.hoisted(() => ({ setOptions: vi.fn<(options: { headerRight?: () => React.ReactElement }) => void>() }));
 installSettingsViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -17,7 +18,9 @@ installSettingsViewCommonModuleMocks({
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({ pathname: () => route.pathname, params: { path: 'direct' } }).module;
+        const router = createExpoRouterMock({ pathname: () => route.pathname, params: { path: 'direct' } });
+        (router.state as { navigation: unknown }).navigation = navigation;
+        return router.module;
     },
     storage: (importOriginal) => importOriginal(),
 });
@@ -36,10 +39,20 @@ function headerHeadings(screen: Awaited<ReturnType<typeof renderScreen>>, testID
 }
 
 beforeEach(() => {
+    navigation.setOptions.mockReset();
     // Discovery is the network boundary; no Home is enrolled or connected by these render tests.
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({}, { status: 503 })));
     discardMachineAddFlowDraft();
 });
+
+async function expectNativeDiscard(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
+    expect(screen.findByTestId(testID)).toBeNull();
+    const headerRight = navigation.setOptions.mock.calls.map(([options]) => options.headerRight).filter(Boolean).at(-1);
+    expect(headerRight).toBeTypeOf('function');
+    if (!headerRight) throw new Error('Expected navigation to publish the native discard action');
+    const nativeHeader = await renderScreen(headerRight());
+    expect(nativeHeader.findByTestId(testID)).not.toBeNull();
+}
 afterEach(() => {
     standardCleanup();
     discardMachineAddFlowDraft();
@@ -52,7 +65,7 @@ describe('Add-flow page headers under phone navigation', () => {
         const screen = await renderScreen(<NavigationTitleChromeProvider showsTitle><HomeAddDraftScreen /></NavigationTitleChromeProvider>);
         expect(headerHeadings(screen, 'settings.homes.draft.header')).toEqual([]);
         expect(screen.findAllByProps({ children: 'addFlows.addHomeDescription' }).length).toBeGreaterThan(0);
-        expect(screen.findByTestId('settings.homes.draft.discard')).not.toBeNull();
+        await expectNativeDiscard(screen, 'settings.homes.draft.discard');
     });
 
     it('leaves generic machine setup titles to navigation and retains a typed host identity', async () => {
@@ -67,6 +80,6 @@ describe('Add-flow page headers under phone navigation', () => {
         expect(headerHeadings(screen, 'settings.machines.draft.header')).toEqual(['build-box']);
         await act(async () => updateMachineAddFlowDraft((draft) => ({ ...draft, path: 'anotherComputer', sshDraft: { ...draft.sshDraft, host: '' } })));
         expect(headerHeadings(screen, 'settings.machines.draft.header')).toEqual([]);
-        expect(screen.findByTestId('settings.machines.draft.discard')).not.toBeNull();
+        await expectNativeDiscard(screen, 'settings.machines.draft.discard');
     });
 });

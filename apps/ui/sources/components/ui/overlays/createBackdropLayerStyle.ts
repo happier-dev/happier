@@ -8,6 +8,8 @@ export function createBackdropWebStyle(params: Readonly<{
     enableBlur?: boolean;
     fallbackBackgroundColorWhenBlurDisabled?: string;
     surfaceGroup?: GlassSurfaceGroup;
+    /** Static tone resolved by the material owner; scrims do not acquire it implicitly. */
+    backdropTone?: string;
 }>): CSSProperties {
     if (params.enableBlur === false) {
         return {
@@ -17,9 +19,10 @@ export function createBackdropWebStyle(params: Readonly<{
 
     const blurPx = typeof params.blurPx === 'number' ? params.blurPx : 12;
     const group = params.surfaceGroup ?? 'floating';
+    const filter = [`blur(var(--happier-glass-${group}-blur, ${blurPx}px))`, params.backdropTone].filter(Boolean).join(' ');
     return {
-        WebkitBackdropFilter: `blur(var(--happier-glass-${group}-blur, ${blurPx}px))`,
-        backdropFilter: `blur(var(--happier-glass-${group}-blur, ${blurPx}px))`,
+        WebkitBackdropFilter: filter,
+        backdropFilter: filter,
         backgroundColor: params.backgroundColor,
     };
 }

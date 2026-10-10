@@ -15,10 +15,9 @@ import { mapCodeReadingAnchors } from '@/components/ui/code/model/mapCodeReading
 import { collapseUnifiedDiffContext } from './collapseUnifiedDiffContext';
 import { UnifiedDiffFoldToggleRow } from './UnifiedDiffFoldToggleRow';
 import { Text } from '@/components/ui/text/Text';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
 import Color from 'color';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -108,12 +107,9 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
         // where the fold toggle sits, and the way back at the row's end.
         if (findOpenedRegion?.afterLineId === line.id) return <View style={{ paddingLeft: 46, paddingRight: 12, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: openedBandColor }}>
             <Icon name="arrows-down-up" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
-            <Text style={{ flex: 1, color: theme.colors.text.tertiary, fontSize: 12, ...Typography.default() }} numberOfLines={1}>{t('find.openedForMatch')}</Text>
-            <HappierPressable testID="diff-find-fold-again" accessibilityRole="button" accessibilityLabel={t('find.foldAgain')}
-                style={{ minHeight: resolveTouchTargetFloorPx() ?? 28, justifyContent: 'center' }}
-                onPress={() => setRefoldedFindLine(props.scrollToLineId ?? null)}>
-                <Text style={{ color: theme.colors.text.link, fontSize: 12, ...Typography.default() }}>{t('find.foldAgain')}</Text>
-            </HappierPressable>
+            <Text style={{ flex: 1, color: theme.colors.text.tertiary, ...Typography.rowMeta() }} numberOfLines={1}>{t('find.openedForMatch')}</Text>
+            <TextLinkButton testID="diff-find-fold-again" label={t('find.foldAgain')}
+                onPress={() => setRefoldedFindLine(props.scrollToLineId ?? null)} />
         </View>;
         const region = foldRegionsByAfterLineId.get(line.id) ?? null;
         if (!region) return null;
@@ -131,7 +127,7 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
                 }}
             />
         );
-    }, [foldRegionsByAfterLineId, findOpenedRegion, openedBandColor, props.scrollToLineId, theme.colors.text.tertiary, theme.colors.text.link]);
+    }, [foldRegionsByAfterLineId, findOpenedRegion, openedBandColor, props.scrollToLineId, theme.colors.text.tertiary]);
 
     const view = (
         <View style={props.virtualized ? styles.virtualizedBody : undefined}>

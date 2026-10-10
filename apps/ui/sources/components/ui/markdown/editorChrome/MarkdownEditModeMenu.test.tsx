@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -54,6 +55,13 @@ function itemById(id: string): DropdownMenuItem | undefined {
 }
 
 describe('MarkdownEditModeMenu', () => {
+    it('keeps the mode trigger translucent while showing the effective mode', async () => {
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => 'rgba(0, 0, 0, 0.1)'}>
+            <MarkdownEditModeMenu mode="rich" onChange={() => {}} richEligible />
+        </HappierMaterialRoleProvider>);
+        expect(screen.findByTestId('markdown-edit-mode-menu')!.props.style.backgroundColor).toBe('rgba(0, 0, 0, 0.1)');
+        expect(dropdownSpy.selectedId).toBe('rich');
+    });
     it('offers raw and rich options with stable testIDs', async () => {
         await renderScreen(
             <MarkdownEditModeMenu mode="raw" onChange={vi.fn()} richEligible={true} />,

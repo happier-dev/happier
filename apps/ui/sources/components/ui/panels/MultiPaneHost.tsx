@@ -14,6 +14,7 @@ import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
 import { ESCAPE_LAYER_PRIORITIES } from '@/keyboard/escape';
 import { t } from '@/text';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 // A pane floating over the main content (overlay presentation) rounds the one edge that shows.
 const PANE_OVERLAY_CORNER_RADIUS_PX = 16;
@@ -284,7 +285,7 @@ function PaneColumn(props: Readonly<{
                 right: props.overlayRightInsetPx,
                 bottom: 0,
                 zIndex: overlay ? props.overlayZIndex : -1,
-                backgroundColor: theme.colors.surface.base,
+                backgroundColor: 'transparent',
                 opacity: overlay ? props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }) : 0,
                 ...(overlay ? {
                     borderTopLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX,
@@ -324,17 +325,16 @@ function PaneColumn(props: Readonly<{
                         nativeBackLayer={props.nativeBackLayer}
                         style={{ flex: 1, minHeight: 0, minWidth: 0 }}
                     >
-                        <View style={{
+                        <GlassSurface surfaceGroup="content" solidColor={theme.colors.surface.base} finishRole={null} nested={docked} style={{
                             flex: 1, minHeight: 0, minWidth: 0,
                             borderLeftWidth: docked ? StyleSheet.hairlineWidth : 0,
                             borderLeftColor: theme.colors.border.subtle,
-                            backgroundColor: theme.colors.surface.base,
                             overflow: 'hidden',
                         }}>
                             <PluginSurfaceFocusEligibilityProvider active={props.focusEligible}>
                                 {props.children}
                             </PluginSurfaceFocusEligibilityProvider>
-                        </View>
+                        </GlassSurface>
                     </ModalPaneBoundaryView>
                 </ResizableDockedPane>
             </ModalPaneBoundaryView>

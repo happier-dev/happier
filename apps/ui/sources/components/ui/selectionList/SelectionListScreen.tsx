@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { SelectionList } from './SelectionList';
 import type { SelectionListProps } from './_types';
@@ -34,6 +35,8 @@ export type SelectionListScreenProps = Omit<SelectionListProps,
  * safe-area-aware viewport and route-close callback.
  */
 export function SelectionListScreen(props: SelectionListScreenProps): React.ReactElement {
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const window = useWindowDimensions();
     const insets = useSafeAreaInsets();
     const { viewportHeight, testID = 'selection-list-screen', ...listProps } = props;
@@ -44,7 +47,7 @@ export function SelectionListScreen(props: SelectionListScreenProps): React.Reac
     });
 
     return (
-        <View testID={testID} style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View testID={testID} style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom, backgroundColor: paintColor(theme.colors.surface.base, 'transparent') }]}>
             <SelectionList
                 {...listProps}
                 testID={`${testID}.list`}

@@ -28,9 +28,11 @@ export function resolveGlassCapability(input: ResolveGlassCapabilityInput): Glas
         || material?.blur === 'off') {
         return 'solid';
     }
-    // Liquid Glass has clear/regular materials, not an intensity control.
-    // Strong uses the adjustable native blur rather than collapsing to regular.
-    const strong = material?.blur === 'strong';
+    // Named floating presets use fixed web frost; native Liquid Glass adapts
+    // itself. An authored Strong material still selects adjustable native blur.
+    const namedFloating = (input.surfaceGroup ?? 'floating') === 'floating'
+        && input.settings !== undefined && readGlassPreset(input.settings) !== 'custom';
+    const strong = material?.blur === 'strong' && !namedFloating;
     if (input.liquidGlassAvailable && !(strong && input.blurAvailable)) {
         return 'liquidGlass';
     }
@@ -42,4 +44,4 @@ export function resolveGlassCapability(input: ResolveGlassCapabilityInput): Glas
     }
     return 'solid';
 }
-import { resolveGlassSurfaceMaterial, type GlassMaterialSettings, type GlassSurfaceGroup, type GlassMaterialEnvironment } from './glassMaterial';
+import { readGlassPreset, resolveGlassSurfaceMaterial, type GlassMaterialSettings, type GlassSurfaceGroup, type GlassMaterialEnvironment } from './glassMaterial';

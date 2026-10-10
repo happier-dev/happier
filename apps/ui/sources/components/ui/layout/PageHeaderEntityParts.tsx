@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -8,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
 
 /** One rare operation in an entity page's `⋯` menu. */
@@ -31,6 +32,8 @@ export type PageHeaderMenuAction = Readonly<{
  */
 export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly<{
     actions: readonly PageHeaderMenuAction[];
+    /** Page context controls folded into the same overflow on a phone. */
+    content?: React.ReactNode;
     testID?: string;
     /** Overrides the trigger's test id (kept for pages with an established one). */
     triggerTestID?: string;
@@ -64,6 +67,11 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
             open={open}
             onOpenChange={setOpen}
             items={items}
+            // Operations, not a choice: nothing reads as picked when the menu opens (DESIGN-9 N46).
+            // Arrow keys still move to the first row.
+            allowEmptySelection
+            header={props.content ? <View style={stylesheet.menuContent}>{props.content}</View> : undefined}
+            emptyLabel={props.content ? null : undefined}
             onSelect={(id) => {
                 setOpen(false);
                 return props.actions.find((action) => action.id === id)?.onSelect();
@@ -76,16 +84,17 @@ export const PageHeaderMenu = React.memo(function PageHeaderMenu(props: Readonly
             showCategoryTitles={false}
             popoverPortalWebTarget="body"
             trigger={({ toggle }) => (
-                <Pressable
+                <IconButton
                     testID={props.triggerTestID ?? (props.testID ? `${props.testID}.trigger` : undefined)}
                     onPress={toggle}
-                    accessibilityRole="button"
                     accessibilityLabel={t('common.moreActions')}
-                    hitSlop={8}
-                    style={({ pressed }) => [stylesheet.menuTrigger, pressed ? { backgroundColor: theme.colors.surface.pressed } : null]}
-                >
-                    <Icon name="dots-three" size={18} color={theme.colors.text.secondary} />
-                </Pressable>
+                    iconName="dots-three"
+                    iconSize={18}
+                    size={32}
+                    variant="plain"
+                    expanded={open}
+                    hasPopup="menu"
+                />
             )}
         />
     );
@@ -131,6 +140,10 @@ export const PageHeaderStateSwitch = React.memo(function PageHeaderStateSwitch(p
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
+    menuContent: {
+        padding: 12,
+        gap: 8,
+    },
     stateSwitch: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -142,12 +155,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 13,
         lineHeight: 18,
         color: theme.colors.text.secondary,
-    },
-    menuTrigger: {
-        width: 32,
-        height: 32,
-        borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
 }));

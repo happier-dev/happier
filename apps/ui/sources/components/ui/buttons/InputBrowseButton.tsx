@@ -3,6 +3,7 @@ import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 const styles = StyleSheet.create((theme) => ({
     button: {
@@ -25,6 +26,7 @@ export function InputBrowseButton(props: Readonly<{
     iconName?: IconName;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
 
     return (
         <Pressable
@@ -38,6 +40,7 @@ export function InputBrowseButton(props: Readonly<{
             hitSlop={10}
             style={({ pressed }) => [
                 styles.button,
+                { backgroundColor: paintColor(theme.colors.input.background) },
                 { opacity: props.disabled ? 0.45 : pressed ? motionTokens.press.opacitySubtle : 1 },
             ]}
         >

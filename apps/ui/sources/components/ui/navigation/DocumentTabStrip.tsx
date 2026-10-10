@@ -12,7 +12,7 @@ import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentation';
+import { resolveHappierTabKeySelection, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { shadowLevelStyle } from '@/shadowElevation';
 import type { EntityDragItemV1, EntityDragKindV1, EntityDragScopeV1, EntityDropAdmissionV1, EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
@@ -221,6 +221,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...M.tabSubtitle,
         color: theme.colors.text.tertiary,
         ...Typography.default(),
+        // The subtitle gives way first: a narrow tab keeps its title readable ("Checkout UI…")
+        // rather than shrinking both to "C…" and "R…".
+        flexShrink: 1000,
+        minWidth: 0,
     },
     tabActions: {
         flexDirection: 'row',
@@ -383,8 +387,9 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 export function DocumentTabStrip<T extends DocumentTabItem>(props: DocumentTabStripProps<T>) {
-    const styles = stylesheet;
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const styles = { ...stylesheet, tabActive: [stylesheet.tabActive, { backgroundColor: materialColor(theme.colors.surface.elevated) }] };
     // A finger gets the platform touch floor; a precise pointer keeps the dense strip (details lab 2),
     // with its pin and close still at least the WCAG 2.5.8 target.
     const touchFloorPx = resolveTouchTargetFloorPx(Platform.OS);
@@ -710,8 +715,16 @@ function DocumentBarTab<T extends DocumentTabItem>(props: Readonly<{
     rail?: boolean;
     onLayout?: (event: LayoutChangeEvent) => void;
 }>) {
-    const styles = stylesheet;
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const selectedPaint = { backgroundColor: materialColor(theme.colors.surface.selected) };
+    const styles = {
+        ...stylesheet,
+        barTabHovered: [stylesheet.barTabHovered, selectedPaint],
+        barTabQuiet: [stylesheet.barTabQuiet, selectedPaint],
+        barTabRaised: [stylesheet.barTabRaised, { backgroundColor: materialColor(theme.colors.surface.pressed) }],
+        railTabOpen: [stylesheet.railTabOpen, selectedPaint],
+    };
     const [hovered, setHovered] = React.useState(false);
     const { tab, strip } = props;
     const safeTabKey = toTestIdSafeValue(tab.key);

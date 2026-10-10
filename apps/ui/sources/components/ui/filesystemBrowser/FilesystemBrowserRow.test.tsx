@@ -95,8 +95,9 @@ describe('FilesystemBrowserRow tree title (one line; the meaningful end stays)',
         const screen = await renderScreen(
             <FilesystemBrowserRow testID="row" node={folder} title={folder.name} icon={null} disclosure density="tight" />,
         );
-        expect(textNodes(screen, 'components/settings').length).toBeGreaterThan(0);
-        expect(textNodes(screen, '/modal').length).toBeGreaterThan(0);
+        const title = textNodes(screen, folder.name);
+        expect(title.length).toBeGreaterThan(0);
+        expect(title.some((node) => node.props.ellipsizeMode === 'middle')).toBe(true);
     });
 
     it('keeps a file name on one line, truncating its end', async () => {

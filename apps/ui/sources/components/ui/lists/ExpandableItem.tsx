@@ -8,7 +8,7 @@ import Animated, {
     withTiming,
     type SharedValue,
 } from 'react-native-reanimated';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierDisclosure,
     type HappierDisclosureBodyProps,
@@ -18,6 +18,7 @@ import {
     type HappierDisclosureProps,
 } from '@happier-dev/plugin-ui/presentation';
 
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { ItemRevealContext } from './ItemRevealContext';
 
@@ -95,6 +96,22 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.border.default,
     },
 }));
+
+/**
+ * The caret an expandable row's header shows at its end: one glyph, one size and the secondary ink
+ * for every accordion row, so headers never pick their own. Decorative; the header's pressable owns
+ * the expanded state it mirrors (`header={(state) => <Item rightElement={<ExpandableItemCaret expanded={state.expanded} />} />}`).
+ */
+export function ExpandableItemCaret(props: Readonly<{ expanded: boolean }>) {
+    const { theme } = useUnistyles();
+    return (
+        <Icon
+            name={props.expanded ? 'caret-down' : 'caret-right'}
+            size={ICON_SIZE.sm}
+            color={theme.colors.text.secondary}
+        />
+    );
+}
 
 export type ExpandableItemProps = Omit<HappierDisclosureProps, 'motion' | 'reducedMotion' | 'separatorStyle'> & Readonly<{
     reducedMotion?: boolean;

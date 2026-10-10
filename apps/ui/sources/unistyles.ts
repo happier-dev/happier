@@ -9,6 +9,7 @@ import {
     resolveThemeRuntimeVisualTheme,
 } from './theme/profiles/themeProfileRuntime';
 import { fireAndForget } from './utils/system/fireAndForget';
+import { themeStyleSelectionFromSurfaceFinish } from './theme/themeStyleScales';
 
 type AppThemeName = 'light' | 'dark';
 
@@ -22,6 +23,7 @@ const startupThemes = resolveThemeRuntimeStartupThemes({
     themeProfiles: themeRuntimeLocalState.themeProfiles,
     themePreference,
     systemTheme: normalizeColorScheme(Appearance.getColorScheme()),
+    style: themeStyleSelectionFromSurfaceFinish(themeRuntimeLocalState),
 });
 const appThemes = startupThemes.themes;
 

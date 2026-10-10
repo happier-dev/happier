@@ -173,6 +173,10 @@ type PopoverCommonProps = Readonly<{
     open: boolean;
     /** Reuse the shared bottom-sheet navigation and chrome on phone viewports. */
     phonePresentation?: 'sheet';
+    /** A form's completion control replaces the sheet's close button in the shared header. */
+    sheetHeaderAction?: React.ReactNode;
+    /** A form summary belongs under the title in the sheet's existing header. */
+    sheetSubtitle?: string;
     accessibilityLabel?: string;
     /** Move focus into the popover after it opens when the content is menu-like. */
     autoFocusOnOpen?: boolean;
@@ -237,6 +241,8 @@ type PopoverCommonProps = Readonly<{
      * agent-input chips without needing a second click).
      */
     consumeOutsidePointerDown?: boolean;
+    /** In-page controls participating in this popover's interaction, outside its portal. */
+    interactionBoundaryRef?: React.RefObject<unknown>;
     /**
      * Native-only bottom viewport occlusion supplied by a canonical keyboard source.
      *
@@ -257,21 +263,25 @@ type PopoverWithoutBackdrop = PopoverCommonProps & Readonly<{
     onRequestClose?: () => void;
 }>;
 
-/** Open web popovers. One whose anchor sits inside another's content was opened from it (a row's menu in a roster). */
-type OpenWebPopoverEntry = Readonly<{ getContentElement: () => HTMLElement | null; getAnchorElement: () => HTMLElement | null }>;
+/** Open web popovers; an anchor inside another's participating content belongs to that interaction. */
+type OpenWebPopoverEntry = Readonly<{
+    getContentElement: () => HTMLElement | null;
+    getInteractionBoundaryElement: () => HTMLElement | null;
+    getAnchorElement: () => HTMLElement | null;
+}>;
 const OPEN_WEB_POPOVERS: OpenWebPopoverEntry[] = [];
 
 /**
- * Whether a popover opened from inside `owner` (its anchor sits in owner's content) is still open. While it is, that
+ * Whether a popover opened from inside `owner` (its anchor sits in owner's content or interaction boundary) is still open. While it is, that
  * nested popover owns dismissal: a press inside it is not outside `owner`, and a press outside both closes only it.
  */
 function hasOpenNestedWebPopover(owner: OpenWebPopoverEntry): boolean {
     const content = owner.getContentElement();
-    if (!content) return false;
+    const interactionBoundary = owner.getInteractionBoundaryElement();
     return OPEN_WEB_POPOVERS.some(entry => {
         if (entry === owner) return false;
         const anchor = entry.getAnchorElement();
-        return anchor !== null && content.contains(anchor);
+        return anchor !== null && (content?.contains(anchor) === true || interactionBoundary?.contains(anchor) === true);
     });
 }
 
@@ -1668,6 +1678,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         const shouldAttachPointerDownCapture = !(backdropEnabled && backdropBlocksOutsidePointerEvents);
         const openEntry: OpenWebPopoverEntry = {
             getContentElement: getContentDomElement,
+            getInteractionBoundaryElement: () => getDomElementFromNode(props.interactionBoundaryRef?.current),
             getAnchorElement: () => getDomElementFromNode(anchorRef.current),
         };
         OPEN_WEB_POPOVERS.push(openEntry);
@@ -1689,6 +1700,8 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 return;
             }
 
+            const interactionBoundary = getDomElementFromNode(props.interactionBoundaryRef?.current);
+            if (interactionBoundary?.contains(target)) return;
             const shouldConsumeOutsidePointerDown = props.consumeOutsidePointerDown ?? true;
             if (shouldConsumeOutsidePointerDown) {
                 // Prevent nested Radix/Vaul "outside click" logic from also dismissing the underlying modal.
@@ -1721,6 +1734,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         onRequestClose,
         open,
         props.closeOnAnchorPress,
+        props.interactionBoundaryRef,
         requestClose,
     ]);
 
@@ -1831,7 +1845,6 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                             <OverlayMotionFrame
                                 visible={motionVisible}
                                 kind="popover"
-                                disableTransformOnWeb
                                 direction={popoverMotionDirection}
                             >
                                 {children({ ...computed, requestClose })}
@@ -1842,7 +1855,6 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                     <OverlayMotionFrame
                         visible={motionVisible}
                         kind="popover"
-                        disableTransformOnWeb
                         direction={popoverMotionDirection}
                     >
                         {children({ ...computed, requestClose })}
@@ -1893,8 +1905,10 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 presentation="sheet"
                 sheetBottomInset={insets.bottom}
                 title={props.accessibilityLabel}
+                subtitle={props.sheetSubtitle}
                 closeButtonTestID="popover-sheet.close"
-                onClose={onRequestClose ? closeSheet : undefined}
+                actions={props.sheetHeaderAction}
+                onClose={onRequestClose && !props.sheetHeaderAction ? closeSheet : undefined}
                 style={{ maxHeight: Math.max(0, windowHeight - insets.top) }}
                 bodyStyle={{ flexGrow: 0, paddingLeft: insets.left, paddingRight: insets.right }}
             >

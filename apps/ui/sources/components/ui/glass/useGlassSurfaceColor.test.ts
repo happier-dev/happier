@@ -7,6 +7,14 @@ const liveDesktop = { desktopWindow: true, nativeWindowMaterialLive: true };
 const settings = { glassSurfaceMaterials: glassPresetMaterials('everywhere') };
 
 describe('glass renderer paint', () => {
+    it('keeps descendant ink paint translucent in every glass group and restores exact solid paint', () => {
+        for (const group of ['chrome', 'sidebar', 'content', 'floating'] as const) {
+            expect(resolveGlassSurfaceColor('#112233', group, settings, liveDesktop, true, true, 'rgba(235, 230, 225, 0.1)')).toBe('rgba(235, 230, 225, 0.1)');
+            expect(resolveGlassSurfaceColor('#112233', group, settings, { ...liveDesktop, reduceTransparency: true }, true, true, 'rgba(235, 230, 225, 0.1)')).toBe('#112233');
+            expect(resolveGlassSurfaceColor('rgba(20, 30, 40, 0.07)', group, settings, liveDesktop, true, true, 'rgba(235, 230, 225, 0.1)')).toBe('rgba(20, 30, 40, 0.07)');
+        }
+    });
+
     it('clears nested terminal/editor coats while keeping the containing content coat exact', () => {
         const custom = { glassSurfaceMaterials: { ...settings.glassSurfaceMaterials, content: { blur: 'strong' as const, opacity: 0.125 } } };
         expect(resolveGlassSurfaceColor('#112233', 'content', custom, liveDesktop, true)).toBe('#11223300');

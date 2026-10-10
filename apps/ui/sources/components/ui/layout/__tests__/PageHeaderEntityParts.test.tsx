@@ -90,6 +90,26 @@ describe('PageHeaderMenu', () => {
         expect(clearRow!.findAllByType(ActivitySpinner)).toHaveLength(1);
         expect(deleteRow!.findAllByType(ActivitySpinner)).toHaveLength(0);
     });
+
+    it('opens with no row looking chosen: a menu of operations has no current choice (DESIGN-9 N46)', async () => {
+        const screen = await renderScreen(
+            <OverlayPortalProvider>
+            <PageHeaderMenu
+                testID="entity-menu"
+                actions={[
+                    { id: 'discard', title: 'Discard', destructive: true, onSelect: () => {} },
+                    { id: 'export', title: 'Export JSON', onSelect: () => {} },
+                ]}
+            />
+            <OverlayPortalHost />
+            </OverlayPortalProvider>,
+            measuredHostNodes,
+        );
+        await openMenu(screen);
+        const rows = ['Discard', 'Export JSON'].map((title) => findRow(screen, title));
+        expect(rows.every((row) => row !== null)).toBe(true);
+        expect(rows.map((row) => row!.props.selected === true)).toEqual([false, false]);
+    });
 });
 
 describe('PageHeaderMenu: reached from search', () => {

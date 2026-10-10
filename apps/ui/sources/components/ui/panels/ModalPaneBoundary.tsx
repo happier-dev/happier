@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Animated, Platform, View, type ViewProps } from 'react-native';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '@happier-dev/plugin-ui/presentation';
 
 import { usePaneAnimatedPresence } from './motion/usePaneAnimatedPresence';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -55,6 +56,9 @@ export const ModalPaneBoundaryView = React.forwardRef<unknown, ModalPaneBoundary
             <View
                 ref={ref as React.Ref<React.ElementRef<typeof View>>}
                 {...viewProps}
+                // Structural focus sinks retain modal focus-return custody;
+                // only their descendant controls draw the shared focus ring.
+                style={[viewProps.style, Platform.OS === 'web' && viewProps.tabIndex === -1 ? HAPPIER_FOCUS_RING_DELEGATED_STYLE : null]}
                 // Pane underlay refs are the native fallback after a close, so
                 // retain this otherwise-layout-only host in the native tree.
                 collapsable={Platform.OS === 'web' ? viewProps.collapsable : false}

@@ -74,6 +74,30 @@ function countMeasureHosts(screen: { findAll: (predicate: (node: { props: Record
 }
 
 describe('SelectionList measurement ownership (R1)', () => {
+    it.each([
+        { heightBehavior: undefined, fillAvailableSpace: true },
+        { heightBehavior: 'fixedToMaxHeight' as const },
+    ])('mounts rows once in a fixed frame while preserving step transitions (%j)', async (frame) => {
+        const { SelectionList } = await import('../SelectionList');
+        const { SelectionListBody } = await import('../SelectionListBody');
+        const screen = await renderScreen(<SelectionList {...defaultProps(frame)} />);
+
+        expect(screen.findAllByType(SelectionListBody)).toHaveLength(1);
+        expect(countMeasureHosts(screen)).toBe(0);
+        expect(screen.findByTestId('sl:transition')).toBeTruthy();
+    });
+
+    it('retains the live body when its frame switches between content-sized and filled', async () => {
+        const { SelectionList } = await import('../SelectionList');
+        const { SelectionListBody } = await import('../SelectionListBody');
+        const props = defaultProps({ heightBehavior: undefined, fillAvailableSpace: true });
+        const screen = await renderScreen(<SelectionList {...props} />);
+        const liveBody = screen.findAllByType(SelectionListBody).find((body) => body.props.mode !== 'measure');
+
+        await screen.update(<SelectionList {...props} fillAvailableSpace={false} />);
+        expect(screen.findAllByType(SelectionListBody).find((body) => body.props.mode !== 'measure') === liveBody).toBe(true);
+    });
+
     it('mounts the body subtree exactly twice on the measured-native path', async () => {
         const { SelectionList } = await import('../SelectionList');
         const { SelectionListBody } = await import('../SelectionListBody');

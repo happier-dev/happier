@@ -14,6 +14,28 @@ import type { DynamicSectionState } from '../useSelectionListDynamicSections';
  * These tests pin the contract independent of the React orchestrator.
  */
 describe('SelectionListRenderPlan (R14 extracted)', () => {
+    it('ranks opted-in search results across groups without promoting stale rows or dropping their status', async () => {
+        const { synthesizeSelectionListRenderPlan } = await import('../SelectionListRenderPlan');
+        const args = {
+            sections: [
+                { kind: 'static' as const, id: 'kinds', title: 'Kinds', options: [{ id: 'action', label: 'Action', subtitle: 'Notify someone' }] },
+                { kind: 'dynamic' as const, id: 'actions', resolve: async () => ({ options: [] }) },
+                { kind: 'dynamic' as const, id: 'remote', resolve: async () => ({ options: [] }) },
+            ],
+            inputValue: 'Notify', filterQuery: 'Notify',
+            dynamicSectionStates: new Map<string, DynamicSectionState>([
+                ['actions', { status: 'success', options: [{ id: 'notify', label: 'Notify me' }], lastSuccessOptions: undefined }],
+                ['remote', { status: 'error', options: [{ id: 'stale', label: 'Notify remotely' }], error: new Error('offline'), lastSuccessOptions: [{ id: 'stale', label: 'Notify remotely' }] }],
+            ]),
+        };
+        const grouped = synthesizeSelectionListRenderPlan(args);
+        expect(grouped[0]?.options[0]?.id).toBe('action');
+        const searched = synthesizeSelectionListRenderPlan({ ...args, searchAcrossSections: true });
+        expect(searched[0]?.options.map(option => option.id)).toEqual(['notify', 'action']);
+        expect(searched[0]?.title).toBeUndefined();
+        expect(searched[1]).toMatchObject({ id: 'remote', dynamicState: 'error', isStale: true, options: [{ id: 'stale' }] });
+        expect(synthesizeSelectionListRenderPlan({ ...args, inputValue: '', filterQuery: '', searchAcrossSections: true })[0]?.title).toBe('Kinds');
+    });
     it('retains a static section status hint even when matching produced no rows', async () => {
         const { synthesizeSelectionListRenderPlan } = await import('../SelectionListRenderPlan');
         const plan = synthesizeSelectionListRenderPlan({

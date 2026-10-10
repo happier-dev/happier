@@ -25,7 +25,8 @@ export function resolveContentMaxWidthForMode(mode: unknown): number {
  * measure, so sheets do not stretch into long rows on a wide window; `wide` is for a page whose body
  * is a grid or a dashboard. The column holds the sheets and their 16px inset on each side, so its
  * sheets are the approved lab's 760px / 1000px page less its 44px sides. The content-width preference
- * can only narrow it (`useLayoutMaxWidth`).
+ * can only narrow it (`useLayoutMaxWidth`) unless the page explicitly opts out through its shared
+ * page-column preference policy.
  */
 export type PageColumn = 'reading' | 'wide';
 

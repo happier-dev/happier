@@ -47,12 +47,12 @@ describe('IconButton', () => {
 
         const pressable = screen.findByTestId('icon-btn');
         const frame = flattenStyle(pressable?.props.style);
-        // The press box is real box model — padding-equivalent growth plus an equal
-        // negative margin — because `hitSlop` is inert on react-native-web.
+        // The press box is real box model because `hitSlop` is inert on react-native-web.
+        // Only the declared horizontal row gap can be spent; another row can sit flush vertically.
         expect(frame.width).toBe(44);
         expect(frame.height).toBe(44);
         expect(frame.marginHorizontal).toBe(-8);
-        expect(frame.marginVertical).toBe(-8);
+        expect(frame.marginVertical).toBe(0);
         // A declared target is never delegated to hit slop.
         expect(pressable?.props.hitSlop).toBe(0);
 
@@ -77,9 +77,59 @@ describe('IconButton', () => {
         const frame = flattenStyle(screen.findByTestId('icon-btn')?.props.style);
         expect(frame.width).toBe(44);
         expect(frame.marginHorizontal).toBe(-2);
+        expect(frame.marginVertical).toBe(0);
         // Only the margin expansion is capped: layout allocates the rest, so targets never overlap.
         expect(frame.height).toBe(44);
         expect((frame.width as number) + 2 * (frame.marginHorizontal as number)).toBe(40);
+        // The row gap says nothing about a stacked neighbor: the full vertical target stays in flow.
+        expect((frame.height as number) + 2 * (frame.marginVertical as number)).toBe(44);
+    });
+
+    it('overhangs instead of taking layout when the caller declares its container cannot grow', async () => {
+        const screen = await renderScreen(
+            <IconButton
+                testID="icon-btn"
+                iconName="copy"
+                accessibilityLabel="Close view"
+                size={26}
+                minimumInteractiveTargetSize={44}
+                interactiveTargetGapPx={2}
+                interactiveTargetLayout="overhang"
+                onPress={() => {}}
+            />,
+        );
+
+        const frame = flattenStyle(screen.findByTestId('icon-btn')?.props.style);
+        // The full target height, none of it in flow; sideways only the row gap is spent.
+        expect(frame.height).toBe(44);
+        expect((frame.height as number) + 2 * (frame.marginVertical as number)).toBe(26);
+        expect((frame.width as number) + 2 * (frame.marginHorizontal as number)).toBe(26);
+        expect(frame.width).toBe(28);
+        const surface = flattenStyle(screen.findByTestId('icon-btn-surface')?.props.style);
+        expect(surface.width).toBe(26);
+        expect(surface.height).toBe(26);
+    });
+
+    it('takes the free space it is given on each side, so a row of controls tiles its container with targets', async () => {
+        const screen = await renderScreen(
+            <IconButton
+                testID="icon-btn"
+                iconName="x"
+                accessibilityLabel="Close view"
+                size={26}
+                minimumInteractiveTargetSize={44}
+                interactiveTargetLayout="overhang"
+                interactiveTargetEdgesPx={{ leading: 1, trailing: 3 }}
+                onPress={() => {}}
+            />,
+        );
+        const frame = flattenStyle(screen.findByTestId('icon-btn')?.props.style);
+        // Half the neighbour gap before it, the container's padding after it; no layout taken.
+        expect(frame.width).toBe(30);
+        expect((frame.width as number) + (frame.marginLeft as number) + (frame.marginRight as number)).toBe(26);
+        // Padded so the drawn square stays where layout put it.
+        expect(frame.paddingLeft).toBe(1);
+        expect(frame.paddingRight).toBe(3);
     });
 
     it('does not grow the press frame when no minimum target is declared', async () => {
@@ -284,6 +334,10 @@ describe('IconButton', () => {
                 onPress={() => {}}
             />,
         );
+        const descriptionId = screen.findByTestId('icon-btn')?.props['aria-describedby'];
+        expect(typeof descriptionId).toBe('string');
+        expect(screen.findAll(node => typeof node.type === 'string' && node.props.nativeID === descriptionId
+            && node.props.children === 'Preview registration is unavailable.')).not.toHaveLength(0);
         await act(async () => {
             screen.findByTestId('icon-btn')?.props.onHoverIn?.();
         });

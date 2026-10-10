@@ -71,6 +71,7 @@ describe('SurfaceCard surface chrome', () => {
     });
 
     it('sits on a configuration page as a sheet rather than a floating shadowed card', async () => {
+        shared.themeOverride = { parts: { card: { finish: 'flat' } } };
         const { SurfaceCard } = await import('./SurfaceCard');
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         const { PAGE_LIST_METRICS } = await import('@/components/ui/lists/pageListMetrics');
@@ -84,7 +85,8 @@ describe('SurfaceCard surface chrome', () => {
             .map((node) => flattenStyle(node.props.style))
             .find((style) => style.minWidth === 0 && style.width === '100%');
 
-        expect(cardStyle?.backgroundColor).toBe(lightTheme.colors.surface.sectionTint);
+        const paints = screen.findAllByType('View' as never).map(node => flattenStyle(node.props.style));
+        expect(paints.some(style => typeof style.backgroundColor === 'string' && style.backgroundColor.includes(lightTheme.colors.surface.sectionTint))).toBe(true);
         expect(cardStyle?.borderColor).toBe(lightTheme.colors.border.default);
         expect(cardStyle?.borderRadius).toBe(PAGE_LIST_METRICS.sheetRadiusPx);
         expect(hasShadow(cardStyle ?? {}) && cardStyle?.shadowOpacity !== 0).toBe(false);

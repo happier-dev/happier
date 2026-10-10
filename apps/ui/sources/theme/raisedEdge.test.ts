@@ -22,6 +22,46 @@ function profile(mode: 'light' | 'dark', overrides: Record<string, string>): The
 }
 
 describe('raised edge colours', () => {
+    it('derives one translucent ink overlay independent of the surface underneath', () => {
+        const light = lightTheme.colors.edge.finishGradient;
+        const dark = darkTheme.colors.edge.finishGradient;
+        expect(light?.locations).toEqual([0.3, 1]);
+        expect(dark?.locations).toEqual([0, 0.7]);
+        expect(light?.colors.map(alpha)).toEqual([0, 0.024]);
+        expect(dark?.colors.map(alpha)).toEqual([0.045, 0.01]);
+        expect(lightTheme.colors.edge.primaryFinishGradient?.colors.map(alpha)).toEqual([0.14, 0]);
+        expect(darkTheme.colors.edge.primaryFinishGradient?.colors.map(alpha)).toEqual([0, 0.12]);
+        expect(lightTheme.colors.edge.secondaryFinishGradient?.colors.map(alpha)).toEqual([0, 0.025]);
+        expect(darkTheme.colors.edge.secondaryFinishGradient?.colors.map(alpha)).toEqual([0.04, 0]);
+        for (const theme of [lightTheme, darkTheme]) {
+            const fills = theme.colors.button.primary.gradient?.colors ?? [theme.colors.button.primary.background];
+            for (const fill of fills) {
+                for (const stop of theme.colors.edge.primaryFinishGradient!.colors) {
+                    const paint = compositeRaisedEdgeColor(fill, stop);
+                    expect(Color(paint).contrast(Color(theme.colors.button.primary.tint))).toBeGreaterThanOrEqual(4.5);
+                }
+            }
+        }
+        // A glass coat keeps the backdrop: the finish adds low-alpha ink, never an opaque fill.
+        const glass = 'rgba(240, 240, 240, 0.3)';
+        expect(alpha(compositeRaisedEdgeColor(glass, light!.colors[1]))).toBeCloseTo(0.317, 3);
+        expect(alpha(compositeRaisedEdgeColor(glass, dark!.colors[0]))).toBeCloseTo(0.045 + 0.3 * (1 - 0.045), 2);
+    });
+
+    it('keeps existing paint exact when finish strength is transparent and honors profile ink without clamping', () => {
+        const flat = resolveThemeProfile({ mode: 'light', profile: profile('light', { 'effect.surfaceFinish': 'transparent' }) });
+        expect(flat.colors.edge.finishGradient).toBeNull();
+        expect(flat.colors.edge.primaryFinishGradient).toBeNull();
+        expect(flat.colors.edge.secondaryFinishGradient).toBeNull();
+        const { finishGradient, primaryFinishGradient, secondaryFinishGradient, ...existingPaint } = flat.colors.edge;
+        const { finishGradient: ignoredFinish, primaryFinishGradient: ignoredPrimary, secondaryFinishGradient: ignoredSecondary, ...oldPaint } = lightTheme.colors.edge;
+        expect(existingPaint).toEqual(oldPaint);
+        const tinted = resolveThemeProfile({ mode: 'dark', profile: profile('dark', { 'text.primary': '#A9B1D6' }) });
+        expect(tinted.colors.edge.finishGradient?.colors[0]).toBe('rgba(169, 177, 214, 0.045)');
+        const strong = resolveThemeProfile({ mode: 'light', profile: profile('light', { 'effect.surfaceFinish': 'rgba(122, 162, 247, 0.5)' }) });
+        expect(strong.colors.edge.finishGradient?.colors[1]).toBe('rgba(122, 162, 247, 0.5)');
+    });
+
     it('composites the edge ink over the border as the eye sees it', () => {
         // white 6% over white 9% is one white at 1 - 0.94 × 0.91.
         expect(compositeRaisedEdgeColor('rgba(255,255,255,0.09)', 'rgba(255,255,255,0.06)')).toBe('rgba(255, 255, 255, 0.145)');

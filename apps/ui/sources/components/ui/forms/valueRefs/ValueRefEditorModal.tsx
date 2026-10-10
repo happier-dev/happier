@@ -12,6 +12,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -71,7 +72,7 @@ export type ValueRefEditorModalProps = CustomModalInjectedProps & Readonly<{
     initialKey: string;
     initialValueRef: McpValueRefV1;
     secrets: SavedSecret[];
-    onChangeSecrets: (next: SavedSecret[]) => void;
+    scope?: AccountSettingsScope | null;
     onSubmit: (result: Readonly<{ key: string; valueRef: McpValueRefV1 }>) => boolean;
     onDelete?: (() => void) | null;
 }>;
@@ -79,7 +80,7 @@ export type ValueRefEditorModalProps = CustomModalInjectedProps & Readonly<{
 export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const catalog = useSavedSecretCatalog();
+    const catalog = useSavedSecretCatalog(props.scope === undefined ? undefined : { scope: props.scope });
 
     const initialSource: ValueRefSource = props.initialValueRef.t === 'savedSecret' ? 'savedSecret' : 'literal';
 
@@ -120,6 +121,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
         Modal.show({
             component: SavedSecretPickerModal,
             props: {
+                ...(props.scope === undefined ? {} : { scope: props.scope }),
                 selectedId: secretId,
                 onSelectId: (id) => setSecretId(id),
             },
@@ -130,7 +132,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
             },
             closeOnBackdrop: true,
         });
-    }, [secretId]);
+    }, [props.scope, secretId]);
 
     const onSave = React.useCallback(() => {
         if (!keyValid) {

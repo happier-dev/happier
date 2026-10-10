@@ -9,10 +9,11 @@ export type KeyHintProps = Readonly<{
     label: string;
     enabled?: boolean;
     /**
-     * `attention`: a key on an attention (amber) pill — borderless, in its ink; the pill passes the well's tint.
+     * `attention`: a key on an attention pill — borderless, in its themed ink and well.
+     * `onFill`: a key on a filled action, using the surface ink.
      * Default `neutral`: the bordered keycap of menus and settings.
      */
-    tone?: 'neutral' | 'attention';
+    tone?: 'neutral' | 'attention' | 'onFill';
     testID?: string;
     style?: StyleProp<ViewStyle>;
 }>;
@@ -53,13 +54,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 1,
         borderRadius: 5,
         borderWidth: 0,
-        backgroundColor: theme.colors.state.warning.background,
+        backgroundColor: theme.colors.state.attention.background,
     },
     attentionLabel: {
-        ...Typography.default('semiBold'),
-        fontSize: 10.5,
+        ...resolveKeyHintTypography(),
         color: theme.colors.state.attention.foreground,
     },
+    onFillLabel: { color: theme.colors.surface.base },
+    onFillContainer: { backgroundColor: theme.colors.surface.pressedOverlay },
 }));
 
 export function KeyHint(props: KeyHintProps): React.ReactElement | null {
@@ -70,11 +72,13 @@ export function KeyHint(props: KeyHintProps): React.ReactElement | null {
         <View
             testID={props.testID}
             accessibilityLabel={props.label}
-            style={[styles.container, props.tone === 'attention' ? styles.attentionContainer : null, props.style]}
+            style={[styles.container, props.tone !== undefined && props.tone !== 'neutral' ? styles.attentionContainer : null,
+                props.tone === 'onFill' ? styles.onFillContainer : null, props.style]}
         >
             <Text
                 testID={props.testID ? `${props.testID}:label` : undefined}
-                style={[styles.label, props.tone === 'attention' ? styles.attentionLabel : null]}
+                style={[styles.label, props.tone === 'attention' ? styles.attentionLabel : null,
+                    props.tone === 'onFill' ? styles.onFillLabel : null]}
             >
                 {props.label}
             </Text>

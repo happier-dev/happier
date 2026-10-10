@@ -162,6 +162,14 @@ export function createEntityDragDropRuntime(options: Readonly<{
             notify();
         }
     };
+    const retireTargetFeedback = () => {
+        // A mounted pointer source owns its carry, not the place currently under it.
+        // Target mounting/replacement re-selects and revalidates that place; it cannot
+        // take the held pointer away. Semantic choices and dispatched feedback keep
+        // their existing retirement boundary.
+        if (carry?.input === 'pointer' && !carry.dispatched) refresh();
+        else retireFeedback();
+    };
     const matchingMeasurementTargets = (active: Carry) => active.input === 'pointer' ? [...targets.values()].filter(target =>
         targetCurrent(target) && accepts(target, active.item)
         && entityDragScopesEqualV1(active.item.scope, target.scope) && target.measureBounds) : [];
@@ -277,14 +285,15 @@ export function createEntityDragDropRuntime(options: Readonly<{
         },
         getSourceBounds: sourceId => sourceFeedback?.sourceId === sourceId ? sourceFeedback.bounds : null,
         registerTarget: target => {
-            if (snapshot.targetId === target.id) retireFeedback();
+            const wasSelected = snapshot.targetId === target.id;
             targets.set(target.id, target);
-            refresh();
+            if (wasSelected) retireTargetFeedback();
+            else refresh();
             notify();
             return () => {
                 if (targets.get(target.id) !== target) return;
                 targets.delete(target.id);
-                if (snapshot.targetId === target.id) retireFeedback();
+                if (snapshot.targetId === target.id) retireTargetFeedback();
                 notify();
             };
         },

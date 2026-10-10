@@ -3,6 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet } from 'react-native';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLinesFromFile';
 import { filterReviewCommentDraftsIncludedInPrompt } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
@@ -19,6 +21,24 @@ const initialDraft = buildReviewCommentDraftFromCodeLine({
 });
 
 describe('saved inline review drafts', () => {
+    it('keeps draft cards and composer actions translucent while preserving editable text and save', async () => {
+        const onSave = vi.fn();
+        const ink = 'rgba(0, 0, 0, 0.1)';
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" translucentColor={ink} resolveMaterialColor={({ translucentColor }) => translucentColor ?? 'transparent'}>
+            <ReviewCommentSavedDrafts drafts={[initialDraft]} onEditDraft={() => {}} />
+            <ReviewCommentInlineComposer value="Keep this comment" onChange={() => {}} onSave={onSave} onCancel={() => {}} />
+        </HappierMaterialRoleProvider>);
+        expect(StyleSheet.flatten(screen.findByTestId(`review-comment-draft:${initialDraft.id}`)!.props.style).backgroundColor).toBe(ink);
+        const composer = screen.findByType(ReviewCommentInlineComposer);
+        const container = composer.findAll(node => typeof node.type === 'string' && String(node.type) === 'View')[0]!;
+        expect(StyleSheet.flatten(container.props.style).backgroundColor).toBe(ink);
+        const input = composer.findAll(node => typeof node.type === 'string' && node.props.value === 'Keep this comment')[0]!;
+        expect(input.props.value).toBe('Keep this comment');
+        const actions = composer.findAll(node => typeof node.type === 'string' && typeof node.props.onPress === 'function');
+        for (const action of actions) expect(StyleSheet.flatten(action.props.style).backgroundColor).toBe(ink);
+        await act(async () => actions.at(-1)!.props.onPress());
+        expect(onSave).toHaveBeenCalledOnce();
+    });
     afterEach(() => vi.useRealTimers());
     it('keeps a saved comment while toggling whether it goes with the next message', async () => {
         let current: readonly ReviewCommentDraft[] = [];

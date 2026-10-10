@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveGlassCapability } from './resolveGlassCapability';
+import { glassPresetMaterials } from './glassMaterial';
 
 describe('resolveGlassCapability', () => {
+    it('lets Liquid Glass adapt named floating presets while honoring authored Strong blur', () => {
+        const input = { liquidGlassAvailable: true, blurAvailable: true, reduceTransparency: false, surfaceGroup: 'floating' as const };
+        for (const preset of ['auto', 'everywhere', 'clear'] as const) {
+            expect(resolveGlassCapability({ ...input, settings: { glassSurfaceMaterials: glassPresetMaterials(preset) } })).toBe('liquidGlass');
+            expect(resolveGlassCapability({ ...input, surfaceGroup: undefined, settings: { glassSurfaceMaterials: glassPresetMaterials(preset) } })).toBe('liquidGlass');
+        }
+        expect(resolveGlassCapability({ ...input, settings: { glassSurfaceMaterials: {
+            ...glassPresetMaterials('auto'), floating: { blur: 'strong', opacity: 0.13 },
+        } } })).toBe('blur');
+    });
     it('honors Solid from predecessor account settings instead of independently enabling web blur', () => {
         expect(resolveGlassCapability({
             liquidGlassAvailable: false,

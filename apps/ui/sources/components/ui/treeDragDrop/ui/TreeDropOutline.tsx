@@ -9,10 +9,12 @@ export type TreeDropOutlineProps = Readonly<{
     testID?: string;
     /** The corner of the surface the outline lies over (a composer), when it is not a row. */
     radius?: number;
+    /** `container`: the target will hold the carried item (a group). */
+    weight?: React.ComponentProps<typeof HappierDropTargetOutline>['weight'];
     style?: React.ComponentProps<typeof HappierDropTargetOutline>['style'];
 }>;
 
 export function TreeDropOutline(props: TreeDropOutlineProps): React.ReactElement {
     const { theme } = useUnistyles();
-    return <HappierDropTargetOutline testID={props.testID} colors={theme.colors.state.active} radius={props.radius} style={props.style} />;
+    return <HappierDropTargetOutline testID={props.testID} colors={theme.colors.state.active} radius={props.radius} weight={props.weight} style={props.style} />;
 }

@@ -156,4 +156,26 @@ describe('SegmentedChoiceItem', () => {
         expect(texts(screen)).not.toContain('Light');
         expect(screen.findByTestId('theme:dark')?.props.accessibilityLabel).toBe('Dark');
     });
+
+    it('keeps a menu row\'s segmented choice beside its label in a narrow menu, while a narrow page row stacks it', async () => {
+        const { SegmentedChoiceItem } = await import('./SegmentedChoiceItem');
+        const layout = (width: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width, height: 44 } } });
+        const placement = async (rowRole: 'menu' | 'item') => {
+            const screen = await renderScreen(<SegmentedChoiceItem title="Width" options={OPTIONS} value="hints" onChange={() => {}} rowRole={rowRole} />);
+            const { act } = await import('react-test-renderer');
+            const { StyleSheet } = await import('react-native');
+            // The row is a narrow 260 pt menu or phone row; the segmented control's natural width is 100 pt.
+            await act(async () => {
+                for (const node of screen.root.findAll(candidate => typeof candidate.props.onLayout === 'function')) {
+                    node.props.onLayout(layout(StyleSheet.flatten(node.props.style)?.flexShrink === 0 ? 100 : 260));
+                }
+            });
+            // The inline accessory keeps its natural width (flexShrink 0); a stacked one spans the row.
+            return screen.root.findAll(candidate => typeof candidate.props.onLayout === 'function'
+                && StyleSheet.flatten(candidate.props.style)?.flexShrink === 0).length > 0 ? 'inline' : 'stacked';
+        };
+        expect(await placement('menu')).toBe('inline');
+        expect(await placement('item')).toBe('stacked');
+    });
 });
+

@@ -4,6 +4,7 @@ import {
     resolveHappierIconButtonChrome,
     type HappierPressableProps,
     type HappierPressableRole,
+    useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
@@ -13,6 +14,7 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 
 import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 
@@ -128,15 +130,28 @@ export function IconButton(props: Readonly<{
      */
     minimumInteractiveTargetSize?: number;
     /**
-     * Layout gap this control's own row leaves between it and its nearest
+     * Horizontal gap this control's own row leaves between it and its nearest
      * neighbour, in px. Horizontal press-frame growth is capped at half of it so
-     * two adjacent targets meet exactly and never overlap — DESIGN.md forbids
-     * overlapping targets outright. Omitted means "an unknown neighbour could be
-     * flush against this control", so the frame grows only on the free vertical
-     * axis; the constrained axis then stays at `size`, which still clears WCAG
-     * 2.2 AA SC 2.5.8 (24×24 CSS px) at the default size.
+     * adjacent targets never overlap. Omitted means the whole declared target
+     * takes its own layout space. The full vertical target always stays in flow:
+     * an inline row gap does not describe a stacked neighbor's spacing.
      */
     interactiveTargetGapPx?: number;
+    /**
+     * `overhang`: the press frame takes no layout beyond the drawn square, for a control whose
+     * container must not grow (a floating capsule). It spends the declared row gap sideways and
+     * overhangs above and below, so the caller must own that free space and must not clip it. The
+     * target is then as wide as the row's pitch allows, which can be less than the declared floor.
+     * Its hover and press tint stay on the drawn square. Default `reserve`: layout allocates
+     * whatever the row gap cannot cover.
+     */
+    interactiveTargetLayout?: 'reserve' | 'overhang';
+    /**
+     * With `overhang`: the free space on each side this control may take (half of each neighbour
+     * gap, or the container's padding at its ends), so a row of controls tiles its container with
+     * targets and none overlap. Defaults to half of `interactiveTargetGapPx` on both sides.
+     */
+    interactiveTargetEdgesPx?: Readonly<{ leading: number; trailing: number }>;
     iconSize?: number;
     tone?: IconButtonTone;
     variant?: IconButtonVariant;
@@ -175,6 +190,7 @@ export function IconButton(props: Readonly<{
 }> & IconButtonGlyph): React.ReactElement {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
 
     const tone = props.tone ?? 'default';
     const tint = tone === 'danger'
@@ -196,19 +212,19 @@ export function IconButton(props: Readonly<{
     }>) => resolveHappierIconButtonChrome({
         ...state, size, variant, selectedBackground: props.selectedBackground,
         colors: fillColor === null ? {
-            background: theme.colors.surface.inset,
+            background: paintColor(theme.colors.surface.inset),
             border: theme.colors.border.default,
-            hover: theme.colors.surface.selected,
-            pressed: theme.colors.surface.pressed,
-            selected: theme.colors.surface.pressed,
+            hover: paintColor(theme.colors.surface.selected),
+            pressed: paintColor(theme.colors.surface.pressed),
+            selected: paintColor(theme.colors.surface.pressed),
             focus: theme.colors.border.focus,
         } : {
             // The fill is its own edge: the outline the chrome draws matches it.
-            background: fillColor,
+            background: paintColor(fillColor),
             border: fillColor,
-            hover: props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border,
-            pressed: props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border,
-            selected: theme.colors.state.neutral.border,
+            hover: paintColor(props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border),
+            pressed: paintColor(props.fill === 'danger' ? fillColor : theme.colors.state.neutral.border),
+            selected: paintColor(theme.colors.state.neutral.border),
             focus: theme.colors.border.focus,
         },
     });
@@ -220,6 +236,12 @@ export function IconButton(props: Readonly<{
      */
     const resolveChrome = (state: Parameters<typeof chrome>[0]) => {
         const resolved = chrome(state);
+        // An overhanging frame is only a target: its hover and press tint stay on the drawn square,
+        // so the control never looks bigger than it is.
+        if (overhang && fillColor === null) {
+            const { backgroundColor, ...frame } = resolved.frame;
+            return { frame, surface: { ...resolved.surface, backgroundColor } };
+        }
         if (fillColor === null) return resolved;
         const { backgroundColor, ...frame } = resolved.frame;
         return {
@@ -237,13 +259,13 @@ export function IconButton(props: Readonly<{
      * legacy `Touchable` export — `Pressable` and `View` never read it — and the
      * desktop app IS the web bundle, so a slop-declared target there is a target
      * that does not exist (on Android it is additionally clipped to the parent).
-     * The frame is therefore real box model: a larger width/height plus an equal
-     * negative margin, which grows the press box on every platform while the
-     * layout uses the existing gap first and allocates any remaining width. Same technique as
-     * `components/ui/lists/ItemRowActions.tsx`.
+     * The frame is therefore real box model: a larger width/height, which grows
+     * the press box on every platform. Horizontal negative margins use the
+     * declared row gap first, and layout allocates the remaining width and full
+     * height. Same horizontal technique as `components/ui/lists/ItemRowActions.tsx`.
      *
-     * Vertical is the free axis for an icon control in a row; horizontal is
-     * negative margins are bounded by the declared neighbour gap so targets meet but never overlap.
+     * The same control can be stacked on a narrow composer, whose vertical gap
+     * is independent of the inline row. Never spend the row gap vertically.
      */
     const targetDeficitPerSide = minimumInteractiveTargetSize === null
         ? 0
@@ -251,18 +273,25 @@ export function IconButton(props: Readonly<{
     const neighborGapPx = Number.isFinite(props.interactiveTargetGapPx)
         ? Math.max(0, props.interactiveTargetGapPx!)
         : 0;
-    const targetExpandY = targetDeficitPerSide;
     const targetExpandX = Math.min(targetDeficitPerSide, neighborGapPx / 2);
-    // The declared floor is a physical target. Only margins are gap-limited; layout allocates
-    // any remaining width instead of silently shrinking the target below its contract.
-    const frameWidth = minimumInteractiveTargetSize ?? size;
-    const frameHeight = size + (targetExpandY * 2);
+    const overhang = props.interactiveTargetLayout === 'overhang' && minimumInteractiveTargetSize !== null;
+    // An overhanging frame spends exactly the free space it was given on each side (never more than
+    // the floor asks), padded so the drawn square stays where layout put it.
+    const edgeX = (free: number | undefined) => Math.min(targetDeficitPerSide, Math.max(0, free ?? neighborGapPx / 2));
+    const leadingX = overhang ? edgeX(props.interactiveTargetEdgesPx?.leading) : targetExpandX;
+    const trailingX = overhang ? edgeX(props.interactiveTargetEdgesPx?.trailing) : targetExpandX;
+    // The declared floor is a physical target, never shrunk to fit the row gap, unless the caller
+    // declared that its container cannot grow: then the frame stops at what the row's pitch offers.
+    const frameWidth = overhang ? size + leadingX + trailingX : minimumInteractiveTargetSize ?? size;
+    const frameHeight = minimumInteractiveTargetSize ?? size;
     const pressFrame = {
         width: frameWidth,
         height: frameHeight,
         // `-0` is a distinct value to strict equality; keep an ungrown frame at a plain 0.
-        marginHorizontal: targetExpandX === 0 ? 0 : -targetExpandX,
-        marginVertical: targetExpandY === 0 ? 0 : -targetExpandY,
+        ...(overhang && leadingX !== trailingX
+            ? { marginLeft: -leadingX, marginRight: -trailingX, paddingLeft: leadingX, paddingRight: trailingX }
+            : { marginHorizontal: targetExpandX === 0 && leadingX === 0 ? 0 : -leadingX }),
+        marginVertical: overhang && targetDeficitPerSide > 0 ? -targetDeficitPerSide : 0,
         // The frame carries the fill and the interaction tint, so it stays a
         // capsule around the narrow axis rather than a rounded rectangle. With no
         // growth this is exactly the drawn square's `size / 2`.
@@ -277,6 +306,8 @@ export function IconButton(props: Readonly<{
     const richTooltipContent = props.disabled === true && props.disabledReason ? undefined : props.tooltipContent;
     const hasTooltip = richTooltipContent != null || (tooltipContent != null && tooltipContent.length > 0);
     const tooltipAnchorRef = React.useRef<View | null>(null);
+    const descriptionId = React.useId();
+    const disabledReason = props.disabled === true ? props.disabledReason : undefined;
 
     return (
         <HappierPressable
@@ -284,6 +315,7 @@ export function IconButton(props: Readonly<{
             accessibilityRole={props.accessibilityRole}
             accessibilityLabel={props.accessibilityLabel}
             accessibilityHint={props.disabled === true && props.disabledReason ? props.disabledReason : props.accessibilityHint}
+            describedById={disabledReason ? descriptionId : undefined}
             disabled={props.disabled}
             selected={props.selected}
             checked={props.checked}
@@ -328,6 +360,8 @@ export function IconButton(props: Readonly<{
                         resolveChrome({ ...state, pressed: false }).surface,
                     ]}
                 >
+                    {disabledReason ? <Text nativeID={descriptionId} style={visuallyHiddenStyle}
+                        accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{disabledReason}</Text> : null}
                     <View
                         testID={props.testID ? `${props.testID}-icon` : undefined}
                         accessibilityElementsHidden

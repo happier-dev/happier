@@ -3,7 +3,9 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { CONTENT_WIDTH_PX_BY_MODE } from '@/components/ui/layout/contentWidthMode';
+import { CONTENT_WIDTH_PX_BY_MODE, PAGE_COLUMN_MAX_WIDTH_PX } from '@/components/ui/layout/contentWidthMode';
+import { ListPresentationProvider, PageColumnProvider } from '@/components/ui/lists/listPresentation';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -122,6 +124,40 @@ describe('surfaces follow the content-width setting without a reload', () => {
     beforeEach(() => {
         contentWidthSetting.state.mode = 'compact';
         mountCounts.constrainedViews = 0;
+    });
+
+    it('lets a wide page opt out while sibling pages and floating surfaces retain the preference', async () => {
+        const renderPage = (ignorePreference: boolean) => (
+            <ListPresentationProvider value="page">
+                <PageColumnProvider value="wide" preferencePolicy={ignorePreference ? 'ignore' : 'respect'}>
+                    <ConstrainedScreenContent><></></ConstrainedScreenContent>
+                    {/* A page list may declare its column without replacing the page's preference policy. */}
+                    <PageColumnProvider value="wide">
+                        <ConstrainedScreenContent><></></ConstrainedScreenContent>
+                    </PageColumnProvider>
+                    <ListPresentationProvider value="grouped">
+                        <ConstrainedScreenContent><></></ConstrainedScreenContent>
+                    </ListPresentationProvider>
+                </PageColumnProvider>
+            </ListPresentationProvider>
+        );
+        const screen = await renderScreen(renderPage(true));
+        expect(readConstrainedMaxWidths(screen)).toEqual([
+            PAGE_COLUMN_MAX_WIDTH_PX.wide, PAGE_COLUMN_MAX_WIDTH_PX.wide, CONTENT_WIDTH_PX_BY_MODE.compact,
+        ]);
+        const mountsAfterFirstPaint = mountCounts.constrainedViews;
+
+        await setContentWidthMode('full');
+        expect(readConstrainedMaxWidths(screen)).toEqual([
+            PAGE_COLUMN_MAX_WIDTH_PX.wide, PAGE_COLUMN_MAX_WIDTH_PX.wide, Number.POSITIVE_INFINITY,
+        ]);
+
+        await setContentWidthMode('compact');
+        await screen.update(renderPage(false));
+        expect(readConstrainedMaxWidths(screen)).toEqual([
+            CONTENT_WIDTH_PX_BY_MODE.compact, CONTENT_WIDTH_PX_BY_MODE.compact, CONTENT_WIDTH_PX_BY_MODE.compact,
+        ]);
+        expect(mountCounts.constrainedViews).toBe(mountsAfterFirstPaint);
     });
 
     it('re-applies the setting to the shared settings action footer in place', async () => {

@@ -5,10 +5,11 @@ import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { isDesktopOverlayWindowContext } from '@/desktop/window/isDesktopOverlayWindowContext';
 import { applyDesktopGlassMaterial, subscribeDesktopGlassState, type DesktopGlassState } from '@/utils/platform/desktopGlassMaterial';
+import { useWebRootCanvasPresentation } from '@/theme/useWebRootCanvasPresentation';
 
 import { GLASS_SURFACE_GROUPS, readGlassMaterials } from './glassMaterial';
 import { useGlassMaterialSettings } from './useGlassMaterialSettings';
-import { applyGlassDocumentPresentation } from './glassDocumentPresentation';
+import { applyGlassDocumentPresentation, shouldRevealNativeGlassCanvas } from './glassDocumentPresentation';
 import { GlassRuntimeEnvironmentProvider } from './glassRuntimeEnvironment';
 export { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 
@@ -24,6 +25,7 @@ export function GlassMaterialRuntime(props: Readonly<{ children: React.ReactNode
         reduceTransparency: reduceTransparency || nativeState?.reduceTransparency === true,
         windowActive: nativeState?.windowActive ?? true,
     }), [desktopWindow, nativeState?.materialLive, nativeState?.reduceTransparency, nativeState?.windowActive, reduceTransparency]);
+    useWebRootCanvasPresentation(shouldRevealNativeGlassCanvas(environment));
 
     React.useEffect(() => {
         if (!desktopWindow) return;

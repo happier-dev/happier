@@ -21,7 +21,8 @@
  * is covered only by device QA.
  */
 import * as React from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
@@ -71,6 +72,38 @@ function defaultProps(overrides: Partial<CommandMenuProps> = {}): CommandMenuPro
 }
 
 describe('CommandMenu (native tap commit)', () => {
+    it('renders an empty group invitation with the list while keeping keyboard selection on an option', async () => {
+        const onSelect = vi.fn();
+        const screen = await renderScreen(<CommandMenu {...defaultProps({ onSelect })}
+            leadingEmptyGroup={{ title: 'Favorites', hint: 'Star a prompt to keep it here' }} />);
+        const list = screen.findByTestId('cmd-menu:list');
+        expect(list?.findAll((node) => node.props.children === 'Star a prompt to keep it here').length).toBeGreaterThan(0);
+        screen.pressByTestId('cmd-menu:list:command-menu-root:option:heading1');
+        expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'heading1' }), 0);
+    });
+
+    it.each([false, true])('highlights the hovered row without activating it (custom=%s)', async (custom) => {
+        const onSelect = vi.fn();
+        function Menu() {
+            const [highlighted, setHighlighted] = React.useState('heading1');
+            const items: readonly CommandMenuItem[] = ITEMS.map((item) => ({
+                ...item,
+                onHighlight: () => setHighlighted(item.id),
+                ...(custom ? { renderRow: () => <Text>{item.label}</Text> } : {}),
+            }));
+            return <CommandMenu {...defaultProps({ items, onSelect })}
+                preview={<Text testID="highlighted-preview">{highlighted}</Text>} />;
+        }
+        const screen = await renderScreen(<Menu />);
+        await act(async () => {
+            screen.findByTestId('cmd-menu:list:command-menu-root:option:bullet')?.props.onHoverIn?.();
+        });
+        expect(screen.findByTestId('highlighted-preview')?.props.children).toBe('bullet');
+        expect(onSelect).not.toHaveBeenCalled();
+        screen.pressByTestId('cmd-menu:list:command-menu-root:option:code');
+        expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'code' }), 3);
+    });
+
     it('commits the tapped row rather than the highlighted one', async () => {
         const onSelect = vi.fn();
         const screen = await renderScreen(

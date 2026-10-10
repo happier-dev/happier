@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 export const SplitActionButtons = React.memo(function SplitActionButtons(props: Readonly<{
     secondaryLabel?: string;
@@ -17,6 +18,7 @@ export const SplitActionButtons = React.memo(function SplitActionButtons(props: 
     primaryTestID?: string;
 }>) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
 
     return (
         <View style={styles.actionsRow}>
@@ -28,7 +30,7 @@ export const SplitActionButtons = React.memo(function SplitActionButtons(props: 
                         accessibilityRole="button"
                         accessibilityLabel={props.secondaryLabel}
                         style={({ pressed }) => ({
-                            backgroundColor: theme.colors.surface.base,
+                            backgroundColor: paintColor(theme.colors.surface.base),
                             borderRadius: 10,
                             paddingVertical: 12,
                             alignItems: 'center',
@@ -55,14 +57,14 @@ export const SplitActionButtons = React.memo(function SplitActionButtons(props: 
                     accessibilityRole="button"
                     accessibilityLabel={props.primaryLabel}
                     style={({ pressed }) => ({
-                        backgroundColor: theme.colors.button.primary.background,
+                        backgroundColor: paintColor(theme.colors.button.primary.background),
                         borderRadius: 10,
                         paddingVertical: 12,
                         alignItems: 'center',
                         opacity: props.primaryDisabled ? 0.5 : (pressed ? motionTokens.press.opacitySubtle : 1),
                     })}
                 >
-                    <Text style={{ color: theme.colors.button.primary.tint, ...Typography.default('semiBold') }}>
+                    <Text style={{ color: paintColor(theme.colors.button.primary.tint, theme.colors.text.primary), ...Typography.default('semiBold') }}>
                         {props.primaryLabel}
                     </Text>
                 </Pressable>

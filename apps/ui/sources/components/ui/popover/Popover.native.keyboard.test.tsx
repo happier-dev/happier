@@ -83,7 +83,7 @@ describe('Popover (native keyboard)', () => {
         vi.useRealTimers();
     });
 
-    it('recomputes position when the keyboard shows/hides so popovers remain visible', async () => {
+    it('recomputes bottom placement when the keyboard moves the anchor and flipping is disabled', async () => {
         vi.useFakeTimers();
 
         // Patch the Keyboard listener implementation directly so the Popover module
@@ -138,6 +138,8 @@ describe('Popover (native keyboard)', () => {
                         anchorRef={anchorRef}
                         portal={{ native: true }}
                         placement="bottom"
+                        // Isolate anchor remeasurement from the default side-flipping policy.
+                        flip={false}
                         gap={0}
                         maxHeightCap={320}
                         onRequestClose={() => {}}

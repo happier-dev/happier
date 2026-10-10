@@ -7,7 +7,7 @@ const GlassMaterialSettingsContext = React.createContext<GlassMaterialSettings |
 /** A static preview supplies its draft to the existing paints without mutating Account settings. */
 export const GlassMaterialSettingsProvider = GlassMaterialSettingsContext.Provider;
 
-export function useGlassMaterialSettings() {
+export function useGlassMaterialSettings(): GlassMaterialSettings {
     const draft = React.useContext(GlassMaterialSettingsContext);
     const select = React.useCallback((settings: Settings): GlassMaterialSettings => draft ?? {
         glassBlurEnabled: settings.glassBlurEnabled,

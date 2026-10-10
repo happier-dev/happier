@@ -23,6 +23,27 @@ vi.mock('expo-linear-gradient', () => ({
 }));
 
 describe('Android material fallback', () => {
+    it('shares translucent field ink with the native containing plane but keeps disabled and accessibility-solid fields unchanged', async () => {
+        const { GlassSurface } = await import('./GlassSurface');
+        const { CompactSearchField } = await import('@/components/ui/forms/CompactSearchField');
+        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const { lightTheme } = await import('@/theme');
+        for (const solid of ['glass', 'disabled', 'reduceTransparency'] as const) {
+            const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ reduceTransparency: solid === 'reduceTransparency' }}>
+                <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+                    <GlassSurface surfaceGroup="floating" enabled={solid !== 'disabled'}>
+                        <CompactSearchField testID="native-field" value="keep draft" onChangeText={() => {}} placeholder="Search" />
+                    </GlassSurface>
+                </GlassMaterialSettingsProvider>
+            </GlassRuntimeEnvironmentProvider>);
+            const fill = screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === lightTheme.colors.edge.fill);
+            expect(fill.length > 0).toBe(solid !== 'glass');
+            expect(screen.findByTestId('native-field')?.props.value).toBe('keep draft');
+            standardCleanup();
+        }
+    });
     it('keeps menu edges at the same alpha as its Android tint, including synced transparency and OS recovery', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { glassPresetMaterials } = await import('./glassMaterial');
@@ -43,6 +64,12 @@ describe('Android material fallback', () => {
                     const effective = reduceTransparency ? 1 : opacity;
                     expect(Color(gradients[0]!.props.colors[0]).alpha()).toBeCloseTo(effective, 2);
                     expect(Color(gradients[1]!.props.colors[1]).alpha()).toBeCloseTo(effective, 2);
+                    // Finish stays one low-alpha ink coat through tint and the
+                    // OS solid fallback; edge fades are not finish layers.
+                    const finishLayer = screen.findAllByType('Svg').filter(node => node.props.accessibilityElementsHidden === true);
+                    expect(finishLayer).toHaveLength(1);
+                    expect(finishLayer[0]!.findAllByType('Rect')).toHaveLength(1);
+                    expect(finishLayer[0]!.findAllByType('Stop').map(node => Color(node.props.stopColor).alpha())).toEqual([0, 0.024]);
                     standardCleanup();
                 }
             }
@@ -53,6 +80,6 @@ describe('Android material fallback', () => {
         const { GlassSurface } = await import('./GlassSurface');
         const screen = await renderScreen(<GlassSurface testID="android-material" solidColor="#ffffff"><></></GlassSurface>);
         expect(flattenTestStyle(screen.findByTestId('android-material')?.props.style).backgroundColor)
-            .toBe('rgba(255, 255, 255, 0.9)');
+            .toBe('rgba(255, 255, 255, 0.02)');
     });
 });

@@ -303,26 +303,59 @@ describe('default tinted status text contrast', () => {
     }
 });
 
+describe('default secondary text contrast on raised surfaces', () => {
+    const themes = [
+        ['light', lightTheme],
+        ['dark', darkTheme],
+        ['sunsetDark', resolveThemeProfile({
+            mode: 'dark',
+            profile: BUILT_IN_THEME_PROFILES.find((definition) => definition.presetId === 'sunsetDark')!.profile,
+        })],
+    ] as const;
+
+    for (const [name, theme] of themes) {
+        it(`keeps small subtitles readable on cards and dialogs in ${name}`, () => {
+            // Item subtitles paint secondary ink on ItemGroup's card fill, including grant rows
+            // inside a token dialog. Dialog headers and descriptions also use this ink on the
+            // brighter floating fill. Testing the real derived fills catches palette changes
+            // that pass against surface.base while failing in the mounted component.
+            const failures = ['edge.cardFill', 'edge.floatingFill'].flatMap((background) => {
+                const ratio = contrastRatio(
+                    theme.colors.text.secondary,
+                    readTokenPath(theme.colors, background),
+                    theme.colors.background.canvas,
+                );
+                return ratio >= 4.5 ? [] : [`text.secondary on ${background} = ${ratio.toFixed(2)}:1 (needs 4.5:1)`];
+            });
+            expect(failures).toEqual([]);
+        });
+    }
+});
+
+describe('default switch on-state contrast', () => {
+    for (const [name, theme] of [['light', lightTheme], ['dark', darkTheme]] as const) {
+        it(`keeps the thumb distinct from the active track in ${name}`, () => {
+            const ratio = contrastRatio(theme.colors.switch.thumb.active, theme.colors.switch.track.active, theme.colors.surface.base);
+            expect(ratio).toBeGreaterThanOrEqual(3);
+        });
+    }
+});
+
 /**
  * The "needs you" ink (Next: the header "2 need you" pill, the phone count capsule, the Next capsule's
  * dot and Go fill, their keycaps). The system warning orange it replaced measured ~2:1 on its own tint
- * in light mode. The pill paints the ink on a 12% tint of itself (18% under the pointer), so each
+ * in light mode. The pill paints the ink on its themed attention background, so each
  * pairing is measured against that composite, over every surface the pill stands on, in the base
  * themes and every built-in profile.
  */
 const ATTENTION_SURFACES = ['surface.base', 'background.canvas'] as const;
-
-function withAlpha(color: string, alpha: number): string {
-    const { red, green, blue } = parseColor(color);
-    return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-}
 
 function attentionInkFailures(colors: unknown, label: string): string[] {
     const canvas = readTokenPath(colors, 'background.canvas');
     const ink = readTokenPath(colors, 'state.attention.foreground');
     const failures: string[] = [];
     for (const surface of ATTENTION_SURFACES) {
-        const backdrop = compositeOver(parseColor(withAlpha(ink, 0.12)), parseColor(readTokenPath(colors, surface)));
+        const backdrop = compositeOver(parseColor(readTokenPath(colors, 'state.attention.background')), parseColor(readTokenPath(colors, surface)));
         const pill = `rgba(${backdrop.red}, ${backdrop.green}, ${backdrop.blue}, 1)`;
         const ratio = contrastRatio(ink, pill, canvas);
         if (ratio < 4.5) failures.push(`${label}: attention ink on its tint over ${surface} = ${ratio.toFixed(2)}:1 (needs 4.5:1)`);
@@ -346,6 +379,31 @@ describe('needs-you attention ink contrast', () => {
             (['light', 'dark'] as const).flatMap((mode) => attentionInkFailures(
                 resolveThemeProfile({ mode, profile: definition.profile }).colors, `${definition.presetId}/${mode}`))
         ));
+        expect(failures).toEqual([]);
+    });
+});
+
+/**
+ * An off switch is its track plus the thumb (DESIGN-8/9 N39): the track is what says "this is a
+ * switch, and it is off". The light theme's off track stands apart from the cards a switch sits on;
+ * the dark theme must not lose it to the card (it measured 1.05-1.10:1, a knob with no track). The
+ * light theme is the reference rather than a WCAG floor, because neither theme's off track is meant
+ * to carry state on its own (the thumb's side does).
+ */
+const SWITCH_SURFACES = ['surface.base', 'surface.elevated'] as const;
+
+describe('switch off track', () => {
+    it('stands apart from its surfaces in dark at least as much as in light', () => {
+        const ratio = (colors: unknown, surface: string) => contrastRatio(
+            readTokenPath(colors, 'switch.track.inactive'),
+            readTokenPath(colors, surface),
+            readTokenPath(colors, 'background.canvas'),
+        );
+        const failures = SWITCH_SURFACES.flatMap((surface) => {
+            const light = ratio(lightTheme.colors, surface);
+            const dark = ratio(darkTheme.colors, surface);
+            return dark >= light ? [] : [`dark off track on ${surface} = ${dark.toFixed(2)}:1, light = ${light.toFixed(2)}:1`];
+        });
         expect(failures).toEqual([]);
     });
 });

@@ -10,6 +10,7 @@ import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { isTouchPrimaryPointer, resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -18,6 +19,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
+import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 
 const GLYPHS = {
     search: 'magnifying-glass',
@@ -81,7 +83,7 @@ function buildFindBarLabels(field: string): HappierFindBarLabels {
     };
 }
 
-export type FindBarProps = Omit<HappierFindBarProps, 'labels' | 'colors' | 'host' | 'reducedMotion' | 'minimumTargetSize' | 'elevation' | 'keyboardHandlers'> & Readonly<{
+export type FindBarProps = Omit<HappierFindBarProps, 'labels' | 'colors' | 'host' | 'reducedMotion' | 'minimumTargetSize' | 'elevation' | 'keyboardHandlers' | 'gradient' | 'renderMaterialSurface'> & Readonly<{
     /** What the field searches, already translated: `t('find.surface.chat')`, `t('find.surface.terminal', { name })`. */
     surfaceLabel: string;
 }>;
@@ -126,6 +128,8 @@ export function FindBar({ surfaceLabel, ...props }: FindBarProps): React.ReactEl
             labels={labels}
             colors={colors}
             elevation={elevation}
+            gradient={resolveThemeSurfaceFinish(theme, 'floating')}
+            renderMaterialSurface={renderThemeMaterialSurface}
             host={CORE_FIND_BAR_HOST}
             reducedMotion={reducedMotion}
             minimumTargetSize={minimumTargetSize}

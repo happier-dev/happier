@@ -12,6 +12,8 @@ export type StoryDeckFooterActionsProps = Readonly<{
     onSkip?: () => void;
     primaryLabel?: string;
     secondaryLabel?: string;
+    /** What the secondary action starts, said above the last slide's actions. */
+    secondaryNote?: React.ReactNode;
     skipLabel?: string;
     primaryDisabled?: boolean;
     testID?: string;
@@ -31,6 +33,7 @@ export function StoryDeckFooterActions(props: StoryDeckFooterActionsProps) {
 
     return (
         <View style={styles.container} testID={props.testID}>
+            {props.isLastSlide && props.onSecondary ? props.secondaryNote : null}
             <RoundButton
                 testID={`${props.testID ?? 'story-deck'}-primary`}
                 title={primaryLabel}

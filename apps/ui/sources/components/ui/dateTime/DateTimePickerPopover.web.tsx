@@ -11,6 +11,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { DateTimePickerPopoverProps } from './DateTimePickerPopover';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 const DAY_SIZE = 44;
 export function isDateTimePickerPopoverAvailable(): boolean { return true; }
@@ -51,13 +52,14 @@ function withTimePart(value: Date, hour: number, minute: number): Date {
 
 function PickerHeader(props: Readonly<{ title: string; onPrevious?: () => void; onNext?: () => void }>) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     return <View style={styles.header}>
         <Text style={[styles.headerTitle, { color: theme.colors.text.primary }]}>{props.title}</Text>
         {props.onPrevious && props.onNext ? <View style={styles.headerActions}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`${t('common.previous')}: ${props.title}`} hitSlop={8} onPress={props.onPrevious} style={({ pressed }) => [styles.iconButton, { backgroundColor: pressed ? theme.colors.surface.pressed : 'transparent' }]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`${t('common.previous')}: ${props.title}`} hitSlop={8} onPress={props.onPrevious} style={({ pressed }) => [styles.iconButton, { backgroundColor: pressed ? paintColor(theme.colors.surface.pressed) : 'transparent' }]}>
                 <Icon name="caret-left" size={16} color={theme.colors.text.secondary} />
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel={`${t('common.next')}: ${props.title}`} hitSlop={8} onPress={props.onNext} style={({ pressed }) => [styles.iconButton, { backgroundColor: pressed ? theme.colors.surface.pressed : 'transparent' }]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`${t('common.next')}: ${props.title}`} hitSlop={8} onPress={props.onNext} style={({ pressed }) => [styles.iconButton, { backgroundColor: pressed ? paintColor(theme.colors.surface.pressed) : 'transparent' }]}>
                 <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
             </Pressable>
         </View> : null}
@@ -66,6 +68,7 @@ function PickerHeader(props: Readonly<{ title: string; onPrevious?: () => void; 
 
 function CalendarPicker(props: DateTimePickerPopoverProps) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const [visibleMonth, setVisibleMonth] = React.useState(() => new Date(props.value.getFullYear(), props.value.getMonth(), 1, 12));
     const days = React.useMemo(() => monthGrid(visibleMonth), [visibleMonth]);
     const weekdayLabels = React.useMemo(() => Array.from({ length: 7 }, (_, index) =>
@@ -103,14 +106,14 @@ function CalendarPicker(props: DateTimePickerPopoverProps) {
                     }}
                     style={({ pressed }) => [
                         styles.day,
-                        selected ? { backgroundColor: theme.colors.button.primary.background } : null,
+                        selected ? { backgroundColor: paintColor(theme.colors.button.primary.background) } : null,
                         ordinal === todayOrdinal && !selected ? { borderWidth: 1, borderColor: theme.colors.border.default } : null,
-                        pressed && !selected ? { backgroundColor: theme.colors.surface.pressed } : null,
+                        pressed && !selected ? { backgroundColor: paintColor(theme.colors.surface.pressed) } : null,
                     ]}
                 >
                     <Text style={[
                         styles.dayText,
-                        { color: selected ? theme.colors.button.primary.tint : theme.colors.text.primary },
+                        { color: selected ? paintColor(theme.colors.button.primary.tint, theme.colors.text.primary) : theme.colors.text.primary },
                         outsideMonth ? { opacity: 0.38 } : null,
                         disabled ? { opacity: 0.22 } : null,
                     ]}>{day.getDate()}</Text>
@@ -122,6 +125,7 @@ function CalendarPicker(props: DateTimePickerPopoverProps) {
 
 function TimeColumn(props: Readonly<{ label: string; values: readonly number[]; selected: number; accentColor: string; onSelect: (value: number) => void }>) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const scrollRef = React.useRef<React.ElementRef<typeof ScrollView> | null>(null);
     const [viewportHeight, setViewportHeight] = React.useState(0);
     React.useEffect(() => {
@@ -144,7 +148,7 @@ function TimeColumn(props: Readonly<{ label: string; values: readonly number[]; 
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
                     onPress={() => props.onSelect(value)}
-                    style={({ pressed }) => [styles.timeOption, selected ? { backgroundColor: theme.colors.surface.elevated } : null, pressed ? { opacity: motionTokens.press.opacity } : null]}
+                    style={({ pressed }) => [styles.timeOption, selected ? { backgroundColor: paintColor(theme.colors.surface.elevated) } : null, pressed ? { opacity: motionTokens.press.opacity } : null]}
                 >
                     <Text style={[styles.timeOptionText, { color: selected ? theme.colors.text.primary : theme.colors.text.secondary }]}>{String(value).padStart(2, '0')}</Text>
                     {selected ? <View style={[styles.selectionDot, { backgroundColor: props.accentColor }]} /> : null}

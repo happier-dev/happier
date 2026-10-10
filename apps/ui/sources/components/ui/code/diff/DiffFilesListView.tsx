@@ -1,7 +1,8 @@
 import * as React from 'react';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { Pressable, View, Platform, useWindowDimensions } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 
@@ -48,6 +49,9 @@ export type DiffFileFindState = Pick<DiffViewerBaseProps, 'findActive' | 'findRa
 const DIFF_FILE_ROW_ESTIMATED_ITEM_SIZE = 72;
 
 type DiffFilesListViewRenderContext = Readonly<{
+    fileRowColor: string;
+    rowHoverColor: string;
+    controlColor: string;
     canRenderInlineDiffs: boolean;
     clearMeasurementCache: () => void;
     inlineDiffContainerVariant?: 'default' | 'none';
@@ -154,6 +158,11 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         getFindStateForFile,
     } = props;
     const virtualizedListLayout = props.virtualizedListLayout ?? 'bounded';
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
+    const fileRowColor = paintColor(theme.colors.surface.inset);
+    const rowHoverColor = paintColor(theme.colors.surface.elevated ?? theme.colors.surface.inset);
+    const controlColor = paintColor(theme.colors.surface.elevated ?? theme.colors.surface.base);
     const shouldUseVirtualizedList = virtualizeFileList === true
         && !(virtualizedListLayout === 'intrinsic' && Platform.OS !== 'web');
     const [focusedFileKey, setFocusedFileKey] = React.useState<string | null>(null);
@@ -246,6 +255,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
 
     const renderContextRef = React.useRef<DiffFilesListViewRenderContext | null>(null);
     renderContextRef.current = {
+        fileRowColor, rowHoverColor, controlColor,
         canRenderInlineDiffs,
         clearMeasurementCache,
         inlineDiffContainerVariant,
@@ -265,6 +275,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
     };
 
     const listExtraData = React.useMemo(() => ({
+        fileRowColor, rowHoverColor, controlColor,
         getFindStateForFile,
         canRenderInlineDiffs,
         inlineDiffContainerVariant,
@@ -281,6 +292,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
         virtualizationLineThreshold,
         wrapLines,
     }), [
+        fileRowColor, rowHoverColor, controlColor,
         getFindStateForFile,
         canRenderInlineDiffs,
         inlineDiffContainerVariant,
@@ -394,6 +406,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                     <View
                         style={[
                             styles.fileRowContainer,
+                            { backgroundColor: ctx.fileRowColor },
                             focused ? styles.fileRowFocused : null,
                         ]}
                     >
@@ -407,7 +420,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                                 const hovered = (state as { hovered?: boolean }).hovered === true;
                                 return [
                                     styles.fileRowInteractive,
-                                    hovered ? styles.fileRowHovered : null,
+                                    hovered ? [styles.fileRowHovered, { backgroundColor: ctx.rowHoverColor }] : null,
                                     pressed ? styles.fileRowPressed : null,
                                 ];
                             }}
@@ -421,6 +434,7 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                                     <View
                                         style={[
                                             styles.kindBadge,
+                                            { backgroundColor: ctx.controlColor },
                                             file.kind === 'new'
                                                 ? styles.kindBadgeNew
                                                 : file.kind === 'deleted'
@@ -477,7 +491,8 @@ export const DiffFilesListView = React.forwardRef<DiffFilesListViewHandle, DiffF
                                     const hovered = (state as { hovered?: boolean }).hovered === true;
                                     return [
                                         styles.openFileButton,
-                                        hovered ? styles.openFileButtonHovered : null,
+                                        { backgroundColor: ctx.controlColor },
+                                        hovered ? [styles.openFileButtonHovered, { backgroundColor: ctx.rowHoverColor }] : null,
                                         pressed ? styles.openFileButtonPressed : null,
                                     ];
                                 }}

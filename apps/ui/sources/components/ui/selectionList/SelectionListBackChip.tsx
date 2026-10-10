@@ -6,6 +6,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 const stylesheet = StyleSheet.create((theme) => ({
     chip: {
@@ -41,6 +42,7 @@ export type SelectionListBackChipProps = Readonly<{
  */
 export function SelectionListBackChip(props: SelectionListBackChipProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     return (
         <Pressable
@@ -49,7 +51,7 @@ export function SelectionListBackChip(props: SelectionListBackChipProps): React.
             accessibilityLabel={t('selectionList.backTo', { label: props.label })}
             onPress={props.onPress}
             hitSlop={{ top: 6, right: 6, bottom: 6, left: 6 }}
-            style={({ pressed }) => [styles.chip, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.chip, { backgroundColor: paintColor(theme.colors.surface.pressedOverlay) }, pressed && styles.pressed]}
         >
             <Icon name="caret-left" size={14} color={theme.colors.text.secondary} />
             <Text style={styles.label}>{props.label}</Text>

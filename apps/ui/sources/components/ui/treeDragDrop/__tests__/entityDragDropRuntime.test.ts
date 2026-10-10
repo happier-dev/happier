@@ -23,6 +23,30 @@ function fixture() {
 }
 
 describe('mounted entity drag owner', () => {
+    it('keeps the pointer source held through target retirement and re-admits the current replacement', async () => {
+        const f = fixture();
+        const carry = f.runtime.begin('source')!;
+        carry.move({ x: 50, y: 50 });
+        f.retireTarget();
+        expect(f.runtime.getSnapshot()).toMatchObject({ phase: 'carrying', sourceId: 'source', targetId: null });
+        expect(f.runtime.getPointer()).toEqual({ x: 50, y: 50 });
+        const replacementEffects: unknown[] = [];
+        const replacement: EntityDropTarget = { ...f.target, execute: async effect => {
+            replacementEffects.push(effect.input);
+            return { status: 'applied' };
+        } };
+        const retireReplacement = f.runtime.registerTarget(replacement);
+        expect(f.runtime.getSnapshot()).toMatchObject({ phase: 'carrying', targetId: 'target', admission: allowed });
+        f.runtime.registerTarget({ ...replacement });
+        expect(f.runtime.getSnapshot()).toMatchObject({ phase: 'carrying', targetId: 'target', admission: allowed });
+        // The stale registration's disposer cannot retire its replacement.
+        f.retireTarget();
+        retireReplacement();
+        expect(await carry.release()).toEqual({ status: 'applied' });
+        expect(replacementEffects).toEqual([allowed.effect.input]);
+        expect(f.effects).toEqual([]);
+    });
+
     it('refreshes only current matching pointer targets at scroll boundaries and ignores a retired measurement completion', async () => {
         const f = fixture();
         let finishMeasurement = () => {};

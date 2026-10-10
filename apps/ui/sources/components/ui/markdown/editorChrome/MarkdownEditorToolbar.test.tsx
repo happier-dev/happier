@@ -3,6 +3,11 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet } from 'react-native';
+import { lightTheme } from '@/theme';
+import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
+import { LinearGradient } from 'expo-linear-gradient';
 import type {
     MarkdownEditorCommand,
     MarkdownEditorController,
@@ -79,6 +84,24 @@ function createFakeController(initial: MarkdownSelectionState = BASE_SELECTION) 
 }
 
 describe('MarkdownEditorToolbar', () => {
+    it('does not put an opaque scroll fade over its glass plane', async () => {
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={({ translucentColor }) => translucentColor ?? 'transparent'}>
+            <ScrollEdgeFades color={lightTheme.colors.surface.inset} edges={{ right: true }} />
+        </HappierMaterialRoleProvider>);
+        expect(screen.findByType(LinearGradient).props.colors[1]).toBe('transparent');
+    });
+    it('keeps its panel and active formatting chips translucent without changing their commands', async () => {
+        const fake = createFakeController({ ...BASE_SELECTION, marks: { ...BASE_SELECTION.marks, bold: true } });
+        const ink = 'rgba(0, 0, 0, 0.1)';
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" translucentColor={ink} resolveMaterialColor={({ translucentColor }) => translucentColor ?? 'transparent'}>
+            <MarkdownEditorToolbar controller={fake.controller} testID={TEST_ID} />
+        </HappierMaterialRoleProvider>);
+        expect(StyleSheet.flatten(screen.findByTestId(TEST_ID)!.props.style).backgroundColor).toBe('transparent');
+        const bold = screen.findByTestId(`${TEST_ID}:bold`)!;
+        expect(StyleSheet.flatten(bold.props.style({ pressed: false })).backgroundColor).toBe(ink);
+        screen.pressByTestId(`${TEST_ID}:bold`);
+        expect(fake.commands).toEqual([{ kind: 'toggleBold' }]);
+    });
     it('renders the Phase-1 formatting chips', async () => {
         const fake = createFakeController();
         const screen = await renderScreen(

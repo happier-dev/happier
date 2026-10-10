@@ -417,7 +417,7 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
         <View style={CALLER_SURFACE_STYLE}>
           <HostedFrameHost
             title={props.title}
-            html={prepared.frameSource.html}
+            bundle={prepared.frameSource.bundle}
             networkOrigins={prepared.frameSource.networkOrigins}
             bootstrapConfig={{
                 identity: frameIdentity,

@@ -17,6 +17,16 @@ const RAISED_EDGE_INK_ALPHA = { dark: 0.06, light: 0.04 } as const;
 /** How much light the gloss line of a filled accent control carries. */
 const RAISED_EDGE_GLOSS_ALPHA = 0.16;
 
+/** Material G: one translucent ink overlay, shared by solid and glass surfaces. */
+const SOFT_SURFACE_ALPHA = { light: 0.024, dark: 0.045 } as const;
+
+export type SurfaceFinishGradient = Readonly<{
+    colors: readonly [string, string];
+    locations: readonly [number, number];
+    start: Readonly<{ x: number; y: number }>;
+    end: Readonly<{ x: number; y: number }>;
+}>;
+
 /** How much of its ink a dark theme's raised control lifts its fill by (berthd's input/32 ≈ white 2.5%). */
 const RAISED_CONTROL_FILL_ALPHA_DARK = 0.025;
 
@@ -70,6 +80,9 @@ export type RaisedEdgeColors = Readonly<{
     rimMid: string;
     /** The short soft sheen inside the lit corner. */
     sheen: string;
+    finishGradient: SurfaceFinishGradient | null;
+    primaryFinishGradient: SurfaceFinishGradient | null;
+    secondaryFinishGradient: SurfaceFinishGradient | null;
 }>;
 
 type RaisedEdgeThemeColors = Readonly<{
@@ -121,11 +134,49 @@ export function deriveRaisedEdgeInk(textPrimary: string, dark: boolean): string 
     }
 }
 
+export function deriveSurfaceFinishInk(textPrimary: string, dark: boolean): string {
+    try {
+        return withAlpha(textPrimary, SOFT_SURFACE_ALPHA[dark ? 'dark' : 'light']);
+    } catch {
+        return 'transparent';
+    }
+}
+
+function buildSurfaceFinishGradients(colors: RaisedEdgeThemeColors, ink: string, dark: boolean) {
+    let finishGradient: SurfaceFinishGradient | null = null;
+    let primaryFinishGradient: SurfaceFinishGradient | null = null;
+    let secondaryFinishGradient: SurfaceFinishGradient | null = null;
+    try {
+        const strength = Color(ink).alpha();
+        if (strength > 0) {
+            const scale = strength / SOFT_SURFACE_ALPHA[dark ? 'dark' : 'light'];
+            // Alpha's physical range is 0..1; no legibility ceiling is imposed on user strength.
+            const at = (color: string, alpha: number) => withAlpha(color, Math.min(1, alpha));
+            const gradient = (top: string, bottom: string, locations: readonly [number, number]): SurfaceFinishGradient => ({
+                colors: [top, bottom], locations, start: { x: 0.5, y: 0 }, end: { x: 0.5, y: 1 },
+            });
+            finishGradient = dark
+                ? gradient(at(ink, strength), at(ink, 0.01 * scale), [0, 0.7])
+                : gradient(at(ink, 0), at(ink, strength), [0.3, 1]);
+            secondaryFinishGradient = dark
+                ? gradient(at(ink, 0.04 * scale), at(ink, 0), [0, 1])
+                : gradient(at(ink, 0), at(ink, 0.025 * scale), [0, 1]);
+            // Primary actions carry the opposite light: the theme's paper ink over the accent.
+            primaryFinishGradient = dark
+                ? gradient(at(colors.surface.base, 0), at(colors.surface.base, 0.12 * scale), [0, 1])
+                : gradient(at(colors.surface.base, 0.14 * scale), at(colors.surface.base, 0), [0, 1]);
+        }
+    } catch {
+        // A malformed profile loses the finish, preserving its existing surface material.
+    }
+    return { finishGradient, primaryFinishGradient, secondaryFinishGradient };
+}
+
 /**
  * Every border role's raised colour for a theme, from its borders and its edge ink. The gloss is the
  * theme's lightest ink (the text on dark, the page on light) at gloss strength.
  */
-export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string, dark: boolean): RaisedEdgeColors {
+export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string, dark: boolean, finishInk = deriveSurfaceFinishInk(colors.text.primary, dark)): RaisedEdgeColors {
     const raise = (border: string) => compositeRaisedEdgeColor(border, ink);
     let gloss: string;
     let fill: string;
@@ -164,6 +215,7 @@ export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string
         rimHi,
         rimMid,
         sheen,
+        ...buildSurfaceFinishGradients(colors, finishInk, dark),
     };
 }
 
@@ -173,12 +225,13 @@ export function buildRaisedEdgeColors(colors: RaisedEdgeThemeColors, ink: string
  */
 export function withRaisedEdgeColors<TTheme extends Readonly<{ dark: boolean; colors: RaisedEdgeThemeColors }>>(theme: TTheme) {
     const ink = deriveRaisedEdgeInk(theme.colors.text.primary, theme.dark);
+    const finishInk = deriveSurfaceFinishInk(theme.colors.text.primary, theme.dark);
     return {
         ...theme,
         colors: {
             ...theme.colors,
-            effect: { surfaceHighlight: ink },
-            edge: buildRaisedEdgeColors(theme.colors, ink, theme.dark),
+            effect: { surfaceHighlight: ink, surfaceFinish: finishInk },
+            edge: buildRaisedEdgeColors(theme.colors, ink, theme.dark, finishInk),
         },
     };
 }

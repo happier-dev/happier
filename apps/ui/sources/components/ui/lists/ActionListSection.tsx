@@ -62,6 +62,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         ...Typography.default(),
     },
+    // A destructive row says so in its words as well as its glyph (as DropdownMenu's destructive rows do).
+    labelDestructive: {
+        color: theme.colors.state.danger.foreground,
+    },
 }));
 
 export function ActionListSection(props: {
@@ -101,13 +105,13 @@ export function ActionListSection(props: {
             accessibilityLabel={action.accessibilityLabel}
             subtitle={action.subtitle}
             subtitleLeading={action.subtitleLeading}
-            titleStyle={styles.label}
+            titleStyle={action.destructive ? [styles.label, styles.labelDestructive] : styles.label}
             selected={action.selected}
             accessibilityButtonSelected={action.selected}
             variant="slim"
             presentation="menu"
         />
-    ), [renderActionIcon, styles.label]);
+    ), [renderActionIcon, styles.label, styles.labelDestructive]);
 
     if (actions.length === 0) return null;
 

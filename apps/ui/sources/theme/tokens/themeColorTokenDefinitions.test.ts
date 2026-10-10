@@ -50,6 +50,7 @@ const requiredTokenIds = [
     'state.warning.background',
     'state.warning.border',
     'state.attention.foreground',
+    'state.attention.background',
     'state.danger.foreground',
     'state.danger.background',
     'state.danger.border',

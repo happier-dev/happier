@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { registerVoiceSetupPresentation, setVoiceSetupOpen } from '@/components/voice/presence/voiceCompanionSectionReveal';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import Color from 'color';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -75,6 +77,62 @@ function isCovered(screen: Awaited<ReturnType<typeof renderGrid>>, id: string): 
 }
 
 describe('SetupBlockGrid', () => {
+    it('borrows the existing setup opening and closing controls for mounted presentation commands', async () => {
+        const { SetupBlockGrid } = await import('./SetupBlockGrid');
+        const lifecycle: string[] = [];
+        const screen = await renderScreen(<SetupBlockGrid testID="voice-setup" items={[{
+            id: 'voice',
+            registerPresentation: ({ open, close }) => registerVoiceSetupPresentation((expanded) => { if (expanded) open(); else close(); }),
+            renderTile: ({ open }) => <Pressable testID="voice-setup-tile" onPress={open}><Text>Voice</Text></Pressable>,
+            renderPanel: ({ close }) => <ProbePanel close={close} lifecycle={lifecycle} />,
+        }]} />);
+        await act(async () => { expect(setVoiceSetupOpen(true)).toBe(true); });
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.findByTestId('probe-panel')).toBeTruthy();
+        await act(async () => { expect(setVoiceSetupOpen(false)).toBe(true); });
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.findByTestId('probe-panel')).toBeNull();
+        expect(lifecycle).toEqual(['mount', 'unmount']);
+        await screen.unmount();
+        expect(setVoiceSetupOpen(true)).toBe(false);
+    });
+    it('keeps setup paper, expanded frames and path columns within their containing material', async () => {
+        const { AppShellMaterialFrame } = await import('@/components/navigation/shell/AppShellMaterialFrame');
+        const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
+        const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const { SetupBlockGrid } = await import('./SetupBlockGrid');
+        const { SetupBlockPaper } = await import('./SetupBlockPaper');
+        const { SetupPathPanel } = await import('./SetupPathPanel');
+        const { useUnistyles } = await import('react-native-unistyles');
+        const { theme } = useUnistyles();
+        for (const reduceTransparency of [false, true]) {
+            const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ desktopWindow: true, nativeWindowMaterialLive: true, reduceTransparency }}>
+                <GlassMaterialSettingsProvider value={{ glassBlurEnabled: true, glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+                    <AppShellMaterialFrame showChrome={false} dragEnabled={false} leftOffsetPx={0} sidebarWidth={320} titleStrip={null} rail={null} column={null} peek={null}>
+                        <SetupBlockGrid testID="material-setup" openId="machine" items={[{ id: 'machine',
+                            renderTile: () => <SetupBlockPaper testID="material-setup-paper" layout="card"><Text>Machine</Text></SetupBlockPaper>,
+                            renderPanel: ({ close }) => <SetupPathPanel testID="material-setup-path" title="Add machine" active="local" onChoose={() => {}} onClose={close}
+                                paths={[{ id: 'local', title: 'Local', subtitle: 'This machine', glyph: null }]} pane={<Text>Details</Text>} />,
+                        }]} />
+                    </AppShellMaterialFrame>
+                </GlassMaterialSettingsProvider>
+            </GlassRuntimeEnvironmentProvider>);
+            const paper = StyleSheet.flatten(screen.findHostByTestId('material-setup-paper')!.props.style).backgroundColor;
+            const frame = StyleSheet.flatten(screen.findHostByTestId('material-setup.panel')!.props.style).backgroundColor;
+            const column = screen.findAllByType('View').map(node => StyleSheet.flatten(node.props.style)).find(style => style?.width === 264)!.backgroundColor;
+            if (reduceTransparency) {
+                expect(Color(paper).hexa()).toBe(Color(theme.colors.surface.base).hexa());
+                expect(Color(frame).hexa()).toBe(Color(theme.colors.surface.base).hexa());
+                expect(Color(column).hexa()).toBe(Color(theme.colors.surface.sectionTint).hexa());
+            } else {
+                expect(Color(paper).alpha()).toBeLessThan(1);
+                expect(Color(frame).alpha()).toBe(0);
+                expect(Color(column).alpha()).toBeLessThan(1);
+            }
+            standardCleanup();
+        }
+    });
     it('grows the pressed tile into its panel over the row, keeping every tile in its slot underneath', async () => {
         const lifecycle: string[] = [];
         const screen = await renderGrid(lifecycle);

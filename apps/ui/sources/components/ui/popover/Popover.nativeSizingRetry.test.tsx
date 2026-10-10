@@ -48,6 +48,8 @@ describe('Popover (native sizing retries)', () => {
                     anchorRef,
                     boundaryRef,
                     placement: 'bottom',
+                    // Keep the invalid bottom measurement from successfully flipping above.
+                    flip: false,
                     gap: 8,
                     maxHeightCap: 300,
                     backdrop: false,
@@ -58,7 +60,7 @@ describe('Popover (native sizing retries)', () => {
                 }),
             );
 
-            await flushHookEffects({ cycles: 1, turns: 8 });
+            await flushHookEffects({ cycles: 6, turns: 8, frames: 1 });
 
             expect(screen).toBeTruthy();
             expect(boundaryMeasureCalls).toBeGreaterThanOrEqual(2);
@@ -99,6 +101,7 @@ describe('Popover (native sizing retries)', () => {
                     anchorRef,
                     boundaryRef,
                     placement: 'bottom',
+                    flip: false,
                     gap: 8,
                     maxHeightCap: 300,
                     backdrop: false,
@@ -109,7 +112,7 @@ describe('Popover (native sizing retries)', () => {
                 }),
             );
 
-            await flushHookEffects({ cycles: 1, turns: 8 });
+            await flushHookEffects({ cycles: 6, turns: 8, frames: 1 });
 
             // The budget is spent and nothing ever measured: the popover is stuck at its initial cap,
             // mounted at opacity 0 with pointerEvents none — invisible and untappable forever.
@@ -123,7 +126,7 @@ describe('Popover (native sizing retries)', () => {
             await act(async () => {
                 contentView?.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 240, height: 180 } } });
             });
-            await flushHookEffects({ cycles: 2, turns: 8 });
+            await flushHookEffects({ cycles: 2, turns: 8, frames: 1 });
 
             expect(boundaryMeasureCalls).toBeGreaterThan(6);
             expect(renders.at(-1)?.maxHeight).toBe(100);

@@ -152,6 +152,7 @@ const CompactSearchFieldFrame = React.memo(function CompactSearchFieldFrame(prop
 const compactSearchFieldStyles = StyleSheet.create((theme) => ({
     input: {
         flex: 1,
+        minWidth: 0,
         padding: 0,
         margin: 0,
         minHeight: 20,

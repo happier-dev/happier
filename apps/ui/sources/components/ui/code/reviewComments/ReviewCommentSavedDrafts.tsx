@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { type StyleProp, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -50,6 +50,7 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
     onUpdateDraft?: (draft: ReviewCommentDraft) => void;
 }>) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const profile = useProfile();
     const touchTargetFloor = resolveTouchTargetFloorPx();
     const [menuOpen, setMenuOpen] = React.useState(false);
@@ -60,7 +61,7 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
         ...(props.onDeleteDraft ? [{ id: 'delete', title: t('common.delete'), destructive: true, testID: `review-comment-draft-delete:${draft.id}` }] : []),
     ];
     return (
-        <View style={styles.card} testID={`review-comment-draft:${draft.id}`}>
+        <View style={[styles.card, { backgroundColor: paintColor(theme.colors.surface.base) }]} testID={`review-comment-draft:${draft.id}`}>
             <View style={styles.header}>
                 <Avatar id={profile.id} imageUrl={getAvatarUrl(profile)} thumbhash={profile.avatar?.thumbhash} size={18} />
                 <Text style={styles.author}>{t('detailsSurface.review.draftAuthor')}</Text>

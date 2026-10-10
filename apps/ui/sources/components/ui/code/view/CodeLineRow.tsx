@@ -12,7 +12,7 @@ import { CodeGutter } from './CodeGutter';
 import { Text } from '@/components/ui/text/Text';
 import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
-import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
+import { useContainingHappierMaterialRole, useHappierMaterialColorResolver, type FindTextRange } from '@happier-dev/plugin-ui/presentation';
 
 /** Shared base row metric for code display and pre-paint layout estimates. */
 export const CODE_LINE_BASE_HEIGHT = 22;
@@ -75,6 +75,8 @@ export function CodeLineRow(props: {
     findRanges?: readonly FindTextRange[];
 }) {
     const { theme } = useUnistyles();
+    const materialRole = useContainingHappierMaterialRole();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     const {
         line,
@@ -210,7 +212,9 @@ export function CodeLineRow(props: {
                     styles.rowHighlighted,
                     { borderLeftColor: theme.colors.text.link ?? theme.colors.text.secondary },
                 ] : null,
-                { backgroundColor: glassSurfaceBackgroundColor(backgroundColor, 'content') },
+                { backgroundColor: selected && materialRole !== undefined
+                    ? paintColor(backgroundColor, theme.colors.surface.selected)
+                    : glassSurfaceBackgroundColor(backgroundColor, 'content') },
                 selected ? [
                     styles.rowSelected,
                     { borderLeftColor: theme.colors.state.success.foreground },

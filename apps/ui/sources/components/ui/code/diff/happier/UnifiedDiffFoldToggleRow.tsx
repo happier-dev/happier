@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -11,6 +12,7 @@ export const UnifiedDiffFoldToggleRow = React.memo(function UnifiedDiffFoldToggl
     onPressExpand: () => void;
 }>) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const count = Math.max(0, Math.floor(props.hiddenCount));
 
     return (
@@ -25,7 +27,7 @@ export const UnifiedDiffFoldToggleRow = React.memo(function UnifiedDiffFoldToggl
                     borderRadius: 999,
                     borderWidth: 1,
                     borderColor: theme.colors.border.default,
-                    backgroundColor: theme.colors.surface.inset,
+                    backgroundColor: paintColor(theme.colors.surface.inset),
                 }}
             >
                 <Text

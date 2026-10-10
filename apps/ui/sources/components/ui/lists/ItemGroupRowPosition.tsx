@@ -11,8 +11,13 @@ export function ItemGroupRowPositionProvider(props: {
     value: ItemGroupRowPosition | null;
     children?: React.ReactNode;
 }) {
+    const isFirst = props.value?.isFirst;
+    const isLast = props.value?.isLast;
+    const value = React.useMemo(() => (
+        isFirst === undefined || isLast === undefined ? null : { isFirst, isLast }
+    ), [isFirst, isLast]);
     return (
-        <ItemGroupRowPositionContext.Provider value={props.value}>
+        <ItemGroupRowPositionContext.Provider value={value}>
             {props.children}
         </ItemGroupRowPositionContext.Provider>
     );

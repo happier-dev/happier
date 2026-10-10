@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, type AccessibilityRole, type TextProps, type ViewProps, type LayoutChangeEvent } from 'react-native';
+import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, StyleSheet as RNStyleSheet, type AccessibilityRole, type TextProps, type ViewProps, type LayoutChangeEvent } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -56,6 +56,7 @@ import {
     HappierDivider,
     useHappierItemGroupItemBehavior,
     useHappierPageSection,
+    useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
 
 function resizeItemIconForDensity(icon: React.ReactNode, iconSize: number, color?: string): React.ReactNode {
@@ -802,8 +803,8 @@ export const Item = React.memo<ItemProps>((props) => {
     const [accessoryWidthPx, setAccessoryWidthPx] = React.useState<number | null>(null);
     // An independently activated page operation follows the phone rule even when a caller asks
     // for inline placement. Grouped controls retain their explicitly chosen composition.
-    const adaptiveAccessory = accessoryLayout === 'adaptive'
-        || (isPageRow && rightElementOutsidePressable && accessoryLayout === 'inline');
+    const pageOperation = isPageRow && rightElementOutsidePressable && accessoryLayout === 'inline';
+    const adaptiveAccessory = accessoryLayout === 'adaptive' || pageOperation;
     const measuresRowWidth = adaptiveAccessory;
     const handleRowLayout = React.useCallback((event: LayoutChangeEvent) => {
         const widthPx = event.nativeEvent.layout.width;
@@ -818,8 +819,15 @@ export const Item = React.memo<ItemProps>((props) => {
         && accessoryWidthPx > rowWidthPx * ADAPTIVE_ACCESSORY_MAX_ROW_SHARE;
     // A menu is narrow by design: its adaptive control (a segmented choice) stays beside the label and
     // moves beneath it only when it would take more than its share of the row.
+    // An operation (a button) is the phone rule's "short value": it stays on its label's line in a
+    // narrow row — a phone, a dialog pane — while the label keeps its column (the section-action
+    // rule, `sectionTextMinWidthPx`), and moves beneath only when measured wider than that. It is
+    // drawn inline until measured: a stacked control spans the row and reports no natural width.
+    const operationSqueezesLabel = rowWidthPx !== null && accessoryWidthPx !== null
+        && rowWidthPx - accessoryWidthPx - PAGE_LIST_METRICS.rowLeadingGapPx < PAGE_LIST_METRICS.sectionTextMinWidthPx;
     const stackAccessory = rightElement != null
-        && (accessoryLayout === 'stacked' || (adaptiveAccessory && ((isNarrowRow && !isMenuRow) || accessoryOverflows)));
+        && (accessoryLayout === 'stacked' || (adaptiveAccessory && (
+            (pageOperation ? operationSqueezesLabel : isNarrowRow && !isMenuRow) || accessoryOverflows)));
     const stackAccessoryRef = React.useRef(stackAccessory);
     stackAccessoryRef.current = stackAccessory;
     const handleAccessoryLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -934,6 +942,14 @@ export const Item = React.memo<ItemProps>((props) => {
         const candidate = (isHovered ? leftElementWhenHovered : null) ?? leftElement ?? sizedIcon ?? null;
         return normalizeNodeForView(candidate);
     }, [isHovered, leftElement, leftElementWhenHovered, sizedIcon]);
+    // A control placed under its label begins at the label's leading edge, after the section's shared
+    // mark column, whether the row is one pressable or a split operation. Auto-fit identity marks
+    // have no fixed width here; they retain their anatomy.
+    const stackedLabelEdgeStyle = React.useMemo(() => (
+        stackAccessory && isPageRow && leadingMarkFitStyle === null && (leftAccessory || reservesLeadingColumn)
+            ? { marginLeft: (iconBoxSize ?? PAGE_LIST_METRICS.rowLeadingColumnPx) + PAGE_LIST_METRICS.rowLeadingGapPx }
+            : null
+    ), [iconBoxSize, isPageRow, leadingMarkFitStyle, leftAccessory, reservesLeadingColumn, stackAccessory]);
     /**
      * The name this row lends to an accessory control that has none of its own.
      *
@@ -1157,7 +1173,7 @@ export const Item = React.memo<ItemProps>((props) => {
 
             </View>
             {/* Right Section */}
-            <View style={[styles.rightSection, stackContentAccessory ? styles.rightSectionStacked : pageRowStyles?.accessoryBleed]}>
+            <View style={[styles.rightSection, stackContentAccessory ? [styles.rightSectionStacked, stackedLabelEdgeStyle] : pageRowStyles?.accessoryBleed]}>
                 {copyFeedback.isCopied() ? (
                     <CopiedPill visible testID="item-copy-feedback" />
                 ) : detail ? (
@@ -1193,6 +1209,7 @@ export const Item = React.memo<ItemProps>((props) => {
         chevronAccessory,
         copyFeedback,
         stackAccessory,
+        stackedLabelEdgeStyle,
         detail,
         detailTestID,
         detailSizeStyle,
@@ -1257,6 +1274,8 @@ export const Item = React.memo<ItemProps>((props) => {
         && rightAccessory,
     );
 
+    const paintColor = useHappierMaterialColorResolver();
+    const pressableBackground = RNStyleSheet.flatten(pressableStyle)?.backgroundColor;
     const resolveInteractiveRowStyle = React.useCallback((pressed: boolean) => {
         const backgroundColor = (() => {
             if (pressed && isIOS && !isWeb) return theme.colors.surface.pressedOverlay;
@@ -1274,13 +1293,15 @@ export const Item = React.memo<ItemProps>((props) => {
         });
 
         return [
-            { backgroundColor, opacity: disabled ? 0.5 : 1 },
+            { backgroundColor: paintColor(backgroundColor), opacity: disabled ? 0.5 : 1 },
             isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
             roundedCornersStyle,
             pressableStyle,
+            typeof pressableBackground === 'string' ? { backgroundColor: paintColor(pressableBackground) } : null,
         ];
     }, [
         disabled,
+        paintColor,
         groupCornerRadius,
         hoverBackgroundColor,
         isHovered,
@@ -1288,6 +1309,7 @@ export const Item = React.memo<ItemProps>((props) => {
         isWeb,
         loading,
         pressableStyle,
+        pressableBackground,
         rowPosition,
         showSelectedBackground,
         splitRightElementOutsidePressable,
@@ -1407,13 +1429,9 @@ export const Item = React.memo<ItemProps>((props) => {
                     <View
                         style={[
                             styles.rightSection,
-                            // A stacked page operation begins at its label's leading edge, after
-                            // the shared mark column, and above the row's bottom padding.
+                            // A stacked page operation sits above the row's bottom padding.
                             stackAccessory ? [styles.rightSectionStacked, containerPadding, styles.splitRightSectionStacked] : null,
-                            // Auto-fit identity marks have no fixed width here; retain their anatomy.
-                            stackAccessory && isPageRow && leadingMarkFitStyle === null && (leftAccessory || reservesLeadingColumn) ? {
-                                marginLeft: (iconBoxSize ?? PAGE_LIST_METRICS.rowLeadingColumnPx) + PAGE_LIST_METRICS.rowLeadingGapPx,
-                            } : null,
+                            stackedLabelEdgeStyle,
                         ]}
                         pointerEvents={sharedItemBehavior.secondaryActionsEnabled ? 'auto' : 'none'}
                         accessibilityElementsHidden={!sharedItemBehavior.secondaryActionsEnabled}
@@ -1526,7 +1544,7 @@ export const Item = React.memo<ItemProps>((props) => {
             // unavailable), exactly as the pressable row draws it.
             style={showSelectedBackground
                 ? [
-                    { backgroundColor: theme.colors.surface.selected, opacity: disabled ? 0.5 : 1 },
+                    { backgroundColor: paintColor(theme.colors.surface.selected), opacity: disabled ? 0.5 : 1 },
                     getItemGroupRowCornerRadii({ hasBackground: true, position: rowPosition, radius: groupCornerRadius }),
                     pressableStyle,
                 ]

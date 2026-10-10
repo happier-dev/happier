@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
@@ -176,6 +177,7 @@ function buildChipSpecs(): ToolbarChipSpec[] {
 function MarkdownEditorToolbarInner(props: MarkdownEditorToolbarProps): React.ReactElement {
     const { controller, testID, variant = 'panel' } = props;
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     const isInline = variant === 'inline';
 
@@ -227,9 +229,9 @@ function MarkdownEditorToolbarInner(props: MarkdownEditorToolbarProps): React.Re
                 style={({ pressed }) => [
                     styles.chip,
                     {
-                        backgroundColor: active
+                        backgroundColor: paintColor(active
                             ? theme.colors.state.active.background
-                            : theme.colors.surface.base,
+                            : theme.colors.surface.base),
                         borderColor: active
                             ? theme.colors.state.active.border
                             : theme.colors.border.default,
@@ -284,7 +286,7 @@ function MarkdownEditorToolbarInner(props: MarkdownEditorToolbarProps): React.Re
                         style={({ pressed }) => [
                             styles.chip,
                             {
-                                backgroundColor: theme.colors.surface.base,
+                                backgroundColor: paintColor(theme.colors.surface.base),
                                 borderColor: theme.colors.border.default,
                                 opacity: pressed ? motionTokens.press.opacity : 1,
                             },
@@ -301,7 +303,7 @@ function MarkdownEditorToolbarInner(props: MarkdownEditorToolbarProps): React.Re
                         style={({ pressed }) => [
                             styles.chip,
                             {
-                                backgroundColor: theme.colors.surface.base,
+                                backgroundColor: paintColor(theme.colors.surface.base),
                                 borderColor: theme.colors.border.default,
                                 opacity: pressed ? motionTokens.press.opacity : 1,
                             },
@@ -328,7 +330,7 @@ function MarkdownEditorToolbarInner(props: MarkdownEditorToolbarProps): React.Re
         <View
             testID={testID}
             accessibilityRole="toolbar"
-            style={styles.bar}
+            style={[styles.bar, { backgroundColor: paintColor(theme.colors.surface.inset, 'transparent') }]}
         >
             {content}
         </View>

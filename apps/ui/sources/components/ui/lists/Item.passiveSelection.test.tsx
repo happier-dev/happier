@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { StyleSheet } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
+import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,10 +20,18 @@ const { Item } = await import('./Item');
 
 function rowBackground(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string): unknown {
     const host = screen.findHostByTestId(testID);
-    return (StyleSheet.flatten(host?.props.style) as { backgroundColor?: unknown } | undefined)?.backgroundColor;
+    const style = typeof host?.props.style === 'function' ? host.props.style({ pressed: false }) : host?.props.style;
+    return readSurfaceStyleProperty(style, 'backgroundColor');
 }
 
 describe('Item selection without an action', () => {
+    it('keeps a caller-supplied selected row coat translucent inside its material plane', async () => {
+        const authoredStyle = Object.defineProperty({}, 'backgroundColor', { value: '#112233', enumerable: false });
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="sidebar" resolveMaterialColor={() => 'rgba(235, 230, 225, 0.1)'}>
+            <Item testID="material-row" title="Project" selected onPress={() => {}} pressableStyle={authoredStyle} />
+        </HappierMaterialRoleProvider>);
+        expect(rowBackground(screen, 'material-row')).toBe('rgba(235, 230, 225, 0.1)');
+    });
     it.each(['ContextMenu', 'Shift+F10', 'pointer'] as const)('keeps passive row actions reachable through %s without making the row a button', async (entry) => {
         function ContextualRow() {
             const [open, setOpen] = React.useState(false);

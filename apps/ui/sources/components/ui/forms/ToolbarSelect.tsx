@@ -29,6 +29,8 @@ export const ToolbarSelect = React.memo(function ToolbarSelect(props: Readonly<{
     selectedId: string | null;
     onSelect: (id: string) => void;
     disabled?: boolean;
+    /** Fit a narrow toolbar to its choice; keep the platform press target and typography. */
+    compact?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
@@ -67,7 +69,7 @@ export const ToolbarSelect = React.memo(function ToolbarSelect(props: Readonly<{
                     accessibilityLabel={`${props.label}: ${selectedTitle}`}
                     expanded={open}
                     hasPopup="menu"
-                    style={{ minHeight: resolveMinimumInteractiveTargetSize(Platform.OS), justifyContent: 'center' }}
+                    style={{ minHeight: resolveMinimumInteractiveTargetSize(Platform.OS), minWidth: resolveMinimumInteractiveTargetSize(Platform.OS), justifyContent: 'center' }}
                 >
                     {renderDropdownItemTriggerRightElement({
                         detail: selectedTitle,
@@ -76,6 +78,7 @@ export const ToolbarSelect = React.memo(function ToolbarSelect(props: Readonly<{
                         chevronColor: theme.colors.text.secondary,
                         field: resolveFieldBoxColors(theme),
                         leading: selected?.icon,
+                        fieldSpan: props.compact ? 'intrinsic' : 'content',
                     })}
                 </HappierPressable>
             )}

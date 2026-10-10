@@ -7,10 +7,12 @@ import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 
 export const ConnectButton = React.memo(() => {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
     const [manualUrl, setManualUrl] = React.useState('');
@@ -54,7 +56,7 @@ export const ConnectButton = React.memo(() => {
             </TouchableOpacity>
 
             {showManualEntry && (
-                <View style={styles.manualEntryContainer}>
+                <View style={[styles.manualEntryContainer, { backgroundColor: paintColor(theme.colors.surface.inset) }]}>
                     <Text style={styles.manualEntryLabel}>
                         {t('connectButton.pasteAuthUrl')}
                     </Text>

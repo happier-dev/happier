@@ -142,6 +142,8 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
                 </> : undefined}
                 action={actions}
                 compactActionPlacement={props.compactActionPlacement}
+                // Two or more ways forward, or a list of steps, never share a line with the words.
+                actionPlacement={props.secondaryAction || (props.moreActions?.length ?? 0) > 0 || (props.points?.length ?? 0) > 0 ? 'below' : undefined}
                 onLayout={(event) => { const width = event.nativeEvent.layout.width; if (width > 0) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx); }}
                 details={<>
                     {hasDetails ? (

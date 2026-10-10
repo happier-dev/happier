@@ -1,7 +1,9 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,7 +38,21 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
 }));
 
+let originalPlatform = Platform.OS;
+beforeEach(() => {
+    originalPlatform = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+});
+afterEach(() => Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform }));
+
 describe('PrimaryCircleIconButton', () => {
+    it('does not add an opaque primary gradient inside its containing glass plane', async () => {
+        const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="chrome" resolveMaterialColor={() => 'rgba(235, 230, 225, 0.1)'}>
+            <PrimaryCircleIconButton testID="glass-circle" active accessibilityLabel="Send" onPress={() => {}}><span /></PrimaryCircleIconButton>
+        </HappierMaterialRoleProvider>);
+        expect(screen.findByTestId('glass-circle')!.findAllByType('Stop' as never).slice(0, 2).map(node => node.props.stopColor)).toEqual(['rgba(235, 230, 225, 0.1)', 'rgba(235, 230, 225, 0.1)']);
+    });
     it('forwards testID to the Pressable', async () => {
         const { PrimaryCircleIconButton } = await import('./PrimaryCircleIconButton');
         const screen = await renderScreen(<PrimaryCircleIconButton
@@ -52,7 +68,7 @@ describe('PrimaryCircleIconButton', () => {
             throw new Error('Expected primary circle icon button pressable to render');
         }
         expect(pressable.props.testID).toBe('circle-button');
-        expect(pressable.findByType('LinearGradient' as never).props.colors).toEqual(['#000', '#111']);
+        expect(pressable.findAllByType('Stop' as never).slice(0, 2).map(node => node.props.stopColor)).toEqual(['#000', '#111']);
     });
 
     it('does not emit raw text nodes under Pressable when icon children render as text on web', async () => {

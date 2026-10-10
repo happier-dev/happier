@@ -41,7 +41,7 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
     /** Field only: colour of a quiet value. */
     quietValueColor?: string;
     /** Field only: `row` when the field is stacked under its label, so it spans the row. */
-    fieldSpan?: 'content' | 'row';
+    fieldSpan?: 'content' | 'column' | 'row' | 'intrinsic';
 }>) {
     const resolvedDensity = params.detailDensity ?? 'comfortable';
     const chevron = (

@@ -25,6 +25,19 @@ vi.mock('react-native-safe-area-context', () => ({
 afterEach(() => { viewport.width = 390; viewport.height = 844; });
 
 describe('Popover phone presentation', () => {
+    it('uses a form completion action as the single sheet header exit', async () => {
+        const { Popover } = await import('./Popover');
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const onComplete = vi.fn();
+        const onClose = vi.fn();
+        const screen = await renderScreen(<Popover open phonePresentation="sheet" accessibilityLabel="Trigger"
+            sheetHeaderAction={<RoundButton testID="sheet-done" size="small" title="Done" onPress={onComplete} />}
+            onRequestClose={onClose}>{() => React.createElement('Form')}</Popover>);
+        expect(screen.findByTestId('popover-sheet.close')).toBeNull();
+        await screen.pressByTestIdAsync('sheet-done');
+        expect(onComplete).toHaveBeenCalledOnce();
+        expect(onClose).not.toHaveBeenCalled();
+    });
     it('presents content as a named, full-width sheet with the shared close action on a phone', async () => {
         const { Popover } = await import('./Popover');
         const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverlay');

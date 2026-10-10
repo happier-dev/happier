@@ -1,5 +1,6 @@
 import type { Theme } from '@/theme';
-import { buildRaisedEdgeColors, deriveRaisedEdgeInk } from '../raisedEdge';
+import Color from 'color';
+import { buildRaisedEdgeColors, deriveRaisedEdgeInk, deriveSurfaceFinishInk } from '../raisedEdge';
 import { createVerticalGradient } from '../verticalGradient';
 
 type ThemeControlGradient = Theme['colors']['button']['primary']['gradient'];
@@ -62,6 +63,9 @@ const deriveRaisedEdgeInkForProfile = (theme: Theme, baseTheme: Theme): string =
 
 export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverrides: ReadonlySet<string> = new Set()): Theme => {
     const raisedEdgeInk = deriveRaisedEdgeInkForProfile(theme, baseTheme);
+    const finishInk = explicitOverrides.has('effect.surfaceFinish')
+        ? theme.colors.effect.surfaceFinish
+        : deriveSurfaceFinishInk(theme.colors.text.primary, theme.dark);
     // Existing profiles authored the shared foreground. Keep that choice exact unless they
     // explicitly set the new text role, even when its value equals the default.
     const statusText = (variant: 'success' | 'warning' | 'attention' | 'danger' | 'info' | 'neutral') => (
@@ -79,7 +83,9 @@ export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverri
                 ...theme.colors.state,
                 success: { ...theme.colors.state.success, textForeground: statusText('success') },
                 warning: { ...theme.colors.state.warning, textForeground: statusText('warning') },
-                attention: { ...theme.colors.state.attention, textForeground: statusText('attention') },
+                attention: { ...theme.colors.state.attention, textForeground: statusText('attention'),
+                    background: explicitOverrides.has('state.attention.background') ? theme.colors.state.attention.background
+                        : Color(theme.colors.state.attention.foreground).alpha(0.12).rgb().string() },
                 danger: { ...theme.colors.state.danger, textForeground: statusText('danger') },
                 info: { ...theme.colors.state.info, textForeground: statusText('info') },
                 neutral: { ...theme.colors.state.neutral, textForeground: statusText('neutral') },
@@ -87,9 +93,10 @@ export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverri
             effect: {
                 ...theme.colors.effect,
                 surfaceHighlight: raisedEdgeInk,
+                surfaceFinish: finishInk,
             },
             // Always re-derived: every border role's raised colour follows the profile's borders and ink.
-            edge: buildRaisedEdgeColors(theme.colors, raisedEdgeInk, theme.dark),
+            edge: buildRaisedEdgeColors(theme.colors, raisedEdgeInk, theme.dark, finishInk),
             button: {
                 ...theme.colors.button,
                 primary: {

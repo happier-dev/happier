@@ -5,6 +5,7 @@ import React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
+import type { Virtualizer as PierreVirtualizer } from '@pierre/diffs';
 
 const setupSpy = vi.fn();
 const cleanUpSpy = vi.fn();
@@ -136,7 +137,7 @@ describe('PierreScrollRootVirtualizerProvider (web)', () => {
         vi.stubGlobal('ResizeObserver', class {});
         const { PierreScrollRootVirtualizerProvider, usePierreScrollRootVirtualizer } = await import('./PierreScrollRootVirtualizerProvider.web');
         const { Virtualizer } = await import('@pierre/diffs');
-        const instances: Virtualizer[] = [];
+        const instances: PierreVirtualizer[] = [];
         let mounts = 0;
         function Demand() {
             const instance = usePierreScrollRootVirtualizer(() => new Virtualizer());

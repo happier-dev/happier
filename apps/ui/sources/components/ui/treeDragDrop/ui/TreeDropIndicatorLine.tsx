@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { HappierDropInsertionLine } from '@happier-dev/plugin-ui/presentation';
 
 import type { TreeInstructionVisual } from '../treeDragDropTypes';
 
@@ -13,37 +14,17 @@ export type TreeDropIndicatorLineProps = Readonly<{
     style?: StyleProp<ViewStyle>;
 }>;
 
-const stylesheet = StyleSheet.create(() => ({
-    line: {
-        height: 2,
-        borderRadius: 1,
-    },
-    vertical: {
-        width: 2,
-        borderRadius: 1,
-        alignSelf: 'stretch',
-    },
-}));
-
+/** Happier core's binding of the one insertion line (plugin-ui): the theme accent and a tree's indent. */
 export function TreeDropIndicatorLine(props: TreeDropIndicatorLineProps): React.ReactElement {
     const { theme } = useUnistyles();
-    const styles = stylesheet;
     const vertical = props.orientation === 'vertical';
     const marginLeft = vertical ? 0 : Math.max(0, props.visual.depth * props.indentPx);
-
     return (
-        <View
+        <HappierDropInsertionLine
             testID={props.testID}
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={[
-                vertical ? styles.vertical : styles.line,
-                {
-                    marginLeft,
-                    backgroundColor: theme.colors.accent.blue,
-                },
-                props.style,
-            ]}
+            orientation={props.orientation}
+            color={theme.colors.accent.blue}
+            style={[{ marginLeft }, props.style]}
         />
     );
 }

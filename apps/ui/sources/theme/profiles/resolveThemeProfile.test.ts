@@ -87,6 +87,16 @@ describe('resolveThemeProfile', () => {
         expect(lightTheme.colors.background.canvas).toBe(beforeCanvas);
     });
 
+    it('preserves an explicit secondary text color even when it has low contrast', () => {
+        const effective = resolveThemeProfile({
+            mode: 'dark',
+            profile: profile({ light: {}, dark: { 'text.secondary': '#8A817C' } }),
+        });
+
+        // Custom colors are user choices; the editor warns rather than silently correcting them.
+        expect(effective.colors.text.secondary).toBe('#8A817C');
+    });
+
     it('derives linked color recipes after overrides are applied', () => {
         const effective = resolveThemeProfile({
             mode: 'light',

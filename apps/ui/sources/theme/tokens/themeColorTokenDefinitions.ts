@@ -1,4 +1,5 @@
 import type { Theme } from '@/theme';
+import type { TranslationKeyNoParams } from '@/text';
 
 export type ThemeColorTokenGroup =
     | 'background'
@@ -29,6 +30,8 @@ type EditableThemeColorTokenDefinitionInput = Readonly<{
     group: ThemeColorTokenGroup;
     label: string;
     description: string;
+    labelKey?: TranslationKeyNoParams;
+    descriptionKey?: TranslationKeyNoParams;
     valueKind: 'color';
     contrastPairs?: readonly ThemeColorTokenContrastPair[];
 }>;
@@ -68,7 +71,7 @@ const defineEditableThemeColorToken = <TDefinition extends EditableThemeColorTok
 export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'state.success.textForeground', path: ['state', 'success', 'textForeground'], group: 'state', label: 'Success text', description: 'Text on tinted success badges and pills; independent of marker ink.', valueKind: 'color', contrastPairs: stateContrast('state.success.background') }),
     defineEditableThemeColorToken({ id: 'state.warning.textForeground', path: ['state', 'warning', 'textForeground'], group: 'state', label: 'Warning text', description: 'Text on tinted warning badges and pills; independent of marker ink.', valueKind: 'color', contrastPairs: stateContrast('state.warning.background') }),
-    defineEditableThemeColorToken({ id: 'state.attention.textForeground', path: ['state', 'attention', 'textForeground'], group: 'state', label: 'Needs-you text', description: 'Text on tinted needs-you badges and pills; independent of marker ink.', valueKind: 'color', contrastPairs: stateContrast('state.warning.background') }),
+    defineEditableThemeColorToken({ id: 'state.attention.textForeground', path: ['state', 'attention', 'textForeground'], group: 'state', label: 'Needs-you text', description: 'Text on tinted needs-you badges and pills; independent of marker ink.', valueKind: 'color', contrastPairs: stateContrast('state.attention.background') }),
     defineEditableThemeColorToken({ id: 'state.danger.textForeground', path: ['state', 'danger', 'textForeground'], group: 'state', label: 'Danger text', description: 'Text on tinted danger badges and pills; independent of marker ink.', valueKind: 'color', contrastPairs: stateContrast('state.danger.background') }),
     defineEditableThemeColorToken({ id: 'state.info.textForeground', path: ['state', 'info', 'textForeground'], group: 'state', label: 'Info text', description: 'Text on tinted informational badges and pills; independent of marker ink.', valueKind: 'color', contrastPairs: stateContrast('state.info.background') }),
     defineEditableThemeColorToken({ id: 'state.neutral.textForeground', path: ['state', 'neutral', 'textForeground'], group: 'state', label: 'Neutral status text', description: 'Text on tinted neutral badges and pills; independent of marker ink.', valueKind: 'color', contrastPairs: stateContrast('state.neutral.background') }),
@@ -87,6 +90,7 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'border.focus', path: ['border', 'focus'], group: 'border', label: 'Focus ring', description: 'Keyboard focus-visible ring for controls without an editable-text caret. Must stay legible against the surfaces a control sits on.', valueKind: 'color', contrastPairs: focusIndicatorContrast }),
     defineEditableThemeColorToken({ id: 'border.modal', path: ['border', 'modal'], group: 'border', label: 'Modal border', description: 'Border color for modal card and dialog chrome surfaces.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'effect.surfaceHighlight', path: ['effect', 'surfaceHighlight'], group: 'effect', label: 'Raised edge', description: 'The ink of the raised edge every bordered control and surface stands on: laid over the top border on dark themes and the bottom border on light ones. Defaults to the theme\'s own text colour at a whisper of strength; transparent draws every edge flat.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'effect.surfaceFinish', path: ['effect', 'surfaceFinish'], group: 'effect', label: 'Soft finish', description: 'The translucent ink of the soft surface finish. Alpha sets its strength over solid or glass material; transparent keeps the fill flat.', labelKey: 'settingsAppearance.surfaceFinish.strength', descriptionKey: 'settingsAppearance.surfaceFinish.strengthDescription', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'chrome.header.background', path: ['chrome', 'header', 'background'], group: 'chrome', label: 'Header background', description: 'Navigation and screen header background color.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'chrome.header.foreground', path: ['chrome', 'header', 'foreground'], group: 'chrome', label: 'Header foreground', description: 'Navigation header title and icon color.', valueKind: 'color', contrastPairs: stateContrast('chrome.header.background') }),
 
@@ -105,6 +109,7 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'state.warning.background', path: ['state', 'warning', 'background'], group: 'state', label: 'Warning background', description: 'Background for warning badges, notices, and pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.warning.border', path: ['state', 'warning', 'border'], group: 'state', label: 'Warning border', description: 'Border for warning badges, notices, and caution affordances.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.attention.foreground', path: ['state', 'attention', 'foreground'], group: 'state', label: 'Needs-you foreground', description: 'Ink for sessions waiting on you: the "N need you" pill, the phone count capsule and the Next capsule\'s dot and Go fill, drawn on a light tint of itself.', valueKind: 'color', contrastPairs: textOnCanvasAndSurface }),
+    defineEditableThemeColorToken({ id: 'state.attention.background', path: ['state', 'attention', 'background'], group: 'state', label: 'Needs-you background', description: 'Tinted background for sessions waiting on you, behind needs-you text and markers.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.danger.foreground', path: ['state', 'danger', 'foreground'], group: 'state', label: 'Danger foreground', description: 'Danger, destructive, error, and delete icons or labels.', valueKind: 'color', contrastPairs: stateContrast('state.danger.background') }),
     defineEditableThemeColorToken({ id: 'state.danger.background', path: ['state', 'danger', 'background'], group: 'state', label: 'Danger background', description: 'Background for danger badges, error notices, and destructive state pills.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'state.danger.border', path: ['state', 'danger', 'border'], group: 'state', label: 'Danger border', description: 'Border for danger badges, error notices, and destructive state affordances.', valueKind: 'color' }),
@@ -278,6 +283,11 @@ export const THEME_COLOR_TOKEN_CLASSIFICATIONS = [
         reason: 'Raised twin of a border role: the role\'s border with the theme\'s edge ink (effect.surfaceHighlight) composited over it (theme/raisedEdge.ts).',
     } as const)),
     { path: ['edge', 'gloss'], status: 'derived', reason: 'Gloss line of a filled accent control, derived from the theme\'s lightest ink (theme/raisedEdge.ts).' },
+    ...(['finishGradient', 'primaryFinishGradient', 'secondaryFinishGradient'] as const).flatMap((gradient) => [0, 1].map((stop) => ({
+        path: ['edge', gradient, 'colors', String(stop)],
+        status: 'derived',
+        reason: 'Translucent soft finish overlay derived from effect.surfaceFinish by theme/raisedEdge.ts; never an opaque fill.',
+    } as const))),
     ...(['rimHi', 'rimMid', 'sheen'] as const).map((leaf) => ({
         path: ['edge', leaf],
         status: 'derived',

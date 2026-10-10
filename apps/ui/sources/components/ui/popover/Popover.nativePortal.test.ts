@@ -64,6 +64,9 @@ installPopoverCommonModuleMocks({
     },
 });
 
+// Resolve the component graph during collection, outside behavior-test deadlines.
+await import('./Popover');
+
 function PopoverChild() {
     return React.createElement('PopoverChild');
 }
@@ -255,6 +258,10 @@ describe('Popover (native portal)', () => {
         await act(async () => {
             await flushInitialPositioning();
         });
+
+        // Fake timers also own requestAnimationFrame: let the real positioning
+        // pass run before asserting that the measured portal accepts input.
+        await flushHookEffects({ frames: 1 });
 
         // The motion frame owns content hit testing while the Popover remains
         // present. This preserves native responder behavior during the web-only

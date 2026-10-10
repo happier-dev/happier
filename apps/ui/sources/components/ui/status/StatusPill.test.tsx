@@ -15,7 +15,6 @@ vi.mock('@/components/ui/text/Text', async () => {
 });
 
 describe('StatusPill', () => {
-    it('maps onboarding status states to green live, amber needs-attention, and neutral otherwise', async () => {
     it('uses readable text ink for the label and count while preserving the status dot', async () => {
         const { StatusPill } = await import('./StatusPill');
         const screen = await renderScreen(<StatusPill variant="success" label="Live" count={2} testID="pill" />);
@@ -33,6 +32,7 @@ describe('StatusPill', () => {
         expect(flattenStyle(screen.findByTestId('pill:count')?.props.style).color).toBe('#ffffff');
         expect(flattenStyle(screen.findByTestId('pill:dot')?.props.style).backgroundColor).toBe('#ffffff');
     });
+    it('maps onboarding status states to green live, the attention amber for needs-attention, and neutral otherwise', async () => {
         const { StatusPill, resolveStatusPillVariantForState } = await import('./StatusPill');
 
         const live = await renderScreen(
@@ -60,7 +60,7 @@ describe('StatusPill', () => {
         expect(live.findByTestId('status-live:variant:success')).not.toBeNull();
         expect(live.findByTestId('status-live:dot')).not.toBeNull();
         expect(live.findByTestId('status-live:label')).not.toBeNull();
-        expect(needsAttention.findByTestId('status-needs-attention:variant:warning')).not.toBeNull();
+        expect(needsAttention.findByTestId('status-needs-attention:variant:attention')).not.toBeNull();
         expect(neutral.findByTestId('status-neutral:variant:neutral')).not.toBeNull();
     });
 

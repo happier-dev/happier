@@ -124,8 +124,32 @@ describe('ItemGroup page presentation', () => {
         // A 390pt phone: a "Cancel"-sized action leaves the title well over its label column.
         await layout({ header: 358, action: 84 });
         expect(direction()).toBe('row');
+        // Outer width alone suggests enough room, but the heading's two insets consume it.
+        await layout({ header: 390, action: 160 });
+        expect(direction()).toBe('column');
         // The same width with an action that would squeeze the title below its column.
         await layout({ header: 358, action: 160 });
         expect(direction()).toBe('column');
+    });
+
+    it('moves an adaptive section action below its explanation on a phone and beside it on desktop', async () => {
+        const { ItemGroup } = await import('./ItemGroup');
+        const { ListPresentationProvider } = await import('./listPresentation');
+        const { act } = await import('react-test-renderer');
+        const screen = await renderScreen(
+            <ListPresentationProvider value="page">
+                <ItemGroup title="Environment variables" description="Values used when starting a session."
+                    actionLayout="adaptive" action={React.createElement('Action', { testID: 'section-action' })}>
+                    {React.createElement('Text', null, 'ROW')}
+                </ItemGroup>
+            </ListPresentationProvider>,
+        );
+        const { direction, layout } = measuredSectionHeader(screen, act);
+
+        // Real source capture: the 390px phone's Add variable action measures 118px.
+        await layout({ header: 390, action: 118 });
+        expect(direction()).toBe('column');
+        await layout({ header: 720, action: 118 });
+        expect(direction()).toBe('row');
     });
 });

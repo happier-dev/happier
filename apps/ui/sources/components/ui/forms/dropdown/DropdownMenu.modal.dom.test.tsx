@@ -26,6 +26,81 @@ vi.mock('react-native-keyboard-controller', () => ({
 import { BaseModal } from '@/modal/components/BaseModal';
 import { DropdownMenu } from './DropdownMenu';
 
+it('dismisses only the nested dropdown on Escape, then the enclosing sheet on the next Escape', async () => {
+    function Harness() {
+        const [visible, setVisible] = React.useState(true);
+        const [open, setOpen] = React.useState(false);
+        return <><output data-testid="sheet-state">{visible ? 'open' : 'closed'}</output>
+        <BaseModal visible={visible} placement="bottom" onClose={() => setVisible(false)}>
+            <div data-testid="outer-sheet">
+                <DropdownMenu open={open} onOpenChange={setOpen} selectedId={null} onSelect={() => {}}
+                    items={[{ id: 'small', title: 'Small', testID: 'nested-size-option' }]}
+                    trigger={({ toggle }) => <button data-testid="size-trigger" onClick={toggle}>Size</button>} />
+            </div>
+        </BaseModal></>;
+    }
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 100, y: 100, width: 200, height: 40, top: 100, left: 100, right: 300, bottom: 140, toJSON: () => ({}),
+    });
+    try {
+        await act(async () => { root.render(<Harness />); });
+        const trigger = document.querySelector<HTMLElement>('[data-testid="size-trigger"]')!;
+        trigger.focus();
+        await act(async () => { trigger.click(); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)); });
+        const option = document.querySelector<HTMLElement>('[data-testid="nested-size-option"]')!;
+        expect(option).not.toBeNull();
+        option.focus();
+        await act(async () => { option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
+        expect(document.querySelector('[data-testid="nested-size-option"]')).toBeNull();
+        expect(document.querySelector('[data-testid="outer-sheet"]')).not.toBeNull();
+        expect(document.querySelector('[data-testid="sheet-state"]')?.textContent).toBe('open');
+        expect(document.activeElement).toBe(trigger);
+        await act(async () => { trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
+        expect(document.querySelector('[data-testid="sheet-state"]')?.textContent).toBe('closed');
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});
+
+it.each(['arrival', 'typing'] as const)('handles %s before cold asynchronous DropdownMenu results arrive', async (intent) => {
+    const search = document.createElement('input');
+    const container = document.createElement('div');
+    document.body.append(search, container);
+    const root = createRoot(container);
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 100, y: 100, width: 200, height: 40, top: 100, left: 100, right: 300, bottom: 140, toJSON: () => ({}),
+    });
+    const render = (ready: boolean) => <DropdownMenu open onOpenChange={() => {}} selectedId={null} onSelect={() => {}}
+        items={ready ? [{ id: 'disabled', title: 'Unavailable session', disabled: true },
+            { id: 'session-a', title: 'Session A', testID: 'cold-session-option' }] : []}
+        trigger={() => <button>Choose</button>} />;
+    try {
+        search.focus();
+        await act(async () => { root.render(render(false)); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)); });
+        expect(document.activeElement).toBe(search);
+        if (intent === 'typing') {
+            await act(async () => {
+                search.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true }));
+                search.value = 'Session summaryx';
+                search.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'x' }));
+            });
+        }
+        await act(async () => { root.render(render(true)); });
+        expect(document.activeElement).toBe(intent === 'typing' ? search : document.querySelector('[data-testid="cold-session-option"]'));
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove(); search.remove();
+    }
+});
+
 it('selects a portaled dropdown option inside BaseModal without dismissing the modal', async () => {
     const close = vi.fn();
     function Harness() {
@@ -47,6 +122,11 @@ it('selects a portaled dropdown option inside BaseModal without dismissing the m
     try {
         await act(async () => { root.render(<Harness />); });
         await act(async () => { document.querySelector<HTMLElement>('[data-testid="choose"]')!.click(); });
+        // Opening crosses the real frame/timer boundary after the trigger press.
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(document.querySelector('[data-testid="session-option"]')).not.toBeNull();
+        });
         const option = document.querySelector<HTMLElement>('[data-testid="session-option"]');
         expect(option).not.toBeNull();
         expect(option!.closest('[data-happy-modal-portal-host]')).not.toBeNull();
@@ -55,8 +135,11 @@ it('selects a portaled dropdown option inside BaseModal without dismissing the m
             option!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
             option!.click();
         });
-        expect(document.querySelector('[data-testid="selection"]')?.textContent).toBe('session-a');
-        expect(document.querySelector('[data-testid="session-option"]')).toBeNull();
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(document.querySelector('[data-testid="selection"]')?.textContent).toBe('session-a');
+            expect(document.querySelector('[data-testid="session-option"]')).toBeNull();
+        });
         expect(close).not.toHaveBeenCalled();
     } finally {
         await act(async () => { root.unmount(); });

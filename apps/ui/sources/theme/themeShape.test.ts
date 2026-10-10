@@ -87,7 +87,7 @@ describe('canonical theme color shape', () => {
 
     it('uses canonical semantic, text, message, syntax, version-control, and diff color groups', () => {
         expect(darkTheme.colors).toHaveProperty('text.primary', '#EFEFEF');
-        expect(darkTheme.colors).toHaveProperty('text.secondary', '#8A817C');
+        expect(darkTheme.colors).toHaveProperty('text.secondary', '#9A918C');
         expect(darkTheme.colors).toHaveProperty('text.tertiary', '#6C625D');
         expect(darkTheme.colors).toHaveProperty('text.link', '#9EB9FF');
         expect(darkTheme.colors).toHaveProperty('text.destructive', '#EE6E6C');

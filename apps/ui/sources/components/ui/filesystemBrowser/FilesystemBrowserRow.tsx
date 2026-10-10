@@ -6,15 +6,15 @@ import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import type { FilesystemBrowserNode, FilesystemBrowserWrapContentInput } from './filesystemBrowserTypes';
 import { Icon } from '@/components/ui/icons/Icon';
-import { HAPPIER_TREE_ROW_METRICS, HappierTreeDisclosure, resolveHappierTreeRowIndentPx } from '@happier-dev/plugin-ui/presentation';
+import { HappierTreeRow, resolveHappierTreeRowIndentPx } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveFilesystemErrorReason } from './filesystemErrorReason';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SelectionCheckGlyph, type SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
-import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 /** How a row hands its actions menu the reveal: open it (a long press) and whether its … is drawn. */
 export type FilesystemBrowserRowActionsControl = Readonly<{
@@ -86,14 +86,9 @@ export type FilesystemBrowserRowProps = Readonly<{
     wrapContent?: ((input: FilesystemBrowserWrapContentInput) => React.ReactElement) | null;
 }>;
 
-/** A tree whose chevron is decoration (the row toggles) keeps the glyph's own width as its column. */
-const DECORATIVE_DISCLOSURE_COLUMN_PX = 12;
-
-const ROW_ACTIONS_OVERLAY_STYLE = { position: 'absolute', right: 0, top: 0, bottom: 0, justifyContent: 'center', borderRadius: 6 } as const;
-const ROW_ACTIONS_HIDDEN_ANCHOR_STYLE = { position: 'absolute', right: 0, width: 0, height: 0, overflow: 'visible' } as const;
-
 export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const phone = useDeviceType() === 'phone';
     const reducedMotion = useReducedMotionPreference();
     const paddingLeft = resolveHappierTreeRowIndentPx(props.node.depth, {
@@ -101,77 +96,25 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
         ...(props.depthIndent === undefined ? {} : { indentStepPx: props.depthIndent }),
     });
     const table = props.rowPresentation === 'table';
-    const treeRowHeights = table ? HAPPIER_TREE_ROW_METRICS.tableMinHeightPx : HAPPIER_TREE_ROW_METRICS.minHeightPx;
-    const treeRowMinHeight = props.disclosure
-        ? (isTouchPrimaryPointer() || phone ? treeRowHeights.touch : treeRowHeights.precise)
-        : undefined;
     const showDivider = props.showDivider === true;
 
     const errorNode = props.node;
     const touch = isTouchPrimaryPointer();
-    const [hovered, setHovered] = React.useState(false);
-    const [focused, setFocused] = React.useState(false);
-    const [actionsOpen, setActionsOpen] = React.useState(false);
-    const rowActions = props.rowActions ?? null;
-    const actionsVisible = Boolean(rowActions) && (touch
-        ? actionsOpen
-        : hovered || focused || actionsOpen || props.rowActionsRevealed === true || props.selected === true);
-    const treeItemOnFocus = props.treeItemProps?.onFocus;
-    const onFocus = React.useCallback(() => {
-        setFocused(true);
-        treeItemOnFocus?.();
-    }, [treeItemOnFocus]);
-    const onBlur = React.useCallback(() => setFocused(false), []);
-    const actionsNode = actionsVisible && rowActions
-        ? rowActions({ open: actionsOpen, onOpenChange: setActionsOpen, triggerHidden: touch })
-        : null;
-    const rightElement = actionsNode
-        ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                {props.rightElement}
-                {/* Over the trailing marks, never beside them: showing the … must not move the row. */}
-                <View style={touch ? ROW_ACTIONS_HIDDEN_ANCHOR_STYLE : [ROW_ACTIONS_OVERLAY_STYLE, { backgroundColor: theme.colors.surface.pressed }]}>
-                    {actionsNode}
-                </View>
-            </View>
-        )
-        : props.rightElement;
-    const leading = props.disclosure || props.selection ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-            {props.disclosure ? (
-                // The shared tree disclosure (plugin-ui): the one chevron that turns, its own target when the
-                // folder has one, the row's decoration otherwise. The row is the tree item, so the chevron
-                // stays out of the tab order. Files keep the column so names align with their folders.
-                <HappierTreeDisclosure
-                    kind={props.node.type === 'directory' ? 'branch' : 'leaf'}
-                    expanded={props.node.isExpanded === true}
-                    color={props.onDisclosurePress ? theme.colors.text.tertiary : theme.colors.text.secondary}
-                    activeColor={theme.colors.text.primary}
-                    onPress={props.node.type === 'directory' ? props.onDisclosurePress ?? null : null}
-                    accessibilityLabel={props.disclosureAccessibilityLabel ?? props.title}
-                    reducedMotion={reducedMotion}
-                    columnPx={props.onDisclosurePress !== undefined ? HAPPIER_TREE_ROW_METRICS.disclosureBoxPx : DECORATIVE_DISCLOSURE_COLUMN_PX}
-                    testID={props.testID ? `${props.testID}-disclosure` : undefined}
-                />
-            ) : null}
-            {props.selection ? (
-                <IconButton
-                    testID={props.testID ? `${props.testID}-select` : undefined}
-                    variant="plain"
-                    size={24}
-                    accessibilityRole="checkbox"
-                    checked={props.selection.state === 'checked'}
-                    selectedBackground={false}
-                    disabled={props.selection.disabled}
-                    accessibilityLabel={props.selection.accessibilityLabel}
-                    // Tree rows are always the compact rhythm: the 14 px checkbox (Git lab TV).
-                    icon={<SelectionCheckGlyph state={props.selection.state} size="compact" />}
-                    onPress={props.selection.onToggle}
-                />
-            ) : props.icon}
-            {props.selection && props.selectionMark ? props.selectionMark : null}
-        </View>
-    ) : props.icon;
+    const treeTouch = touch || phone;
+    const selection = props.selection ? (
+        <IconButton
+            testID={props.testID ? `${props.testID}-select` : undefined}
+            variant="plain"
+            size={24}
+            accessibilityRole="checkbox"
+            checked={props.selection.state === 'checked'}
+            selectedBackground={false}
+            disabled={props.selection.disabled}
+            accessibilityLabel={props.selection.accessibilityLabel}
+            icon={<SelectionCheckGlyph state={props.selection.state} size="compact" />}
+            onPress={props.selection.onToggle}
+        />
+    ) : undefined;
     const content = props.node.type === 'error'
         ? (
             // Pane-states lab 0 "N": a folder that could not be listed is one quiet line in the tree — what
@@ -210,40 +153,87 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                     ]}
                 />
             )
-        : (
+        : props.disclosure ? (
+            <View
+                // @ts-expect-error React Native's View types omit RNW's supported double-click event.
+                onDoubleClick={props.onDoublePress}
+            >
+                <HappierTreeRow
+                    node={{
+                        key: props.node.path,
+                        parentKey: props.node.parentDirectoryPath ?? null,
+                        depth: props.node.depth,
+                        kind: props.node.type === 'directory' ? 'branch' : 'leaf',
+                        expanded: props.node.isExpanded === true,
+                    }}
+                    title={props.title}
+                    titleAccessory={props.titleAccessory}
+                    mark={props.selection ? undefined : props.icon}
+                    selection={selection}
+                    selectionMark={props.selection ? props.selectionMark : undefined}
+                    meta={props.subtitle}
+                    trailing={props.rightElement}
+                    renderActions={props.rowActions ?? undefined}
+                    actionsRevealed={props.rowActionsRevealed}
+                    selected={props.selected}
+                    tabStop={props.treeItemProps?.webTabIndex === 0}
+                    presentation={props.rowPresentation}
+                    touch={treeTouch}
+                    theme={presentationTheme}
+                    reducedMotion={reducedMotion}
+                    onActivate={props.onPress ?? (() => {})}
+                    onLongPress={props.onLongPress}
+                    onContextMenu={props.onContextMenu}
+                    keyboardShortcuts={props.treeItemProps?.webKeyShortcuts}
+                    onFocus={props.treeItemProps?.onFocus ?? (() => {})}
+                    onKeyDown={(_key, event) => {
+                        props.treeItemProps?.onKeyDown?.(event as Parameters<NonNullable<ItemProps['onKeyDown']>>[0]);
+                        return (event as { defaultPrevented?: boolean } | null)?.defaultPrevented === true;
+                    }}
+                    controlRef={(target) => {
+                        const ref = props.treeItemProps?.pressableRef;
+                        if (typeof ref === 'function') ref(target as never);
+                        else if (ref && 'current' in ref) ref.current = target as never;
+                    }}
+                    disclosure={{
+                        ...(props.node.type === 'directory' && props.onDisclosurePress !== undefined && props.onDisclosurePress !== null
+                            ? { onPress: props.onDisclosurePress }
+                            : {}),
+                        accessibilityLabel: props.disclosureAccessibilityLabel ?? props.title,
+                        testID: props.testID ? `${props.testID}-disclosure` : undefined,
+                    }}
+                    testID={props.testID}
+                    style={[
+                        {
+                            marginHorizontal: 0,
+                            ...(table ? { borderRadius: 0 } : null),
+                            ...(table && showDivider ? { borderBottomWidth: 1, borderBottomColor: theme.colors.border.subtle } : null),
+                        },
+                        props.style,
+                    ]}
+                />
+            </View>
+        ) : (
             <Item
                 testID={props.testID}
                 {...props.treeItemProps}
                 title={props.title}
                 titleAccessory={props.titleAccessory}
                 subtitle={props.subtitle}
-                // A compound tree control grows horizontally through Item's natural leading slot.
-                // The fixed icon box fits one glyph, not disclosure + checkbox + status.
-                leftElement={props.disclosure || props.selection ? leading : undefined}
-                icon={props.disclosure || props.selection ? undefined : props.icon}
-                titleStyle={props.disclosure ? { ...(props.node.type === 'directory' && !table ? Typography.default('semiBold') : null), ...(phone && !table ? { fontSize: 14, lineHeight: 20 } : null) } : undefined}
-                // A tree row is one line. A folder (or a merged chain) ellipsizes in the middle so its last
-                // folder stays whole; a file keeps its name's start and truncates its end.
-                titleLines={props.disclosure ? 1 : undefined}
-                titleEllipsizeMode={props.disclosure ? (props.node.type === 'directory' ? 'middle' : 'tail') : undefined}
+                icon={props.icon}
                 density={props.density}
-                rightElement={rightElement}
+                rightElement={props.rightElement}
                 showChevron={false}
                 selected={props.selected}
-                onFocus={rowActions && !touch ? onFocus : props.treeItemProps?.onFocus}
-                onBlur={rowActions && !touch ? onBlur : undefined}
-                onHoverIn={rowActions && !touch ? () => setHovered(true) : undefined}
-                onHoverOut={rowActions && !touch ? () => setHovered(false) : undefined}
                 onPress={props.onPress}
                 onDoublePress={props.onDoublePress}
-                onLongPress={rowActions && touch ? () => setActionsOpen(true) : props.onLongPress}
+                onLongPress={props.onLongPress}
                 onContextMenu={props.onContextMenu}
                 showDivider={showDivider}
                 style={[
                     {
                         paddingLeft,
                         paddingRight: props.paddingRight ?? 12,
-                        ...(treeRowMinHeight ? { minHeight: treeRowMinHeight, paddingVertical: table && phone ? 8 : 0 } : null),
                     },
                     props.style,
                 ]}

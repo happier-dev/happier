@@ -8,7 +8,8 @@ import Animated, {
     withTiming,
     type SharedValue,
 } from 'react-native-reanimated';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { CardGrid, CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { resolveInPlaceMorphTiming, type InPlaceMorphTiming } from '@/components/ui/motion/motionTokens';
@@ -351,6 +352,8 @@ function MorphFrame(props: Readonly<{
     children: React.ReactNode;
 }>) {
     const { frame, clock, origin, sizes, tracks } = props;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const frameStyle = useAnimatedStyle(() => {
         const from = origin.value;
         const current = sizes.value;
@@ -373,7 +376,7 @@ function MorphFrame(props: Readonly<{
         return { opacity: start >= 1 ? 0 : clamp01((clock.value - start) / (1 - start)) };
     });
     return (
-        <Animated.View testID={props.testID} style={[styles.frame, props.bare ? styles.frameBare : null, frameStyle]}>
+        <Animated.View testID={props.testID} style={[styles.frame, props.bare ? styles.frameBare : null, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }, frameStyle]}>
             <Animated.View
                 onLayout={props.onContentLayout}
                 style={[styles.frameContent, props.contentWidth !== null ? { width: props.contentWidth } : styles.frameContentFill, contentStyle]}

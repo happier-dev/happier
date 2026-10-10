@@ -61,6 +61,11 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
                 const anchor = anchorRef.current;
                 const dialogContent = resolveDialogContentTarget();
 
+                // Ordinary workspace panes are not modal containment boundaries. Keeping their
+                // portal inside a clipped pane also traps it in that pane's stacking context,
+                // below body-portalled chrome regardless of the dialog's own z-index.
+                if (!dialogContent) return document.body;
+
                 if (!anchor || typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') {
                     return dialogContent ?? document.body;
                 }

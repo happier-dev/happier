@@ -709,6 +709,8 @@ describe('Popover (web)', () => {
                     boundaryRef,
                     portal: { web: { target: 'boundary' } },
                     placement: 'bottom',
+                    // The bottom side here cannot hold maxHeightCap; this case measures the scroll offset, not the side.
+                    flip: false,
                     gap: 0,
                     maxHeightCap: 320,
                     onRequestClose: () => {},

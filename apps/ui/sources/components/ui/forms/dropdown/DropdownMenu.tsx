@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, ViewStyle, StyleProp, TextStyle, type AccessibilityState } from 'react-native';
+import { Platform, View, ViewStyle, StyleProp, TextStyle, useWindowDimensions, type AccessibilityState } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Popover, type PopoverAnchor, type PopoverPlacement } from '@/components/ui/popover';
@@ -19,7 +19,6 @@ import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dro
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { Icon } from '@/components/ui/icons/Icon';
 
 const DROPDOWN_ACTION_FRAME_FALLBACK_MS = 100;
@@ -51,6 +50,8 @@ export type DropdownMenuSubmenu = Readonly<{
     emptyLabel?: string | null;
     maxHeightCap?: number;
     maxWidthCap?: number;
+    /** Draw this submenu's category titles (a chooser titled by what it acts on), whatever its parent does. */
+    showCategoryTitles?: boolean;
 }>;
 
 export type DropdownMenuCreateItemDisplay = Readonly<{
@@ -179,6 +180,9 @@ export type DropdownMenuProps = Readonly<{
      * Set to 'body' to allow menus to escape overflow-clipped modals.
      */
     popoverPortalWebTarget?: 'body' | 'modal' | 'boundary';
+    /** On a phone, present the menu as the shared bottom sheet (named by `popoverAccessibilityLabel`). */
+    popoverPhonePresentation?: 'sheet';
+    popoverAccessibilityLabel?: string;
     overlayStyle?: ViewStyle;
     /** When true, category titles like "General" are rendered (default false). */
     showCategoryTitles?: boolean;
@@ -228,6 +232,7 @@ export type DropdownMenuProps = Readonly<{
 }>;
 
 type DropdownTriggerAccessibilityProps = Readonly<{
+    expanded?: boolean;
     accessibilityState?: AccessibilityState;
     'aria-expanded'?: boolean;
 }>;
@@ -240,6 +245,7 @@ function withExpandedTriggerState(trigger: React.ReactNode, open: boolean): Reac
     }
 
     return React.cloneElement(trigger, {
+        expanded: open,
         accessibilityState: {
             ...trigger.props.accessibilityState,
             expanded: open,
@@ -247,6 +253,12 @@ function withExpandedTriggerState(trigger: React.ReactNode, open: boolean): Reac
         'aria-expanded': open,
     });
 }
+
+/**
+ * The room below its trigger at which a menu still opens downward. It only chooses the side; it never
+ * limits the menu's height.
+ */
+const MENU_PREFERRED_ROOM_BELOW_PX = 320;
 
 export function DropdownMenu(props: DropdownMenuProps) {
     const { theme } = useUnistyles();
@@ -263,6 +275,11 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const createItemDisplay = props.createItemDisplay ?? null;
     const matchTriggerWidth = props.matchTriggerWidth ?? true;
     const maxWidthCap = props.maxWidthCap ?? (matchTriggerWidth ? 1024 : 320);
+    // A menu is as tall as its content and the window allow (the Popover clamps to the room on its
+    // side); it never cuts a list off at a fixed height. A caller's explicit cap still wins.
+    const { height: windowHeight } = useWindowDimensions();
+    const maxHeightCap = props.maxHeightCap ?? windowHeight;
+    const placementMinSpace = props.maxHeightCap ?? MENU_PREFERRED_ROOM_BELOW_PX;
     const emptyLabel = props.emptyLabel === undefined ? t('commandPalette.noCommandsFound') : props.emptyLabel;
     const contentPadding = rowVariant === 'slim' ? 12 : 16;
     const resultsPaddingBottom = typeof props.resultsPaddingBottom === 'number'
@@ -368,14 +385,11 @@ export function DropdownMenu(props: DropdownMenuProps) {
         }
     }, [activeSubmenu, props.open]);
 
-    // A stacked configuration select retains its full-width field on phones. Inline phone
-    // controls use the compact value and chevron. Elsewhere (menus,
-    // sheets, grouped lists) the grouped trigger is unchanged.
+    // Configuration selects keep one bordered field treatment at every width. Item's measured
+    // adaptive layout moves the field below the label when the row has no room beside it.
+    // Menus, sheets and grouped lists retain their grouped trigger.
     const isPagePresentation = useListPresentation() === 'page';
-    const viewportClass = useViewportClass();
-    const pageTrigger: 'field' | 'compact' | null = !isPagePresentation
-        ? null
-        : viewportClass === 'compact' && props.itemTrigger?.itemProps?.accessoryLayout !== 'stacked' ? 'compact' : 'field';
+    const pageTrigger = isPagePresentation ? 'field' : null;
     const fieldInvalid = props.itemTrigger?.field?.invalid === true;
     const fieldColors = React.useMemo(
         () => (pageTrigger === 'field' ? resolveFieldBoxColors(theme, fieldInvalid ? 'invalid' : 'idle') : undefined),
@@ -424,6 +438,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         field: fieldColors,
                         placeholder: pageTrigger ? cfg.placeholder ?? t('common.choose') : undefined,
                         placeholderColor: theme.colors.input.placeholder,
+                        // A field its row places under the label spans the row, like every stacked control.
+                        fieldSpan: cfg.itemProps?.accessoryLayout === 'stacked' ? 'row' : pageTrigger ? 'column' : 'content',
                         ...(pageTrigger === 'field' && cfg.field ? {
                             leading: cfg.field.leading,
                             secondary: cfg.field.secondary ?? null,
@@ -432,7 +448,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                             quietValueColor: theme.colors.text.secondary,
                         } : {}),
                     })}
-                    // Both page triggers measure the row (R9): a narrow row puts the value under the
+                    // Page triggers measure the row (R9): a narrow row puts the value under the
                     // label rather than pushing it off the side of the screen.
                     accessoryLayout={pageTrigger ? 'adaptive' : undefined}
                     onPress={toggle}
@@ -598,7 +614,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     autoFocusOnOpen
                     placement={requestedPlacement}
                     gap={props.gap ?? 0}
-                    maxHeightCap={props.maxHeightCap ?? 320}
+                    maxHeightCap={maxHeightCap}
+                    placementMinSpace={placementMinSpace}
                     maxWidthCap={maxWidthCap}
                     edgePadding={edgePadding}
                     portal={{
@@ -609,6 +626,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                         anchorAlignVertical: props.popoverAnchorAlignVertical ?? 'start',
                     }}
                     boundaryRef={props.popoverBoundaryRef}
+                    phonePresentation={props.popoverPhonePresentation}
+                    accessibilityLabel={props.popoverAccessibilityLabel}
                     onRequestClose={onRequestClose}
                 >
                     {({ maxHeight, maxWidth, placement }) => (<>
@@ -714,7 +733,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 variant={props.variant}
                                 rowKind={props.rowKind}
                                 itemRowProps={props.itemRowProps}
-                                showCategoryTitles={props.showCategoryTitles}
+                                showCategoryTitles={activeSubmenuItem.submenu.showCategoryTitles ?? props.showCategoryTitles}
                                 allowEmptySelection={props.allowEmptySelection}
                             />
                         ) : null}

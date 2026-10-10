@@ -247,8 +247,10 @@ function resolveReseededFocusedIndex(
         preferredFocusedOptionId,
         virtualizedOptionSource,
     } = params;
-    if (!previous.explicit && params.autoFocusFirstOption === false) {
-        return resolveDefaultFocusedIndex(flatVisibleOptionIds, preferredFocusedOptionId, virtualizedOptionSource, false);
+    if (!previous.explicit && (params.inputMode !== 'value' || params.autoFocusFirstOption === false)) {
+        // Search results may reorder a surviving row. Until the user aims at a
+        // row, the initial match is the current first match, not an old index.
+        return resolveDefaultFocusedIndex(flatVisibleOptionIds, preferredFocusedOptionId, virtualizedOptionSource, params.autoFocusFirstOption);
     }
     if (virtualizedOptionSource) {
         if (previous.optionId !== null) {
@@ -736,6 +738,8 @@ export function useSelectionListKeyboardNav(
                 return false;
             }
             case 'Escape': {
+                // While composing, Escape cancels the IME candidate; it must not clear, pop or close.
+                if (isComposing === true) return false;
                 handleEscape();
                 return consume(event);
             }

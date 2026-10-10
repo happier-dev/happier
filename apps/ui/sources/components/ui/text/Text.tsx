@@ -1,6 +1,7 @@
 import {
     HappierTextSelectabilityScope,
     useHappierTextPresentation,
+    useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import {
@@ -13,6 +14,7 @@ import {
 } from 'react-native';
 
 import { Typography } from '@/constants/Typography';
+import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { useLocalSetting } from '@/sync/store/hooks';
 
 import { scaleTextStyle } from './uiFontScale';
@@ -127,6 +129,7 @@ export const TextInput = React.memo(
         ref
     ) {
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
+        const paintColor = useHappierMaterialColorResolver();
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
         const { accessibilityLabel, testID, ...restProps } = props;
 
@@ -152,8 +155,13 @@ export const TextInput = React.memo(
                 } satisfies TextStyle;
                 out.push(webResetStyle);
             }
+            const backgroundColor = readSurfaceStyleProperty(out, 'backgroundColor');
+            if (typeof backgroundColor === 'string') {
+                const resolvedColor = paintColor(backgroundColor);
+                if (resolvedColor !== backgroundColor) out.push({ backgroundColor: resolvedColor });
+            }
             return out;
-        }, [defaultStyle, scaledStyle, uiFontScale]);
+        }, [defaultStyle, scaledStyle, uiFontScale, paintColor]);
 
         const webAccessibilityProps = Platform.OS === 'web'
             ? { 'data-happier-text-input': 'true', ...(disableUiFontScaling ? WEB_FONT_SCALING_DISABLED_PROPS : null) }

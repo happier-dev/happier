@@ -1,18 +1,15 @@
-import { LinearGradient } from 'expo-linear-gradient';
+import { HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle, type HappierSurfaceGradient } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Platform, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 
-export type SurfaceGradient = Readonly<{
-    colors: readonly [string, string, ...string[]];
-    start?: Readonly<{ x: number; y: number }>;
-    end?: Readonly<{ x: number; y: number }>;
-}>;
+export type SurfaceGradient = HappierSurfaceGradient;
 
 export type GradientSurfaceProps = Readonly<{
     fallbackColor: string;
-    gradient?: SurfaceGradient;
+    gradient?: SurfaceGradient | null;
+    overlay?: SurfaceGradient | null;
+    clipToPaddingBox?: boolean;
     borderRadius: number;
     style?: StyleProp<ViewStyle>;
     children?: React.ReactNode;
@@ -29,18 +26,17 @@ export const GradientSurface = React.memo(function GradientSurface(props: Gradie
                     position: 'relative',
                 },
                 props.style,
+                Platform.OS === 'web' ? combinedWebGradientStyle(props.gradient, props.overlay, props.clipToPaddingBox !== false) : null,
             ]}
         >
-            {props.gradient ? (
-                <LinearGradient
-                    pointerEvents="none"
-                    colors={props.gradient.colors}
-                    start={props.gradient.start}
-                    end={props.gradient.end}
-                    style={StyleSheet.absoluteFill}
-                />
-            ) : null}
+            <HappierSurfaceGradientLayer underlay={props.gradient} gradient={props.overlay} borderRadius={props.borderRadius} />
             {props.children}
         </View>
     );
 });
+
+function combinedWebGradientStyle(gradient: SurfaceGradient | null | undefined, overlay: SurfaceGradient | null | undefined, clip: boolean) {
+    const base = happierSurfaceGradientWebStyle(gradient, clip);
+    const top = happierSurfaceGradientWebStyle(overlay, clip);
+    return base && top ? { ...top, backgroundImage: `${top.backgroundImage}, ${base.backgroundImage}` } : top ?? base;
+}

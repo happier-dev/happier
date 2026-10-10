@@ -187,7 +187,7 @@ describe('theme profile runtime', () => {
         expect(updateTheme).toHaveBeenCalledWith('dark', expect.any(Function));
         expect(setAdaptiveThemes).toHaveBeenCalledWith(false);
         expect(setTheme).toHaveBeenCalledWith('dark');
-        expect(setRootViewBackgroundColor).toHaveBeenCalledWith('#0a0a0a');
+        expect(setRootViewBackgroundColor).not.toHaveBeenCalled();
     });
 
     it('updates only the visual Unistyles theme on native when applying a profile', () => {

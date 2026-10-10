@@ -1,6 +1,13 @@
 import { Platform } from 'react-native';
 import { happierMaterialBackgroundColor } from '@happier-dev/plugin-ui/presentation';
-import type { GlassSurfaceGroup } from './glassMaterial';
+import { readGlassPreset, resolveGlassSurfaceMaterial, type GlassMaterialSettings, type GlassMaterialEnvironment, type GlassSurfaceGroup } from './glassMaterial';
+
+/** Named dark floating coats use low-alpha ink; custom and solid retain their authored color. */
+export function glassSurfaceTintColor(input: Readonly<{ color: string; ink: string; dark: boolean; settings: GlassMaterialSettings; group: GlassSurfaceGroup; environment?: GlassMaterialEnvironment }>): string {
+    return input.dark && input.group === 'floating' && readGlassPreset(input.settings) !== 'custom'
+        && resolveGlassSurfaceMaterial(input.settings, input.group, input.environment).material.opacity < 1
+        ? input.ink : input.color;
+}
 
 /** Shared presentation owner changes only paint alpha, never foreground opacity. */
 export function glassSurfaceBackgroundColor(color: string, group: GlassSurfaceGroup, nested = false): string {

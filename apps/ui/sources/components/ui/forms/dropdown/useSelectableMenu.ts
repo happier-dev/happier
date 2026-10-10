@@ -11,16 +11,20 @@ function toCategoryId(title: string): string {
     return title.toLowerCase().replace(/\s+/g, '-');
 }
 
-function groupByCategory(items: ReadonlyArray<SelectableMenuItem>, defaultCategory: string): SelectableMenuCategory[] {
+/**
+ * Items that name no category form one untitled group: a menu never invents a heading ("General",
+ * "Results") the caller did not write.
+ */
+function groupByCategory(items: ReadonlyArray<SelectableMenuItem>): SelectableMenuCategory[] {
     const grouped = items.reduce((acc, item) => {
-        const category = item.category || defaultCategory;
+        const category = item.category || '';
         if (!acc[category]) acc[category] = [];
         acc[category]!.push(item);
         return acc;
     }, {} as Record<string, SelectableMenuItem[]>);
 
     return Object.entries(grouped).map(([title, groupedItems]) => ({
-        id: toCategoryId(title),
+        id: title ? toCategoryId(title) : '__uncategorized__',
         title,
         items: groupedItems,
     }));
@@ -49,14 +53,12 @@ export function useSelectableMenu(params: {
     const inputRef = useRef<TextInput>(null);
 
     const allItemsRaw = useMemo(() => params.items, [params.items]);
-    const defaultCategoryTitle = t('dropdown.category.general');
-    const resultsCategoryTitle = t('dropdown.category.results');
 
     const filteredCategories = useMemo((): SelectableMenuCategory[] => {
         const query = searchQuery.trim().toLowerCase();
 
         if (!query) {
-            return groupByCategory(allItemsRaw, defaultCategoryTitle);
+            return groupByCategory(allItemsRaw);
         }
 
         const filtered = allItemsRaw.filter((item) => {
@@ -81,8 +83,8 @@ export function useSelectableMenu(params: {
             }
             return [];
         }
-        return groupByCategory(filtered, resultsCategoryTitle);
-    }, [allItemsRaw, defaultCategoryTitle, params.createItemFactory, params.onCreateItem, resultsCategoryTitle, searchQuery]);
+        return groupByCategory(filtered);
+    }, [allItemsRaw, params.createItemFactory, params.onCreateItem, searchQuery]);
 
     const allItems = useMemo(() => {
         return filteredCategories.flatMap((c) => c.items);

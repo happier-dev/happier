@@ -10,6 +10,7 @@ import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 import { Typography } from '@/constants/Typography';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 const TOOLTIP_RADIUS_PX = 6;
 /** Keeps a tooltip off the window's edge when it is clamped there. */
@@ -49,13 +50,18 @@ export default function AnchoredTooltip(props: Readonly<{
             maxHeightCap={TOOLTIP_MAX_HEIGHT_PX}
         >
             {() => (
-                <View role="tooltip" testID={props.testID} style={styles.bubble}>
-                    {props.content ?? <Text style={styles.label}>{props.label}</Text>}
-                    <SurfaceRim role="floating" radius={TOOLTIP_RADIUS_PX} border="modal" />
-                </View>
+                <AnchoredTooltipBubble {...props} />
             )}
         </Popover>
     );
+}
+
+/** The bubble's semantic body, independent of the Popover's placement lifecycle. */
+export function AnchoredTooltipBubble(props: Readonly<{ label: string; content?: React.ReactNode; testID?: string }>) {
+    return <GlassSurface surfaceGroup="floating" role="tooltip" testID={props.testID} style={styles.bubble}>
+        {props.content ?? <Text style={styles.label}>{props.label}</Text>}
+        <SurfaceRim role="floating" radius={TOOLTIP_RADIUS_PX} border="modal" />
+    </GlassSurface>;
 }
 
 // A tooltip is the smallest floating surface: the shared surface hairline, its raised edge and the

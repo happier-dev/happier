@@ -30,6 +30,10 @@ function createThemeRuntime() {
 const style = (value: Omit<EmbedStyleV1, 'v'>): EmbedStyleV1 => ({ v: 1, ...value });
 
 describe('embed style → theme', () => {
+    it('maps the shared surface finish and merges a part finish without discarding its radius', () => {
+        const merged = mergeEmbedStyles(style({ finish: 'flat', parts: { composer: { radius: 'xxl' }, card: { finish: 'flat' } } }), style({ parts: { composer: { finish: 'soft' } } }));
+        expect(resolveEmbedThemeApplication(merged).style).toEqual({ finish: 'flat', parts: { composer: { radius: 'xxl', finish: 'soft' }, card: { finish: 'flat' } } });
+    });
     it('applies valid colours through the theme runtime and drops invalid ones', async () => {
         const runtime = createThemeRuntime();
 

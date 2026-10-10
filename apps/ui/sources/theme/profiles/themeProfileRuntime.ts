@@ -25,7 +25,7 @@ import {
 } from './themeProfilePersistence';
 import { resolveThemeProfile } from './resolveThemeProfile';
 import { applyThemeFontFamilyVariables } from '../themeFontFamilyVariables';
-import { applyThemeStyleScales, resolveThemeStyleScales, type ThemeStyleSelection } from '../themeStyleScales';
+import { applyThemeStyleScales, resolveThemeStyleScales, themeStyleSelectionFromSurfaceFinish, type ThemeStyleSelection } from '../themeStyleScales';
 import type { ThemeProfileMode, ThemeProfileSelectionByMode, ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 
 type AppThemeName = 'light' | 'dark';
@@ -50,9 +50,8 @@ type ApplyThemeRuntimeSelectionInput = Readonly<{
     resolveThemes?: (themeProfiles: ThemeProfilesLocalStateV1) => ThemeRuntimeThemes;
     recordBreadcrumb?: (breadcrumb: ThemeRuntimeBreadcrumb) => void;
     /**
-     * Radius, density, part radii and font families for both themes. Absent or `null` is the
-     * default step of every scale, which is what the full app always renders; the embed passes the
-     * style its host chose (plan 04 §4.7).
+     * Shared scales for both themes. Absent uses the device's finish; explicit `null` uses the
+     * canonical defaults. The embed supplies the style its host chose.
      */
     style?: ThemeStyleSelection | null;
 }>;
@@ -72,6 +71,7 @@ type ResolveThemeRuntimeStartupThemesInput = Readonly<{
     themeProfiles: ThemeProfilesLocalStateV1;
     systemTheme?: AppThemeName | null;
     resolveThemes?: (themeProfiles: ThemeProfilesLocalStateV1) => ThemeRuntimeThemes;
+    style?: ThemeStyleSelection | null;
 }>;
 
 type ThemeRuntimeStartupThemes = Readonly<{
@@ -171,10 +171,12 @@ export const resolveThemeRuntimeStartupThemes = (
     input: ResolveThemeRuntimeStartupThemesInput,
 ): ThemeRuntimeStartupThemes => {
     const resolveThemes = input.resolveThemes ?? resolveThemeRuntimeThemes;
+    const scales = resolveThemeStyleScales(input.style ?? null);
 
     let themes: ThemeRuntimeThemes;
     try {
-        themes = resolveThemes(input.themeProfiles);
+        const resolved = resolveThemes(input.themeProfiles);
+        themes = { light: applyThemeStyleScales(resolved.light, scales), dark: applyThemeStyleScales(resolved.dark, scales) };
     } catch (error) {
         warnThemeRuntimeFallback(error);
         themes = canonicalBaseThemes;
@@ -277,21 +279,26 @@ const applyThemesToUnistyles = (
         runtime.setTheme(input.themePreference);
     }
 
-    const background = resolveEffectiveThemeRuntimeBackground({
-        themes,
-        themePreference: input.themePreference,
-        systemTheme,
-    });
-    recordThemeRuntimeBreadcrumb(input, { phase: 'root-background', platform, systemTheme, visualTheme });
-    runtime.setRootViewBackgroundColor(background);
-    const setSystemBackgroundColor = input.setSystemBackgroundColor ?? SystemUI.setBackgroundColorAsync;
-    fireAndForget(Promise.resolve(setSystemBackgroundColor(background)), { tag: 'themeProfileRuntime.setSystemBackgroundColor' });
+    // Mounted web roots subscribe to the actual theme and resolved material presentation.
+    // Imperative web writes here would race that owner and flatten native glass backing.
+    if (isNativeRuntimePlatform(platform)) {
+        const background = resolveEffectiveThemeRuntimeBackground({
+            themes,
+            themePreference: input.themePreference,
+            systemTheme,
+        });
+        recordThemeRuntimeBreadcrumb(input, { phase: 'root-background', platform, systemTheme, visualTheme });
+        runtime.setRootViewBackgroundColor(background);
+        const setSystemBackgroundColor = input.setSystemBackgroundColor ?? SystemUI.setBackgroundColorAsync;
+        fireAndForget(Promise.resolve(setSystemBackgroundColor(background)), { tag: 'themeProfileRuntime.setSystemBackgroundColor' });
+    }
 };
 
 export const applyThemeRuntimeSelection = (input: ApplyThemeRuntimeSelectionInput): ThemeRuntimeThemes => {
     const resolveThemes = input.resolveThemes ?? resolveThemeRuntimeThemes;
 
-    const styleScales = resolveThemeStyleScales(input.style ?? null);
+    const styleScales = resolveThemeStyleScales(input.style === undefined
+        ? themeStyleSelectionFromSurfaceFinish(defaultLoadLocalSettings()) : input.style);
     let themes: ThemeRuntimeThemes;
     try {
         const profileThemes = resolveThemes(input.themeProfiles);

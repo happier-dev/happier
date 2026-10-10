@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import Color from 'color';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -10,6 +11,36 @@ import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entity
 installPanelCommonModuleMocks();
 
 describe('DocumentTabStrip actions', () => {
+    it('keeps active strip and raised tabs as ink within the containing material', async () => {
+        const { AppShellMaterialFrame } = await import('@/components/navigation/shell/AppShellMaterialFrame');
+        const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
+        const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const { useUnistyles } = await import('react-native-unistyles');
+        const { theme } = useUnistyles();
+        for (const reduceTransparency of [false, true]) for (const variant of ['strip', 'bar'] as const) {
+            const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ desktopWindow: true, nativeWindowMaterialLive: true, reduceTransparency }}>
+                <GlassMaterialSettingsProvider value={{ glassBlurEnabled: true, glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+                    <AppShellMaterialFrame showChrome={false} dragEnabled={false} leftOffsetPx={0} sidebarWidth={320} titleStrip={null} rail={null} column={null} peek={null}>
+                        <DocumentTabStrip variant={variant} tabs={[{ key: 'active', title: 'Active', isPinned: false, isPreview: false }]} activeTabKey="active" accessibilityLabel="Documents"
+                            onActivate={() => {}} onPin={() => {}} onUnpin={() => {}} onClose={() => {}} renderLeadingIcon={() => null} tabNativeId={id => id} panelNativeId={id => id}
+                            testIds={{ tab: id => `material-tab-${id}` }} />
+                    </AppShellMaterialFrame>
+                </GlassMaterialSettingsProvider>
+            </GlassRuntimeEnvironmentProvider>);
+            let node = screen.findHostByTestId('material-tab-active');
+            let paint: string | undefined;
+            while (node && paint === undefined) {
+                const color = StyleSheet.flatten(node.props.style)?.backgroundColor;
+                if (typeof color === 'string') paint = color;
+                else node = node.parent;
+            }
+            expect(paint).toBeDefined();
+            if (reduceTransparency) expect(Color(paint).hexa()).toBe(Color(variant === 'strip' ? theme.colors.surface.elevated : theme.colors.surface.pressed).hexa());
+            else expect(Color(paint).alpha()).toBeLessThan(1);
+            await screen.unmount();
+        }
+    });
     it('offers the same semantic before-tab destination to keyboard and chooser carries', async () => {
         const runtime = createEntityDragDropRuntime();
         const scope = { serverId: 'home', accountId: 'account' };

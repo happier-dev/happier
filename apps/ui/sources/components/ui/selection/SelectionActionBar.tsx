@@ -13,6 +13,8 @@ import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
+import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
+import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 
 function CoreSelectionBarText(props: React.ComponentProps<HappierSelectionActionBarHost['Text']>): React.ReactElement {
     return (
@@ -89,6 +91,8 @@ export function SelectionActionBar(props: SelectionActionBarProps): React.ReactE
             host={CORE_SELECTION_BAR_HOST}
             reducedMotion={reducedMotion}
             moreLabel={t('common.moreActions')}
+            gradient={resolveThemeSurfaceFinish(theme, 'floating')}
+            renderMaterialSurface={renderThemeMaterialSurface}
         />
     );
 }

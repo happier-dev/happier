@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
 
-import { applyThemeRuntimeSelection } from './themeProfileRuntime';
+import { applyThemeRuntimeSelection, resolveThemeRuntimeStartupThemes } from './themeProfileRuntime';
+import { themeStyleSelectionFromSurfaceFinish } from '../themeStyleScales';
 import type { ThemeProfilesLocalStateV1 } from './themeProfileTypes';
 
 const noProfiles: ThemeProfilesLocalStateV1 = { activeProfileIds: { light: null, dark: null }, profiles: [] };
@@ -31,6 +32,15 @@ function rootFontVariable(name: string): string {
 }
 
 describe('theme runtime style selection', () => {
+    it('restores device finish at startup and preserves role overrides through both theme modes', () => {
+        const startup = resolveThemeRuntimeStartupThemes({
+            themePreference: 'adaptive', themeProfiles: noProfiles,
+            style: themeStyleSelectionFromSurfaceFinish({ uiSurfaceFinish: 'flat', uiSurfaceFinishOverrides: { composer: 'soft' } }),
+        });
+        expect(startup.themes.light.finish).toBe('flat');
+        expect(startup.themes.dark.parts.composer.finish).toBe('soft');
+        expect(startup.themes.dark.parts.card.finish).toBe('flat');
+    });
     beforeEach(() => {
         document.documentElement.removeAttribute('style');
     });

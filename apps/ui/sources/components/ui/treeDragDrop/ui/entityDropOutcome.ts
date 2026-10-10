@@ -11,6 +11,8 @@ import { PANE_DROP_UNCHANGED_CODES } from '@/components/appShell/splitCanvas/pre
 import { SESSION_LIST_NO_TARGET_CODE } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
 import { t } from '@/text';
 
+import { WIDGET_MOVE_SILENT_CODES } from '../widgetLayoutEntityDrop';
+
 /**
  * Happier core's words for the ONE outcome presenter (`describeHappierDropOutcome`, plugin-ui): the
  * carried card, every docked keyboard preview, the polite status and the source row's lasting line
@@ -42,7 +44,7 @@ function vocabulary(): HappierDropOutcomeVocabulary {
         unknownTitle: effect => t('entityDragDrop.settled.unknown', { verb: effect.preview.verb }),
         unknownDetail: t('entityDragDrop.preview.unknownDetail'),
         unchangedCodes: UNCHANGED_CODES,
-        silentCodes: new Set([SESSION_LIST_NO_TARGET_CODE]),
+        silentCodes: new Set([SESSION_LIST_NO_TARGET_CODE, ...WIDGET_MOVE_SILENT_CODES]),
     };
 }
 

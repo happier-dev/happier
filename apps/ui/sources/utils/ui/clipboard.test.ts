@@ -53,7 +53,7 @@ describe('getClipboardStringTrimmedSafe', () => {
 describe('setClipboardStringSafe', () => {
     it('writes to clipboard and returns true', async () => {
         vi.resetModules();
-        const setStringAsync = vi.fn(async () => {});
+        const setStringAsync = vi.fn(async () => true);
         vi.doMock('expo-clipboard', () => {
             return {
                 setStringAsync,
@@ -74,6 +74,14 @@ describe('setClipboardStringSafe', () => {
                 }),
             };
         });
+
+        const { setClipboardStringSafe } = await import('./clipboard');
+        await expect(setClipboardStringSafe('hello')).resolves.toBe(false);
+    });
+
+    it('returns false when the platform declines a clipboard write', async () => {
+        vi.resetModules();
+        vi.doMock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => false) }));
 
         const { setClipboardStringSafe } = await import('./clipboard');
         await expect(setClipboardStringSafe('hello')).resolves.toBe(false);

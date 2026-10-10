@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
@@ -35,6 +36,7 @@ const ICON_SIZE = 14;
 
 export function MarkdownEditModeMenu(props: MarkdownEditModeMenuProps) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const [open, setOpen] = React.useState(false);
 
     const items = React.useMemo<DropdownMenuItem[]>(() => {
@@ -93,7 +95,7 @@ export function MarkdownEditModeMenu(props: MarkdownEditModeMenuProps) {
                         paddingVertical: 5,
                         paddingHorizontal: 10,
                         borderRadius: 10,
-                        backgroundColor: theme.colors.surface.inset,
+                        backgroundColor: paintColor(theme.colors.surface.inset),
                         borderWidth: 1,
                         borderColor: theme.colors.border.default,
                         alignItems: 'center',

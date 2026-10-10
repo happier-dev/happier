@@ -15,7 +15,16 @@ export async function getClipboardStringTrimmedSafe(): Promise<string> {
 
 export async function setClipboardStringSafe(value: string): Promise<boolean> {
     try {
-        await Clipboard.setStringAsync(value);
+        return await Clipboard.setStringAsync(value);
+    } catch {
+        return false;
+    }
+}
+
+/** A PNG (standard base64, no data-URI prefix) onto the system clipboard; false when the platform refuses. */
+export async function setClipboardImageSafe(base64Png: string): Promise<boolean> {
+    try {
+        await Clipboard.setImageAsync(base64Png);
         return true;
     } catch {
         return false;

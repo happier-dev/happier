@@ -1,13 +1,16 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import type { GestureResponderEvent, StyleProp, ViewStyle } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { resolveThemeControlEdge, resolveThemeGloss } from '@/components/ui/surfaces/themeRaisedEdge';
+import { resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
+import { HappierPressable, type HappierSurfaceProps, HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle } from '@happier-dev/plugin-ui/presentation';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { happierRaisedEdgeStyle } from '@happier-dev/plugin-ui/presentation';
+import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 
 /**
  * The canonical small labelled action for pane toolbars and surface headers.
@@ -121,16 +124,19 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
     const styles = stylesheet;
     const tone = props.tone ?? 'default';
     const isPrimary = tone === 'primary';
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
+    const callerBackground = readSurfaceStyleProperty(props.style, 'backgroundColor');
 
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
-            onPress={props.disabled ? undefined : props.onPress}
+            onPress={event => { props.onPress?.(event as GestureResponderEvent); }}
             disabled={props.disabled}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel ?? props.label}
-            accessibilityState={{ disabled: Boolean(props.disabled), ...(props.busy ? { busy: true } : {}) }}
-            style={({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+            busy={props.busy}
+            style={({ hovered, pressed, focused }) => [
                 styles.base,
                 props.size === 'md' ? styles.md : null,
                 isPrimary ? styles.primary : null,
@@ -140,9 +146,16 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
                 pressed && !props.disabled ? (isPrimary ? styles.primaryPressed : styles.pressed) : null,
                 !pressed && !props.disabled && !props.active ? (isPrimary ? styles.primaryRaised : styles.raised) : null,
                 props.disabled ? styles.disabled : null,
-                props.style,
+                // Native caller styles cross the portable adapter unchanged.
+                props.style as HappierSurfaceProps['style'],
+                callerBackground !== undefined && typeof callerBackground !== 'string' ? null : {
+                    backgroundColor: paintColor(callerBackground ?? (isPrimary ? theme.colors.button.primary.background : pressed && !props.disabled ? theme.colors.surface.selected : props.active || hovered && !props.disabled ? theme.colors.surface.pressed : theme.colors.surface.base)),
+                },
+                Platform.OS === 'web' ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, isPrimary ? 'primaryButton' : 'secondaryButton', { pressed, focused, disabled: props.disabled || props.active }), !theme.dark) : null,
             ]}
         >
+            {({ pressed, focused }) => <>
+            <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, isPrimary ? 'primaryButton' : 'secondaryButton', { pressed, focused, disabled: props.disabled || props.active })} borderRadius={8} />
             {props.icon ? <View pointerEvents="none">{props.icon}</View> : null}
             <Text
                 numberOfLines={1}
@@ -151,12 +164,14 @@ export const ToolbarButton = React.memo((props: ToolbarButtonProps) => {
                     isPrimary ? styles.primaryLabel : null,
                     tone === 'danger' ? styles.dangerLabel : null,
                     props.labelColor ? { color: props.labelColor } : null,
+                    isPrimary && !props.labelColor ? { color: paintColor(theme.colors.button.primary.tint, theme.colors.text.primary) } : null,
                 ]}
             >
                 {props.label}
             </Text>
             {props.trailing ? <View pointerEvents="none">{props.trailing}</View> : null}
-        </Pressable>
+            </>}
+        </HappierPressable>
     );
 });
 

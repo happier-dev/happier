@@ -22,6 +22,8 @@ export function InlineTextField(props: Readonly<{
     editor: InlineTextEditor;
     multiline?: boolean;
     style: StyleProp<TextStyle>;
+    /** `ink`: the placeholder is the title a reader sees until one is typed (an unnamed block's kind). */
+    placeholderTone?: 'quiet' | 'ink';
 }>) {
     const { theme } = useUnistyles();
     const { editor } = props;
@@ -38,6 +40,21 @@ export function InlineTextField(props: Readonly<{
     const [editingValue, setEditingValue] = React.useState(editor.value);
     const singleLine = props.multiline !== true;
     const [contentHeight, setContentHeight] = React.useState<number | null>(null);
+    const measuredWidthRef = React.useRef<number | null>(null);
+    const handleLayout = React.useCallback((event: Readonly<{ nativeEvent: Readonly<{ layout: Readonly<{ width: number }> }> }>) => {
+        const width = event.nativeEvent.layout.width;
+        if (width <= 0 || measuredWidthRef.current === width) return;
+        measuredWidthRef.current = width;
+        // RNW reports content-size changes for text edits, not reflow when a
+        // docked pane closes. Measure the same textarea at its new width.
+        const input = inputRef.current as unknown as { style?: { height: string }; scrollHeight?: number } | null;
+        if (!input?.style || typeof input.scrollHeight !== 'number') return;
+        const previousHeight = input.style.height;
+        input.style.height = 'auto';
+        const height = input.scrollHeight;
+        input.style.height = previousHeight;
+        if (Number.isFinite(height) && height > 0) setContentHeight(Math.ceil(height));
+    }, []);
     const handleContentSizeChange = React.useCallback((event: Readonly<{ nativeEvent: Readonly<{ contentSize?: Readonly<{ height?: number }> }> }>) => {
         const height = event.nativeEvent.contentSize?.height;
         if (typeof height === 'number' && Number.isFinite(height) && height > 0) setContentHeight(Math.ceil(height));
@@ -69,10 +86,10 @@ export function InlineTextField(props: Readonly<{
             accessibilityHint={editor.accessibilityHint}
             value={focused ? editingValue : editor.value}
             placeholder={editor.placeholder}
-            placeholderTextColor={theme.colors.text.tertiary}
+            placeholderTextColor={props.placeholderTone === 'ink' ? theme.colors.text.primary : theme.colors.text.tertiary}
             editable={editor.editable !== false}
             multiline
-            {...(Platform.OS === 'web' ? { numberOfLines: 1, onContentSizeChange: handleContentSizeChange } : {})}
+            {...(Platform.OS === 'web' ? { numberOfLines: 1, onContentSizeChange: handleContentSizeChange, onLayout: handleLayout } : {})}
             submitBehavior={singleLine ? 'blurAndSubmit' : 'newline'}
             onSubmitEditing={singleLine ? () => latestRef.current.onCommit?.() : undefined}
             onKeyPress={handleKeyPress as never}

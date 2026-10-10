@@ -92,9 +92,9 @@ export function createSelectionListKeyPressHandler(
         );
         if (eventComposing) {
             // Mirrors the hook's IME guard — Enter / plain Tab / Backspace /
-            // ArrowRight are NOT consumed while composing so the IME machinery
-            // can process them (text commit, autocomplete acceptance, segment
-            // walk-up).
+            // ArrowRight / Escape are NOT consumed while composing so the IME
+            // machinery can process them (text commit, autocomplete acceptance,
+            // segment walk-up, candidate cancel).
             //
             // FR3-7: Shift+Tab is EXEMPT from the IME guard because it does
             // NOT commit text. It is reserved for the back/up shortcut and
@@ -110,6 +110,7 @@ export function createSelectionListKeyPressHandler(
                     || nativeKey === 'Tab'
                     || nativeKey === 'Backspace'
                     || nativeKey === 'ArrowRight'
+                    || nativeKey === 'Escape'
                 )
             ) {
                 return;

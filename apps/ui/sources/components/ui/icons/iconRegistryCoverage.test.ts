@@ -44,9 +44,10 @@ describe('icon registry coverage', () => {
             const source = readFileSync(file, 'utf8');
             for (const pattern of NAME_PATTERNS) {
                 for (const match of source.matchAll(pattern)) {
-                    // Only multi-word names are unambiguously icon tokens; a bare word in an
-                    // `icon:`-shaped field is as likely to be a domain value.
-                    if (match[1].includes('-') && !registry.has(match[1])) unregistered.add(match[1]);
+                    // Picker fields always name icons; elsewhere only multi-word names are
+                    // unambiguous, since a bare `icon:` field can also hold a domain value.
+                    const isAgentPickerIcon = match[0].startsWith('agentPickerIconName');
+                    if ((isAgentPickerIcon || match[1].includes('-')) && !registry.has(match[1])) unregistered.add(match[1]);
                 }
             }
         }

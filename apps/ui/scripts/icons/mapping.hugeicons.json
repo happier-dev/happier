@@ -248,5 +248,10 @@
   "x-circle": "CancelCircleIcon",
   "hard-drive-download": "HardDriveDownloadIcon",
   "square-split-horizontal": "LayoutTwoColumnIcon",
-  "square-split-vertical": "LayoutTwoRowIcon"
+  "square-split-vertical": "LayoutTwoRowIcon",
+  "kanban": "KanbanIcon",
+  "scales": "JusticeScale01Icon",
+  "binoculars": "BinocularsIcon",
+  "layout": "GroupItemsIcon",
+  "exclude-square": "UngroupItemsIcon"
 }

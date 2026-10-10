@@ -64,6 +64,8 @@ type SelectionListOptionBase = Readonly<{
     testID?: string;
     /** Plain-text label used for matching and as the synchronous fallback. */
     label: string;
+    /** Rich visual label, resolved only by a mounted row; `label` remains its matching/spoken name. */
+    labelContent?: SelectionListLazyVisual;
     /** An inline mark after the label, such as "· via DeepSeek"; rendered by the row's `Item`. */
     titleAccessory?: SelectionListLazyVisual;
     /**
@@ -84,6 +86,8 @@ type SelectionListOptionBase = Readonly<{
      * remains owned by SelectionList and is delivered through `onSelect`.
      */
     onPressIn?: () => void;
+    /** Pointer highlight for hosts that keep the active option in a separate input or preview. */
+    onHighlight?: () => void;
     /**
      * Optional full-row body. When present, SelectionList still owns row
      * activation, selected/focused styling, a11y ids, and scroll-into-view,
@@ -122,6 +126,10 @@ type SelectionListOptionBase = Readonly<{
      * is chosen; the row itself stays the single activation target.
      */
     expandedContent?: SelectionListLazyVisual;
+    /** Hide the compact subtitle while expanded content already shows it. */
+    hideSubtitleWhenExpanded?: boolean;
+    /** Opt free disclosure content into the row gutter; default/none keeps content-owned insets. */
+    expandedContentInset?: 'row' | 'none';
     /**
      * When `true`, the navigation chevron is kept VISIBLE even though the row
      * also renders a `rightAccessory`. By default a right accessory suppresses
@@ -209,6 +217,7 @@ export type SelectionListVirtualizedOptionSourceHeader = Readonly<{
     id: string;
     title?: string;
     count?: number;
+    rightAccessory?: SelectionListLazyVisual;
 }>;
 
 /**
@@ -254,6 +263,8 @@ export type SelectionListSection = Readonly<{
     id: string;
     /** Uppercase tracking label; renders as a section header. */
     title?: string;
+    /** Quiet scope or context at the trailing edge of the section header. */
+    rightAccessory?: SelectionListLazyVisual;
     /** Optional integer rendered as ` · {count}` after the section title. */
     count?: number;
     /** One quiet destination at the header's trailing edge ("New machine · Presets"); never an option. */
@@ -307,6 +318,7 @@ export type SelectionListDynamicSectionResolveResult = Readonly<{
 export type SelectionListDynamicSection = Readonly<{
     id: string;
     title?: string;
+    rightAccessory?: SelectionListLazyVisual;
     /**
      * Optional explicit identity key for the resolver. When present, the
      * dynamic-sections hook treats two descriptors with the same `id` AND same
@@ -649,11 +661,14 @@ export type SelectionListFilterOption = Readonly<{
     subtitle?: string;
     /** A leading mark (an Agent's brand mark), shown in the popover row and, when selected, the chip. */
     icon?: React.ReactNode;
+    /** A quiet trailing fact for the row (an identity colour swatch); never a control. */
+    accessory?: React.ReactNode;
     disabled?: boolean;
 }>;
 
 /**
- * A filter chip: what is being chosen, its current value and how to change it. Single choice.
+ * A filter chip: what is being chosen, its current value and how to change it. Single choice, or
+ * several at once with `selectedIds` (the popover stays open and each row toggles).
  *
  * The popover lists `options` (a small `SelectionList`), unless the filter's canonical owner draws
  * its own chooser (`renderPopoverContent`, e.g. the machine list the machine owner already has).
@@ -667,12 +682,21 @@ export type SelectionListFilter = Readonly<{
     valueLabel?: string;
     /** The chip's leading glyph; defaults to the selected option's icon. */
     icon?: React.ReactNode;
-    /** Presence of what the value names (a machine): a dot after the value. Omitted: no dot. */
-    presence?: 'online' | 'offline';
+    /**
+     * A dot after the value: the presence of what the value names (a machine), or `attention` when
+     * what the filter covers is incomplete (a source still being read). Omitted: no dot.
+     */
+    presence?: 'online' | 'offline' | 'attention';
+    /** Draw the filter's name, quieter, before its value ("Agents  Claude, Codex"). */
+    showLabel?: boolean;
+    /** The filter narrows what is shown: the chip takes the accent edge so a narrowed view is never missed. */
+    active?: boolean;
     /** The value is a placeholder ("Choose a machine") rather than a choice. */
     muted?: boolean;
     options?: ReadonlyArray<SelectionListFilterOption>;
     selectedId?: string | null;
+    /** Several choices at once: these rows are checked, the popover stays open, `onChange` gets the toggled id. */
+    selectedIds?: ReadonlySet<string>;
     onChange?: (id: string) => void;
     /** The canonical owner's own chooser. `close` dismisses the popover. */
     renderPopoverContent?: (context: Readonly<{ close: () => void; maxHeight: number }>) => React.ReactNode;

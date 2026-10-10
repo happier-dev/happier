@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { FLOATING_OVERLAY_METRICS } from '@/components/ui/overlays/floatingOverlayMetrics';
+export { HAPPIER_MENU_ROW_METRICS as MENU_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type { ResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 
 function selectValue<T>(values: { ios?: T; default: T }): T {
@@ -73,18 +73,6 @@ export const ITEM_ROW_PADDING_HORIZONTAL: Record<ResolvedItemDensity, number> = 
     tight: 10,
 };
 
-/**
- * A tree row (the Files tree, the path browser): one line per node, the session tabs lab F1 rhythm.
- * Rows are 28 under a precise pointer and 36 under a finger; each level indents one step from the
- * tight row inset, and deep levels stop indenting so names keep their width.
- */
-export const TREE_ROW_METRICS = {
-    minHeightPx: { precise: 28, touch: 36 },
-    basePaddingPx: 10,
-    indentStepPx: 14,
-    maxIndentDepth: 6,
-} as const;
-
 export const ITEM_ICON_BOX_SIZE: Record<ResolvedItemDensity, number> = {
     comfortable: selectValue({ ios: 32, default: 32 }),
     cozy: selectValue({ ios: 22, default: 24 }),
@@ -110,51 +98,6 @@ export const ITEM_ICON_GLYPH_SIZE: Record<ResolvedItemDensity, number> = {
     tight: ICON_SIZE.sm,
 };
 
-const MENU_ROW_INSET_PX = 4;
-
-/**
- * Everything that sizes a MENU row — a dropdown, a picker, an action list.
- *
- * Flat, and that is the point. Menu rows and settings rows share `Item`/`SelectableRow`, so a menu
- * row used to inherit the whole item scale: at the default density a 20px glyph in a 24px box on a
- * 44px row, while the menu rows that happened to render through `SelectableRow` sat at 16 on 36. One
- * concept, two sizes, chosen by which component the call site reached for.
- *
- * Density is a LIST setting — how much of a settings screen or a file tree fits on screen. A menu is
- * transient and self-contained: nothing about a user preferring dense file trees says their dropdowns
- * should be 8px taller. Letting the preference through gave one menu four possible heights decided
- * somewhere else entirely, which is why these numbers are constants and not another table.
- *
- * The values are the canonical menu row's, the one `SelectableRow` has always drawn: a 16px glyph, a
- * 12px gap, and 8px above and below a 20px line — 36px in total.
- */
-export const MENU_ROW_METRICS = {
-    iconGlyphSizePx: ICON_SIZE.sm,
-    /** No reserved box beyond the glyph: a menu row has one column of icons, all the same size. */
-    iconBoxSizePx: ICON_SIZE.sm,
-    iconMarginRightPx: 12,
-    minHeightPx: 36,
-    paddingVerticalPx: 8,
-    /**
-     * A menu row spans the menu's full content width, drawn this far in from the surface's edge
-     * on each side, with the list padded by the same amount above and below: the highlight is a
-     * fill inset evenly inside the surface, never a box around part of the row.
-     */
-    insetPx: MENU_ROW_INSET_PX,
-    /** Concentric with the surface: its radius minus the inset. */
-    radiusPx: FLOATING_OVERLAY_METRICS.radiusPx - MENU_ROW_INSET_PX,
-    /** Content inset inside the row, so every menu's text starts at the same distance from the edge. */
-    paddingHorizontalPx: 12,
-    /**
-     * A menu's vertical rhythm has one unit: the inset. Each section of a menu is padded by it above
-     * and below, so the list sits one inset from the surface's edges (the surface adds the same) and
-     * a hairline between two sections sits exactly midway, one inset from each.
-     */
-    sectionPaddingVerticalPx: MENU_ROW_INSET_PX,
-    /** Title → subtitle gap inside a row: the subtitle reads as the title's second line. */
-    subtitleGapPx: 2,
-} as const;
-
 export const ITEM_ICON_MARGIN_RIGHT: Record<ResolvedItemDensity, number> = {
     comfortable: 12,
     cozy: 14,
@@ -177,4 +120,3 @@ export const ITEM_CHEVRON_SIZE: Record<ResolvedItemDensity, number> = {
     compact: 15,
     tight: 14,
 };
-

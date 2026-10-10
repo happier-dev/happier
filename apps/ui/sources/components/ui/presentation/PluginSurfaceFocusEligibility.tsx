@@ -12,6 +12,26 @@ type PluginSurfaceFocusEligibility = Readonly<{
 // fail closed when no owner supplied any fact at all.
 const PluginSurfaceFocusEligibilityContext = React.createContext<PluginSurfaceFocusEligibility | null>(null);
 
+function RetainedFocusEligibility(props: Readonly<{
+    captured: PluginSurfaceFocusEligibility | null;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    const slot = React.useContext(PluginSurfaceFocusEligibilityContext);
+    const presented = slot?.presentationEffective ?? true;
+    const value = React.useMemo(() => props.captured ? Object.freeze({
+        effective: props.captured.effective && presented,
+        presentationEffective: props.captured.presentationEffective && presented,
+        currentUiContextEffective: props.captured.currentUiContextEffective && presented,
+    }) : slot, [presented, props.captured, slot]);
+    return <PluginSurfaceFocusEligibilityContext.Provider value={value}>{props.children}</PluginSurfaceFocusEligibilityContext.Provider>;
+}
+
+/** Transfer the existing layout's facts into its portal; parking can only withdraw them. */
+export function useRetainedPluginSurfaceFocusNode(children: React.ReactNode): React.ReactElement {
+    const captured = React.useContext(PluginSurfaceFocusEligibilityContext);
+    return <RetainedFocusEligibility captured={captured}>{children}</RetainedFocusEligibility>;
+}
+
 /**
  * App-private composition boundary for layout and route activity. It is not
  * navigation state and does not cross the Plugin UI SDK seam.

@@ -17,7 +17,7 @@ import { FieldTextInput } from './FieldTextInput';
 
 export type FieldValueKind = HappierFieldValueKind;
 
-export type FieldValueItemProps = Omit<ItemProps, 'rightElement' | 'onPress' | 'accessoryLayout' | 'showChevron' | 'detail'> & Readonly<{
+export type FieldValueItemProps = Omit<ItemProps, 'rightElement' | 'onPress' | 'showChevron' | 'detail'> & Readonly<{
     /** The saved value, as text. The field follows it whenever it changes. */
     value: string;
     /** Visible unit beside a numeric draft; it is never included in the stored value. */
@@ -40,6 +40,8 @@ export type FieldValueItemProps = Omit<ItemProps, 'rightElement' | 'onPress' | '
     placeholder?: string;
     /** Test id of the text input (its error is `<fieldTestID>.error`). */
     fieldTestID?: string;
+    /** A bounded value such as a clock time can use the field owner's compact width. */
+    fieldStyle?: React.ComponentProps<typeof FieldTextInput>['style'];
     monospace?: boolean;
     /** Masks the draft as it is typed (secrets); pass `value=""` so a saved secret is never echoed. */
     secureTextEntry?: boolean;
@@ -68,12 +70,14 @@ export const FieldValueItem = React.memo(function FieldValueItem(props: FieldVal
         allowEmpty,
         placeholder,
         fieldTestID,
+        fieldStyle,
         monospace,
         secureTextEntry,
         autoCapitalize,
         fieldAccessibilityLabel,
         error,
         autoFocus,
+        accessoryLayout = 'adaptive',
         ...itemProps
     } = props;
     // The draft, its filtering and the commit rule are the shared owner's (a plugin page field
@@ -102,14 +106,14 @@ export const FieldValueItem = React.memo(function FieldValueItem(props: FieldVal
                     autoFocus={autoFocus}
                     onBlur={field.commit}
                     onSubmitEditing={field.commit}
-                    style={stepper ? { minWidth: 0, width: FIELD_BOX_METRICS.triggerMinWidthPx } : undefined}
+                    style={[stepper ? { minWidth: 0, width: FIELD_BOX_METRICS.triggerMinWidthPx } : undefined, fieldStyle]}
                 />
     );
     return (
         <Item
             {...itemProps}
             showChevron={false}
-            accessoryLayout="adaptive"
+            accessoryLayout={accessoryLayout}
             rightElement={stepper ? <HappierFieldStepper
                 testID={fieldTestID} colors={resolveFieldBoxColors(theme, error ? 'invalid' : 'idle')}
                 focusColor={theme.colors.border.focus}

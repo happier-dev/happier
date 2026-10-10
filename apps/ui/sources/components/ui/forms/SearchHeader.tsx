@@ -9,6 +9,7 @@ import { t } from '@/text';
 import { TextInput } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 
 export interface SearchHeaderProps {
@@ -85,13 +86,14 @@ export function SearchHeader({
     onBlur,
 }: SearchHeaderProps) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const maxWidth = useLayoutMaxWidth();
     const styles = stylesheet;
 
     return (
-        <View testID={testID} style={[styles.container, containerStyle]}>
+        <View testID={testID} style={[styles.container, { backgroundColor: paintColor(theme.colors.surface.base, 'transparent') }, containerStyle]}>
             <View style={[styles.content, { maxWidth }]}>
-                <View style={styles.inputWrapper}>
+                <View style={[styles.inputWrapper, { backgroundColor: paintColor(theme.colors.input.background) }]}>
                     {normalizeNodeForView(
                         <Icon
                             name="magnifying-glass"

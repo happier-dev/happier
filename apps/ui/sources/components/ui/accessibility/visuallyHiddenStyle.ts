@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { Platform, type ViewStyle } from 'react-native';
+import { Platform } from 'react-native';
 
 const baseVisuallyHiddenStyle = {
     position: 'absolute',
@@ -24,8 +24,8 @@ const webClipStyle = {
  * overflow box already hides it there, and it stays opaque so TalkBack keeps
  * treating it as live content).
  */
-export const visuallyHiddenStyle: ViewStyle = Platform.OS === 'web'
-    ? ({ ...baseVisuallyHiddenStyle, ...webClipStyle } as ViewStyle)
+export const visuallyHiddenStyle = Platform.OS === 'web'
+    ? { ...baseVisuallyHiddenStyle, ...webClipStyle }
     : baseVisuallyHiddenStyle;
 
 /** The same recipe for raw DOM elements (web-only portals and `.web.tsx` hosts). */

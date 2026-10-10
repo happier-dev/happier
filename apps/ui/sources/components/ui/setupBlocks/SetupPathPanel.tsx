@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierPressable, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
@@ -18,7 +18,7 @@ export type SetupPath<T extends string> = Readonly<{
     glyph: React.ReactNode;
     title: string;
     subtitle: string;
-    /** A shorter label for the narrow chip row. */
+    /** A shorter label wherever the ways sit side by side: the narrow chip row and the page's segmented bar. */
     chipLabel?: string;
 }>;
 
@@ -40,6 +40,8 @@ export function SetupPathPanel<T extends string>(props: Readonly<{
     onClose: () => void;
 }>) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const [width, setWidth] = React.useState<number | null>(null);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
         const next = event.nativeEvent.layout.width;
@@ -56,7 +58,7 @@ export function SetupPathPanel<T extends string>(props: Readonly<{
             style={[styles.panel, sideBySide ? styles.panelSideBySide : null]}
         >
             {sideBySide ? (
-                <View style={styles.column}>
+                <View style={[styles.column, { backgroundColor: materialColor(theme.colors.surface.sectionTint) }]}>
                     <Text accessibilityRole="header" style={styles.columnTitle}>{props.title}</Text>
                     <View accessibilityRole="tablist">
                         {props.paths.map((path) => {
@@ -71,6 +73,7 @@ export function SetupPathPanel<T extends string>(props: Readonly<{
                                     style={({ hovered }) => [
                                         styles.path,
                                         selected ? styles.pathSelected : hovered ? styles.pathHovered : null,
+                                        selected ? { backgroundColor: materialColor(theme.colors.surface.selected) } : hovered ? { backgroundColor: materialColor(theme.colors.surface.pressed, theme.colors.surface.pressedOverlay) } : null,
                                     ]}
                                 >
                                     <View style={styles.pathGlyph}>{path.glyph}</View>
@@ -100,6 +103,7 @@ export function SetupPathPanel<T extends string>(props: Readonly<{
                                     style={({ hovered }) => [
                                         styles.chip,
                                         selected ? styles.chipSelected : hovered ? styles.chipHovered : null,
+                                        !selected && hovered ? { backgroundColor: materialColor(theme.colors.surface.pressed, theme.colors.surface.pressedOverlay) } : null,
                                     ]}
                                 >
                                     {path.glyph}

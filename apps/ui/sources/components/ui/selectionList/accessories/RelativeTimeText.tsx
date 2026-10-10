@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 
-import { formatRelativeTimeShort } from '../formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 
 const stylesheet = StyleSheet.create((theme) => ({
     text: {

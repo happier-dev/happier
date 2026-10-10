@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { View, Pressable } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable, happierMaterialGradient, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -29,6 +31,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 
 export const FAB = React.memo((props: { onPress: () => void; accessibilityLabel?: string }) => {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     const safeArea = useChromeSafeAreaInsets();
     return (
@@ -38,23 +41,25 @@ export const FAB = React.memo((props: { onPress: () => void; accessibilityLabel?
                 { bottom: safeArea.bottom + 16 }
             ]}
         >
-            <Pressable
+            <HappierPressable
                 style={styles.button}
-                onPress={props.onPress}
+                onPress={() => { props.onPress(); }}
                 accessibilityRole="button"
                 accessibilityLabel={props.accessibilityLabel}
             >
-                {({ pressed }) => (
+                {({ pressed, focused }) => (
                     <GradientSurface
-                        fallbackColor={pressed ? theme.colors.fab.backgroundPressed : theme.colors.fab.background}
-                        gradient={pressed ? undefined : theme.colors.fab.gradient}
+                        fallbackColor={paintColor(pressed ? theme.colors.fab.backgroundPressed : theme.colors.fab.background)}
+                        gradient={pressed ? undefined : happierMaterialGradient(theme.colors.fab.gradient, paintColor)}
+                        overlay={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused })}
+                        clipToPaddingBox={!theme.dark}
                         borderRadius={20}
                         style={styles.surface}
                     >
-                        <Icon name="plus" size={24} color={theme.colors.fab.icon} />
+                        <Icon name="plus" size={24} color={paintColor(theme.colors.fab.icon, theme.colors.text.primary)} />
                     </GradientSurface>
                 )}
-            </Pressable>
+            </HappierPressable>
         </View>
     )
 });

@@ -1,14 +1,15 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
-import { HappierSurface } from '@happier-dev/plugin-ui/presentation';
-import { StyleSheet } from 'react-native-unistyles';
+import { type StyleProp, type ViewStyle } from 'react-native';
+import { HappierSurface, type HappierMaterialSurfaceRender, type HappierSurfaceProps } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
 import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
-import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
+import { resolveThemeRaisedEdge, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 /**
  * `flat` draws no chrome at all: the content is one section of a column that already
@@ -138,32 +139,33 @@ export const SurfaceCard = React.memo(function SurfaceCard(props: SurfaceCardPro
         style,
     } = props;
     const page = useListPresentation() === 'page';
-
-    const content = (
-        <View
-            style={[
+    const { theme } = useUnistyles();
+    const renderMaterialSurface = React.useCallback<HappierMaterialSurfaceRender>((input) =>
+        <GlassSurface surfaceGroup={input.role} nested enabled={tone !== 'flat'} finishRole={tone === 'flat' ? null : 'card'} gradient={input.gradient} style={input.style as StyleProp<ViewStyle>}>
+            {input.children}
+        </GlassSurface>, [tone]);
+    const cardStyle: StyleProp<ViewStyle> = [
                 styles.cardBase,
                 page ? styles.cardPage : null,
                 tone === 'muted' ? styles.toneMuted : null,
                 tone === 'flat' ? styles.toneFlat : null,
                 resolvePaddingStyle(padding),
                 style,
-            ]}
-        >
-            {children}
-        </View>
-    );
+            ];
 
     return (
         <HappierSurface
             testID={testID}
             onPress={onPress}
+            materialRole="content"
+            gradient={tone === 'flat' ? null : resolveThemeSurfaceFinish(theme, 'card')}
+            renderMaterialSurface={renderMaterialSurface}
             frameStyle={props.fill ? FILL_STYLE : undefined}
-            style={props.fill ? FILL_STYLE : undefined}
+            style={[props.fill ? FILL_STYLE : undefined, cardStyle] as HappierSurfaceProps['style']}
             pressableStyle={[styles.pressable, page ? styles.pressablePage : null]}
             pressedStyle={styles.pressablePressed}
         >
-            {content}
+            {children}
         </HappierSurface>
     );
 });

@@ -90,6 +90,12 @@ const HomeScopedFailedRow = React.memo(function HomeScopedFailedRow(props: Reado
     );
 });
 
+/**
+ * Whether reserved rows draw the hairlines between them. A container that draws every divider itself
+ * (a widget group's cells) turns them off, so a loading cell never reads as more cells.
+ */
+export const ItemLoadStateRowDividersContext = React.createContext(true);
+
 const TITLE_WIDTHS: readonly DimensionValue[] = ['46%', '58%', '38%', '52%', '42%'];
 const DETAIL_WIDTHS: readonly DimensionValue[] = ['28%', '34%', '24%', '31%', '26%'];
 
@@ -118,6 +124,7 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     const testID = props.testID;
     // The reserved rows take the real rows' box at the user's density, so nothing moves when they arrive.
     const rowMetrics = usePageRowMetrics(props.shape);
+    const divided = React.useContext(ItemLoadStateRowDividersContext);
     const rowBox = React.useMemo(
         () => ({ minHeight: rowMetrics.minHeightPx, paddingVertical: rowMetrics.paddingVerticalPx }),
         [rowMetrics],
@@ -148,7 +155,7 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
                     testID={testID ? `${testID}-skeleton:${index}` : undefined}
                     accessibilityElementsHidden
                     importantForAccessibility="no-hide-descendants"
-                    style={[styles.row, rowBox, index > 0 ? styles.rowDivided : null]}
+                    style={[styles.row, rowBox, divided && index > 0 ? styles.rowDivided : null]}
                 >
                     <HappierSkeletonBlock color={color} width={TITLE_WIDTHS[index % TITLE_WIDTHS.length]!} height={10} radius={5} />
                     {twoLines ? (

@@ -1,5 +1,6 @@
 import * as React from "react";
 import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 
 interface AvatarBrutalistProps {
@@ -462,14 +463,15 @@ function hashCode(str: string): number {
 
 export const AvatarBrutalist = React.memo((props: AvatarBrutalistProps) => {
     const { id, size = 32, square = false, monochrome = false } = props;
+    const { theme } = useUnistyles();
 
     const imageIndex = hashCode(id) % allImages.length;
     const colorIndex = hashCode(id + 'color') % colorPairs.length;
 
     const imageSource = allImages[imageIndex];
     const colorPair = colorPairs[colorIndex];
-    const tintColor = monochrome ? '#999999' : colorPair.tint;
-    const backgroundColor = monochrome ? '#F0F0F0' : colorPair.background;
+    const tintColor = monochrome ? theme.colors.text.secondary : colorPair.tint;
+    const backgroundColor = monochrome ? theme.colors.surface.inset : colorPair.background;
 
     const dimension = square ? size : size;
     const borderRadius = square ? 0 : size / 2;

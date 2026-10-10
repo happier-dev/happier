@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import type {
     MarkdownEditorController,
@@ -165,6 +166,14 @@ vi.mock('@/components/ui/markdown/editor/linkBubble/useMarkdownLinkBubble', () =
 import { RichMarkdownEditorPanel } from './RichMarkdownEditorPanel';
 
 describe('RichMarkdownEditorPanel', () => {
+    it('keeps the read-only frontmatter card translucent while preserving document bytes', async () => {
+        const editorRef = { current: null as CodeEditorHandle | null };
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => 'rgba(0, 0, 0, 0.1)'}>
+            <RichMarkdownEditorPanel resetKey="glass" editorRef={editorRef} value={'---\ntitle: Exact\n---\n# Body'} onChange={() => {}} />
+        </HappierMaterialRoleProvider>);
+        expect(screen.findByTestId('file-details-rich-editor-frontmatter')!.props.style.backgroundColor).toBe('rgba(0, 0, 0, 0.1)');
+        expect(editorRef.current?.getValue()).toBe('---\ntitle: Exact\n---\n# Body');
+    });
     beforeEach(() => {
         toolbarSpy.controller = null;
         toolbarSpy.renderCount = 0;

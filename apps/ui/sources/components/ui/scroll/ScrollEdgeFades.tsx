@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Color from 'color';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 export type ScrollEdgeFadeVisibility = Readonly<{
     top?: boolean;
@@ -21,6 +22,8 @@ export function ScrollEdgeFades(props: {
 }) {
     const size = typeof props.size === 'number' ? props.size : 18;
     const edges = props.edges;
+    const paintColor = useHappierMaterialColorResolver();
+    const fadeColor = paintColor(props.color, 'transparent');
 
     const transparent = React.useMemo(() => {
         try {
@@ -51,7 +54,7 @@ export function ScrollEdgeFades(props: {
                     ]}
                 >
                     <LinearGradient
-                        colors={[props.color, transparent]}
+                        colors={[fadeColor, transparent]}
                         start={{ x: 0.5, y: 0 }}
                         end={{ x: 0.5, y: 1 }}
                         style={{ height: '100%', width: '100%', pointerEvents: 'none' }}
@@ -76,7 +79,7 @@ export function ScrollEdgeFades(props: {
                     ]}
                 >
                     <LinearGradient
-                        colors={[transparent, props.color]}
+                        colors={[transparent, fadeColor]}
                         start={{ x: 0.5, y: 0 }}
                         end={{ x: 0.5, y: 1 }}
                         style={{ height: '100%', width: '100%', pointerEvents: 'none' }}
@@ -101,7 +104,7 @@ export function ScrollEdgeFades(props: {
                     ]}
                 >
                     <LinearGradient
-                        colors={[props.color, transparent]}
+                        colors={[fadeColor, transparent]}
                         start={{ x: 0, y: 0.5 }}
                         end={{ x: 1, y: 0.5 }}
                         style={{ height: '100%', width: '100%', pointerEvents: 'none' }}
@@ -126,7 +129,7 @@ export function ScrollEdgeFades(props: {
                     ]}
                 >
                     <LinearGradient
-                        colors={[transparent, props.color]}
+                        colors={[transparent, fadeColor]}
                         start={{ x: 0, y: 0.5 }}
                         end={{ x: 1, y: 0.5 }}
                         style={{ height: '100%', width: '100%', pointerEvents: 'none' }}

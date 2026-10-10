@@ -48,7 +48,7 @@ async function renderItemGroup(props?: Readonly<{ clipContent?: boolean }>) {
 function findGroupSurfaceStyle(screen: Awaited<ReturnType<typeof renderItemGroup>>): Record<string, unknown> {
     const matchingNode = screen.findAllByType('View' as never).find((node) => {
         const style = flattenStyle(node.props.style);
-        return style.backgroundColor === '#ffffff' && style.borderRadius === GROUPED_SURFACE_RADIUS_PX;
+        return style.borderColor !== undefined && style.borderRadius === GROUPED_SURFACE_RADIUS_PX;
     });
     return matchingNode ? flattenStyle(matchingNode.props.style) : {};
 }

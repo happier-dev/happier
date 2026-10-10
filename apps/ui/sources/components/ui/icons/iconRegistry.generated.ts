@@ -32,6 +32,7 @@ import { AtomIcon } from 'phosphor-react-native/src/icons/Atom';
 import { BackspaceIcon } from 'phosphor-react-native/src/icons/Backspace';
 import { BellIcon } from 'phosphor-react-native/src/icons/Bell';
 import { BellSlashIcon } from 'phosphor-react-native/src/icons/BellSlash';
+import { BinocularsIcon } from 'phosphor-react-native/src/icons/Binoculars';
 import { BookBookmarkIcon } from 'phosphor-react-native/src/icons/BookBookmark';
 import { BookIcon } from 'phosphor-react-native/src/icons/Book';
 import { BookOpenIcon } from 'phosphor-react-native/src/icons/BookOpen';
@@ -77,6 +78,7 @@ import { CubeIcon } from 'phosphor-react-native/src/icons/Cube';
 import { CurrencyDollarIcon } from 'phosphor-react-native/src/icons/CurrencyDollar';
 import { DesktopIcon } from 'phosphor-react-native/src/icons/Desktop';
 import { DeviceMobileIcon } from 'phosphor-react-native/src/icons/DeviceMobile';
+import { DiamondIcon } from 'phosphor-react-native/src/icons/Diamond';
 import { DiscordLogoIcon } from 'phosphor-react-native/src/icons/DiscordLogo';
 import { DotsSixVerticalIcon } from 'phosphor-react-native/src/icons/DotsSixVertical';
 import { DotsThreeIcon } from 'phosphor-react-native/src/icons/DotsThree';
@@ -85,6 +87,7 @@ import { DownloadIcon } from 'phosphor-react-native/src/icons/Download';
 import { EnvelopeIcon } from 'phosphor-react-native/src/icons/Envelope';
 import { EnvelopeOpenIcon } from 'phosphor-react-native/src/icons/EnvelopeOpen';
 import { EnvelopeSimpleOpenIcon } from 'phosphor-react-native/src/icons/EnvelopeSimpleOpen';
+import { ExcludeSquareIcon } from 'phosphor-react-native/src/icons/ExcludeSquare';
 import { EyeIcon } from 'phosphor-react-native/src/icons/Eye';
 import { EyeSlashIcon } from 'phosphor-react-native/src/icons/EyeSlash';
 import { FileArrowDownIcon } from 'phosphor-react-native/src/icons/FileArrowDown';
@@ -130,9 +133,11 @@ import { ImageIcon } from 'phosphor-react-native/src/icons/Image';
 import { ImagesIcon } from 'phosphor-react-native/src/icons/Images';
 import { InfinityIcon } from 'phosphor-react-native/src/icons/Infinity';
 import { InfoIcon } from 'phosphor-react-native/src/icons/Info';
+import { KanbanIcon } from 'phosphor-react-native/src/icons/Kanban';
 import { KeyIcon } from 'phosphor-react-native/src/icons/Key';
 import { KeyboardIcon } from 'phosphor-react-native/src/icons/Keyboard';
 import { LaptopIcon } from 'phosphor-react-native/src/icons/Laptop';
+import { LayoutIcon } from 'phosphor-react-native/src/icons/Layout';
 import { LeafIcon } from 'phosphor-react-native/src/icons/Leaf';
 import { LifebuoyIcon } from 'phosphor-react-native/src/icons/Lifebuoy';
 import { LightbulbIcon } from 'phosphor-react-native/src/icons/Lightbulb';
@@ -194,6 +199,7 @@ import { ResizeIcon } from 'phosphor-react-native/src/icons/Resize';
 import { RobotIcon } from 'phosphor-react-native/src/icons/Robot';
 import { RocketIcon } from 'phosphor-react-native/src/icons/Rocket';
 import { RocketLaunchIcon } from 'phosphor-react-native/src/icons/RocketLaunch';
+import { ScalesIcon } from 'phosphor-react-native/src/icons/Scales';
 import { ScissorsIcon } from 'phosphor-react-native/src/icons/Scissors';
 import { ShareIcon } from 'phosphor-react-native/src/icons/Share';
 import { ShareNetworkIcon } from 'phosphor-react-native/src/icons/ShareNetwork';
@@ -285,6 +291,7 @@ export const ICON_REGISTRY = {
     'backspace': BackspaceIcon,
     'bell': BellIcon,
     'bell-slash': BellSlashIcon,
+    'binoculars': BinocularsIcon,
     'book': BookIcon,
     'book-bookmark': BookBookmarkIcon,
     'book-open': BookOpenIcon,
@@ -331,6 +338,7 @@ export const ICON_REGISTRY = {
     'currency-dollar': CurrencyDollarIcon,
     'desktop': DesktopIcon,
     'device-mobile': DeviceMobileIcon,
+    'diamond': DiamondIcon,
     'discord-logo': DiscordLogoIcon,
     'dots-six-vertical': DotsSixVerticalIcon,
     'dots-three': DotsThreeIcon,
@@ -339,6 +347,7 @@ export const ICON_REGISTRY = {
     'envelope': EnvelopeIcon,
     'envelope-open': EnvelopeOpenIcon,
     'envelope-simple-open': EnvelopeSimpleOpenIcon,
+    'exclude-square': ExcludeSquareIcon,
     'eye': EyeIcon,
     'eye-slash': EyeSlashIcon,
     'file': FileIcon,
@@ -386,9 +395,11 @@ export const ICON_REGISTRY = {
     'images': ImagesIcon,
     'infinity': InfinityIcon,
     'info': InfoIcon,
+    'kanban': KanbanIcon,
     'key': KeyIcon,
     'keyboard': KeyboardIcon,
     'laptop': LaptopIcon,
+    'layout': LayoutIcon,
     'leaf': LeafIcon,
     'lifebuoy': LifebuoyIcon,
     'lightbulb': LightbulbIcon,
@@ -451,6 +462,7 @@ export const ICON_REGISTRY = {
     'robot': RobotIcon,
     'rocket': RocketIcon,
     'rocket-launch': RocketLaunchIcon,
+    'scales': ScalesIcon,
     'scissors': ScissorsIcon,
     'share': ShareIcon,
     'share-network': ShareNetworkIcon,

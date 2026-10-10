@@ -12,6 +12,7 @@ import {
 } from './_constants';
 import { PlanOptionRow } from './SelectionListOptionRow';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
+import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import { selectionListTestId } from './_shared';
 import {
     buildSelectionListSectionGroupA11yProps,
@@ -226,6 +227,7 @@ export function SelectionListVirtualizedSection(
                 <SelectionListSectionHeader
                     testID={headerTestId}
                     title={props.section.title}
+                    rightAccessory={renderSelectionListAccessory(props.section.rightAccessory)}
                     count={props.section.count}
                     action={props.section.action}
                     {...(headerGridRow === undefined ? {} : { gridRow: headerGridRow })}
@@ -257,6 +259,7 @@ export function SelectionListVirtualizedSection(
             <SelectionListSectionHeader
                 testID={headerTestId}
                 title={props.section.title}
+                rightAccessory={renderSelectionListAccessory(props.section.rightAccessory)}
                 count={props.section.count}
                 action={props.section.action}
                     {...(headerGridRow === undefined ? {} : { gridRow: headerGridRow })}

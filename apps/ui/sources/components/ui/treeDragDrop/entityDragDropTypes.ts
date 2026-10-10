@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import type {
     EntityDragItemV1, EntityDragKindV1, EntityDragScopeV1, EntityDropAdmissionV1,
     EntityDropEffectV1, EntityDropOutcomeV1, PluginUiJsonValueV1,
@@ -11,7 +12,8 @@ export type EntityDropResolveContext = Readonly<{
     destination: PluginUiJsonValueV1 | null;
     input: EntityDragInput;
 }>;
-export type EntityDragSourceDescription = Readonly<{ title: string; subtitle?: string }>;
+/** The carried card's identity: a title, one quiet state line, and the item's own mark (lab C2). */
+export type EntityDragSourceDescription = Readonly<{ title: string; subtitle?: string; renderMark?: (size: number) => React.ReactNode }>;
 export type EntityDragSource = Readonly<{
     id: string;
     scope: EntityDragScopeV1;

@@ -59,6 +59,18 @@ describe('MeterBar', () => {
         expect(style.width).toBe('42%');
     });
 
+    it('keeps small positive values visible without changing the announced amount or inventing zero usage', async () => {
+        const positive = await renderScreen(<MeterBar testID="positive" tone="neutral" fillFraction={0.02}
+            minimumVisibleFraction={0.08} progressAccessibilityLabel="Activity" />);
+        expect(flattenStyle(positive.findByTestId('positive:fill')?.props.style).width).toBe('8%');
+        expect(positive.findByTestId('positive:track')?.props.accessibilityValue.now).toBe(2);
+
+        const zero = await renderScreen(<MeterBar testID="zero" tone="neutral" fillFraction={0}
+            minimumVisibleFraction={0.08} progressAccessibilityLabel="Activity" />);
+        expect(flattenStyle(zero.findByTestId('zero:fill')?.props.style).width).toBe('0%');
+        expect(zero.findByTestId('zero:track')?.props.accessibilityValue.now).toBe(0);
+    });
+
     it('clamps value into the 0..1 range', async () => {
 
         const over = await renderScreen(<MeterBar testID="over" tone="success" fillFraction={1.8} />);

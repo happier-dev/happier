@@ -8,18 +8,25 @@ import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const viewport = vi.hoisted(() => ({ width: 320, height: 800 }));
 installUiListsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             // Exercise fallback scheduling when this native boundary never invokes its callback.
             InteractionManager: { runAfterInteractions: () => ({ cancel: () => {} }) },
-            useWindowDimensions: () => ({ width: 320, height: 800, scale: 1, fontScale: 1 }),
+            useWindowDimensions: () => ({ ...viewport, scale: 1, fontScale: 1 }),
         });
     },
 });
 
 vi.unmock('@/components/ui/icons/Icon');
+
+// Renderer tests have no DOM: only the external Radix hosts are replaced.
+vi.mock('@/utils/web/radixCjs', async () => {
+    const { createRadixCjsModuleMock } = await import('@/dev/testkit/mocks/radixCjs');
+    return createRadixCjsModuleMock();
+});
 
 const vendorIconState = vi.hoisted(() => ({ renderText: false }));
 
@@ -34,9 +41,72 @@ vi.mock('phosphor-react-native/src/icons/Star', () => ({
 describe('ItemRowActions', () => {
     let restoreWebGlobals: (() => void) | undefined;
     beforeEach(() => {
+        viewport.width = 320;
+        viewport.height = 800;
         restoreWebGlobals = withPopoverWebGlobals();
     });
     afterEach(() => restoreWebGlobals?.());
+
+    it('uses the widget phone sheet with Done and persistent inline choices, then the desktop popover on resize', async () => {
+        viewport.width = 390;
+        viewport.height = 844;
+        const { WidgetGroupMenuButton } = await import('@/components/widgets/group/WidgetGroupMenuButton');
+        const { ModalCardFrame } = await import('@/modal/components/card/ModalCardFrame');
+        const { Popover } = await import('@/components/ui/popover');
+        const setFrame = vi.fn();
+        const input: import('@/components/widgets/group/widgetGroupMenu').WidgetGroupMenuInput = {
+            group: { kind: 'group', id: 'group', title: 'happier', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [] },
+            childTitle: id => id,
+            operations: { setWidth: vi.fn(), setFrame, setDividers: vi.fn(), ungroup: vi.fn(), remove: vi.fn(), move: vi.fn(), create: vi.fn() },
+            showWidth: false,
+            editInputs: undefined, onRename: undefined, onSave: undefined, onAddTo: undefined,
+        };
+        const screen = await renderScreen(React.createElement(WidgetGroupMenuButton, { input, visible: true, testID: 'group-menu' }));
+        expect(screen.tree.root.findAllByType(ModalCardFrame)).toHaveLength(0);
+        await screen.pressByTestIdAsync('group-menu.trigger');
+        expect(screen.tree.root.findByType(ModalCardFrame).props.presentation).toBe('sheet');
+        expect(screen.tree.root.findAllByType(Popover)).toHaveLength(0);
+        await screen.pressByTestIdAsync('group-menu.options.frame:plain');
+        expect(setFrame).toHaveBeenCalledWith('group', 'plain');
+        expect(screen.tree.root.findAllByType(ModalCardFrame)).toHaveLength(1);
+        await screen.pressByTestIdAsync('group-menu.done');
+        expect(screen.tree.root.findAllByType(ModalCardFrame)).toHaveLength(0);
+        await screen.pressByTestIdAsync('group-menu.trigger');
+        expect(screen.tree.root.findAllByType(ModalCardFrame)).toHaveLength(1);
+        viewport.width = 900;
+        await screen.update(React.createElement(WidgetGroupMenuButton, { input, visible: true, testID: 'group-menu' }));
+        expect(screen.tree.root.findAllByType(ModalCardFrame)).toHaveLength(0);
+        expect(screen.tree.root.findAllByType(Popover)).toHaveLength(1);
+        await screen.pressByTestIdAsync('ungroup');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(input.operations.ungroup).toHaveBeenCalledWith('group');
+        expect(screen.tree.root.findAllByType(Popover)).toHaveLength(0);
+    });
+
+    it('names a group once in its phone sheet, never as a desktop menu title, and words its removal as destructive', async () => {
+        viewport.width = 390;
+        viewport.height = 844;
+        const { WidgetGroupMenuButton } = await import('@/components/widgets/group/WidgetGroupMenuButton');
+        const child = (id: string) => ({ kind: 'widget' as const, instance: { v: 1 as const, id, definition: { kind: 'builtin' as const, id: 'changes' }, bindings: {} } });
+        const input: import('@/components/widgets/group/widgetGroupMenu').WidgetGroupMenuInput = {
+            group: { kind: 'group', id: 'group', title: 'Morning glance', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [child('a'), child('b')] },
+            childTitle: id => id,
+            operations: { setWidth: vi.fn(), setFrame: vi.fn(), setDividers: vi.fn(), ungroup: vi.fn(), remove: vi.fn(), move: vi.fn(), create: vi.fn() },
+            showWidth: false,
+            editInputs: undefined, onRename: () => {}, onSave: undefined, onAddTo: undefined,
+        };
+        const named = (text: string) => text.split('Morning glance').length - 1;
+        const screen = await renderScreen(React.createElement(WidgetGroupMenuButton, { input, visible: true, testID: 'group-menu' }));
+        await screen.pressByTestIdAsync('group-menu.trigger');
+        expect(named(screen.getTextContent())).toBe(1);
+        expect(screen.tree.root.findAll(node => node.props.testID === 'removeGroup' && node.props.destructive === true).length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('group-menu.done');
+        viewport.width = 900;
+        await screen.update(React.createElement(WidgetGroupMenuButton, { input, visible: true, testID: 'group-menu' }));
+        await screen.pressByTestIdAsync('group-menu.trigger');
+        expect(screen.findByTestId('removeGroup')).not.toBeNull();
+        expect(named(screen.getTextContent())).toBe(0);
+    });
 
     it('routes shortcuts only from the mounted overflow control and renders custom content only while open', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');

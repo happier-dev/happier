@@ -16,7 +16,7 @@ import { InlineTextField, type InlineTextEditor } from '@/components/ui/text/Inl
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { NavigationHeaderActions, type NavigationHeaderAction } from '@/components/ui/layout/NavigationHeaderActions';
-import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { useNavigationChromeShowsBack, useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
 
 export { NavigationTitleChromeProvider, useNavigationTitleChromeShowsTitle } from './navigationTitleChrome';
@@ -27,6 +27,8 @@ export type PageHeaderMetaFact = Readonly<{
     text: string;
     /** A small glyph before the text (a lock for encryption). */
     icon?: IconName;
+    /** The fact is an address, path or id: drawn in the mono face. */
+    mono?: boolean;
     testID?: string;
 }>;
 
@@ -45,8 +47,8 @@ export type PageHeaderProps = Readonly<{
     titleProminence?: 'page' | 'hero';
     /** An inline mark after the title, such as a release-channel badge. */
     titleAccessory?: React.ReactNode;
-    /** One sentence saying what the page is for. */
-    description?: string;
+    /** One sentence saying what the page is for (a node only when the sentence itself animates). */
+    description?: React.ReactNode;
     /** Identity details under the description (an identifier to copy, a version and machine). */
     details?: React.ReactNode;
     /** Defaults to identity; column places the summary below title and actions at full content width. */
@@ -61,10 +63,20 @@ export type PageHeaderProps = Readonly<{
     /** A leading identity mark (entity logo, avatar). */
     leading?: React.ReactNode;
     /**
-     * Context controls and quiet actions (a machine chip, a `⋯` menu, Cancel). They stay in the page;
-     * the primary action goes in `primaryAction`.
+     * Context controls and quiet actions (a machine chip, a `⋯` menu, Discard). They fold into the
+     * navigation header's overflow on phones and stay in the page elsewhere; use `primaryAction`
+     * for the action that remains directly visible.
      */
     actions?: React.ReactNode;
+    /** Keep an entity's frequent operations in its page instead of the phone navigation overflow. */
+    actionsPlacement?: 'navigation' | 'page';
+    /** Prefer the title row, wrapping controls beneath when the title needs its readable width. */
+    actionsLayout?: 'wrap' | 'inline';
+    /**
+     * A status line under the actions (a save state and validity readout). It is the actions' own
+     * row, as wide as they are, so its changing words never reflow the title.
+     */
+    status?: React.ReactNode;
     /**
      * The page's one primary action. Where navigation chrome shows the title (phones), it moves into
      * the native header instead of stacking under the purpose line; elsewhere it closes `actions`.
@@ -105,13 +117,33 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     const { theme } = useUnistyles();
     const maxWidth = useLayoutMaxWidth();
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
+    const chromeShowsBack = useNavigationChromeShowsBack();
+    const publisher = useNavigationTitleChromePublisher();
+    const setChromeTitle = publisher?.setTitle;
+    React.useEffect(() => {
+        if (!setChromeTitle) return;
+        // Entity identity stays in the body. Leave its generic destination
+        // title (for example "Workflow") with the navigation owner.
+        setChromeTitle(props.alwaysShowTitle ? undefined : props.title);
+        return () => setChromeTitle(undefined);
+    }, [props.alwaysShowTitle, props.title, setChromeTitle]);
     const showTitle = props.alwaysShowTitle === true || !chromeShowsTitle;
     const BackControl = useNavigationBackControl();
+    // An entity page under retained title chrome puts its Back in that bar even on a deep link with no
+    // history, so the identity starts on the same edge however the page was opened (DESIGN-9 P12).
+    const publishesBack = Boolean(publisher && chromeShowsTitle && BackControl && (chromeShowsBack || props.alwaysShowTitle === true));
     const renderBack = React.useMemo(
-        () => (BackControl ? (style: StyleProp<ViewStyle>) => <BackControl style={style} /> : null),
-        [BackControl],
+        () => (BackControl && !chromeShowsBack && !publishesBack ? (style: StyleProp<ViewStyle>) => <BackControl style={style} /> : null),
+        [BackControl, chromeShowsBack, publishesBack],
     );
-    // Phones: the primary (and Cancel) go to the native header, which already shows the title.
+    React.useEffect(() => {
+        if (!publishesBack || !publisher || !BackControl) return;
+        // A retained phone header must use the same departure owner as its
+        // inline Back, not the Expo stack that only mirrors its URL.
+        publisher.setBack(<BackControl style={{}} />);
+        return () => publisher.setBack(null);
+    }, [BackControl, publishesBack, publisher]);
+    // Navigation owns ordinary page actions; an entity can retain its frequent operations by its identity.
 
     const pageButtons = !chromeShowsTitle && (props.primaryAction || props.cancelAction) ? (
         <>
@@ -122,12 +154,14 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     // Inside the desktop app shell the stack header is not drawn; the actions its route put there
     // (an "Add friend") come here instead (`stackHeaderActions`). Elsewhere there are none.
     const routeActions = useClaimedStackHeaderActions();
+    const pageActions = chromeShowsTitle && props.actionsPlacement !== 'page' ? null : props.actions;
     const actions = pageButtons || routeActions
-        ? <View style={stylesheet.actions}>{props.actions}{routeActions}{pageButtons}</View>
-        : props.actions;
+        ? <View style={stylesheet.actions}>{pageActions}{routeActions}{pageButtons}</View>
+        : pageActions;
     const meta = React.useMemo(() => props.meta?.map((fact) => ({
         key: fact.key,
         text: fact.text,
+        ...(fact.mono ? { mono: true } : {}),
         ...(fact.testID === undefined ? {} : { testID: fact.testID }),
         ...(fact.icon
             ? { icon: <Icon name={fact.icon} size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> }
@@ -143,8 +177,9 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
 
     return (
         <>
-        {props.primaryAction || props.cancelAction ? (
-            <NavigationHeaderActions primary={props.primaryAction ?? null} cancel={props.cancelAction ?? null} />
+        {props.primaryAction || props.cancelAction || props.actions ? (
+            <NavigationHeaderActions primary={props.primaryAction ?? null} cancel={props.cancelAction ?? null}
+                actions={props.actionsPlacement === 'page' ? undefined : props.actions} />
         ) : null}
         <HappierPageHeader
             title={titleNode}
@@ -158,6 +193,8 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             meta={meta}
             leading={props.leading}
             actions={actions}
+            actionsLayout={props.actionsLayout}
+            status={props.status}
             renderBack={renderBack}
             columnMaxWidthPx={props.columnWidth === 'pane' ? undefined : maxWidth}
             renderText={renderPageHeaderText}
@@ -184,10 +221,12 @@ function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryActio
     );
 }
 
-const renderPageHeaderText: HappierPageHeaderTextRender = (input) => (
+/** Core's text owner for the shared header (font families and text scaling), for hosts drawing it directly. */
+export const renderPageHeaderText: HappierPageHeaderTextRender = (input) => (
     <Text
         accessibilityRole={input.header ? 'header' : undefined}
-        style={input.role === 'heroTitle' ? stylesheet.heroTitle : input.role === 'pageTitle' ? stylesheet.title : input.role === 'meta' ? stylesheet.metaText : stylesheet.description}
+        style={input.role === 'heroTitle' ? stylesheet.heroTitle : input.role === 'pageTitle' ? stylesheet.title
+            : input.role === 'meta' ? (input.mono ? [stylesheet.metaText, stylesheet.metaMono] : stylesheet.metaText) : stylesheet.description}
     >
         {input.text}
     </Text>
@@ -233,5 +272,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('regular'),
         ...happierPageTextMetrics('meta'),
         color: theme.colors.text.secondary,
+    },
+    // An address or path on the meta line: the mono face at the meta step.
+    metaMono: {
+        ...Typography.mono(),
+        ...happierPageTextMetrics('meta'),
     },
 }));

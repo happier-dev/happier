@@ -81,6 +81,16 @@ function makeVirtualizedSource(
 }
 
 describe('useSelectionListKeyboardNav (base)', () => {
+    it('focuses the first new search match before explicit row navigation and Enter activates it', async () => {
+        let params = makeParams({ flatVisibleOptionIds: ['wait', 'notify'], inputValue: '' });
+        const onActivate = params.onActivate;
+        const harness = await renderHook(() => useSelectionListKeyboardNav(params));
+        params = { ...params, flatVisibleOptionIds: ['notify', 'wait'], inputValue: 'work' };
+        await harness.rerender();
+        expect(harness.getCurrent().focusedOptionId).toBe('notify');
+        await act(async () => { harness.getCurrent().handleKey(makeKeyEvent({ key: 'Enter' }).event); });
+        expect(onActivate).toHaveBeenCalledWith('notify');
+    });
     it('initializes focusedIndex to 0 when there is at least one visible option', async () => {
         const harness = await renderHook(() => useSelectionListKeyboardNav(makeParams()));
         expect(harness.getCurrent().focusedIndex).toBe(0);
@@ -260,6 +270,24 @@ describe('useSelectionListKeyboardNav (base)', () => {
         await act(async () => { outcome = harness.getCurrent().handleEscape(); });
         expect(outcome).toBe('clear-input');
         expect(onClearInput).toHaveBeenCalledTimes(1);
+    });
+
+    it('Escape during IME composition belongs to the IME: no clear, close or preventDefault', async () => {
+        const onClearInput = vi.fn();
+        const harness = await renderHook(() => useSelectionListKeyboardNav(makeParams({
+            canPopStep: false,
+            onClearInput,
+            inputValue: 'foo',
+            isComposing: true,
+        })));
+        const { event, preventDefault } = makeKeyEvent({ key: 'Escape' });
+
+        let consumed = true;
+        await act(async () => { consumed = harness.getCurrent().handleKey(event); });
+
+        expect(consumed).toBe(false);
+        expect(preventDefault).not.toHaveBeenCalled();
+        expect(onClearInput).not.toHaveBeenCalled();
     });
 
     it('handleEscape returns "close" when no step and input is empty', async () => {

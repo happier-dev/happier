@@ -9,16 +9,29 @@ import { Text } from '@/components/ui/text/Text';
 import { GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
-import { resolveThemeControlEdge, resolveThemeGloss } from '@/components/ui/surfaces/themeRaisedEdge';
+import { resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
+import { HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle } from '@happier-dev/plugin-ui/presentation';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
+import { happierMaterialGradient, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 
 
 /** `mini` is the inline action inside a compact capsule (a live call's Retry), not a call to action. */
 export type RoundButtonSize = 'large' | 'normal' | 'small' | 'mini';
-const RoundButtonDefaultSizeContext = React.createContext<RoundButtonSize>('large');
+const RoundButtonDefaultSizeContext = React.createContext<Readonly<{
+    size: RoundButtonSize;
+    presentation: 'contextual' | 'uniform';
+}>>({ size: 'large', presentation: 'contextual' });
 
-export function RoundButtonSizeScope(props: Readonly<{ size: RoundButtonSize; children: React.ReactNode }>) {
-    return <RoundButtonDefaultSizeContext.Provider value={props.size}>{props.children}</RoundButtonDefaultSizeContext.Provider>;
+export function RoundButtonSizeScope(props: Readonly<{
+    size: RoundButtonSize;
+    /** `uniform` gives an action group one geometry across primary, secondary and destructive fills. */
+    presentation?: 'contextual' | 'uniform';
+    children: React.ReactNode;
+}>) {
+    const value = React.useMemo(() => ({ size: props.size, presentation: props.presentation ?? 'contextual' }), [props.size, props.presentation]);
+    return <RoundButtonDefaultSizeContext.Provider value={value}>{props.children}</RoundButtonDefaultSizeContext.Provider>;
 }
 const sizes: { [key in RoundButtonSize]: { fontSize: number, hitSlop: number, pad: number } } = {
     large: { fontSize: 21, hitSlop: 0, pad: Platform.OS == 'ios' ? 0 : -1 },
@@ -124,14 +137,6 @@ type RoundButtonStyle = Exclude<HappierPressableProps['style'], (state: never) =
 
 const TRANSPARENT_LAYOUT_BOX = { backgroundColor: 'transparent' } as const;
 
-function readBackgroundColor(style: RoundButtonStyle): string | undefined {
-    if (!style) return undefined;
-    if (Array.isArray(style)) {
-        return style.reduce<string | undefined>((current, entry) => readBackgroundColor(entry) ?? current, undefined);
-    }
-    return style.backgroundColor;
-}
-
 export const RoundButton = React.memo((props: {
     size?: RoundButtonSize,
     display?: RoundButtonDisplay,
@@ -192,7 +197,7 @@ export const RoundButton = React.memo((props: {
     action?: () => Promise<any>
 }) => {
     const { theme } = useUnistyles();
-    const scopedDefaultSize = React.useContext(RoundButtonDefaultSizeContext);
+    const scopedSizing = React.useContext(RoundButtonDefaultSizeContext);
     const styles = stylesheet;
     /**
      * `onPress` wins and stays synchronous, exactly as before: only the `action`
@@ -208,6 +213,8 @@ export const RoundButton = React.memo((props: {
         }
         return props.action?.();
     }, [props.onPress, props.action]);
+    const paintColor = useHappierMaterialColorResolver();
+    const secondaryFill = paintColor(theme.colors.edge.fill);
     const displays: { [key in RoundButtonDisplay]: {
         textColor: string,
         backgroundColor: string,
@@ -221,12 +228,12 @@ export const RoundButton = React.memo((props: {
             textColor: theme.colors.button.primary.tint
         },
         secondary: {
-            backgroundColor: theme.colors.edge.fill,
+            backgroundColor: secondaryFill,
             borderColor: theme.colors.border.strong,
             textColor: theme.colors.text.primary,
         },
         destructive: {
-            backgroundColor: theme.colors.edge.fill,
+            backgroundColor: secondaryFill,
             borderColor: theme.colors.state.danger.border,
             textColor: theme.colors.state.danger.foreground,
         },
@@ -238,22 +245,18 @@ export const RoundButton = React.memo((props: {
     }
 
     const pressFeedback = usePressFeedback();
-    // The visible pill is the pressable's child, which the pressable does not hand `pressed` (it lives
-    // only in its style callback), so the button follows its own press to drop the raised edge.
-    const [pressed, setPressed] = React.useState(false);
-    const handlePressIn = () => {
-        setPressed(true);
-        pressFeedback.onPressIn();
-    };
-    const handlePressOut = () => {
-        setPressed(false);
-        pressFeedback.onPressOut();
-    };
     // A caller fill (for example a destructive tone) belongs to the pill that moves,
     // not to the static layout box behind it.
-    const callerBackgroundColor = readBackgroundColor(props.style);
-    const resolvedSize = props.size ?? scopedDefaultSize;
+    const callerBackgroundColor = readSurfaceStyleProperty(props.style, 'backgroundColor');
+    const resolvedSize = props.size ?? scopedSizing.size;
     const size = sizes[resolvedSize];
+    // Contextual inline actions keep their compact presentation. A uniform action group owns one
+    // geometry regardless of fill; an explicit size still overrides the group's default size.
+    const compactInlineDisplay = scopedSizing.presentation !== 'uniform'
+        && (props.display === 'secondary' || props.display === 'destructive');
+    // Native floors belong to the shared Pressable. A phone browser needs the same physical target;
+    // keep pointer density on desktop and reserve real space instead of overlapping hit slop.
+    const webTouchFloor = Platform.OS === 'web' ? resolveTouchTargetFloorPx() : null;
     const baseDisplay = displays[props.display || 'default'];
     // A disabled primary is the theme's own disabled slab with quiet words (muted dark on dark,
     // a light ink on light), not the primary fill dimmed: a dimmed light fill reads as a grey slab.
@@ -261,6 +264,8 @@ export const RoundButton = React.memo((props: {
     const display: (typeof displays)[RoundButtonDisplay] = disabledPrimary
         ? { textColor: theme.colors.text.tertiary, backgroundColor: theme.colors.button.primary.disabled, borderColor: 'transparent' }
         : baseDisplay;
+    const textColor = (props.display ?? 'default') === 'default' && !disabledPrimary ? paintColor(display.textColor, theme.colors.text.primary) : display.textColor;
+    const pillBackgroundColor = callerBackgroundColor ?? display.backgroundColor;
     const titleLines = props.titleNumberOfLines ?? 1;
     // `undefined` is React Native's "as many lines as it takes"; `0` is not portable
     // across the platforms this primitive renders on.
@@ -274,24 +279,24 @@ export const RoundButton = React.memo((props: {
             expanded={props.expanded}
             disabled={props.disabled}
             busy={props.loading}
-            hitSlop={size.hitSlop}
+            hitSlop={webTouchFloor === null ? size.hitSlop : 0}
             // The pressable keeps the caller's layout and the hit area; the visible
             // pill is the animated frame inside it, so the tactile press moves the
             // whole fill rather than only its label.
             // Declared-disabled dims; merely pending does not. A button that fades
             // the moment it is pressed reads as unavailable rather than working.
-            // The touch-target floor is `HappierPressable`'s (native only); web and
-            // desktop keep their pointer density, so the button adds none of its own.
+            // The native floor is `HappierPressable`'s; coarse web consumes the same target policy.
             style={[
                 { opacity: props.disabled && !disabledPrimary ? 0.35 : 1 },
                 props.capsuleHeight !== undefined ? styles.capsuleBox : null,
                 props.style,
+                webTouchFloor === null ? null : { minWidth: webTouchFloor, minHeight: webTouchFloor },
                 TRANSPARENT_LAYOUT_BOX,
                 // The ring belongs to the pill inside the hit area.
                 HAPPIER_FOCUS_RING_DELEGATED_STYLE,
             ]}
-            onPressIn={handlePressIn}
-            onPressOut={handlePressOut}
+            onPressIn={pressFeedback.onPressIn}
+            onPressOut={pressFeedback.onPressOut}
             onPress={doAction}
         >
             {(state) => (
@@ -299,14 +304,15 @@ export const RoundButton = React.memo((props: {
                     style={[
                         styles.pill,
                         {
-                            backgroundColor: callerBackgroundColor ?? display.backgroundColor,
+                            backgroundColor: typeof pillBackgroundColor === 'string' ? paintColor(pillBackgroundColor) : pillBackgroundColor,
                             borderColor: display.borderColor,
                         },
                         props.capsuleHeight !== undefined
                             ? { flexGrow: 0, height: props.capsuleHeight, borderRadius: props.capsuleHeight / 2 }
                             : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                        happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { pressed, focused: state.focused, disabled: props.disabled === true })),
+                        happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { pressed: state.pressed, focused: state.focused, disabled: state.disabled })),
+                        Platform.OS === 'web' && !display.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' }), !theme.dark) : null,
                         pressFeedback.animatedStyle,
                     ]}
                 >
@@ -314,22 +320,25 @@ export const RoundButton = React.memo((props: {
                         style={[
                             styles.contentContainer,
                             props.leading || props.trailing ? styles.contentContainerWithMark : null,
-                            props.display === 'secondary' || props.display === 'destructive' ? styles.contentContainerSecondary : null,
+                            compactInlineDisplay ? styles.contentContainerSecondary : null,
                             resolvedSize === 'small' ? styles.contentContainerSmall : null,
                             props.size === 'mini' ? styles.contentContainerMini : null,
                         ]}
                     >
                         {display.gradient ? (
                             <GradientSurface
-                                fallbackColor={display.backgroundColor}
-                                gradient={display.gradient}
+                                fallbackColor={paintColor(display.backgroundColor)}
+                                gradient={happierMaterialGradient(display.gradient, paintColor)}
+                                overlay={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled })}
+                                clipToPaddingBox={!theme.dark}
                                 borderRadius={theme.borderRadius.md}
                                 style={StyleSheet.absoluteFillObject}
                             />
                         ) : null}
+                        {!display.gradient ? <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' })} borderRadius={props.capsuleHeight !== undefined ? props.capsuleHeight / 2 : theme.borderRadius.md} /> : null}
                         {state.busy && (
                             <View style={styles.loadingContainer}>
-                                <ActivitySpinner color={display.textColor} size='small' />
+                                <ActivitySpinner color={textColor} size='small' />
                             </View>
                         )}
                         {props.leading ? (
@@ -344,8 +353,8 @@ export const RoundButton = React.memo((props: {
                                 {
                                     marginTop: size.pad,
                                     opacity: state.busy ? 0 : 1,
-                                    color: display.textColor,
-                                    fontSize: props.display === 'secondary' || props.display === 'destructive' ? Math.min(size.fontSize, 13) : size.fontSize,
+                                    color: textColor,
+                                    fontSize: compactInlineDisplay ? Math.min(size.fontSize, 13) : size.fontSize,
                                 },
                                 resolvedSize === 'small' ? styles.textSmall : null,
                                 // A wrapped label is a paragraph inside a centred pill, so

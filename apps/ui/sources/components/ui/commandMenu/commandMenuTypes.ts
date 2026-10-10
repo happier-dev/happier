@@ -16,6 +16,8 @@ export type CommandMenuItem = Readonly<{
     rowHeight?: number;
     /** Optional escape hatch: render the row contents yourself instead of icon+label+description. */
     renderRow?: () => React.ReactNode;
+    /** Pointer highlight updates the host selection and preview without activating the row. */
+    onHighlight?: () => void;
     /** Optional, host-owned data the primitive passes back unchanged via onSelect. */
     meta?: unknown;
 }>;
@@ -41,6 +43,8 @@ export type CommandMenuProps = Readonly<{
     maxWidth?: number;
     /** Uses Popover placement. Defaults to auto-vertical/bottom depending on host. */
     placement?: PopoverPlacement;
+    /** Keep an explicitly requested side when the host's presentation requires it. */
+    flip?: boolean;
     /** Uses Popover gap. Hosts must NOT pre-offset rect anchors (D42). */
     gap?: number;
     /** Optional explicit Popover boundary override. Passing null intentionally disables context boundary clamping. */
@@ -59,6 +63,8 @@ export type CommandMenuProps = Readonly<{
     emptyStateLabel?: string;
     /** Optional richer empty state (an inline action such as Clear); takes precedence over `emptyStateLabel`. */
     emptyState?: React.ReactNode;
+    /** A non-selectable invitation in a leading empty group, inside the list. */
+    leadingEmptyGroup?: Readonly<{ title: string; hint: string }>;
     /** Optional editable search and supplemental content, inside the same menu surface. */
     header?: React.ReactNode;
     preview?: React.ReactNode;

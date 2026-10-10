@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 
-import { renderScreen } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 const animatedValueInitials = vi.hoisted((): number[] => []);
@@ -42,6 +42,10 @@ vi.mock('react-native', async () => {
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => reduceMotionSpy(),
 }));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 const ORIGINAL_PLATFORM = Platform.OS;
 
@@ -64,17 +68,35 @@ function pointerEventsFromStyle(style: unknown): unknown {
 }
 
 describe('OverlayMotionFrame', () => {
-    it('starts enter animations from hidden progress on first visible mount', async () => {
+    it('does not fade any ancestor of a real web material backdrop during entrance', async () => {
         const { OverlayMotionFrame } = await import('./overlayMotion');
+        const { GlassSurface } = await import('@/components/ui/glass/GlassSurface');
+        const screen = await renderScreen(<OverlayMotionFrame visible kind="popover">
+            <GlassSurface finishRole={null}><div /></GlassSurface>
+        </OverlayMotionFrame>);
+        const paint = screen.findAll(node => typeof node.type === 'string'
+            && String(flattenTestStyle(node.props.style)?.backdropFilter).includes('blur'))[0]!;
+        expect(paint).toBeTruthy();
+        // The clock boundary is held at progress 0. Fading any ancestor limits the backdrop
+        // to that ancestor's empty plane, so the paint and every ancestor must stay unanimated.
+        for (let ancestor = paint.parent; ancestor; ancestor = ancestor.parent) {
+            if (typeof ancestor.type !== 'string') continue;
+            const style = flattenTestStyle(ancestor.props.style);
+            expect(style?.opacity).toBeUndefined();
+            expect(style?.transform).toBeUndefined();
+        }
+    });
+    it('starts enter animations from hidden progress on first visible mount', async () => {
+        const { resolveOverlayMotionPreset, useOverlayMotionAnimation } = await import('./overlayMotion');
+        function Probe() {
+            useOverlayMotionAnimation({ visible: true, preset: resolveOverlayMotionPreset({ kind: 'popover' }) });
+            return null;
+        }
 
         animatedValueInitials.length = 0;
         timingSpy.mockClear();
 
-        await renderScreen(
-            <OverlayMotionFrame visible kind="popover">
-                <div />
-            </OverlayMotionFrame>,
-        );
+        await renderScreen(<Probe />);
 
         expect(animatedValueInitials).toEqual([0]);
         expect(timingSpy).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
@@ -98,6 +120,8 @@ describe('OverlayMotionFrame', () => {
 
         expect(frame.props.pointerEvents).toBe('auto');
         expect(pointerEventsFromStyle(frame.props.style)).toBeUndefined();
+        expect(flattenTestStyle(frame.props.style)?.transform).toBeDefined();
+        expect(timingSpy).toHaveBeenLastCalledWith(expect.any(Object), expect.objectContaining({ useNativeDriver: true }));
     });
 });
 

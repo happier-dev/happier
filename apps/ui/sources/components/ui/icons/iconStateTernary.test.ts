@@ -48,7 +48,7 @@ describe('icon state ternaries', () => {
      * The clause above bans `cond ? 'star' : 'star'`, and that shape is exactly what a careful
      * cleanup pass removes: replacing the collapsed ternary with `const iconName = 'star'` reads as
      * tidying, satisfies the ban, and destroys the state distinction just as completely. That is not
-     * hypothetical — `PathFavoriteToggleButton` was left that way, favourite and not-favourite
+     * hypothetical — `FavoriteToggleButton` was left that way, favourite and not-favourite
      * separated by colour alone, with the ban green the whole time.
      *
      * So the invariant is stated on the element that DECLARES itself a two-state control:

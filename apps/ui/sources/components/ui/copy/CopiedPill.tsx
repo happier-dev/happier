@@ -1,7 +1,8 @@
 import * as React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Text } from '@/components/ui/text/Text';
@@ -15,6 +16,8 @@ type CopiedPillProps = Readonly<{
 }>;
 
 export function CopiedPill(props: CopiedPillProps) {
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     if (!props.visible) return null;
 
     const label = t('common.copied');
@@ -26,7 +29,7 @@ export function CopiedPill(props: CopiedPillProps) {
             accessibilityRole="text"
             accessibilityLabel={label}
             accessibilityLiveRegion="polite"
-            style={[styles.container, props.style]}
+            style={[styles.container, { backgroundColor: paintColor(theme.colors.surface.elevated) }, props.style]}
         >
             <Icon name="check" size={14} color={styles.icon.color} />
             <Text style={styles.label}>{label}</Text>

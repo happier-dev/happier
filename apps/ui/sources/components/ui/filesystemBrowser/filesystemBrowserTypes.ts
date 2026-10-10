@@ -27,8 +27,14 @@ export type FilesystemBrowserListProps = Readonly<{
     loadingLabel: string;
     inlineRetryLabel: string;
     listHeaderTestID?: string;
+    /** Content before the rows, in the list's own scroll. */
+    listHeader?: React.ReactElement | null;
     /** Drawn after the last row, in the same scroll (the Git pane's timeline under its tree). */
     listFooter?: React.ReactElement | null;
+    /** Domain empty/error content, retaining the same list header and footer. */
+    listEmpty?: React.ReactElement | null;
+    /** Entries intersecting the current viewport, including disclosed children. */
+    onVisibleNodesChange?: ((nodes: readonly FilesystemBrowserNode[]) => void) | null;
     /**
      * `scroll` (default): a virtualized list that owns its scroll. `inline`: the rows drawn in place,
      * inside a scroll someone else owns (a turn card in the transcript), with no list or scroll of

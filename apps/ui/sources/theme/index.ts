@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import Color from 'color';
 import { PLANET_ATTENTION_HEX } from '@happier-dev/brand/planet';
 import {
     buildDarkShadowLevels,
@@ -82,6 +83,7 @@ const lightThemeBase = {
             attention: {
                 foreground: PLANET_ATTENTION_HEX.light,
                 textForeground: PLANET_ATTENTION_HEX.light,
+                background: Color(PLANET_ATTENTION_HEX.light).alpha(0.12).rgb().string(),
             },
             danger: {
                 foreground: '#FF3B30',
@@ -414,7 +416,7 @@ const darkThemeBase = {
 
         text: {
             primary: '#EFEFEF',
-            secondary: '#8A817C',
+            secondary: '#9A918C',
             tertiary: '#6C625D',
             link: '#9EB9FF',
             destructive: '#EE6E6C',
@@ -448,6 +450,7 @@ const darkThemeBase = {
             attention: {
                 foreground: PLANET_ATTENTION_HEX.dark,
                 textForeground: PLANET_ATTENTION_HEX.dark,
+                background: Color(PLANET_ATTENTION_HEX.dark).alpha(0.12).rgb().string(),
             },
             danger: {
                 foreground: '#EE6E6C',
@@ -552,8 +555,11 @@ const darkThemeBase = {
 
         switch: {
             track: {
-                active: '#9EB9FF',
-                inactive: '#252121',
+                // The same saturated control blue as light keeps the pale thumb distinct (4.00:1).
+                active: '#1976D2',
+                // Off track a step above the cards it sits on, so an off switch keeps its track in dark
+                // as it does in light (DESIGN-9 N39); #252121 vanished into surface.base/elevated.
+                inactive: '#403838',
             },
             thumb: {
                 active: '#EFEFEF',
@@ -584,7 +590,9 @@ const darkThemeBase = {
                 background: '#EFEFEF',
                 gradient: createVerticalGradient(['#EFEFEF', '#F2F2F2']),
                 tint: '#191717',
-                disabled: '#4A4242',
+                // A primary that cannot act yet: the ink at 9% over the page (lab `widget-add` `.wa-add.off`),
+                // a neutral muted slab rather than a warm one. Light's #E8E8E8 is the same recipe on white.
+                disabled: '#2E2D2D',
             },
             secondary: {
                 background: 'transparent',

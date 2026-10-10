@@ -101,6 +101,8 @@ const TIMING_CONFIG: WithTimingConfig = {
 const RELEASE_BUFFER_MS = 280;
 
 export type SelectionListAnimatedHeightProps = Readonly<{
+    /** Fixed/fill frames keep this wrapper mounted without pinning their height. */
+    enabled?: boolean;
     /**
      * Identifier for the visible "step" — when this changes, the wrapper
      * pins height and runs a height animation in parallel with whatever
@@ -141,6 +143,7 @@ export function SelectionListAnimatedHeight(
 ): React.ReactElement {
     const detectedReducedMotion = useReducedMotionPreference();
     const reducedMotion = props.reducedMotion ?? detectedReducedMotion;
+    const enabled = props.enabled !== false;
 
     const animatedHeight = useSharedValue<number>(0);
     /**
@@ -194,6 +197,16 @@ export function SelectionListAnimatedHeight(
     // resolved once `measuredContentHeight` carries a measurement for the new
     // key (see the measurement effect below).
     React.useLayoutEffect(() => {
+        if (!enabled) {
+            lastStepKeyRef.current = props.stepKey;
+            if (pinned) {
+                animationGenRef.current += 1;
+                cancelAnimation(animatedHeight);
+                pendingTargetHeightRef.current = null;
+                setPinned(false);
+            }
+            return;
+        }
         if (lastStepKeyRef.current === props.stepKey) return;
         lastStepKeyRef.current = props.stepKey;
 
@@ -208,7 +221,7 @@ export function SelectionListAnimatedHeight(
         animatedHeight.value = fromHeight;
         pendingTargetHeightRef.current = null;
         setPinned(true);
-    }, [props.stepKey, animatedHeight]);
+    }, [props.stepKey, animatedHeight, enabled, pinned]);
 
     const deferredReleaseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -264,7 +277,7 @@ export function SelectionListAnimatedHeight(
     // measurement it holds belongs to THIS `stepKey`, so a pin can never
     // resolve against the outgoing step's height.
     React.useEffect(() => {
-        if (!pinned) return;
+        if (!enabled || !pinned) return;
         if (incomingContentHeight === undefined) return;
 
         // Upper-bound the target by the wrapper's last natural height so a
@@ -303,6 +316,7 @@ export function SelectionListAnimatedHeight(
         });
     }, [
         animatedHeight,
+        enabled,
         incomingContentHeight,
         pinned,
         reducedMotion,
@@ -311,19 +325,19 @@ export function SelectionListAnimatedHeight(
     ]);
 
     const animatedStyle = useAnimatedStyle(() => {
-        if (!pinned) return {};
+        if (!enabled || !pinned) return {};
         return { height: animatedHeight.value };
-    }, [pinned]);
+    }, [enabled, pinned]);
 
     // When pinned, also flatten flex grow/shrink so the explicit height is
     // not overridden by the parent's flex space distribution (see comment on
     // `pinnedFlexOverride`).
-    const pinnedOverrideStyle: ViewStyle | undefined = pinned ? pinnedFlexOverride : undefined;
+    const pinnedOverrideStyle: ViewStyle | undefined = enabled && pinned ? pinnedFlexOverride : undefined;
 
     return (
         <Animated.View
             testID={props.testID}
-            onLayout={handleWrapperLayout}
+            onLayout={enabled ? handleWrapperLayout : undefined}
             style={[wrapperBaseStyle, props.style, pinnedOverrideStyle, animatedStyle]}
         >
             {props.children}

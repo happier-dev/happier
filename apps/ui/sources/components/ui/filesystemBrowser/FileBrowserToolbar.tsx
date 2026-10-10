@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { TextInput } from '@/components/ui/text/Text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 export type FileBrowserToolbarActionLike = Readonly<{
     id: string;
@@ -60,6 +61,7 @@ export function FileBrowserToolbar({
     ...rest
 }: FileBrowserToolbarProps) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
 
     const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
         onWidthChange?.(event.nativeEvent.layout.width);
@@ -71,7 +73,7 @@ export function FileBrowserToolbar({
             onLayout={handleLayout}
             style={[styles.row, { borderBottomColor: theme.colors.border.default }, style]}
         >
-            <View style={[styles.searchWrap, { borderColor: theme.colors.border.default, backgroundColor: theme.colors.surface.base }]}>
+            <View style={[styles.searchWrap, { borderColor: theme.colors.border.default, backgroundColor: paintColor(theme.colors.surface.base) }]}>
                 <TextInput
                     testID={searchTestID}
                     placeholder={searchPlaceholder}
@@ -105,6 +107,7 @@ export function FileBrowserToolbarIconButton({
     ...rest
 }: FileBrowserToolbarIconButtonProps) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const userStyle = style;
     return (
         <Pressable
@@ -115,7 +118,7 @@ export function FileBrowserToolbarIconButton({
                 styles.iconButton,
                 {
                     borderColor: selected ? theme.colors.text.link : theme.colors.border.default,
-                    backgroundColor: theme.colors.surface.base,
+                    backgroundColor: paintColor(theme.colors.surface.base),
                     opacity: disabled ? 0.5 : (state.pressed ? motionTokens.press.opacity : 1),
                 },
                 typeof userStyle === 'function' ? userStyle(state) : userStyle,

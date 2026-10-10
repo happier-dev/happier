@@ -44,7 +44,9 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('span', domProps(props)),
 }));
 
-vi.mock('react-native-reanimated', () => {
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    const reanimated = createReanimatedModuleMock();
     const View = React.forwardRef<HTMLDivElement, Record<string, unknown>>(function ReanimatedView(props, ref) {
         const { children, style, ...rest } = props;
         return React.createElement('div', {
@@ -54,11 +56,9 @@ vi.mock('react-native-reanimated', () => {
         }, children as React.ReactNode);
     });
     return {
-        default: { View },
-        useAnimatedStyle: (factory: () => unknown) => factory(),
-        useSharedValue: (value: unknown) => ({ value }),
-        withTiming: (value: unknown) => value,
-        Easing: { bezier: () => (value: number) => value, linear: (value: number) => value },
+        ...reanimated,
+        default: { ...reanimated.default, View },
+        View,
     };
 });
 

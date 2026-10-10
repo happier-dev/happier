@@ -15,8 +15,10 @@
 import * as React from 'react';
 import { Platform, Pressable, View, type ViewProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Item } from '@/components/ui/lists/Item';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
 
@@ -190,7 +192,9 @@ export function PlanOptionRow(
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
+  const paintColor = useHappierMaterialColorResolver();
   const optionLabel = props.option.renderLabel?.() ?? props.option.label;
+  const labelContent = renderSelectionListAccessory(props.option.labelContent);
   const optionAccessibilityLabel =
     props.measureMode === true
       ? undefined
@@ -202,15 +206,26 @@ export function PlanOptionRow(
   const subtitleLeading = renderSelectionListAccessory(
     props.option.subtitleLeading,
   );
+  const titleAccessory = renderSelectionListAccessory(
+    props.option.titleAccessory,
+  );
   const icon = renderSelectionListAccessory(props.option.icon);
   const rightAccessory = renderSelectionListAccessory(
     props.option.rightAccessory,
   );
   // Per-option controls belong to the SELECTED row only, and are resolved
   // lazily so a virtualized list never constructs them for the other rows.
-  const expandedContent = props.isSelected
+  const expandedVisual = props.isSelected
     ? renderSelectionListAccessory(props.option.expandedContent)
     : undefined;
+  const displayedSubtitle = expandedVisual != null && props.option.hideSubtitleWhenExpanded === true
+    ? undefined : subtitleContent ?? props.option.subtitle;
+  const expandedContent = expandedVisual == null ? undefined : props.option.expandedContentInset === 'row' ? (
+    <View style={{
+      paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
+      paddingBottom: PAGE_LIST_METRICS.groupHeadingGapPx,
+    }}>{expandedVisual}</View>
+  ) : expandedVisual;
   const registerScrollItemLayout = React.useContext(
     SelectionListScrollIntoViewContext,
   );
@@ -313,9 +328,9 @@ export function PlanOptionRow(
   // swap; the geometry above is theme-independent and stays in the sheet.
   const cardFillStyle = isCard
     ? {
-        backgroundColor: props.isSelected
+        backgroundColor: paintColor(props.isSelected
           ? theme.colors.surface.selected
-          : theme.colors.surface.base,
+          : theme.colors.surface.base),
       }
     : null;
   // At one column there is no `SelectionListColumnRow`, so this envelope IS
@@ -483,8 +498,9 @@ export function PlanOptionRow(
       <View {...cardWrapperProps}>
         <Item
           rowRole={rowRole}
-          title={optionLabel}
-          subtitle={subtitleContent ?? props.option.subtitle}
+          title={labelContent ?? optionLabel}
+          titleAccessory={titleAccessory}
+          subtitle={displayedSubtitle}
           subtitleLeading={subtitleLeading}
           titleEllipsizeMode={props.option.labelEllipsizeMode}
           subtitleEllipsizeMode={props.option.subtitleEllipsizeMode}
@@ -522,6 +538,7 @@ export function PlanOptionRow(
       <Pressable
         testID={optionTestId}
         onPressIn={props.option.onPressIn}
+        onHoverIn={props.option.disabled === true ? undefined : props.option.onHighlight}
         onPress={handlePress}
         {...(Platform.OS === 'web'
           ? ({
@@ -551,9 +568,9 @@ export function PlanOptionRow(
             backgroundColor: staticContent
               ? undefined
               : state.pressed || hovered
-                ? theme.colors.surface.pressed
+                ? paintColor(theme.colors.surface.pressed)
                 : selectedOrFocused && !isCard
-                  ? theme.colors.surface.selected
+                  ? paintColor(theme.colors.surface.selected)
                   : undefined,
             opacity: props.option.disabled === true && !staticContent ? 0.5 : 1,
           };
@@ -565,8 +582,9 @@ export function PlanOptionRow(
       <Item
         rowRole={rowRole}
         testID={optionTestId}
-        title={optionLabel}
-        subtitle={subtitleContent ?? props.option.subtitle}
+        title={labelContent ?? optionLabel}
+        titleAccessory={titleAccessory}
+        subtitle={displayedSubtitle}
         subtitleLeading={subtitleLeading}
         titleEllipsizeMode={props.option.labelEllipsizeMode}
         subtitleEllipsizeMode={props.option.subtitleEllipsizeMode}
@@ -576,6 +594,7 @@ export function PlanOptionRow(
           !isCard && props.option.rightAccessoryOutsidePressable === true
         }
         onPressIn={props.option.onPressIn}
+        onHoverIn={props.option.disabled === true ? undefined : props.option.onHighlight}
         onPress={handlePress}
         selected={props.isSelected}
         focused={props.isFocused}

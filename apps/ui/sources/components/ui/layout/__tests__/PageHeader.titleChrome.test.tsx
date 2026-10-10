@@ -46,6 +46,17 @@ function headings(screen: Awaited<ReturnType<typeof renderHeader>>): string[] {
 }
 
 describe('PageHeader title and navigation chrome (R2)', () => {
+    it('keeps explicitly page-owned entity actions visible and usable beneath phone title chrome', async () => {
+        const onPress = vi.fn();
+        const screen = await renderScreen(<NavigationTitleChromeProvider showsTitle>
+            <PageHeader testID="entity-header" title="Notes" alwaysShowTitle actionsPlacement="page"
+                actions={React.createElement('EntityAction', { testID: 'entity-action', onPress })} />
+        </NavigationTitleChromeProvider>);
+        expect(screen.findAllByType('EntityAction' as never)).toHaveLength(1);
+        await screen.pressByTestIdAsync('entity-action');
+        expect(onPress).toHaveBeenCalledOnce();
+    });
+
     it('shows the title, its back arrow and the purpose when no navigation header shows the title', async () => {
         const screen = await renderHeader({ description: 'Where your models come from.' });
         expect(headings(screen)).toEqual(['Providers']);
@@ -64,6 +75,26 @@ describe('PageHeader title and navigation chrome (R2)', () => {
     it('keeps the title of an entity page that asks for it even under a native title', async () => {
         const screen = await renderHeader({ chromeShowsTitle: true, alwaysShowTitle: true, description: 'Claude Code' });
         expect(headings(screen)).toEqual(['Providers']);
+        // The entity's editable identity is not a second navigation header.
+        const header = screen.findHostByTestId('page-header')!;
+        await act(async () => header.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 100, x: 0, y: 0 } } }));
+        expect(screen.root.findAllByType('BackArrow' as never)).toHaveLength(0);
+    });
+
+    it('leaves generic navigation identity intact for an inline entity title', async () => {
+        const setTitle = vi.fn();
+        await renderScreen(<NavigationTitleChromeProvider showsTitle publisher={{ setTitle, setBack: () => {} }}>
+            <PageHeader title="Release" alwaysShowTitle titleEditor={{ value: 'Release', placeholder: 'Name',
+                accessibilityLabel: 'Name', onChangeText: () => {} }} />
+        </NavigationTitleChromeProvider>);
+        expect(setTitle).not.toHaveBeenCalledWith(null);
+    });
+    it('keeps a deep-linked entity Back when title chrome has no navigation Back', async () => {
+        const screen = await renderScreen(<NavigationTitleChromeProvider showsTitle showsBack={false}>
+            <NavigationBackChromeProvider control={BackArrow}><PageHeader testID="page-header" title="Release" alwaysShowTitle /></NavigationBackChromeProvider>
+        </NavigationTitleChromeProvider>);
+        await act(async () => screen.findHostByTestId('page-header')!.props.onLayout?.({ nativeEvent: { layout: { width: 390, height: 100, x: 0, y: 0 } } }));
+        expect(screen.root.findAllByType('BackArrow' as never)).toHaveLength(1);
     });
 
     it('renders nothing when the native header shows the title and the page has nothing else to say', async () => {

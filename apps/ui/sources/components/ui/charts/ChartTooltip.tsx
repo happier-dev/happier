@@ -16,6 +16,9 @@ type ChartTooltipProps = Readonly<{
     testID?: string;
     triggerTestID?: string;
     disabled?: boolean;
+    accessibilityLabel?: string;
+    /** Select the neutral datum without adding a nested interactive control. */
+    onSelect?: () => void;
     /**
      * Layout style for the trigger wrapper — charts whose marks own their flex
      * sizing (e.g. 100%-stacked composition segments with `flexGrow`) pass it
@@ -113,8 +116,12 @@ export function ChartTooltip(props: ChartTooltipProps): React.ReactElement {
                 <Pressable
                     testID={resolvedTriggerTestID}
                     accessibilityRole="button"
-                    onPress={() => setOpen((current) => (hoveredRef.current ? true : !current))}
+                    accessibilityLabel={props.accessibilityLabel ?? `${title}: ${value}`}
+                    onPress={() => { props.onSelect?.(); setOpen((current) => (hoveredRef.current ? true : !current)); }}
+                    onFocus={() => { props.onSelect?.(); setOpen(true); }}
+                    onBlur={() => { if (!hoveredRef.current) setOpen(false); }}
                     onHoverIn={() => {
+                        props.onSelect?.();
                         hoveredRef.current = true;
                         setOpen(true);
                     }}

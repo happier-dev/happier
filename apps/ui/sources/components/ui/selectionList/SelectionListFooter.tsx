@@ -5,7 +5,8 @@ import Animated, {
     useSharedValue,
     withTiming,
 } from 'react-native-reanimated';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -71,6 +72,8 @@ export type SelectionListFooterProps = Readonly<{
  * owned by the SelectionList orchestrator (Phase 1.9), not this primitive.
  */
 export function SelectionListFooter(props: SelectionListFooterProps): React.ReactElement | null {
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     const reducedMotion = useReducedMotionPreference();
     const keyboardAvailable = props.hardwareKeyboardAvailable ?? true;
@@ -111,7 +114,7 @@ export function SelectionListFooter(props: SelectionListFooterProps): React.Reac
     if (!keyboardAvailable) return null;
     if (renderedHints.length === 0 && props.hints.length === 0) return null;
     return (
-        <View testID={props.testID} style={styles.container}>
+        <View testID={props.testID} style={[styles.container, { backgroundColor: paintColor(theme.colors.surface.base, 'transparent') }]}>
             <Animated.View
                 testID={selectionListTestId(props.testID, 'hints-animator')}
                 style={[styles.animator, animatedStyle]}

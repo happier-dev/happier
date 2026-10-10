@@ -33,6 +33,8 @@ export type StoryDeckSurfaceProps = Readonly<{
     skipLabel?: string;
     onSecondaryAction?: () => void;
     secondaryActionLabel?: string;
+    /** What the secondary action starts, shown with it on the last card. */
+    secondaryActionNote?: React.ReactNode;
     slideAnimation?: StoryDeckSlideAnimation;
     alternateWideMediaPlacement?: boolean;
     testID?: string;
@@ -204,6 +206,7 @@ export function StoryDeckSurface(props: StoryDeckSurfaceProps) {
                         onPrimary={handlePrimary}
                         onSecondary={props.onSecondaryAction}
                         secondaryLabel={props.secondaryActionLabel}
+                        secondaryNote={props.secondaryActionNote}
                         onSkip={props.onSkip}
                         skipLabel={props.skipLabel}
                         testID={`${props.testID ?? 'story-deck'}-footer`}

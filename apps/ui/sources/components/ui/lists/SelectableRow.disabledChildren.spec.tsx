@@ -1,45 +1,67 @@
+// @vitest-environment jsdom
+
 import * as React from 'react';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import { Pressable } from 'react-native';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
-
-import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-installUiListsCommonModuleMocks();
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
-
-vi.mock('@/components/ui/text/Text', async () => {
-    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
-    return createUiTextModuleMock();
+vi.mock('react-native', async () => vi.importActual('react-native-web'));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
 });
 
+// Construct the real module graph during collection, not inside the row interaction budget.
+const { SelectableRow } = await import('./SelectableRow');
+
 describe('SelectableRow (disabled children)', () => {
-    it('does not disable the root pressable so nested actions remain usable', async () => {
-        const { SelectableRow } = await import('./SelectableRow');
+    let container: HTMLDivElement;
+    let root: Root;
+
+    beforeEach(() => {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+    });
+
+    afterEach(async () => {
+        await act(async () => root.unmount());
+        container.remove();
+    });
+
+    it('keeps the row disabled while allowing its nested action', async () => {
         const onRowPress = vi.fn();
         const onInnerPress = vi.fn();
 
-        const screen = await renderScreen(
+        await act(async () => root.render(
             <SelectableRow
                 testID="selectable-row"
                 title="Row"
                 disabled={true}
+                allowChildInteractionWhenDisabled={true}
                 onPress={onRowPress}
                 right={<Pressable testID="selectable-row-inner" onPress={onInnerPress} />}
             />,
-        );
+        ));
 
-        const rootPressable = screen.findAll((node) => (
-            node.props?.testID === 'selectable-row' && typeof node.props?.style === 'function'
-        ))[0];
-        expect(rootPressable).toBeTruthy();
-        expect(rootPressable?.props?.disabled).toBeUndefined();
-        expect(rootPressable?.props?.onPress).toBeUndefined();
+        const row = container.querySelector<HTMLElement>('[data-testid="selectable-row"]');
+        expect(row?.getAttribute('aria-disabled')).toBe('true');
+        const inner = container.querySelector<HTMLElement>('[data-testid="selectable-row-inner"]');
+        expect(inner).not.toBeNull();
+        await act(async () => inner?.click());
+        expect(onInnerPress).toHaveBeenCalledOnce();
+        expect(onRowPress).not.toHaveBeenCalled();
+    });
+
+    it('disables the activation target by default', async () => {
+        const onRowPress = vi.fn();
+        await act(async () => root.render(
+            <SelectableRow testID="disabled-row" title="Row" disabled onPress={onRowPress} />,
+        ));
+        const row = container.querySelector<HTMLElement>('[data-testid="disabled-row"]');
+        expect(row?.getAttribute('aria-disabled')).toBe('true');
+        await act(async () => row?.click());
+        expect(onRowPress).not.toHaveBeenCalled();
     });
 });

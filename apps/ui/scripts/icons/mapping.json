@@ -109,6 +109,7 @@
   "document-text": "file-text",
   "documents": "files",
   "download": "download",
+  "diamond": "diamond",
   "drag": "dots-six-vertical",
   "ellipse": "circle",
   "ellipsis-horizontal": "dots-three",
@@ -343,5 +344,10 @@
   "worktrees": "tree-structure",
   "x": "x",
   "split-pane-right": "square-split-horizontal",
-  "split-pane-down": "square-split-vertical"
+  "split-pane-down": "square-split-vertical",
+  "kanban": "kanban",
+  "scales": "scales",
+  "binoculars": "binoculars",
+  "widget-group": "layout",
+  "widget-ungroup": "exclude-square"
 }

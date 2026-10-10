@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -31,6 +32,50 @@ async function renderTextHosts(platform: 'web' | 'ios', disabled = false) {
 }
 
 describe('Text metric scaling ownership', () => {
+    it('retains the compiled field paint when the material resolver keeps authored paint unchanged', async () => {
+        const { Platform } = await import('react-native');
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        const { HappierMaterialRoleProvider } = await import('@happier-dev/plugin-ui/presentation');
+        const { TextInput } = await import('./Text');
+        // An enumerable inline variable would override Unistyles' compiled themed class.
+        const fieldStyle = Object.defineProperty({ padding: 12, fontSize: 14 }, 'backgroundColor', { value: 'var(--colors-input-background)', enumerable: false });
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={({ color }) => color}>
+            <TextInput testID="solid-field" value="Exact" style={fieldStyle} />
+        </HappierMaterialRoleProvider>);
+        expect(flattenTestStyle(screen.findByTestId('solid-field')!.props.style).backgroundColor).toBeUndefined();
+        expect(screen.findByTestId('solid-field')!.props.value).toBe('Exact');
+    });
+    it('resolves the hidden authored paint exposed by the real Unistyles boundary', async () => {
+        const { Platform } = await import('react-native');
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        const { HappierMaterialRoleProvider } = await import('@happier-dev/plugin-ui/presentation');
+        const { TextInput } = await import('./Text');
+        // Unistyles exposes semantic style values non-enumerably on web.
+        const fieldStyle = Object.defineProperty({ padding: 12, fontSize: 14 }, 'backgroundColor', { value: '#112233', enumerable: false });
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => 'rgba(235, 230, 225, 0.1)'}>
+            <TextInput testID="hidden-field" value="Exact" style={fieldStyle} />
+        </HappierMaterialRoleProvider>);
+        expect(flattenTestStyle(screen.findByTestId('hidden-field')!.props.style)).toMatchObject({ backgroundColor: 'rgba(235, 230, 225, 0.1)', padding: 12, fontSize: 14 });
+        expect(screen.findByTestId('hidden-field')!.props.value).toBe('Exact');
+    });
+    it('changes only an authored field coat inside glass while keeping editing and geometry', async () => {
+        const { Platform } = await import('react-native');
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        const { HappierMaterialRoleProvider } = await import('@happier-dev/plugin-ui/presentation');
+        const { TextInput } = await import('./Text');
+        function Field() {
+            const [value, setValue] = React.useState('Before');
+            return <TextInput testID="glass-field" value={value} onChangeText={setValue} style={{ backgroundColor: '#112233', color: '#445566', padding: 12, fontSize: 14 }} />;
+        }
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="floating" resolveMaterialColor={() => 'rgba(235, 230, 225, 0.1)'}>
+            <Field />
+            <TextInput testID="bare-field" value="Bare" />
+        </HappierMaterialRoleProvider>);
+        expect(flattenTestStyle(screen.findByTestId('glass-field')!.props.style)).toMatchObject({ backgroundColor: 'rgba(235, 230, 225, 0.1)', color: '#445566', padding: 12, fontSize: 14 });
+        expect(flattenTestStyle(screen.findByTestId('bare-field')!.props.style).backgroundColor).toBeUndefined();
+        await act(async () => screen.findByTestId('glass-field')!.props.onChangeText('After'));
+        expect(screen.findByTestId('glass-field')!.props.value).toBe('After');
+    });
     it('lets web CSS scale text and field metrics once', async () => {
         const screen = await renderTextHosts('web');
         for (const id of ['text', 'input']) {

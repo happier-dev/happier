@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
-import { collectUnexpectedRawTextNodes, findAllHostTestInstances, renderScreen, standardCleanup } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, renderScreen, standardCleanup } from '@/dev/testkit';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
@@ -106,7 +106,9 @@ describe('DropdownMenu model-style text node guard', () => {
                     }}
                 />)).tree;
 
-        expect(findAllHostTestInstances(tree.root, (node) => node.type === 'Text' && React.Children.toArray(node.props.children).includes('.')).length).toBeGreaterThan(0);
+        // Inspect committed output: Icon's composite JSX child becomes a raw glyph only after rendering.
+        expect(collectUnexpectedRawTextNodes(tree.toJSON(), []).filter((node) => node.value === '.'))
+            .toContainEqual({ parent: 'Text', value: '.' });
         expect(collectUnexpectedRawTextNodes(tree.toJSON())).toEqual([]);
     });
 

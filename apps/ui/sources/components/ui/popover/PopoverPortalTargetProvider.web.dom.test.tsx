@@ -31,24 +31,29 @@ const requireForTest = createRequire(import.meta.url);
 const { Drawer: CjsDrawer } = requireForTest('vaul') as typeof import('vaul');
 
 describe('PopoverPortalTargetProvider (web dom)', () => {
-    it('layers the screen-local portal host above later composer siblings', async () => {
+    it('escapes a clipped workspace stacking context so body-portalled chrome cannot cover its dialogs', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
         const container = document.createElement('div');
+        container.style.position = 'relative';
+        container.style.zIndex = '0';
         document.body.appendChild(container);
         const root = createRoot(container);
 
         try {
             await act(async () => {
                 root.render(
-                    <PopoverPortalTargetProvider>
-                        <div data-testid="screen-content" />
-                        <div data-testid="composer" style={{ position: 'relative', zIndex: 1 }} />
-                    </PopoverPortalTargetProvider>,
+                    <div style={{ overflow: 'hidden' }}>
+                        <PopoverPortalTargetProvider>
+                            <div data-testid="screen-content" />
+                            <div data-testid="composer" style={{ position: 'relative', zIndex: 1 }} />
+                        </PopoverPortalTargetProvider>
+                    </div>,
                 );
             });
 
             const host = document.querySelector('[data-happy-popover-portal-host]') as HTMLElement | null;
             expect(host).not.toBeNull();
+            expect(host?.parentElement).toBe(document.body);
             expect(Number(host?.style.zIndex)).toBeGreaterThan(1);
         } finally {
             await act(async () => {

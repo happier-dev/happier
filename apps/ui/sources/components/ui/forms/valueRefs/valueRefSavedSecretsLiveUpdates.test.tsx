@@ -201,7 +201,6 @@ describe('value ref saved secrets live updates', () => {
                     initialKey: 'Authorization',
                     initialValueRef: { t: 'savedSecret', secretId: 'secret-live' },
                     secrets: [],
-                    onChangeSecrets: vi.fn(),
                     onSubmit: () => true,
                 }));
 
@@ -233,7 +232,6 @@ describe('value ref saved secrets live updates', () => {
                     initialKey: 'Authorization',
                     initialValueRef: { t: 'literal', v: 'token' },
                     secrets: [],
-                    onChangeSecrets: vi.fn(),
                     onSubmit: () => true,
                 }));
 

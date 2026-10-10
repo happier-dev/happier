@@ -8,6 +8,7 @@ import {
 } from '@/dev/testkit';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -34,6 +35,20 @@ installCodeViewCommonModuleMocks({
 });
 
 describe('CodeLineRow', () => {
+    it('keeps an interactive selected-line coat translucent without fading code or selection actions', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+        const onPressLine = vi.fn();
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="floating" resolveMaterialColor={() => 'rgba(0, 0, 0, 0.1)'}>
+            <CodeLineRow line={{ id: 'selected', sourceIndex: 0, kind: 'context', oldLine: 1, newLine: 1,
+                renderPrefixText: '', renderCodeText: 'const exact = true;', renderIsHeaderLine: false, selectable: true }} selected onPressLine={onPressLine} />
+        </HappierMaterialRoleProvider>);
+        const row = screen.findAll(node => typeof node.type === 'string' && String(node.type) === 'View')[0]!;
+        expect(flattenTestStyle(row.props.style).backgroundColor).toBe('rgba(0, 0, 0, 0.1)');
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('const exact = true;');
+        const control = screen.findAll(node => typeof node.type === 'string' && String(node.type) === 'Pressable')[0]!;
+        await act(async () => control.props.onPress({ nativeEvent: {} }));
+        expect(onPressLine).toHaveBeenCalledWith(expect.objectContaining({ id: 'selected' }), expect.anything());
+    });
     it('uses the content material for diff paint while preserving the addition prefix and text', async () => {
         const { CodeLineRow } = await import('./CodeLineRow');
         const { glassSurfaceBackgroundColor } = await import('@/components/ui/glass/glassSurfacePaint');

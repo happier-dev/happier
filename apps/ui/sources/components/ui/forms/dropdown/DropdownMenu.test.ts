@@ -483,7 +483,8 @@ describe('DropdownMenu', () => {
             trigger: React.createElement('View'),
         }));
 
-        vi.useFakeTimers();
+        // Keep the explicitly queued frame boundary; default fake timers replace rAF too.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         try {
             const selectableResults = screen.findByType('SelectableMenuResults' as any);
             act(() => selectableResults?.props?.onPressItem?.({ id: 'open-modal' }));
@@ -493,8 +494,13 @@ describe('DropdownMenu', () => {
             });
             expect(onSelect).not.toHaveBeenCalled();
 
+            expect(scheduled).toHaveLength(1);
             act(() => scheduled.shift()?.(0));
             expect(onSelect).toHaveBeenCalledWith('open-modal');
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(100);
+            });
+            expect(onSelect).toHaveBeenCalledTimes(1);
         } finally {
             vi.useRealTimers();
         }
@@ -540,6 +546,32 @@ describe('DropdownMenu', () => {
 
         expect(onSelect).toHaveBeenCalledWith('a');
         expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    });
+
+    it('bounds a menu by the window it opens in, not a fixed height, while still preferring to open below', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const screen = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange: () => {},
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+        }));
+        const popover = screen.findByType('Popover' as any);
+        // The test window is 600 tall: the menu may use all of it, and opens below when 320 fits.
+        expect(popover?.props?.maxHeightCap).toBe(600);
+        expect(popover?.props?.placementMinSpace).toBe(320);
+
+        const capped = await renderScreen(React.createElement(DropdownMenu as any, {
+            open: true,
+            onOpenChange: () => {},
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            maxHeightCap: 240,
+            trigger: React.createElement('View'),
+        }));
+        expect(capped.findByType('Popover' as any)?.props?.maxHeightCap).toBe(240);
+        expect(capped.findByType('Popover' as any)?.props?.placementMinSpace).toBe(240);
     });
 
     it('opens submenu items without selecting the parent row', async () => {

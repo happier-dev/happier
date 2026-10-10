@@ -26,6 +26,19 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 }));
 
 describe('ChartTooltip', () => {
+    it('reports selected semantic values through the host overlay trigger on touch and keyboard focus', async () => {
+        const { ChartTooltip } = await import('./ChartTooltip');
+        let selected = false;
+        const screen = await renderScreen(<ChartTooltip testID="exact" title="Monday" value="North 0.00004, South unknown" accentColor="#007AFF"
+            accessibilityLabel="Monday: North 0.00004, South unknown" onSelect={() => { selected = true; }}><View /></ChartTooltip>);
+        const trigger = screen.findByTestId('exact-trigger');
+        expect(trigger?.props.accessibilityLabel).toBe('Monday: North 0.00004, South unknown');
+        act(() => pressTestInstance(trigger, 'exact-trigger'));
+        expect(selected).toBe(true);
+        selected = false;
+        act(() => trigger?.props.onFocus?.());
+        expect(selected).toBe(true);
+    });
     it('opens on press and renders the tooltip payload', async () => {
         const { ChartTooltip } = await import('./ChartTooltip');
 

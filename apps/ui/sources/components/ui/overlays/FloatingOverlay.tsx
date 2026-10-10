@@ -27,13 +27,14 @@ import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
 
 import { FLOATING_OVERLAY_METRICS } from './floatingOverlayMetrics';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
-import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
-import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
+import { useGlassSurfaceBackdropTone, useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
+import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 const OVERLAY_BORDER_RADIUS = FLOATING_OVERLAY_METRICS.radiusPx;
 
-// A sheet already owns its glass and corners. Keep the same scrolling content
+// A sheet already owns its material and corners. Keep the same scrolling content
 // without nesting a second floating card inside the shared modal surface.
 export const FloatingOverlaySheetContext = React.createContext(false);
 
@@ -129,7 +130,7 @@ interface FloatingOverlayProps {
     edgeIndicators?: boolean | Readonly<{ size?: number; opacity?: number }>;
     /** Optional arrow that points back to the anchor (useful for context menus). */
     arrow?: FloatingOverlayArrow;
-    /** Defaults to legacy modal chrome; bounded popovers can opt into theme surface chrome. */
+    /** Selects the existing border/shadow chrome; both variants follow the floating material. */
     surfaceChrome?: 'modal' | 'theme';
     /**
      * Initial visibility for scroll edge fades before measurement.
@@ -147,7 +148,8 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const insideSheet = React.useContext(FloatingOverlaySheetContext);
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const fadeColor = useGlassSurfaceColor(theme.colors.edge.floatingFill, 'floating', false);
+    const backdropTone = useGlassSurfaceBackdropTone('floating');
+    const glassFadeColor = useGlassSurfaceColor(theme.colors.edge.floatingFill, 'floating', false);
     const { 
         children, 
         maxHeight = 240, 
@@ -165,6 +167,12 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         onScrollViewContentSizeChange,
         onScrollViewScroll,
     } = props;
+    const fadeColor = glassFadeColor;
+    const containerBackground = readSurfaceStyleProperty(containerStyle, 'backgroundColor');
+    const ownContainerColor = useGlassSurfaceColor(typeof containerBackground === 'string' ? containerBackground : 'transparent', 'floating');
+    const resolveContainingColor = useHappierMaterialColorResolver();
+    const containerPaint = typeof containerBackground === 'string' ? { backgroundColor: insideSheet
+        ? resolveContainingColor(containerBackground, 'transparent') : ownContainerColor } : null;
 
     const fadeCfg = React.useMemo(() => {
         if (!edgeFades) return null;
@@ -274,7 +282,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
 
     if (insideSheet) {
         return <ListPresentationProvider value="grouped">
-            <Animated.View style={[{ maxHeight, flexShrink: 1, minHeight: 0 }, containerStyle]}>
+            <Animated.View style={[{ maxHeight, flexShrink: 1, minHeight: 0 }, containerStyle, containerPaint]}>
                 <FloatingOverlaySheetContext.Provider value={false}>
                     {surfaceContent}
                 </FloatingOverlaySheetContext.Provider>
@@ -287,6 +295,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
             surfaceChrome === 'theme' ? styles.themedSurfaceShadowFrame : styles.modalShadowFrame,
             { maxHeight },
             containerStyle,
+            containerPaint,
         ]}>
             <GlassSurface surfaceGroup="floating" style={[
                 surfaceChrome === 'theme' ? styles.themedSurfaceClip : styles.modalClipSurface,
@@ -306,12 +315,12 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const arrowBoxStyle: ViewStyle = {
         width: arrowSize,
         height: arrowSize,
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.edge.floatingFill, 'floating'),
+        backgroundColor: fadeColor,
         transform: [{ rotate: '45deg' as const }],
         // The arrow is part of the floating surface, so on web it frosts what lies under it like the
         // surface does (it holds no content, so its own backdrop cuts nothing off).
         ...(Platform.OS === 'web'
-            ? createBackdropWebStyle({ backgroundColor: glassSurfaceBackgroundColor(theme.colors.edge.floatingFill, 'floating'), surfaceGroup: 'floating' }) as unknown as ViewStyle
+            ? createBackdropWebStyle({ backgroundColor: fadeColor, surfaceGroup: 'floating', backdropTone }) as unknown as ViewStyle
             : null),
     };
 
@@ -371,7 +380,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     return (
         <Animated.View style={{ position: 'relative' }}>
             <View testID="floating-overlay-arrow" style={arrowWrapperStyle}>
-                <View style={arrowBoxStyle} />
+                <View style={arrowBoxStyle} {...(Platform.OS === 'web' ? { dataSet: { happyGlassBackdrop: 'true' } } : {})} />
             </View>
             <ListPresentationProvider value="grouped">{overlay}</ListPresentationProvider>
         </Animated.View>

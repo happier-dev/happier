@@ -47,6 +47,10 @@ const DOCK_MOTION = {
 
 function CapsuleSurface(props: React.ComponentProps<HappierCapsuleHost['Surface']>): React.ReactElement {
     const shadowLevel = props.elevation === 'high' ? 3 : 2;
+    if (props.fill) {
+        // A backing only: the glass fills the box it is placed in and its content stands over it.
+        return <GlassPanel shadowLevel={shadowLevel} innerShadow={false} frameStyle={FILL_FRAME} testID={props.testID}>{null}</GlassPanel>;
+    }
     if (!props.reshape) {
         return <GlassPanel shadowLevel={shadowLevel} innerShadow={false} testID={props.testID}>{props.children}</GlassPanel>;
     }
@@ -61,13 +65,15 @@ function CapsuleSurface(props: React.ComponentProps<HappierCapsuleHost['Surface'
 }
 
 function CapsuleDock(props: React.ComponentProps<NonNullable<HappierCapsuleHost['Dock']>>): React.ReactElement | null {
-    const motion = useOverlayMotionAnimation({ visible: props.visible, preset: DOCK_MOTION[props.edge], disableTransformOnWeb: true });
+    const elementRef = React.useRef<React.ComponentRef<typeof View>>(null);
+    const motion = useOverlayMotionAnimation({ visible: props.visible, preset: DOCK_MOTION[props.edge], elementRef });
     const { present } = useOverlayPresence(props.visible, motion.exitMs);
     if (!present) return null;
     // A leaving capsule keeps its last words while it settles out, but no longer speaks or takes presses.
     const leaving = !props.visible;
     return (
         <Animated.View
+            ref={elementRef}
             style={[props.style as React.ComponentProps<typeof View>['style'], motion.style]}
             pointerEvents={leaving ? 'none' : 'box-none'}
             aria-hidden={leaving ? true : undefined}

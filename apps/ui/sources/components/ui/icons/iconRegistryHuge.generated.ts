@@ -26,6 +26,7 @@ import AtIcon from '@hugeicons/core-free-icons/AtIcon';
 import Atom01Icon from '@hugeicons/core-free-icons/Atom01Icon';
 import Attachment02Icon from '@hugeicons/core-free-icons/Attachment02Icon';
 import BarChartIcon from '@hugeicons/core-free-icons/BarChartIcon';
+import BinocularsIcon from '@hugeicons/core-free-icons/BinocularsIcon';
 import Book01Icon from '@hugeicons/core-free-icons/Book01Icon';
 import BookBookmark01Icon from '@hugeicons/core-free-icons/BookBookmark01Icon';
 import BookOpen01Icon from '@hugeicons/core-free-icons/BookOpen01Icon';
@@ -113,6 +114,7 @@ import GlobeIcon from '@hugeicons/core-free-icons/GlobeIcon';
 import GoogleIcon from '@hugeicons/core-free-icons/GoogleIcon';
 import Grid2X2Icon from '@hugeicons/core-free-icons/Grid2X2Icon';
 import GripVerticalIcon from '@hugeicons/core-free-icons/GripVerticalIcon';
+import GroupItemsIcon from '@hugeicons/core-free-icons/GroupItemsIcon';
 import HammerIcon from '@hugeicons/core-free-icons/HammerIcon';
 import HandIcon from '@hugeicons/core-free-icons/HandIcon';
 import HardDriveDownloadIcon from '@hugeicons/core-free-icons/HardDriveDownloadIcon';
@@ -128,6 +130,8 @@ import Image01Icon from '@hugeicons/core-free-icons/Image01Icon';
 import InboxIcon from '@hugeicons/core-free-icons/InboxIcon';
 import Infinity01Icon from '@hugeicons/core-free-icons/Infinity01Icon';
 import InformationCircleIcon from '@hugeicons/core-free-icons/InformationCircleIcon';
+import JusticeScale01Icon from '@hugeicons/core-free-icons/JusticeScale01Icon';
+import KanbanIcon from '@hugeicons/core-free-icons/KanbanIcon';
 import Key01Icon from '@hugeicons/core-free-icons/Key01Icon';
 import KeyboardIcon from '@hugeicons/core-free-icons/KeyboardIcon';
 import LaptopIcon from '@hugeicons/core-free-icons/LaptopIcon';
@@ -230,6 +234,7 @@ import TickDouble01Icon from '@hugeicons/core-free-icons/TickDouble01Icon';
 import Timer01Icon from '@hugeicons/core-free-icons/Timer01Icon';
 import ToggleOnIcon from '@hugeicons/core-free-icons/ToggleOnIcon';
 import TranslateIcon from '@hugeicons/core-free-icons/TranslateIcon';
+import UngroupItemsIcon from '@hugeicons/core-free-icons/UngroupItemsIcon';
 import Unlink01Icon from '@hugeicons/core-free-icons/Unlink01Icon';
 import Upload01Icon from '@hugeicons/core-free-icons/Upload01Icon';
 import UserAdd01Icon from '@hugeicons/core-free-icons/UserAdd01Icon';
@@ -278,6 +283,7 @@ export const HUGE_ICON_REGISTRY = {
     'atom': Atom01Icon,
     'bell': Notification01Icon,
     'bell-slash': NotificationOff01Icon,
+    'binoculars': BinocularsIcon,
     'book': Book01Icon,
     'book-bookmark': BookBookmark01Icon,
     'book-open': BookOpen01Icon,
@@ -332,6 +338,7 @@ export const HUGE_ICON_REGISTRY = {
     'envelope': Mail01Icon,
     'envelope-open': MailOpen01Icon,
     'envelope-simple-open': MailOpenIcon,
+    'exclude-square': UngroupItemsIcon,
     'eye': EyeIcon,
     'eye-slash': ViewOffSlashIcon,
     'file': FileEmpty01Icon,
@@ -379,9 +386,11 @@ export const HUGE_ICON_REGISTRY = {
     'images': Album01Icon,
     'infinity': Infinity01Icon,
     'info': InformationCircleIcon,
+    'kanban': KanbanIcon,
     'key': Key01Icon,
     'keyboard': KeyboardIcon,
     'laptop': LaptopIcon,
+    'layout': GroupItemsIcon,
     'leaf': Leaf01Icon,
     'lifebuoy': LifebuoyIcon,
     'lightbulb': BulbIcon,
@@ -441,6 +450,7 @@ export const HUGE_ICON_REGISTRY = {
     'robot': BotIcon,
     'rocket': Rocket01Icon,
     'rocket-launch': Rocket01Icon,
+    'scales': JusticeScale01Icon,
     'scissors': Scissor01Icon,
     'share': Share01Icon,
     'share-network': PeerToPeer01Icon,

@@ -11,7 +11,7 @@ vi.mock('react-native', async () => {
 /**
  * RV-2 / F3 — DrillDownChevron must stop the row press from bubbling, so
  * pressing the chevron drills WITHOUT committing the row's `onSelect`. The
- * favorite toggle (PathFavoriteToggleButton) is the canonical reference for
+ * favorite toggle (FavoriteToggleButton) is the canonical reference for
  * the cross-platform stopPropagation + stopImmediatePropagation pattern.
  *
  * Contract changes (F3):

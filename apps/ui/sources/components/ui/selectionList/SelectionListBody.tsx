@@ -74,6 +74,7 @@ import type {
     SelectionListOption,
     SelectionListOptionPresentation,
     SelectionListPagination,
+    SelectionListProps,
     SelectionListStep,
     SelectionListVirtualizedOptionSource,
 } from './_types';
@@ -101,6 +102,7 @@ const stylesheet = StyleSheet.create(() => ({
 }));
 
 export type SelectionListBodyProps = Readonly<{
+    surface?: SelectionListProps['surface'];
     step: SelectionListStep;
     rootTestID: string | undefined;
     selectedOptionIds: ReadonlySet<string>;
@@ -463,6 +465,7 @@ function SelectionListBodyPlannedContent(props: SelectionListBodyProps & Readonl
         }
         return (
             <SelectionListBodyScrollFrame
+                surface={props.surface}
                 bodyTestId={selectionListTestId(props.rootTestID, 'body')}
                 scrollTestId={selectionListTestId(props.rootTestID, 'bodyScroll')}
                 fadeHostTestId={selectionListTestId(props.rootTestID, 'bodyScroll', 'fadeHost')}

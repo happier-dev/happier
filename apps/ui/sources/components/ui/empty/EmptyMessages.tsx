@@ -1,73 +1,24 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import React from 'react';
 import { View } from 'react-native';
-import { Typography } from '@/constants/Typography';
 import { Session } from '@/sync/domains/state/storageTypes';
-import { useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
-import { Text } from '@/components/ui/text/Text';
+import { EmptyState } from './EmptyState';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create(() => ({
     container: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        paddingHorizontal: 48,
-    },
-    iconContainer: {
-        marginBottom: 12,
-    },
-    hostText: {
-        fontSize: 18,
-        color: theme.colors.text.primary,
-        textAlign: 'center',
-        marginBottom: 4,
-        ...Typography.default('semiBold'),
-    },
-    pathText: {
-        fontSize: 14,
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-        marginBottom: 40,
-        ...Typography.default('regular'),
-    },
-    noMessagesText: {
-        fontSize: 20,
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-        marginBottom: 8,
-        ...Typography.default('regular'),
-    },
-    createdText: {
-        fontSize: 16,
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-        lineHeight: 24,
-        ...Typography.default(),
     },
 }));
 
 interface EmptyMessagesProps {
     session: Session;
-}
-
-function getOSIcon(os?: string): IconName {
-    if (!os) return 'cpu';
-    
-    const osLower = os.toLowerCase();
-    if (osLower.includes('darwin') || osLower.includes('mac')) {
-        return 'laptop';
-    } else if (osLower.includes('win')) {
-        return 'desktop';
-    } else if (osLower.includes('linux')) {
-        return 'terminal';
-    }
-    return 'cpu';
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -88,42 +39,30 @@ function formatRelativeTime(timestamp: number): string {
     }
 }
 
+/**
+ * A session with no messages yet (A5 `sessionStarting`): the app's one empty state with its Daybreak
+ * scene. The line under the title keeps what identifies the session: its machine, its folder, and
+ * when it was created.
+ */
 export function EmptyMessages({ session }: EmptyMessagesProps) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const metadata = readSessionOwnerMetadataView(session);
-    const osIcon = getOSIcon(metadata?.os);
-    const sessionStatus = useSessionStatus(session);
-    const startedTime = formatRelativeTime(session.createdAt);
-    
+    const identity = [
+        metadata?.host || null,
+        metadata?.path && readSessionDirectoryKind(metadata) !== 'managed' ? formatSessionPath(metadata.path, metadata.homeDir) : null,
+        t('components.emptyMessages.created', { time: formatRelativeTime(session.createdAt) }),
+    ].filter((part): part is string => typeof part === 'string' && part.length > 0);
+
     return (
         <View testID="session-empty-messages" style={styles.container}>
-            <Icon
-                name={osIcon}
-                size={72} 
-                color={theme.colors.text.secondary}
-                style={styles.iconContainer}
+            <EmptyState
+                layout="centered"
+                scene="sessionStarting"
+                title={t('components.emptyMessages.noMessagesYet')}
+                subtitle={identity.join(' · ')}
+                titleTestID="session-empty-messages.title"
+                subtitleTestID="session-empty-messages.identity"
             />
-            
-            {metadata?.host ? (
-                <Text style={styles.hostText}>
-                    {metadata.host}
-                </Text>
-            ) : null}
-            
-            {metadata?.path && readSessionDirectoryKind(metadata) !== 'managed' ? (
-                <Text style={styles.pathText}>
-                    {formatSessionPath(metadata.path, metadata.homeDir)}
-                </Text>
-            ) : null}
-            
-            <Text style={styles.noMessagesText}>
-                {t('components.emptyMessages.noMessagesYet')}
-            </Text>
-            
-            <Text style={styles.createdText}>
-                {t('components.emptyMessages.created', { time: startedTime })}
-            </Text>
         </View>
     );
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View, StyleProp, ViewStyle, TextStyle, StyleSheet as RNStyleSheet } from 'react-native';
+import { Platform, Pressable, StyleProp, ViewStyle, TextStyle, StyleSheet as RNStyleSheet } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -8,6 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierOptionRow, useHappierMaterialColorResolver, type HappierFocusable, type HappierOptionRowControlProps, type HappierStyleProp } from '@happier-dev/plugin-ui/presentation';
 
 
 /**
@@ -215,6 +216,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>, SelectableRowProps>(function SelectableRow(props, ref) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     const [isHovered, setIsHovered] = React.useState(false);
 
@@ -264,7 +266,6 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
     const titleAccessory = React.useMemo(() => normalizeNodeForView(props.titleAccessory ?? null), [props.titleAccessory]);
     const titleLeading = React.useMemo(() => normalizeNodeForView(props.titleLeading ?? null), [props.titleLeading]);
     const subtitleLeading = React.useMemo(() => normalizeNodeForView(props.subtitleLeading ?? null), [props.subtitleLeading]);
-    const accessoryTitleAlignmentStyle = props.subtitle ? styles.accessoryTitleAligned : null;
     const explicitWebRole = props.webRole ?? (props.accessibilityRole === 'radio' ? 'radio' : undefined);
     const webRole = Platform.OS === 'web' && props.onPress && (!disabled || explicitWebRole)
         ? (explicitWebRole ?? 'button')
@@ -284,11 +285,11 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
                 ...(disabled ? { disabled: true } : {}),
             }
         : (disabled ? ({ disabled: true } as const) : undefined);
-    const splitRightAccessory = Boolean(props.rightElementOutsidePressable && rightAccessory);
+    // Retain the native adapter's registered style binding and web-only paint.
     const rowStyle = (pressed: boolean) => ([
         styles.row,
         rowVariantStyle,
-        Platform.OS === 'web' && disabled ? ({ cursor: 'not-allowed' } as any) : null,
+        Platform.OS === 'web' && disabled ? ({ cursor: 'not-allowed' } satisfies ViewStyle) : null,
         pressed && !disabled
             ? (variant === 'selectable' ? styles.rowSelectablePressed : styles.rowPressed)
             : null,
@@ -298,58 +299,18 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
         selected
             ? (isMenu ? styles.rowMenuSelected : styles.rowSelected)
             : null,
+        selected ? { backgroundColor: paintColor(isMenu ? theme.colors.surface.selected : theme.colors.surface.pressedOverlay) }
+            : isHovered && !disabled ? { backgroundColor: paintColor(variant === 'selectable' ? (theme.dark ? theme.colors.surface.elevated : theme.colors.surface.inset) : theme.colors.surface.pressed) }
+                : pressed && !disabled ? { backgroundColor: paintColor(theme.colors.surface.pressed) } : null,
         disabled ? styles.rowDisabled : null,
         isMenu ? styles.rowMenu : null,
         props.containerStyle,
-    ]);
-    const content = (includeRightAccessory: boolean) => (
-        <>
-            {leftAccessory ? (
-                <View style={[styles.left, accessoryTitleAlignmentStyle, typeof props.leftGap === 'number' ? { marginRight: props.leftGap } : null]}>
-                    {leftAccessory}
-                </View>
-            ) : null}
-
-            <View style={styles.content}>
-                {titleAccessory || titleLeading ? (
-                    <View style={styles.titleRow}>
-                        {titleLeading}
-                        <Text style={[styles.title, styles.titleText, titleVariantStyle, titleColorStyle, props.titleStyle]} numberOfLines={1}>
-                            {props.title}
-                        </Text>
-                        {titleAccessory}
-                    </View>
-                ) : (
-                    <Text style={[styles.title, titleVariantStyle, titleColorStyle, props.titleStyle]} numberOfLines={1}>
-                        {props.title}
-                    </Text>
-                )}
-                {/* One subtitle line, with or without a leading status mark, so every row's title →
-                    subtitle gap is the same (`MENU_ROW_METRICS.subtitleGapPx`). */}
-                {props.subtitle ? (
-                    <View style={styles.subtitleRow}>
-                        {subtitleLeading}
-                        <Text style={[styles.subtitle, subtitleVariantStyle, props.subtitleStyle]} numberOfLines={2}>
-                            {props.subtitle}
-                        </Text>
-                    </View>
-                ) : null}
-            </View>
-
-            {includeRightAccessory && rightAccessory ? (
-                <View style={[styles.right, accessoryTitleAlignmentStyle]}>
-                    {rightAccessory}
-                </View>
-            ) : null}
-        </>
-    );
+    ]) as HappierStyleProp;
     const handleKeyDown = React.useCallback((event: unknown) => {
         props.onKeyDown?.(event);
     }, [props.onKeyDown]);
-    const semanticProps = {
-        ref,
+    const semanticProps: HappierOptionRowControlProps = {
         testID: props.testID,
-        onPress: disabled ? undefined : props.onPress,
         onKeyDown: Platform.OS === 'web' && props.onKeyDown
             ? handleKeyDown
             : undefined,
@@ -368,30 +329,29 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
         ...pressableProps,
     };
 
-    if (splitRightAccessory) {
-        return (
-            <View style={rowStyle(false)}>
-                <Pressable
-                    {...semanticProps}
-                    style={({ pressed }) => [styles.splitPressable, pressed && !disabled ? { opacity: motionTokens.press.opacity } : null]}
-                >
-                    {content(false)}
-                </Pressable>
-                {/* A trailing control (an inline action) centres on the row, like the lab's Retry and
-                    Sign in; accessories that read with the title stay title-aligned. */}
-                <View style={styles.right}>
-                    {rightAccessory}
-                </View>
-            </View>
-        );
-    }
-
-    return (
-        <Pressable
-            {...semanticProps}
-            style={({ pressed }) => rowStyle(pressed)}
-        >
-            {content(true)}
-        </Pressable>
-    );
+    return <HappierOptionRow
+        ref={ref as React.Ref<HappierFocusable>}
+        title={props.title}
+        subtitle={props.subtitle}
+        titleLeading={titleLeading}
+        titleAccessory={titleAccessory}
+        subtitleLeading={subtitleLeading}
+        left={leftAccessory}
+        right={rightAccessory}
+        leftGap={props.leftGap}
+        rightElementOutsidePressable={props.rightElementOutsidePressable}
+        disabled={disabled}
+        onSelect={props.onPress}
+        controlProps={semanticProps}
+        textComponent={Text}
+        rowStyle={rowStyle}
+        splitPressOpacity={motionTokens.press.opacity}
+        styles={{
+            ...styles,
+            // The native adapter retains its exact style binding (including registered RN styles).
+            title: [styles.title, titleVariantStyle, titleColorStyle, props.titleStyle] as HappierStyleProp,
+            titleWithAccessories: [styles.title, styles.titleText, titleVariantStyle, titleColorStyle, props.titleStyle] as HappierStyleProp,
+            subtitle: [styles.subtitle, subtitleVariantStyle, props.subtitleStyle] as HappierStyleProp,
+        }}
+    />;
 });
