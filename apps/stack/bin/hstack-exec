@@ -476,6 +476,12 @@ heavyweight_queue_is_eligible() {
   case "$heavyweight_head_backfilled" in ''|*[!0-9]*) return 1 ;; esac
   heavyweight_head_floor=$(heavyweight_memory_floor_kib "$heavyweight_head_class")
   heavyweight_candidate_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class")
+  # An equal-or-larger candidate can never satisfy the existing backfill gap.
+  # Reject it before the expensive OS observation so only the head (or a
+  # potentially fitting smaller job) spends time in the capacity decision.
+  if [ "$heavyweight_candidate_floor" -ge "$heavyweight_head_floor" ]; then
+    return 1
+  fi
   # No admission deadline exists. Bound bypasses by the head's measured class
   # envelope instead: 21 GiB permits at most three 6 GiB backfills. The charge
   # survives a backfill's exit and disappears only with this waiting head.
@@ -483,6 +489,9 @@ heavyweight_queue_is_eligible() {
     heavyweight_queue_reason="head-backfill-envelope-exhausted=$heavyweight_head_backfilled/$heavyweight_head_floor KiB"
     return 1
   fi
+  # The first pass is only a cheap impossibility check. Potential backfills
+  # still require the full current memory decision under this same lock.
+  [ "${1-}" != before-resource-observation ] || return 0
   # Stop backfill once one candidate envelope would bridge the head's remaining
   # capacity gap, so existing jobs can drain and the oldest request can start.
   if [ $((heavyweight_unreserved_memory + heavyweight_candidate_floor)) -ge "$heavyweight_head_floor" ]; then
@@ -679,7 +688,9 @@ run_heavyweight_admission() {
     heavyweight_is_head=0
     heavyweight_ready=0
     heavyweight_wait_delay_seconds=$heavyweight_fast_retry_seconds
-    if heavyweight_resource_is_ready; then
+    if ! heavyweight_queue_is_eligible before-resource-observation; then
+      heavyweight_resource_reason=$heavyweight_queue_reason
+    elif heavyweight_resource_is_ready; then
       heavyweight_ready=1
       if heavyweight_queue_is_eligible; then heavyweight_is_head=1; fi
     else

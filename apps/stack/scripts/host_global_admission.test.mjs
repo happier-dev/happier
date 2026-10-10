@@ -7,6 +7,73 @@ import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
 import { installNativeAdmissionFixture } from './testkit/core/native_admission_fixture.mjs';
 
+test('queued equal-or-larger classes do not observe resources before the live FIFO head', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'host-admission-head-observation-' });
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root });
+  const token = readProcessInstanceFingerprintSync(process.pid).slice('linux-proc:'.length);
+  await mkdir(`${admissionRoot}/waiters`, { recursive: true });
+  await writeFile(`${admissionRoot}/waiters/${process.pid}-${token}`, `${process.pid} ${token} 1 validation 0\n`);
+  // Node is the resource observer's OS-process boundary, not queue logic.
+  const marker = fixture.path('observed');
+  writeFakeBin({ root: fixture.root, name: 'node', content: `#!/bin/sh
+printf observed >> "$FIXTURE_OBSERVED"
+printf 'service 0\\n'
+` });
+  writeFakeBin({ root: fixture.root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
+  const env = { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`, FIXTURE_OBSERVED: marker,
+    HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' };
+  for (let queued = 0; queued < 40; queued++) {
+    const result = spawnSync('/bin/sh', [launcher, '--heavyweight-admission', '--no-wait',
+      `--class=${queued % 2 ? 'compilation' : 'validation'}`, '--machine=worker', '--', '/usr/bin/true'], { env, encoding: 'utf8' });
+    assert.equal(result.status, 75, result.stderr);
+  }
+  await assert.rejects(access(marker), { code: 'ENOENT' });
+});
+
+test('a contended admission decision waits in the kernel instead of polling the capacity lock', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'host-admission-kernel-wait-' });
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root });
+  await mkdir(admissionRoot, { recursive: true });
+  const ready = fixture.path('locked'), polling = fixture.path('polled');
+  const holder = spawn('/usr/bin/flock', [`${admissionRoot}/lock`, '/bin/sh', '-c', 'touch "$1"; read -r release', 'hold', ready]);
+  const holderExited = new Promise(resolve => holder.once('exit', resolve));
+  let child, childExited;
+  t.after(async () => {
+    holder.stdin.end('release\n');
+    if (child?.exitCode === null) child.kill('SIGTERM');
+    await Promise.all([holderExited, childExited]);
+  });
+  for (let attempt = 0; ; attempt++) {
+    try { await access(ready); break; } catch (error) {
+      if (error.code !== 'ENOENT' || attempt === 250) throw error;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  // Sleep is an OS boundary: observing it here proves the former busy-lock
+  // retry path, not a product admission-pressure wait after a real decision.
+  writeFakeBin({ root: fixture.root, name: 'sleep', content: '#!/bin/sh\ntouch "$FIXTURE_POLLING"\nexec /bin/sleep "$@"\n' });
+  writeFakeBin({ root: fixture.root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
+  child = spawn('/bin/sh', [launcher, '--heavyweight-admission', '--class=validation', '--machine=worker', '--', '/usr/bin/true'], {
+    env: { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`, FIXTURE_POLLING: polling,
+      HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' },
+  });
+  childExited = new Promise(resolve => child.once('exit', resolve));
+  let kernelWait = false;
+  for (let attempt = 0; attempt < 250; attempt++) {
+    const children = (await readFile(`/proc/${child.pid}/task/${child.pid}/children`, 'utf8')).trim().split(/\s+/).filter(Boolean);
+    for (const pid of children) {
+      try { if ((await readFile(`/proc/${pid}/wchan`, 'utf8')).includes('locks_lock')) kernelWait = true; } catch {}
+    }
+    if (kernelWait) break;
+    try { await access(polling); break; } catch {}
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(kernelWait, true, 'contended decision should sleep on the existing kernel lock, not retry processes');
+  await assert.rejects(access(polling), { code: 'ENOENT' });
+  holder.stdin.end('release\n');
+  assert.equal(await childExited, 0);
+});
+
 test('nested package admission preserves its live parent and ignores incomplete retired owner records', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'host-global-nested-package-' });
   const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root });
