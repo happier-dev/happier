@@ -179,6 +179,7 @@ function completePartialStorageState(state: Partial<StorageState>): StorageState
         sessions: {},
         machines: {},
         sessionMessages: {},
+        sessionLastViewed: {},
         sessionPending: {},
         sessionListRowsByServerId: {},
         ordinarySessionListMembershipByServerId: {},

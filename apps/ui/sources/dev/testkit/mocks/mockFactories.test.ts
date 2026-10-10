@@ -821,6 +821,43 @@ describe('UI testkit mock factories', () => {
         expect(mockStore.getState().settings.mobileWorkspaceExperienceV1).toBeDefined();
     });
 
+    it('lets a partial live store defer and evict unmounted transcripts while retaining mounted ones', async () => {
+        const { createLiveStorageStoreMock } = await import('./storage');
+        const { createSessionMessagesFixture } = await import('../fixtures/transcriptFixtures');
+        const { createSessionTranscriptRetentionController } = await import('@/sync/engine/sessions/sessionTranscriptRetention');
+        let sessionMessages: import('@/sync/store/types').StorageState['sessionMessages'] = {
+            unmounted: createSessionMessagesFixture(),
+            mounted: createSessionMessagesFixture(),
+        };
+        const store = createLiveStorageStoreMock(() => ({ sessionMessages }));
+        const evictedSessionIds: string[] = [];
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const retention = createSessionTranscriptRetentionController({
+            readHydratedSessionIds: () => Object.keys(store.getState().sessionMessages),
+            readProtectedSessionIds: () => new Set(['mounted']),
+            readLastViewedAtBySessionId: () => store.getState().sessionLastViewed,
+            evictSessionTranscript: (sessionId) => {
+                evictedSessionIds.push(sessionId);
+                sessionMessages = { ...sessionMessages };
+                delete sessionMessages[sessionId];
+            },
+            tuning: { recentKeepCount: 0, graceMs: 100, sweepDebounceMs: 10 },
+        });
+        try {
+            retention.scheduleSweep();
+            vi.advanceTimersByTime(10);
+            expect(evictedSessionIds).toEqual([]);
+            expect(Object.keys(store.getState().sessionMessages)).toEqual(['unmounted', 'mounted']);
+            vi.advanceTimersByTime(100);
+            expect(evictedSessionIds).toEqual(['unmounted']);
+            expect(Object.keys(store.getState().sessionMessages)).toEqual(['mounted']);
+        } finally {
+            retention.dispose();
+            vi.useRealTimers();
+        }
+    });
+
     it('creates a useSetting mock from a keyed settings map with optional fallback', async () => {
         const { createUseSettingMock } = await import('./storage');
 
