@@ -43,5 +43,5 @@ function EditDocument(props: Readonly<{ id: string; artifact: DecryptedArtifact 
     }
     // The editor keeps its fields from the first body it sees, so it waits for the body rather than flashing empty.
     if (body.state === 'loading') return <SurfaceStateCard testID="artifact-editor:loading" kind="loading" title={t('common.loading')} />;
-    return <ArtifactEditor artifact={props.artifact} mode="edit" />;
+    return <ArtifactEditor key={props.id} artifact={props.artifact} mode="edit" />;
 }

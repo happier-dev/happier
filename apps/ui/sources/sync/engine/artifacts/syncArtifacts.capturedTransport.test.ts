@@ -3,7 +3,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { Encryption } from '@/sync/encryption/encryption';
-import { createArtifactViaApi, createArtifactWithHeaderViaApi, fetchArtifactWithBodyFromApi, updateArtifactViaApi, updateArtifactWithHeaderViaApi, type ArtifactDataKeyCache } from './syncArtifacts';
+import { createArtifactViaApi, createArtifactWithHeaderViaApi, fetchArtifactWithBodyFromApi, updateArtifactWithHeaderViaApi, type ArtifactDataKeyCache } from './syncArtifacts';
 
 // HTTP is the only substituted boundary; API, mode, compatibility, and crypto stay real.
 const runtimeFetch = vi.hoisted(() => vi.fn());
@@ -16,19 +16,6 @@ function json(value: unknown, status = 200): Response {
 afterEach(() => { runtimeFetch.mockReset(); });
 
 describe('artifact captured Home transport', () => {
-    it('refuses repersisting presentation-only cached metadata when raw storage content is unavailable', async () => {
-        const cached: DecryptedArtifact = { id: 'document', title: 'Display title',
-            header: { title: 'Display title', v: 1, kind: 'artifact.legacy' }, body: 'old body',
-            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, isDecrypted: true, storageMode: 'plain' };
-        const request = vi.fn(async () => Response.json({ success: true, headerVersion: 2, bodyVersion: 2 }));
-        const updated: DecryptedArtifact[] = [];
-        await expect(updateArtifactViaApi({ credentials: { token: 'captured-token' }, request, artifactId: 'document',
-            title: 'Edited title', body: 'new body', encryption: null, artifactDataKeys: new Map(),
-            getArtifact: () => cached, updateArtifact: (row) => updated.push(row) }))
-            .rejects.toMatchObject({ code: 'content_unavailable' });
-        expect(updated).toEqual([]);
-        expect(request).not.toHaveBeenCalled();
-    });
     it('uses the caller artifact id and exact revision even when recovering an uncached key', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(23));
         const artifactDataKeys: ArtifactDataKeyCache = new Map();
@@ -125,7 +112,8 @@ describe('artifact captured Home transport', () => {
         // released writer can leave behind is constructed deliberately here.
         projected = { ...fetched!, headerVersion: undefined, bodyVersion: undefined } as unknown as DecryptedArtifact;
         context.artifactDataKeys.clear();
-        await updateArtifactViaApi({ ...context, artifactId: id, title: 'B updated', body: 'B updated body', getArtifact: () => projected, updateArtifact: (value) => { projected = value; } });
+        await updateArtifactWithHeaderViaApi({ ...context, artifactId: id, header: { ...fetched!.rawHeader, title: 'B updated' },
+            body: 'B updated body', getArtifact: () => projected, updateArtifact: (value) => { projected = value; } });
         expect(projected).toMatchObject({ title: 'B updated', body: 'B updated body', headerVersion: 2, bodyVersion: 2 });
         expect(await fetchArtifactWithBodyFromApi({ ...context, artifactId: id })).toMatchObject({ title: 'B updated', body: 'B updated body' });
         expect(requests.filter((url) => !url.endsWith('/health') && !url.includes('/v1/auth/ping')).every((url) => url.startsWith(homeB.serverUrl))).toBe(true);

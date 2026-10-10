@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ArtifactActionOutputSchemasV1, type ArtifactActionResultV1, type ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionOutputSchemasV1, type ArtifactActionInputV1, type ArtifactActionResultV1, type ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 /**
- * The Artifacts surfaces reach history, restore and storage through the canonical `artifact.*`
+ * The Artifacts surfaces reach document writes, history, restore and storage through the canonical `artifact.*`
  * Actions (ART-A1), never a second HTTP path: the UI is one more caller of the same spec the CLI,
  * MCP and agents use, with the same approval policy.
  */
@@ -22,7 +22,8 @@ export type ArtifactActionFailure = Readonly<{
 
 export type ArtifactActionOutcome<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; failure: ArtifactActionFailure }>;
 
-type SurfaceActionId = 'artifact.revisions.list' | 'artifact.storage.usage' | 'artifact.revisions.restore' | 'artifact.delete';
+type SurfaceMutationActionId = 'artifact.create' | 'artifact.update' | 'artifact.revisions.restore' | 'artifact.delete';
+type SurfaceActionId = 'artifact.revisions.list' | 'artifact.storage.usage' | SurfaceMutationActionId;
 
 function readRecord(value: unknown): Record<string, unknown> {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -58,7 +59,7 @@ export function createArtifactActionsClient(scope: ServerAccountScope, execute =
     const run = async <Id extends SurfaceActionId>(actionId: Id, input: unknown): Promise<ArtifactActionOutcome<ArtifactActionResultV1<Id>>> => {
         return readOutcome(actionId, await dispatch(actionId, input));
     };
-    const runMutation = async <Id extends 'artifact.revisions.restore' | 'artifact.delete'>(actionId: Id, input: unknown) => {
+    const runMutation = async <Id extends SurfaceMutationActionId>(actionId: Id, input: unknown) => {
         const result = await dispatch(actionId, input);
         const pending = result?.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
         return pending?.success
@@ -66,6 +67,8 @@ export function createArtifactActionsClient(scope: ServerAccountScope, execute =
             : readOutcome(actionId, result);
     };
     return {
+        createArtifact: (input: ArtifactActionInputV1<'artifact.create'>) => runMutation('artifact.create', input),
+        updateArtifact: (input: ArtifactActionInputV1<'artifact.update'>) => runMutation('artifact.update', input),
         storageUsage: () => run('artifact.storage.usage', {}),
         listRevisions: (artifactId: string) => run('artifact.revisions.list', { artifactId }),
         restoreRevision: (input: Readonly<{ artifactId: string; bodyVersion: number; expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }> }>) =>

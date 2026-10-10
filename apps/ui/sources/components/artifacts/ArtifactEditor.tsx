@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -9,16 +10,16 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Modal } from '@/modal';
-import { ArtifactQuotaExceededError } from '@/sync/api/artifacts/apiArtifacts';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { sync } from '@/sync/sync';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 
 import { artifactViewRoute } from './artifactBrowserModel';
-import type { ArtifactQuota } from './artifactActionsClient';
+import { useArtifactActionsClient, type ArtifactQuota } from './artifactActionsClient';
 import { ArtifactView } from './ArtifactView';
 
 /**
@@ -30,13 +31,18 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
     const router = useRouter();
     const styles = stylesheet;
     const { artifact, mode } = props;
+    const client = useArtifactActionsClient();
+    const scope = useActiveServerAccountScope();
+    // Draft fields, metadata and CAS belong to the same opening read, never a later socket head.
+    const [opening] = React.useState(artifact);
     const [title, setTitle] = React.useState(artifact?.title ?? '');
     const [body, setBody] = React.useState(typeof artifact?.body === 'string' ? artifact.body : '');
     const [saving, setSaving] = React.useState(false);
     const [quota, setQuota] = React.useState<ArtifactQuota | null>(null);
+    const [conflict, setConflict] = React.useState(false);
     const changed = mode === 'new'
         ? title.trim().length > 0 || body.trim().length > 0
-        : title !== (artifact?.title ?? '') || body !== (artifact?.body ?? '');
+        : title !== (opening?.title ?? '') || body !== (opening?.body ?? '');
 
     const save = React.useCallback(async () => {
         if (saving || !changed) return;
@@ -47,19 +53,31 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
         setSaving(true);
         setQuota(null);
         try {
-            if (mode === 'new') {
-                const artifactId = await sync.createArtifact(title.trim() || null, body.trim() || null);
-                router.replace(artifactViewRoute(artifactId) as never);
-            } else if (artifact) {
-                await sync.updateArtifact(artifact.id, title.trim() || null, body.trim() || null);
-                safeRouterBack({ router, fallbackHref: '/artifacts' });
+            if (!client || (mode === 'edit' && (!opening?.isDecrypted || !opening.rawHeader || opening.bodyVersion === undefined))) {
+                throw new Error('artifact_content_unavailable');
             }
-        } catch (error) {
-            setSaving(false);
-            if (error instanceof ArtifactQuotaExceededError) { setQuota(error.quota); return; }
+            const header = ArtifactHeaderMetadataV1Schema.parse({ ...(mode === 'edit' ? opening?.rawHeader : {}), title: title.trim() || null });
+            const outcome = mode === 'new'
+                ? await client.createArtifact({ header, body: body.trim() })
+                : await client.updateArtifact({ artifactId: opening!.id, header, body: body.trim(),
+                    expectedRevision: { headerVersion: opening!.headerVersion, bodyVersion: opening!.bodyVersion! } });
+            if ('approvalId' in outcome) {
+                if (scope) router.push(`/inbox/approvals/${encodeURIComponent(outcome.approvalId)}?serverId=${encodeURIComponent(scope.serverId)}` as never);
+                return;
+            }
+            if (!outcome.ok) {
+                if (outcome.failure.quota) { setQuota(outcome.failure.quota); return; }
+                if (outcome.failure.code === 'version_mismatch') { setConflict(true); return; }
+                throw new Error(outcome.failure.code);
+            }
+            if (mode === 'new') router.replace(artifactViewRoute(outcome.value.artifactId) as never);
+            else safeRouterBack({ router, fallbackHref: '/artifacts' });
+        } catch {
             await Modal.alert(t('common.error'), mode === 'new' ? t('artifacts.createError') : t('artifacts.updateError'));
+        } finally {
+            setSaving(false);
         }
-    }, [artifact, body, changed, mode, router, saving, title]);
+    }, [opening, body, changed, client, mode, router, saving, scope, title]);
 
     const cancel = React.useCallback(async () => {
         if (changed && !(await Modal.confirm(t('artifacts.discardChanges'), t('artifacts.discardChangesDescription'), { destructive: true }))) return;
@@ -67,8 +85,8 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
     }, [changed, router]);
 
     // A direct edit URL must not reinterpret a binary body as an empty Markdown document.
-    if (mode === 'edit' && artifact?.body !== null && typeof artifact?.body === 'object') {
-        return <ArtifactView artifactId={artifact.id} artifact={artifact} presentation="page" />;
+    if (mode === 'edit' && opening?.body !== null && typeof opening?.body === 'object') {
+        return <ArtifactView artifactId={opening.id} artifact={opening} presentation="page" />;
     }
 
     return (
@@ -87,6 +105,7 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
                 primaryAction={{ title: t('artifacts.save'), onPress: save, disabled: !changed, loading: saving, testID: 'artifact-editor:save' }}
                 cancelAction={{ title: t('common.cancel'), onPress: cancel, testID: 'artifact-editor:cancel' }}
             />
+            {conflict ? <SurfaceFreshnessLine testID="artifact-editor:conflict" tone="warning" reason={t('sessionInstructions.saveConflict')} /> : null}
             {quota ? (
                 <View style={styles.refusal} testID="artifact-editor:quota" accessibilityRole="alert">
                     <Icon name="warning" size={17} color={theme.colors.state.warning.foreground} />
