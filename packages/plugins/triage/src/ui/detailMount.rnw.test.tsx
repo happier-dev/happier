@@ -9,6 +9,7 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { useTriagePostMutationCompletion } from '@happier-dev/triage-sources/ui';
 import { PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 } from '@happier-dev/plugin-sdk/ui';
 import {
+    formatTriageTimestampV1,
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -24,6 +25,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
 import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
+import { invokeTriageMountedUiAction } from './mountedActions.js';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
@@ -645,7 +647,7 @@ function createHarness(options: Readonly<{
                 order: 'asc',
                 limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
             });
-            if (first.nextCursor === undefined) throw new Error('Expected a second linked Session page.');
+            if (first.nextCursor === undefined) return;
             const second = await collections.sessionLinks.query({
                 index: 'by-entry',
                 prefix: [entryTag],
@@ -744,6 +746,8 @@ async function mountShell(
             surfaceContext: surfaceContext(options),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
                 ephemeralSharedScope: harness.ephemeralSharedScope,
+                sessions: true,
+                overlays: true,
                 ...(options.hostedDetail ? { detailsPane: { available: true } } : {}),
                 targetedSurfaces: {
                     readCurrentMounts: () => [ADMITTED_MOUNT, OTHER_ADMITTED_MOUNT],
@@ -760,6 +764,11 @@ async function mountShell(
             handlers: {
                 publishCurrentUiContext: ({ enrichment }) => options.publishCurrentUiContext?.(enrichment),
                 executeAction: async ({ action, input }) => {
+                    if (action === 'ui/mounted-v1') {
+                        const parsed = TriageMountedUiInputV1Schema.parse(input);
+                        return await invokeTriageMountedUiAction(harness.ephemeralSharedScope, parsed.mountId,
+                            parsed.operation, new AbortController().signal);
+                    }
                     if (action === 'marks/read-fix-pull-requests-v1' && options.fixPullRequestState !== undefined) {
                         if (failFixRead) { failFixRead = false; throw new Error('Account transport unavailable'); }
                         const primary = { entryRef: { source: SOURCE, kindId: 'fix-pr', collisionScope: 'example/repository', entryId: '999' },
@@ -857,6 +866,11 @@ afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
+/** The fixture entry's "Opened …" phrase, in the same relative words the header computes from its clock. */
+function openedFixtureEntry(): string {
+    return `Opened ${formatTriageTimestampV1('en', testkitSnapshot().createdAtMs ?? 0, 'relative', Date.now())}`;
+}
+
 describe('opening a row into the source detail', () => {
     it('keeps the declared Files and Checks tabs when the fix PR is outside the projection', async () => {
         const shell = await mountShell({ fixPullRequestState: 'unprojected' });
@@ -896,6 +910,39 @@ describe('opening a row into the source detail', () => {
         expect(document.querySelector('[role="radio"][aria-label="List"][aria-checked="true"]')).not.toBeNull();
         await act(async () => { await shell.dispose(); });
         await expect(invoke()).resolves.toEqual({ status: 'unavailable' });
+    });
+
+    it('lets an agent select a linked Session in the same inline detail as the UI picker', async () => {
+        let published: PluginUiContextEnrichmentV1 | null = null;
+        const shell = await mountShell({ linkedSessionCount: 2, activeSurface: true,
+            publishCurrentUiContext: (context) => { published = context; } });
+        await openTheRow(shell);
+        const context = () => published as PluginUiContextEnrichmentV1 | null;
+        const command = context()?.commands?.find((entry) => entry.command.kind === 'executeAction'
+            && typeof entry.command.input === 'object' && entry.command.input !== null
+            && JSON.stringify(entry.command.input).includes('selectLinkedSession'));
+        if (command?.command.kind !== 'executeAction') throw new Error('Missing linked-session command');
+        const address = TriageMountedUiInputV1Schema.parse(command.command.input);
+        const { createTriageMountedUiActionHandler } = await import('../actions/mountedUi.js');
+        const invoke = async (sessionId: string) => createTriageMountedUiActionHandler()(
+            { mountId: address.mountId, operation: { kind: 'selectLinkedSession', sessionId } }, {
+                plugin: { id: 'happier.triage', version: '0.0.0' },
+                contribution: { id: 'ui/mounted-v1', qualifiedId: 'happier.triage/actions/ui/mounted-v1' },
+                invocationSurface: 'agent', signal: new AbortController().signal,
+                ui: shell.context.hostApi, ephemeralSharedScope: currentHarness!.ephemeralSharedScope,
+            });
+        await act(async () => { expect(await invoke('session-linked-002')).toEqual({ status: 'applied' }); });
+        await expect(shell.getByRole('group', { name: 'Session session-linked-002' })).resolves.toBeDefined();
+        expect(context()?.detail).toMatchObject({ linkedSessionIds: expect.arrayContaining(['session-linked-001', 'session-linked-002']),
+            selectedLinkedSessionId: 'session-linked-002' });
+        await act(async () => { expect(await invoke('unlinked')).toEqual({ status: 'unavailable' }); });
+        await expect(shell.getByRole('group', { name: 'Session session-linked-002' })).resolves.toBeDefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Linked session: Linked session-linked-002' })); });
+        await act(async () => { await shell.press(await shell.getByRole('menuitemradio', { name: 'Linked session-linked-001' })); });
+        await expect(shell.getByRole('group', { name: 'Session session-linked-001' })).resolves.toBeDefined();
+        expect(context()?.detail).toMatchObject({ selectedLinkedSessionId: 'session-linked-001' });
+        await act(async () => { await shell.dispose(); });
+        expect(await invoke('session-linked-002')).toEqual({ status: 'unavailable' });
     });
 
     it('lets an agent focus and peek a row without selecting its detail', async () => {
@@ -1323,9 +1370,9 @@ describe('opening a row into the source detail', () => {
         await openTheRow(shell);
 
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
-        // Source, kind, scope, state and observing connection are composed in
-        // one context line, not five independently labelled header fields.
-        await expect(shell.getByText('Example forge · example/repository · Open · via Example account'))
+        // Where it lives and when it was opened are one context line, not independently labelled header fields;
+        // the source mark and the kind glyph say the source and the state, and one connection is not named.
+        await expect(shell.getByText(`example/repository #17 · ${openedFixtureEntry()}`))
             .resolves.toBeDefined();
     });
 
@@ -1550,13 +1597,13 @@ describe('opening a row into the source detail', () => {
         // This page can name the launched connection from configured-source
         // facts, but it must not hand the first connection's observation to
         // the second connection's detail renderer.
-        await expect(shell.getByText('Example forge · example/repository · Open · via Second account'))
+        await expect(shell.getByText(`example/repository #17 · ${openedFixtureEntry()} · via Second account`))
             .resolves.toBeDefined();
         await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
         expect(harness.readDetailInstanceIds).toEqual([]);
         // The header and refusal both stay on the launched connection; neither
         // silently falls through to the window's qualified account.
-        await expect(shell.queryByText('Example forge · example/repository · Open · via Example account'))
+        await expect(shell.queryByText(`example/repository #17 · ${openedFixtureEntry()} · via Example account`))
             .resolves.toBeUndefined();
     });
 

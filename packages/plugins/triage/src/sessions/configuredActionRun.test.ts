@@ -235,12 +235,13 @@ describe('configured action execution through the shared Session owner', () => {
     });
 
     it.each([
-        { destination: 'single', missingMiddle: false },
-        { destination: 'oneSessionPerEntry', missingMiddle: false },
-        { destination: 'oneSessionForAllEntries', missingMiddle: false },
-        { destination: 'oneSessionPerEntry', missingMiddle: true },
+        { surface: 'agent', destination: 'single', missingMiddle: false },
+        { surface: 'mcp', destination: 'single', missingMiddle: false },
+        { surface: 'agent', destination: 'oneSessionPerEntry', missingMiddle: false },
+        { surface: 'agent', destination: 'oneSessionForAllEntries', missingMiddle: false },
+        { surface: 'agent', destination: 'oneSessionPerEntry', missingMiddle: true },
     ] as const)(
-        'agent runs $destination (missing middle: $missingMiddle) using configured instructions and durable links', async ({ destination, missingMiddle }) => {
+        '$surface runs $destination (missing middle: $missingMiddle) using configured instructions and durable links', async ({ surface, destination, missingMiddle }) => {
             const { collections, control } = createTestkitCorpusCollections();
             const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess({ sessionId: 'session-a' }),
                 spawnSuccess({ sessionId: destination === 'single' ? 'session-a' : 'session-b',
@@ -279,7 +280,7 @@ describe('configured action execution through the shared Session owner', () => {
             const clientContext = {
                 plugin: { id: 'happier.triage', version: '1.0.0' },
                 contribution: { id: 'sessions/run-configured-v1', qualifiedId: 'happier.triage/actions/sessions/run-configured-v1' },
-                invocationSurface: 'agent', signal: new AbortController().signal, ephemeralSharedScope: null,
+                invocationSurface: surface, signal: new AbortController().signal, ephemeralSharedScope: null,
                 ui: { ...host, context: async () => ({ targetedContributions: {
                     target: { pluginId: 'happier.triage', immutableGenerationId: 'target-1' },
                     points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol, contributions: [{

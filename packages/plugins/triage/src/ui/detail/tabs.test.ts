@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TriageSourceDetailTabV1 } from '@happier-dev/triage-protocol/v1';
 
-import { planTriageDetailTabsV1 } from './tabs.js';
+import { planTriageDetailTabsV1, readTriageDetailTabSummaryV1 } from './tabs.js';
 
 const shared = (id: 'overview' | 'activity' | 'files' | 'checks'): TriageSourceDetailTabV1 => ({ kind: 'shared', id });
 const PR_TABS: readonly TriageSourceDetailTabV1[] = [shared('checks'), shared('overview'), shared('files'), shared('activity')];
@@ -70,5 +70,54 @@ describe('the detail tab plan (r0.42)', () => {
       fixPullRequest: null,
     });
     expect(summary(plan)).toBe('overview@none files@entry');
+  });
+});
+
+describe('the tab summaries (Files 17, Checks 2 failing)', () => {
+  const failing = { id: 'example/checks', importance: 'primary', value: { kind: 'status', value: '2 failing', tone: 'danger' } } as const;
+  const summaries = (plan: ReturnType<typeof planTriageDetailTabsV1>) => (plan.kind === 'whole'
+    ? []
+    : plan.tabs.map((tab) => [tab.id, tab.summary ?? null]));
+
+  it('reads the fact each declaring source named, from that source\'s own entry', () => {
+    const plan = planTriageDetailTabsV1({
+      workflowSubject: 'issue',
+      entryTabs: [shared('overview'), { kind: 'source', id: 'occurrences', title: 'Occurrences', summaryFact: 'example/events' }],
+      entryFacts: [{ id: 'example/events', importance: 'secondary', value: { kind: 'number', value: 1234, format: 'compact' } }],
+      fixPullRequest: {
+        detailTabs: [shared('files'), { kind: 'shared', id: 'checks', summaryFact: 'example/checks' }],
+        // The issue's own facts never stand in for the fix PR's.
+        facts: [failing],
+      },
+    });
+    expect(summaries(plan)).toEqual([
+      ['overview', null],
+      ['files', null],
+      ['checks', failing.value],
+      ['occurrences', { kind: 'number', value: 1234, format: 'compact' }],
+    ]);
+  });
+
+  it('shows no count when the named fact is absent from this entry', () => {
+    const plan = planTriageDetailTabsV1({
+      workflowSubject: 'pullRequest',
+      entryTabs: [shared('overview'), { kind: 'shared', id: 'checks', summaryFact: 'example/checks' }],
+      entryFacts: [],
+      fixPullRequest: null,
+    });
+    expect(summaries(plan)).toEqual([['overview', null], ['checks', null]]);
+  });
+
+  it('says a failure in its tone and keeps a plain count quiet', () => {
+    expect(readTriageDetailTabSummaryV1(failing.value, 'en')).toEqual({ value: '2 failing', tone: 'danger' });
+    expect(readTriageDetailTabSummaryV1({ kind: 'status', value: 'All passing', tone: 'success' }, 'en'))
+      .toEqual({ value: 'All passing', tone: 'secondary' });
+    expect(readTriageDetailTabSummaryV1({ kind: 'number', value: 17, format: 'plain' }, 'en'))
+      .toEqual({ value: '17', tone: 'secondary' });
+    // An approximate count stays approximate.
+    expect(readTriageDetailTabSummaryV1({ kind: 'number', value: 1234, format: 'compact', approximate: true }, 'en'))
+      .toEqual({ value: '~1.2K', tone: 'secondary' });
+    expect(readTriageDetailTabSummaryV1({ kind: 'timestamp', atMs: 0, format: 'relative' }, 'en')).toBeNull();
+    expect(readTriageDetailTabSummaryV1({ kind: 'detailOnly' }, 'en')).toBeNull();
   });
 });

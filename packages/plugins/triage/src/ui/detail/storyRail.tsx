@@ -100,7 +100,7 @@ export function TriageAgentStep(props: Readonly<{
   const content = (
     <>
       {status === null ? null : (
-        <Status tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[status.tone]} labelKey={status.labelKey} label={status.label} pulsing={status.live} />
+        <Status tone={HAPPIER_WORK_STATUS_SEMANTIC_TONE[status.tone]} label={text(status.labelKey, status.label, status.labelParams)} pulsing={status.live} />
       )}
       {shown.length === 0 ? null : (
         <Stack gap="xsmall">

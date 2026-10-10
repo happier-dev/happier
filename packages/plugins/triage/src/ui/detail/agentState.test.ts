@@ -70,6 +70,16 @@ describe('the one agent state a list row shows for its linked Sessions', () => {
       .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.working', live: true });
   });
 
+  it('keeps the selected attention Session identity beside its words and mark, not another working Agent', () => {
+    expect(readTriageEntryAgentStatusV1([
+      { ...working, agent: { agentId: 'claude', displayName: 'Claude', brand: { pluginId: 'happier.agent.claude' } } },
+      { ...permission, agent: { agentId: 'codex', displayName: 'Codex', brand: { pluginId: 'happier.agent.codex' } } },
+    ])).toMatchObject({
+      labelKey: 'plugins.triage.surface.detail.agent.needsYou', labelParams: { agent: 'Codex' },
+      agent: { agentId: 'codex', brand: { pluginId: 'happier.agent.codex' } },
+    });
+  });
+
   it('falls back to the first Session it can describe, and claims nothing for none', () => {
     expect(readTriageEntryAgentStatusV1([unknown, ready]))
       .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.ready' });

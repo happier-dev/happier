@@ -281,10 +281,11 @@ describe('maximum encoded value derivation', () => {
     it('derives the exact maximum encoded bytes of every finite operation shape', () => {
         // Pinned so that any bound, count, field, or grammar change reruns the
         // derivation instead of silently consuming the remaining headroom.
+        // 2026-10-08: +2 × 1_041 for the snapshot's optional `authorLabel` and `designation` display lines.
         expect(derivedMaxima).toEqual({
-            presentObservation: 12_887,
+            presentObservation: 14_969,
             getInput: 11_496,
-            detailInput: 468_637,
+            detailInput: 470_719,
             prepareReviewWorkspaceInput: 14_243,
             administrationInput: 8_325,
         });
@@ -298,6 +299,6 @@ describe('maximum encoded value derivation', () => {
     it('keeps transient comparison input under the Action envelope while snapshots remain finite', () => {
         expect(() => buildMaximalSchemaValue(TriageGetResultV1Schema.jsonSchema, 'get result'))
             .toThrow(/unbounded/u);
-        expect(derivedMaxima.presentObservation).toBe(12_887);
+        expect(derivedMaxima.presentObservation).toBe(14_969);
     });
 });

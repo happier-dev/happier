@@ -254,6 +254,15 @@ describe('mapSentryIssueForInvokedInstance', () => {
     expect(lastRelease?.value).toEqual({ kind: 'detailOnly' });
   });
 
+  it('publishes the issue short id as the snapshot designation, and omits it when Sentry sends none', () => {
+    const result = map(issuesListPage1.body[0]);
+    if (!result.ok) throw new Error('expected a mapped issue');
+    expect(toTriagePresentObservation(result.snapshot).snapshot.designation).toBe('EXAMPLE-PROJECT-3F');
+    const bare = map({ ...issuesListPage1.body[0], shortId: undefined });
+    if (!bare.ok) throw new Error('expected a mapped issue');
+    expect(toTriagePresentObservation(bare.snapshot).snapshot).not.toHaveProperty('designation');
+  });
+
   it('never puts a mutable locator field into identity and never emits a routingToken', () => {
     const result = map(issuesListPage1.body[0]);
     expect(result.ok).toBe(true);

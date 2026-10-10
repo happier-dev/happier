@@ -4,7 +4,7 @@ import type {
   ScmPullRequestState,
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
-import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
+import { isRecord, parseTimestampMs, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 function readPositiveInt(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
@@ -56,6 +56,12 @@ export function mapGitlabMergeRequest(
   const description = options?.includeDescription ? readString(raw.description) : null;
   const headRepositoryNameWithOwner = readHeadRepositoryNameWithOwner(provider, raw);
   const providerNameWithOwner = provider.nameWithOwner?.trim() || null;
+  const diffRefs = isRecord(raw.diff_refs) ? raw.diff_refs : null;
+  const baseSha = diffRefs ? readString(diffRefs.base_sha) : null;
+  const headSha = diffRefs ? readString(diffRefs.head_sha) : null;
+  const createdAtMs = parseTimestampMs(raw.created_at);
+  const closedAtMs = parseTimestampMs(raw.closed_at);
+  const mergedAtMs = parseTimestampMs(raw.merged_at);
 
   return {
     provider,
@@ -70,6 +76,11 @@ export function mapGitlabMergeRequest(
       ? { isCrossRepository: !sameNameWithOwner(headRepositoryNameWithOwner, providerNameWithOwner) }
       : {}),
     state: mapGitlabMergeRequestState(raw.state),
+    ...(baseSha !== null ? { baseSha } : {}),
+    ...(headSha !== null ? { headSha } : {}),
+    ...(createdAtMs !== null ? { createdAtMs } : {}),
+    ...(closedAtMs !== null ? { closedAtMs } : {}),
+    ...(mergedAtMs !== null ? { mergedAtMs } : {}),
     ...(description ? { description } : {}),
   };
 }

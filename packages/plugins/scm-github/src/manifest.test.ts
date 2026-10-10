@@ -332,13 +332,14 @@ describe('GitHub SCM manifest', () => {
     ).toEqual([...declared].sort());
   });
 
-  it('admits an agent detail read and requires current intent for an agent issue write', async () => {
+  it.each(['agent', 'mcp', 'cli'] as const)('admits discovery and detail reads but requires current intent for a %s issue write', async (surface) => {
     // Feed the real admission owner its parsed declaration, not the author DSL's broad record type.
     const actions = new Map((PLUGIN_MANIFEST.contributes.actions ?? [])
       .map((action) => [action.id, PluginActionContributionV2Schema.parse(action)]));
     const read = actions.get(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline);
     const write = actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueClose);
-    if (!read || !write) throw new Error('Native read and issue write must be declared');
+    const discovery = actions.get(GITHUB_TRIAGE_ACTION_IDS_V1.listInstances);
+    if (!read || !write || !discovery) throw new Error('Discovery, native read and issue write must be declared');
     const gateFor = (action: typeof read, approved = false) => createPluginActionPresentUserGate({
       resolve: () => ({
         status: 'resolved' as const,
@@ -358,7 +359,8 @@ describe('GitHub SCM manifest', () => {
       }),
       ...(approved ? { requestCurrentIntent: async ({ fingerprint }: { fingerprint: string }) => ({ status: 'approved' as const, fingerprint }) } : {}),
     });
-    const invocation = { surface: 'agent', invocationSurface: 'agent', input: {} };
+    const invocation = { surface, invocationSurface: surface, input: {} };
+    await expect(gateFor(discovery).admit(invocation)).resolves.toMatchObject({ status: 'admitted', action: discovery });
     await expect(gateFor(read).admit(invocation)).resolves.toMatchObject({ status: 'admitted', action: read });
     await expect(gateFor(write).admit(invocation)).resolves.toMatchObject({
       status: 'unavailable', code: 'plugin_action_current_intent_unavailable',

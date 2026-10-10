@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { TriageMountedUiInputV1Schema } from './mountedUiProtocol.js';
 
 describe('mounted source-panel intents', () => {
+  it('admits linked-session selection without admitting an unaddressed or empty selection', () => {
+    expect(TriageMountedUiInputV1Schema.safeParse({ mountId: 'detail', operation: {
+      kind: 'selectLinkedSession', sessionId: 'session-other',
+    } }).success).toBe(true);
+    expect(TriageMountedUiInputV1Schema.safeParse({ mountId: 'detail', operation: {
+      kind: 'selectLinkedSession', sessionId: '',
+    } }).success).toBe(false);
+  });
   it.each([
     { kind: 'selectSourceOccurrence', occurrenceId: 'second' },
     { kind: 'setSourceOrdering', order: 'spread' },

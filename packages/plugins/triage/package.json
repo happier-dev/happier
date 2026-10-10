@@ -7,14 +7,17 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./targeted-contributions": {
+      "happier-source": "./src/targetedContributions.ts",
       "types": "./dist/targetedContributions.d.ts",
       "default": "./dist/targetedContributions.js"
     },
@@ -27,7 +30,8 @@
     "./happier-plugin-ui/triage-session-entries-native": "./src/sessions/cockpit/sessionLinkedEntriesSurface.tsx",
     "./happier-plugin-ui/triage-search-action-native": "./src/actions/searchEntries.ts",
     "./happier-plugin-ui/triage-mounted-ui-action-native": "./src/actions/mountedUi.ts",
-    "./happier-plugin-ui/triage-configured-action-native": "./src/actions/configuredActionRun.ts"
+    "./happier-plugin-ui/triage-configured-action-native": "./src/actions/configuredActionRun.ts",
+    "./happier-plugin-ui/triage-collection-migrations": "./src/collectionMigrationArtifact.ts"
   },
   "files": [
     "dist",

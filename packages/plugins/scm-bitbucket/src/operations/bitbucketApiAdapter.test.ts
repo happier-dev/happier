@@ -51,6 +51,8 @@ function createBitbucketPullRequest(overrides?: Readonly<Record<string, unknown>
     id: 42,
     title: 'Add Bitbucket operations',
     state: 'OPEN',
+    created_on: '2026-10-01T12:00:00Z',
+    updated_on: '2026-10-02T12:00:00Z',
     links: {
       html: {
         href: 'https://bitbucket.org/happier-dev/happier/pull-requests/42',
@@ -84,6 +86,32 @@ function createBitbucketPullRequest(overrides?: Readonly<Record<string, unknown>
 }
 
 describe('Bitbucket API adapter', () => {
+  it.each([
+    { nativeState: 'OPEN', state: 'draft' },
+    { nativeState: 'MERGED', state: 'merged' },
+    { nativeState: 'DECLINED', state: 'closed' },
+    { nativeState: 'SUPERSEDED', state: 'closed' },
+  ] as const)('retains native $nativeState outcome separately from its draft flag', async ({ nativeState, state }) => {
+    const { decodeBitbucketPullRequestList } = await import('./bitbucketApiAdapter.js');
+    const mapped = decodeBitbucketPullRequestList(provider, {
+      values: [createBitbucketPullRequest({ state: nativeState, draft: true })],
+    }).pullRequests[0];
+    expect(mapped).toMatchObject({ number: 42, state, isDraft: true });
+  });
+  it('never treats a merged pull request update time as its merge or close time', async () => {
+    const { decodeBitbucketPullRequestList } = await import('./bitbucketApiAdapter.js');
+    const mapped = decodeBitbucketPullRequestList(provider, {
+      values: [createBitbucketPullRequest({ state: 'MERGED' })],
+    }).pullRequests[0];
+    expect(mapped).toMatchObject({ state: 'merged', createdAtMs: Date.parse('2026-10-01T12:00:00Z') });
+    expect(mapped).not.toHaveProperty('mergedAtMs');
+    expect(mapped).not.toHaveProperty('closedAtMs');
+    const invalid = decodeBitbucketPullRequestList(provider, {
+      values: [createBitbucketPullRequest({ created_on: 'invalid' })],
+    }).pullRequests[0];
+    expect(invalid).toMatchObject({ number: 42 });
+    expect(invalid).not.toHaveProperty('createdAtMs');
+  });
   it('lists valid pull requests, skips malformed rows, and preserves decode diagnostics', async () => {
     const mod = await import('./bitbucketApiAdapter.js').catch(() => null);
     expect(mod).not.toBeNull();
@@ -118,6 +146,7 @@ describe('Bitbucket API adapter', () => {
         headBranch: 'feature/bitbucket',
         headRepositoryNameWithOwner: 'happier-dev/happier',
         state: 'open',
+        createdAtMs: Date.parse('2026-10-01T12:00:00Z'),
       }),
     ]);
 

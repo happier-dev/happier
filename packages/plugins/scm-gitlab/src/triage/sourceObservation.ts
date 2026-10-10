@@ -68,6 +68,11 @@ function projectSnapshot(
 ): TriageSourceEntrySnapshotV1 {
   const scopeLabel = boundGitlabText(entry.locator.repositoryKey);
   const reviewRevision = projectReviewRevision(entry);
+  // Who opened it, by the name GitLab shows; a bounded display line, never an identity.
+  const author = entry.snapshot.author === null ? null : boundGitlabText(entry.snapshot.author.displayName);
+  const authorLabel = author === null || author.text === '' ? null : author.text;
+  // The reference as GitLab writes it: `!iid` for a merge request, `#iid` for an issue. Presentation only.
+  const designation = boundGitlabText(`${entry.identity.kindId === 'merge-request' ? '!' : '#'}${entry.identity.entryId}`);
   return {
     v: 1,
     // A GitLab item can be saved with an empty title. Display text is bounded
@@ -78,6 +83,8 @@ function projectSnapshot(
     // copies are shortened; the routing copy is omitted instead, because shortening it
     // would address another project.
     scopeLabel: scopeLabel.text,
+    ...(authorLabel === null ? {} : { authorLabel }),
+    ...(designation.text === '' ? {} : { designation: designation.text }),
     ...(entry.snapshot.sourceCreatedAtMs === null
       ? {}
       : { createdAtMs: entry.snapshot.sourceCreatedAtMs }),
@@ -87,7 +94,8 @@ function projectSnapshot(
     },
     facts: entry.rowFacts.map(projectRowFact),
     ...(reviewRevision === undefined ? {} : { reviewRevision }),
-    ...(entry.projectionTruncated || scopeLabel.truncated || locatorTruncated
+    ...(entry.projectionTruncated || scopeLabel.truncated || author?.truncated === true || designation.truncated
+      || locatorTruncated
       ? { projectionTruncated: true }
       : {}),
   };

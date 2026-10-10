@@ -4,6 +4,7 @@ import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
+import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
@@ -228,9 +229,11 @@ describe('the selected entry once the window stops holding it', () => {
         // selection: why it was asking for the reader, its state, its scope and
         // the connection it was read through.
         await expect(shell.getByText('Your review was requested')).resolves.toBeDefined();
-        // Scope, state and connection are one quiet context line under the
-        // title, not a label/value form repeating the row.
-        await expect(shell.getByText('example/repository · Open · via Example account')).resolves.toBeDefined();
+        // Where it lives and when it was opened are one quiet context line
+        // under the title, not a label/value form repeating the row.
+        await expect(shell.getByText(
+            `example/repository #17 · Opened ${formatTriageTimestampV1('en', testkitSnapshot().createdAtMs ?? 0, 'relative', Date.now())}`,
+        )).resolves.toBeDefined();
         // Marked, never presented as current.
         await expect(shell.getByText(
             'These are the last facts this page held for this entry, and they may be out of date.',

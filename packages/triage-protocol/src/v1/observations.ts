@@ -155,6 +155,18 @@ export const TriageSourceEntrySnapshotV1Schema = defineProtocolObject({
     summary: TriageTextV1ProtocolSchema.optional(),
     /** Readable owning scope; presentation only, never parsed back into identity. */
     scopeLabel: TriageTextV1ProtocolSchema,
+    /**
+     * Who opened the entry, as the provider names them ("Mara Oduya", a login).
+     * Presentation only: never an identity, a viewer match or a filter key. A
+     * source with no author for an entry kind (an error group) omits it.
+     */
+    authorLabel: TriageTextV1ProtocolSchema.optional(),
+    /**
+     * The entry's short native designation as the provider writes it ("#2481",
+     * "!88", "CHECKOUT-WEB-4F2"). Presentation only: never parsed back into
+     * identity or routing. A kind with no designation omits it.
+     */
+    designation: TriageTextV1ProtocolSchema.optional(),
     createdAtMs: defineProtocolNumber({ integer: true }).optional(),
     state: TriageEntryStateV1ProtocolSchema,
     facts: defineProtocolArray(TriageRowFactV1Schema, { maxItems: MAX_TRIAGE_ROW_FACTS_V1 }),

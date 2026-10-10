@@ -58,6 +58,25 @@ function draft(localInstanceKey: string, overrides: Readonly<{
 }
 
 describe('the source settings discovery model', () => {
+  it('carries stored opaque configuration beside the current discovered draft for Update and Restore', () => {
+    const current = draft('acme/api', { displayPath: 'current/path' });
+    const configuration = { v: 1 as const, token: 'stored:repository-scope' };
+    const discovery = readTriageSourceDiscovery({ status: 'success', result: {
+      kind: 'complete', candidates: [current], failures: [],
+    } });
+    for (const lifecycle of ['active', 'retired'] as const) {
+      const configured = readTriageSourceConfiguredInstances({ status: 'success', result: {
+        kind: 'read', status: 'complete', instances: [{ v: 1, lifecycle, configured: {
+          v: 1, binding: current.binding, localInstanceKey: current.localInstanceKey,
+          configuration, locator: { v: 1, displayLabel: 'Previous label' },
+          instance: { source: { pluginId: 'example.tracker', localId: 'triage' }, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
+        } }],
+      } });
+      const rows = projectTriageSourceSettingsRows({ discovery, configured, outcomes: {}, learned: {}, sourceDisplayName: 'Tracker' });
+      expect(rows[0]).toMatchObject({ draft: current, configuredConfiguration: configuration });
+    }
+  });
+
   it('projects native candidates without inventing an account id and keeps the configured row aligned', () => {
     const native = {
       ...draft('acme/api'),
@@ -248,6 +267,36 @@ describe('the source settings configuration model', () => {
 
 describe('what a row may claim about itself', () => {
   const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
+
+  it('learns configuration only when the administration arm commits the submitted draft', () => {
+    const previous = {
+      kind: 'configured' as const, sourceInstanceId: INSTANCE_ID,
+      configuration: { v: 1 as const, token: 'stored:previous' },
+    };
+    const replacement = draft('acme/api');
+    expect(advanceTriageSourceSettingsRowLifecycle(previous,
+      { kind: 'reconfigured', sourceInstanceId: INSTANCE_ID },
+      { v: 1, kind: 'reconfigure', sourceInstanceId: INSTANCE_ID, draft: replacement },
+    )).toMatchObject({ configuration: replacement.configuration });
+    // Reconfigure into an existing tuple writes the new configuration despite returning reused.
+    expect(advanceTriageSourceSettingsRowLifecycle(previous,
+      { kind: 'alreadyConfigured', sourceInstanceId: INSTANCE_ID },
+      { v: 1, kind: 'reconfigure', sourceInstanceId: INSTANCE_ID, draft: replacement },
+    )).toMatchObject({ configuration: replacement.configuration });
+    // Create of an existing tuple and Restore of an already active row do not write the draft.
+    expect(advanceTriageSourceSettingsRowLifecycle(previous,
+      { kind: 'alreadyConfigured', sourceInstanceId: INSTANCE_ID },
+      { v: 1, kind: 'create', draft: replacement },
+    )).toMatchObject({ configuration: previous.configuration });
+    expect(advanceTriageSourceSettingsRowLifecycle(previous,
+      { kind: 'configured', sourceInstanceId: INSTANCE_ID },
+      { v: 1, kind: 'reactivate', sourceInstanceId: INSTANCE_ID, draft: replacement },
+    )).toMatchObject({ configuration: previous.configuration });
+    expect(advanceTriageSourceSettingsRowLifecycle(previous,
+      { kind: 'removed', sourceInstanceId: INSTANCE_ID },
+      { v: 1, kind: 'remove', sourceInstanceId: INSTANCE_ID },
+    )).toMatchObject({ kind: 'retired', configuration: previous.configuration });
+  });
 
   it('learns a row only from a success arm the target actually returned', () => {
     const created = advanceTriageSourceSettingsRowLifecycle(

@@ -81,10 +81,20 @@ export function projectAzurePresentObservation(input: Readonly<{
   );
   const reviewRevision = readReviewRevision(entry, nativeRevision);
 
+  // Who opened it, by the name Azure DevOps shows: one bounded display line, never an identity.
+  const author = entry.authorDisplayName === null
+    ? null
+    : projectTriageDisplayTextV1(entry.authorDisplayName, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+  const authorLabel = author?.value ?? '';
+  // The pull request id as Azure DevOps writes it ("!17"); presentation only.
+  const designation = projectTriageDisplayTextV1(`!${entry.entryId}`, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+
   const snapshot: TriageSourceEntrySnapshotV1 = {
     v: 1,
     title: title.value,
     scopeLabel: scopeLabel.value,
+    ...(authorLabel.length === 0 ? {} : { authorLabel }),
+    ...(designation.value.length === 0 ? {} : { designation: designation.value }),
     ...(createdAtMs === null ? {} : { createdAtMs }),
     state: {
       presentation: readPresentationState(entry),
@@ -101,6 +111,8 @@ export function projectAzurePresentObservation(input: Readonly<{
     ...(reviewRevision === null ? {} : { reviewRevision }),
     ...(title.truncated
       || scopeLabel.truncated
+      || author?.truncated === true
+      || designation.truncated
       || facts.truncated
       || routingToken === null
       || (webUrl === null && entry.locator.webUrl !== null)

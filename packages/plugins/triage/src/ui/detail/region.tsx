@@ -4,6 +4,7 @@ import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
 import {
   Badge,
   Banner,
+  BrandMark,
   Button,
   EmptyState,
   ErrorState,
@@ -23,6 +24,7 @@ import {
   useSurfaceContext,
   type ComposerRefV1,
 } from '@happier-dev/plugin-ui';
+import { isHappierIconName } from '@happier-dev/plugin-ui/presentation';
 import type {
   TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
@@ -48,8 +50,8 @@ import { useTriageTierBEvidenceInsertion } from '../../composer/tierBEvidenceIns
 import type { TriageMountedActionsV1 } from '../actions/useTriageActions.js';
 import {
   readTriageAttentionBadgeToneV1,
-  readTriageEntryGlyphV1,
   readTriagePinActionLabelV1,
+  readTriageRowMarkV1,
   type TriageRowPinHandlersV1,
 } from '../list/rows.js';
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
@@ -65,7 +67,7 @@ import {
 import { TriagePullRequestReviewChooser } from '../header/PullRequestReviewChooser.js';
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
-import { projectTriageDetailHeaderV1, type TriageDetailHeaderV1 } from './header.js';
+import { projectTriageDetailHeaderV1, readTriageDetailContextLineV1, type TriageDetailHeaderV1 } from './header.js';
 import {
   readTriageSourceDetailContributionV1,
   readTriageSourceDescriptorV1,
@@ -81,7 +83,6 @@ import { TriageFixPullRequests } from './fixPullRequests.js';
 import { useTriageDetailFixPullRequest } from './useTriageDetailFixPullRequest.js';
 import { planTriageDetailTabsV1 } from './tabs.js';
 import { TRIAGE_DETAIL_ACTIONS_PANEL_V1 } from '@happier-dev/triage-protocol/v1';
-import { triageEntryRowKey } from '../../projection/listWindow.js';
 
 /**
  * The mounted detail region: the aggregate's common header, and beneath it the
@@ -107,7 +108,12 @@ import { triageEntryRowKey } from '../../projection/listWindow.js';
 
 export type TriageDetailRegionProps = Readonly<{
   sourcePanelActions?: TriageSourcePanelActionsV1;
-  tabSelection?: TriageDetailTabSelectionV1;
+  tabSelection: TriageDetailTabSelectionV1;
+  sessionSelection: Readonly<{
+    value: string | null;
+    onChange(sessionId: string): void;
+    onAvailableSessionsChange(sessions: readonly TriageLinkedSessionProjectionV1[]): void;
+  }>;
   headerHosted?: boolean;
   row: TriageListRowV1;
   /** Reobserves the shell-owned selected snapshot used by both identity and body. */
@@ -161,20 +167,7 @@ export type TriageDetailRegionProps = Readonly<{
  * the row's own context, said once under the title rather than again as a label/value form. What the entry IS
  * is its glyph's job (shared with its row), so the kind is not said again in words.
  */
-export function readTriageDetailContextLineV1(
-  header: TriageDetailHeaderV1,
-  text: (key: string, fallback?: string, values?: Readonly<Record<string, string>>) => string,
-): string | null {
-  const parts = [
-    header.sourceLabel,
-    header.scopeLabel,
-    header.stateLabel,
-    header.connectionLabel === null
-      ? null
-      : text('plugins.triage.surface.detail.via', 'via {name}', { name: header.connectionLabel }),
-  ].filter((part): part is string => part !== null && part.length > 0);
-  return parts.length === 0 ? null : parts.join(' · ');
-}
+export { readTriageDetailContextLineV1 } from './header.js';
 
 /** The header and the entry actions scroll as one block above the source body, never over it. */
 const DETAIL_HEADER_SCROLL_STYLE_V1 = Object.freeze({ flexGrow: 0, flexShrink: 1, maxHeight: '45%' as const });
@@ -182,7 +175,6 @@ const DETAIL_FILL_STYLE_V1 = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 
 const DETAIL_TITLE_STYLE_V1 = Object.freeze({ flex: 1, minWidth: 0 });
 
 const EMPTY_SESSIONS: readonly TriageLinkedSessionProjectionV1[] = Object.freeze([]);
-const IGNORE_AVAILABLE_TABS = (_tabs: readonly string[]) => {};
 
 /** The words the aggregate uses for what it currently knows about the entry. */
 const PRESENCE_COPY = Object.freeze({
@@ -407,10 +399,25 @@ function TriageEntryScopedActionRegion(props: Readonly<{
  * same facts about the same entry and differ only in whether they are current,
  * so they are one renderer with one marker rather than two blocks that drift.
  */
+/**
+ * The entry's kind glyph in the row's own tone, beside the detail title. It stands on its own (no tile): the
+ * same mark the row wears, read through the row's mark owner.
+ */
+export function TriageDetailKindMark(props: Readonly<{ header: TriageDetailHeaderV1 }>): React.ReactElement {
+  const mark = readTriageRowMarkV1(props.header.markFacts, props.header.workflowSubject);
+  return <Icon name={mark.name} tone={mark.tone} />;
+}
+
+/** The source's brand mark leading the detail line. */
+export function TriageDetailSourceMark(props: Readonly<{ pluginId: string }>): React.ReactElement {
+  return <BrandMark pluginId={props.pluginId} size="small" externallyLabelled />;
+}
+
 export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): React.ReactElement {
   const text = usePluginTranslation();
+  const surfaceContext = useSurfaceContext();
   const header = props.header;
-  const contextLine = readTriageDetailContextLineV1(header, text);
+  const contextLine = readTriageDetailContextLineV1(header, text, { locale: surfaceContext.locale, nowMs: Date.now() });
   const presenceCopy = header.presence === 'present'
     ? null
     : header.presence === 'absent'
@@ -420,7 +427,7 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
     <>
       {props.headerHosted ? null : (
         <Row gap="small" align="center">
-          <Icon name={readTriageEntryGlyphV1(header.lifecyclePresentation, header.workflowSubject)} tone="secondary" />
+          <TriageDetailKindMark header={header} />
           <Stack style={DETAIL_TITLE_STYLE_V1}><Heading level={2} value={header.title} /></Stack>
           <Row gap="xsmall" align="center">
             <TriageDetailHeaderActions header={header} pin={props.pin} />
@@ -428,9 +435,14 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
           </Row>
         </Row>
       )}
-      {props.headerHosted || contextLine === null ? null : <Text variant="caption" tone="secondary" value={contextLine} />}
+      {props.headerHosted || contextLine === null ? null : (
+        <Row gap="xsmall" align="center">
+          <TriageDetailSourceMark pluginId={header.sourcePluginId} />
+          <Stack style={DETAIL_TITLE_STYLE_V1}><Text variant="caption" tone="secondary" value={contextLine} numberOfLines={1} /></Stack>
+        </Row>
+      )}
       {props.lastKnown === true ? <Status tone="muted" labelKey="plugins.triage.surface.detail.lastKnown" label="These are the last facts this page held for this entry, and they may be out of date." /> : null}
-      {header.attention === null || props.attentionInActions === true ? null : <Badge variant="tinted" tone={readTriageAttentionBadgeToneV1(header.attention.level)} value={header.attention.reasonLabel} />}
+      {header.attention === null || props.attentionInActions === true ? null : <TriageAttentionBadge attention={header.attention} />}
       {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
       {header.sourceReadFailed ? <Status tone="muted" labelKey="plugins.triage.surface.detail.connectionUnhealthy" label="This connection could not be read in the last pass." /> : null}
       {props.showLinkedSessions === false ? null : <TriageLinkedSessions key={props.instanceKey} sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} pageState={props.linkedSessionsPageState} onLoadMore={props.onLoadMoreLinkedSessions} onSelect={props.onSelectLinkedSession} />}
@@ -488,27 +500,11 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const insertion = useTriageTierBEvidenceInsertion(props.originComposer);
   const evidenceDisclosure = React.useMemo(() => ({ ...insertion, panelActions: props.sourcePanelActions }), [insertion, props.sourcePanelActions]);
   const row = props.row;
-  const entryKey = triageEntryRowKey(row.entryRef);
-  const [inlineSelection, setInlineSelection] = React.useState<Readonly<{
-    entryKey: string; sessionId: TriageLinkedSessionProjectionV1['sessionId'] | null; tab: string;
-  }>>({ entryKey, sessionId: null, tab: 'overview' });
-  const selectedSessionId = inlineSelection.entryKey === entryKey ? inlineSelection.sessionId : null;
-  const changeTab = React.useCallback((tab: string) => {
-    setInlineSelection((previous) => ({ entryKey,
-      sessionId: previous.entryKey === entryKey ? previous.sessionId : null, tab }));
-  }, [entryKey]);
-  const tabSelection = props.tabSelection ?? {
-    value: inlineSelection.entryKey === entryKey ? inlineSelection.tab : 'overview',
-    onChange: changeTab,
-    onAvailableTabsChange: IGNORE_AVAILABLE_TABS,
-  };
-  const selectInlineSession = (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => {
-    setInlineSelection({ entryKey, sessionId, tab: 'session' });
-    props.tabSelection?.onChange('session');
-  };
-  const selectPanelSession = (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => {
-    setInlineSelection((previous) => ({ ...previous, entryKey, sessionId }));
-  };
+  const sessionSelection = props.sessionSelection;
+  const selectedSessionId = sessionSelection.value;
+  const tabSelection = props.tabSelection;
+  const selectInlineSession = sessionSelection.onChange;
+  const selectPanelSession = sessionSelection.onChange;
   const lookup = readTriageSourceDetailContributionV1(context, row.entryRef.source);
 
   // Which connection this row is showing, and the observation made through it,
@@ -542,7 +538,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     sourceDescriptor,
     linkedSessions,
     linkedSessionsHasMore,
-  }), [linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, row, sourceDescriptor]);
+    text,
+  }), [linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, row, sourceDescriptor, text]);
 
   const completePostMutation = props.completePostMutation;
 
@@ -588,12 +585,15 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     display: fixDisplay,
   });
   const fixTabs = fixPullRequest.detailTabs;
+  const fixFacts = fixPullRequest.facts;
+  const entryFacts = snapshot?.facts;
   const composition = React.useMemo(() => planTriageDetailTabsV1({
     workflowSubject,
     entryTabs: declaredKind?.detailTabs,
-    fixPullRequest: fixTabs === undefined ? null : { detailTabs: fixTabs },
-  }), [declaredKind, fixTabs, workflowSubject]);
-  const reportAvailableTabs = props.tabSelection?.onAvailableTabsChange;
+    ...(entryFacts === undefined ? {} : { entryFacts }),
+    fixPullRequest: fixTabs === undefined ? null : { detailTabs: fixTabs, ...(fixFacts === undefined ? {} : { facts: fixFacts }) },
+  }), [declaredKind, entryFacts, fixFacts, fixTabs, workflowSubject]);
+  const reportAvailableTabs = props.tabSelection.onAvailableTabsChange;
   React.useLayoutEffect(() => {
     if (composition.kind === 'whole' && header.linkedSessions.length === 0) reportAvailableTabs?.([]);
   }, [composition.kind, header.linkedSessions.length, reportAvailableTabs]);
@@ -651,6 +651,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const comparisonRead = React.useMemo(() => getOperation !== undefined && detail?.kind === 'ready'
     ? { operation: getOperation, instance: detail.input.instance } : undefined, [detail, getOperation]);
   const linkedSessionIds = React.useMemo(() => header.linkedSessions.map((session) => session.sessionId), [header.linkedSessions]);
+  const reportLinkedSessions = sessionSelection.onAvailableSessionsChange;
+  React.useLayoutEffect(() => { reportLinkedSessions(header.linkedSessions); }, [header.linkedSessions, reportLinkedSessions]);
   // The source's own write controls (merge, close, reviewers…): its `actions` panel, held in the header's More
   // beside Triage's entry actions (r0.42) rather than as a form above the tabs.
   const sourceActions = composition.kind === 'tabs' && declaredKind?.detailActions === true && entryMount !== null ? (
@@ -672,7 +674,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const actionRegionShown = workflowSubject !== null && display !== null && actionPresentation !== null && selected !== null;
   const viewerIsAuthor = row.content?.outcome.viewer.involvement.includes('author') === true;
   const attention = header.attention === null ? undefined : (
-    <Badge variant="tinted" tone={readTriageAttentionBadgeToneV1(header.attention.level)} value={header.attention.reasonLabel} />
+    <TriageAttentionBadge attention={header.attention} />
   );
   return (
     <Stack gap="medium" style={DETAIL_FILL_STYLE_V1}>
@@ -865,5 +867,19 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       )}
       </Stack>
     </Stack>
+  );
+}
+
+/** The entry's attention reason as the detail's chip: the row chip's tone and mark (one owner for both). */
+function TriageAttentionBadge(props: Readonly<{ attention: NonNullable<TriageDetailHeaderV1['attention']> }>): React.ReactElement {
+  const { attention } = props;
+  const icon = attention.icon !== null && isHappierIconName(attention.icon) ? attention.icon : undefined;
+  return (
+    <Badge
+      variant="tinted"
+      tone={readTriageAttentionBadgeToneV1(attention.level)}
+      value={attention.reasonLabel}
+      {...(icon === undefined ? {} : { icon })}
+    />
   );
 }

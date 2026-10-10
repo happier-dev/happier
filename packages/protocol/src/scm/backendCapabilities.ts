@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -25,14 +26,14 @@ export const SCM_BACKEND_CAPABILITY_GROUPS = [
   'freshness',
 ] as const;
 
-export const ScmBackendCapabilitySupportLevelSchema = z.enum([
+export const ScmBackendCapabilitySupportLevelSchema = lazyZodSchema(() => z.enum([
   'supported',
   'unsupported',
   'experimental',
-]);
+]));
 export type ScmBackendCapabilitySupportLevel = z.infer<typeof ScmBackendCapabilitySupportLevelSchema>;
 
-export const ScmBackendCapabilityUnavailableReasonSchema = z.enum([
+export const ScmBackendCapabilityUnavailableReasonSchema = lazyZodSchema(() => z.enum([
   'not_implemented',
   'tool_missing',
   'repo_mode_unsupported',
@@ -40,16 +41,16 @@ export const ScmBackendCapabilityUnavailableReasonSchema = z.enum([
   'hosting_provider_missing',
   'unsafe_worktree_state',
   'unknown',
-]);
+]));
 export type ScmBackendCapabilityUnavailableReason = z.infer<typeof ScmBackendCapabilityUnavailableReasonSchema>;
 
-export const ScmBackendCapabilityLeafSchema = z
+export const ScmBackendCapabilityLeafSchema = lazyZodSchema(() => z
   .object({
     support: ScmBackendCapabilitySupportLevelSchema,
     reason: ScmBackendCapabilityUnavailableReasonSchema.optional(),
     declaredSupport: ScmBackendCapabilitySupportLevelSchema.optional(),
   })
-  .strict();
+  .strict());
 export type ScmBackendCapabilityLeaf = z.infer<typeof ScmBackendCapabilityLeafSchema>;
 
 const capabilityLeafMap = <const T extends readonly [string, ...string[]]>(keys: T) =>
@@ -70,6 +71,7 @@ export const ScmBackendReadCapabilitiesSchema = capabilityLeafMap([
   'diffFile',
   'diffCommit',
   'log',
+  'historyEntries',
   'branches',
   'stash',
   'defaultBranch',
@@ -184,7 +186,7 @@ export const ScmBackendFreshnessCapabilitiesSchema = capabilityLeafMap([
   refreshPolicy: ProviderRefreshPolicySchema.optional(),
 });
 
-export const ScmBackendCapabilitiesSchema = z
+export const ScmBackendCapabilitiesSchema = lazyZodSchema(() => z
   .object({
     detection: ScmBackendDetectionCapabilitiesSchema,
     read: ScmBackendReadCapabilitiesSchema,
@@ -212,7 +214,7 @@ export const ScmBackendCapabilitiesSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict());
 export type ScmBackendCapabilities = z.infer<typeof ScmBackendCapabilitiesSchema>;
 
 export function supportedCapability(): ScmBackendCapabilityLeaf {

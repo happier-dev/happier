@@ -311,6 +311,29 @@ describe('GitHub triage entry mapping', () => {
       .toBe(baseline.snapshot.projectionTruncated || undefined);
   });
 
+  it('publishes who opened the entry as the snapshot author, and omits it when GitHub names nobody', () => {
+    const projection = requireProjection(
+      projectGithubEntry(decodeGithubSearchItem(GITHUB_SEARCH_PULL_REQUEST_ITEM)!, GITHUB_FIXTURE_REPOSITORY_ID),
+    );
+    const published = toTriageSnapshot(projection.snapshot, projection.locator, projection.localRef.entryId);
+    expect(TriageSourceEntrySnapshotV1Schema.parse(published).authorLabel).toBe('octocat');
+
+    const anonymous = requireProjection(projectGithubEntry(
+      decodeGithubSearchItem({ ...GITHUB_SEARCH_PULL_REQUEST_ITEM, user: null })!,
+      GITHUB_FIXTURE_REPOSITORY_ID,
+    ));
+    expect(toTriageSnapshot(anonymous.snapshot, anonymous.locator, anonymous.localRef.entryId)).not.toHaveProperty('authorLabel');
+  });
+
+  it('publishes the entry number as the snapshot designation', () => {
+    const projection = requireProjection(
+      projectGithubEntry(decodeGithubSearchItem(GITHUB_SEARCH_PULL_REQUEST_ITEM)!, GITHUB_FIXTURE_REPOSITORY_ID),
+    );
+    const published = toTriageSnapshot(projection.snapshot, projection.locator, projection.localRef.entryId);
+    expect(TriageSourceEntrySnapshotV1Schema.parse(published).designation)
+      .toBe(`#${(GITHUB_SEARCH_PULL_REQUEST_ITEM as { number: number }).number}`);
+  });
+
   it('publishes a newline-bearing repository label as one line', () => {
     const view = decodeGithubSearchItem({
       ...GITHUB_SEARCH_PULL_REQUEST_ITEM,

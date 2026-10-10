@@ -41,6 +41,9 @@ describe('GitHub REST repository provisioning adapter', () => {
       resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token', profileKey: 'github:work' }),
       fetcher: async (url: string, init?: RequestInit) => {
         requests.push({ url, init });
+        if (!new Headers(init?.headers).get('user-agent')?.trim()) {
+          return jsonResponse({ message: 'User-Agent required' }, { status: 403 });
+        }
         if (url === 'https://api.github.com/user') {
           return jsonResponse({ login: 'octocat', name: 'Octo Cat' });
         }
@@ -118,6 +121,35 @@ describe('GitHub REST repository provisioning adapter', () => {
 
     expect(requests[0]?.init?.headers).toMatchObject({
       Authorization: 'Bearer runtime-redacted-token',
+    });
+  });
+
+  it('identifies anonymous public-repository clone reads without fabricating authorization', async () => {
+    const { createGithubRepositoryRestAdapter } = await import('./githubRepositoryRestAdapter.js');
+    const adapter = createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'missing', reason: 'account_unbound' }),
+      fetcher: async (_url, init) => {
+        const headers = new Headers(init?.headers);
+        if (!headers.get('user-agent')?.trim() || headers.has('authorization')) {
+          return jsonResponse({ message: 'Invalid anonymous request headers' }, { status: 403 });
+        }
+        return jsonResponse({
+          full_name: 'happier-dev/happier',
+          html_url: 'https://github.com/happier-dev/happier',
+          clone_url: 'https://github.com/happier-dev/happier.git',
+          visibility: 'public',
+          default_branch: 'main',
+        });
+      },
+    });
+
+    await expect(adapter.getRepositoryForClone({
+      provider: githubProvider,
+      owner: 'happier-dev',
+      repositoryName: 'happier',
+    })).resolves.toMatchObject({
+      repository: { nameWithOwner: 'happier-dev/happier', visibility: 'public' },
+      auth: { state: 'authenticated', profileKind: 'no_auth' },
     });
   });
 

@@ -19,7 +19,7 @@ import type {
     TriageReadFixPullRequestsResultV1,
     TriageSetFixPullRequestInputV1,
     TriageSetFixPullRequestResultV1,
-} from './fixPullRequestsProtocol.js';
+} from '@happier-dev/triage-protocol/v1';
 
 /**
  * The two fix-PR Actions: transport to the one `user-marks` writer and the

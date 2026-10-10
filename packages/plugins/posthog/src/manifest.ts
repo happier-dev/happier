@@ -154,8 +154,9 @@ const POSTHOG_SOURCE_DESCRIPTOR = {
             { kind: 'shared' as const, id: 'overview' as const },
             { kind: 'shared' as const, id: 'activity' as const },
             { kind: 'source' as const, id: 'stack-trace', title: 'Stack trace', titleKey: 'plugins.posthog.ui.tab.stackTrace' },
-            { kind: 'source' as const, id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.posthog.ui.tab.occurrences' },
-            { kind: 'source' as const, id: 'affected-sessions', title: 'Affected sessions', titleKey: 'plugins.posthog.ui.tab.affectedSessions' },
+            // The row's own counts are these tabs' summaries.
+            { kind: 'source' as const, id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.posthog.ui.tab.occurrences', summaryFact: 'posthog/occurrences' },
+            { kind: 'source' as const, id: 'affected-sessions', title: 'Affected sessions', titleKey: 'plugins.posthog.ui.tab.affectedSessions', summaryFact: 'posthog/sessions' },
         ],
     }],
 };

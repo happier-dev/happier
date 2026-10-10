@@ -61,6 +61,11 @@ const IDENTIFIER_SCHEMA = boundedText(MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1);
 const SOURCE_QUALIFIED_ID_SCHEMA = boundedText(513);
 const TEXT_SCHEMA = boundedText(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
 
+const CORPUS_MIGRATION_ARTIFACT = {
+    artifactId: 'triage-collection-migrations',
+    exportName: 'collectionMigrations',
+} as const;
+
 /** The two display values a mark keeps so it stays nameable on its own bytes. */
 const MARK_DISPLAY_SCHEMA: PluginJsonSchema = {
     type: 'object',
@@ -71,7 +76,8 @@ const MARK_DISPLAY_SCHEMA: PluginJsonSchema = {
 
 export const CORPUS_SOURCE_INSTANCES_COLLECTION = defineAccountCollection({
     id: CORPUS_SOURCE_INSTANCES_COLLECTION_ID,
-    schemaVersion: 1,
+    schemaVersion: 2,
+    readableSchemaVersions: [1, 2],
     schema: {
         type: 'object',
         properties: {
@@ -122,10 +128,15 @@ export const CORPUS_SOURCE_INSTANCES_COLLECTION = defineAccountCollection({
     }],
     uiQueries: [],
     relations: [],
-    // No readable schema version below the current one, so there is no
-    // ordered migration edge to declare and none to implement in the
-    // executable half.
-    migrations: [],
+    // The native source binding widens the configured union; retained v1
+    // configuration already satisfies this schema and must remain unchanged.
+    migrations: [{
+        id: 'source-instances-v1-to-v2',
+        fromSchemaVersion: 1,
+        toSchemaVersion: 2,
+        migrate: (value) => value,
+    }],
+    migrationArtifact: CORPUS_MIGRATION_ARTIFACT,
 });
 
 export const CORPUS_SESSION_LINKS_COLLECTION = defineAccountCollection({
@@ -208,7 +219,8 @@ export const CORPUS_SESSION_LINKS_COLLECTION = defineAccountCollection({
 
 export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
     id: CORPUS_USER_MARKS_COLLECTION_ID,
-    schemaVersion: 1,
+    schemaVersion: 2,
+    readableSchemaVersions: [1, 2],
     schema: {
         type: 'object',
         properties: {
@@ -270,10 +282,14 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
     }],
     uiQueries: [],
     relations: [],
-    // No readable schema version below the current one, so there is no
-    // ordered migration edge to declare and none to implement in the
-    // executable half.
-    migrations: [],
+    // Fix-PR intent is optional; existing pin intent and display bytes survive.
+    migrations: [{
+        id: 'user-marks-v1-to-v2',
+        fromSchemaVersion: 1,
+        toSchemaVersion: 2,
+        migrate: (value) => value,
+    }],
+    migrationArtifact: CORPUS_MIGRATION_ARTIFACT,
 });
 
 /**

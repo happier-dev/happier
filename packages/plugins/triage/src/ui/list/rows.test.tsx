@@ -8,6 +8,8 @@ import {
 } from './continuation.js';
 import {
   TRIAGE_ROW_SELECT_ACTION_ID_V1,
+  readTriageAgentBadgeV1,
+  readTriageRowPlaceV1,
   readTriageAgentCellMarkV1,
   readTriageAttentionBadgeToneV1,
   readTriageRowMarkV1,
@@ -259,6 +261,24 @@ describe('a PRs & Issues entry row', () => {
     // The detail header's badge: a required reason needs you, a suggestion stays quiet (never blue).
     expect(readTriageAttentionBadgeToneV1('required')).toBe('attention');
     expect(readTriageAttentionBadgeToneV1('suggested')).toBe('secondary');
+  });
+
+  it('names the place alone once the designation is said beside the title, and the source address otherwise', () => {
+    expect(readTriageRowPlaceV1({ designation: '#2481', identifierLabel: 'tidewater/payments-api#2481', scopeLabel: 'tidewater/payments-api' }))
+      .toBe('tidewater/payments-api');
+    expect(readTriageRowPlaceV1({ designation: null, identifierLabel: 'CHECKOUT-WEB', scopeLabel: 'checkout-web' }))
+      .toBe('CHECKOUT-WEB');
+  });
+
+  it('badges the row glyph with what the linked agent is doing: a hand while it waits on the reader, a live dot while it works', () => {
+    expect(readTriageAgentBadgeV1({ kind: 'permission', tone: 'attention', live: false })).toEqual({ mark: 'attention', tone: 'attention' });
+    expect(readTriageAgentBadgeV1({ kind: 'input', tone: 'neutral', live: false })).toEqual({ mark: 'attention', tone: 'attention' });
+    expect(readTriageAgentBadgeV1({ kind: 'working', tone: 'neutral', live: true })).toEqual({ mark: 'live' });
+    expect(readTriageAgentBadgeV1({ kind: 'failed', tone: 'danger', live: false })).toEqual({ mark: 'error', tone: 'danger' });
+    expect(readTriageAgentBadgeV1({ kind: 'ready', tone: 'neutral', live: false })).toEqual({ mark: 'check', tone: 'success' });
+    // Offline or archived agents are history, not a state to badge.
+    expect(readTriageAgentBadgeV1({ kind: 'offline', tone: 'attention', live: false })).toBeNull();
+    expect(readTriageAgentBadgeV1({ kind: 'archived', tone: 'neutral', live: false })).toBeNull();
   });
 
   it('marks a cell only where it says something: healthy is quiet, news and working are ink, needs-you amber, failure rose', () => {

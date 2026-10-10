@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Button, Popover, Select, Stack, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Button, Popover, Select, Stack } from '@happier-dev/plugin-ui';
 
 import {
   CORPUS_SMART_PRECEDENCE_TUPLES_V1,
@@ -7,7 +7,7 @@ import {
 } from '../../corpus/query/smartPolicy.js';
 import type { TriageFilterFacetValueV1, TriageSurfaceStateV1 } from '../state/surface.js';
 import type { TriageTextResolverV1 } from '../shell/windowState.js';
-import type { TriageFilterFacetPlanV1, TriageFilterOptionV1 } from './plan.js';
+import type { TriageFilterFacetPlanV1 } from './plan.js';
 
 /**
  * The one lens control group (`core/SURFACE.md` §6).
@@ -154,48 +154,9 @@ function TriageFilterFacetControl(props: Readonly<{
 }
 
 /**
- * One selected constraint, named and removable outside the overlay.
- *
- * The visible label qualifies the value with its facet, because two chips
- * reading `Open` and `example/repository` say nothing about what each one
- * constrains — the same "one name or the qualified one" rule `filters/plan.ts`
- * applies to a value whose sources collide. `: ` is the punctuation the label
- * and the value are joined with, not copy.
- *
- * `{label}` interpolation is why the accessible name cannot go through
- * `accessibilityLabelKey`: that resolves through `resolveAuthorText` WITHOUT a
- * values argument, so the placeholder would reach the reader verbatim. It is
- * the same reason `ui/list/rows.tsx` resolves **Unpin {title}** through this
- * hook rather than through the control's own key prop.
- */
-function TriageActiveFilterChip(props: Readonly<{
-  facetLabel: string;
-  option: TriageFilterOptionV1;
-  onToggleFilterValue: (selection: TriageFilterFacetValueV1) => void;
-}>): React.ReactElement {
-  const { facetLabel, onToggleFilterValue, option } = props;
-  const translate = usePluginTranslation();
-  const label = `${facetLabel}: ${option.label}`;
-  const onPress = React.useCallback(() => {
-    onToggleFilterValue(option.selection);
-  }, [onToggleFilterValue, option.selection]);
-  return (
-    <Button
-      title={label}
-      accessibilityLabel={translate(
-        'plugins.triage.surface.filters.remove',
-        'Remove filter {label}',
-        { label },
-      )}
-      variant="secondary"
-      onPress={onPress}
-    />
-  );
-}
-
-/**
- * The compact lens: one **Filters** trigger, and every selected constraint
- * beside it.
+ * The compact lens: one **Filters** trigger. Every selected constraint stays
+ * named and removable as a token in the list's search field (the shell's
+ * `searchTokens`), the one place both arms say it.
  *
  * The open state belongs to this component rather than to the rail, so a
  * region that grows back to the wide composition unmounts it and takes the
@@ -238,16 +199,6 @@ function TriageCompactFilters(props: Readonly<{
           ))}
         </Stack>
       </Popover>
-      {facets.flatMap((facet) => facet.options
-        .filter((option) => option.selected)
-        .map((option) => (
-          <TriageActiveFilterChip
-            key={option.key}
-            facetLabel={facet.label}
-            option={option}
-            onToggleFilterValue={onToggleFilterValue}
-          />
-        )))}
     </>
   );
 }

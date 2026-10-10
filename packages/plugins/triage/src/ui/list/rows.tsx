@@ -24,6 +24,8 @@ import {
   HAPPIER_TONE_COLOR_TOKEN,
   HAPPIER_WORK_STATUS_SEMANTIC_TONE,
   HappierStatusDot,
+  isHappierIconName,
+  resolveHappierIconSize,
 } from '@happier-dev/plugin-ui/presentation';
 import { formatTriageTimestampV1, resolveTriageRowFactStatusToneV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -445,6 +447,32 @@ export function readTriageSignalCellMarkV1(tone: TriageListRowSignalV1['tone']):
   return { tone: resolveTriageRowFactStatusToneV1(tone), marked: true, live: false };
 }
 
+/** The row glyph's corner badge for its linked agent: what it shows, and the ring tone that says its state. */
+export type TriageAgentBadgeV1 = Readonly<{ mark: 'live' | 'attention' | 'error' | 'check'; tone?: TextTone }>;
+
+/**
+ * The linked agent as the list row glyph's badge (the table says the same in its Agent column): a hand while
+ * it waits on the reader, a live dot while it works, the failure or the finish in their tones. An offline or
+ * archived Session is history, not a state, so it draws no badge.
+ */
+export function readTriageAgentBadgeV1(agent: Pick<TriageAgentStatusV1, 'kind' | 'tone' | 'live'>): TriageAgentBadgeV1 | null {
+  switch (agent.kind) {
+    case 'permission':
+    case 'action':
+    case 'input':
+      return { mark: 'attention', tone: HAPPIER_WORK_STATUS_SEMANTIC_TONE.attention };
+    case 'working':
+      return { mark: 'live' };
+    case 'failed':
+      return { mark: 'error', tone: 'danger' };
+    case 'ready':
+      return { mark: 'check', tone: 'success' };
+    case 'offline':
+    case 'archived':
+      return null;
+  }
+}
+
 /** The linked agent as a cell mark: working is the one moving mark, in the ink; needs-you and trouble keep their tone. */
 export function readTriageAgentCellMarkV1(agent: Pick<TriageAgentStatusV1, 'tone' | 'live'>): TriageCellMarkV1 {
   if (agent.tone !== 'neutral') return { tone: HAPPIER_WORK_STATUS_SEMANTIC_TONE[agent.tone], marked: true, live: agent.live };
@@ -457,10 +485,13 @@ export function readTriageAgentCellMarkV1(agent: Pick<TriageAgentStatusV1, 'tone
  * one line that truncates inside a fixed cell, and it is never a live region: the row's own description
  * says the same words (`cells` in `triageListRowItemProps`), so thirty announcing cells would only be noise.
  */
-function TriageCellState(props: Readonly<{ mark: TriageCellMarkV1; label: string }>): React.ReactElement {
+function TriageCellState(props: Readonly<{ mark: TriageCellMarkV1; label: string; brandPluginId?: string }>): React.ReactElement {
   const theme = usePluginTheme();
   return (
     <Row gap="xsmall" align="center" style={TRIAGE_CELL_STATE_STYLE_V1}>
+      {props.brandPluginId === undefined ? null : (
+        <BrandMark pluginId={props.brandPluginId} size="small" pixelSize={resolveHappierIconSize('small')} externallyLabelled />
+      )}
       {props.mark.marked
         ? <HappierStatusDot color={theme.colors[HAPPIER_TONE_COLOR_TOKEN[props.mark.tone]]} isPulsing={props.mark.live} />
         : null}
@@ -473,6 +504,16 @@ function TriageCellState(props: Readonly<{ mark: TriageCellMarkV1; label: string
 
 const TRIAGE_CELL_STATE_STYLE_V1 = Object.freeze({ minWidth: 0, maxWidth: '100%' as const });
 const TRIAGE_CELL_STATE_WORD_STYLE_V1 = Object.freeze({ flexShrink: 1, minWidth: 0 });
+
+/**
+ * Where an entry lives, in words: its scope when the designation is said beside the title, else the source's own
+ * address (which carries the designation itself).
+ */
+export function readTriageRowPlaceV1(
+  row: Pick<TriageListDisplayRowV1, 'designation' | 'identifierLabel' | 'scopeLabel'>,
+): string {
+  return row.designation === null ? row.identifierLabel ?? row.scopeLabel : row.scopeLabel;
+}
 
 /** Where an entry lives, led by its source's own mark so GitHub, GitLab and Sentry rows tell apart at a glance. */
 function TriageRowWhere(props: Readonly<{ pluginId: string; label: string }>): React.ReactElement {
@@ -541,20 +582,43 @@ export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean; or
         );
         return <Icon name={mark.name} size="small" tone={mark.tone} />;
       },
+      glyphBadge: (item) => {
+        const badge = item.agent === null ? null : readTriageAgentBadgeV1(item.agent);
+        if (badge === null) return null;
+        const brand = item.agent?.agent?.brand;
+        if (brand !== undefined) return {
+          mark: (pixelSize) => <BrandMark pluginId={brand.pluginId} size="small" pixelSize={pixelSize} externallyLabelled />,
+          ...(badge.tone === undefined ? {} : { tone: badge.tone }),
+        };
+        return badge.mark === 'live'
+          ? { live: true }
+          : { icon: badge.mark, ...(badge.tone === undefined ? {} : { tone: badge.tone }) };
+      },
       title: (item) => item.row.title,
-      where: (item) => (
-        <TriageRowWhere pluginId={item.row.entryRef.source.pluginId} label={item.row.identifierLabel ?? item.row.scopeLabel} />
-      ),
+      // The table says the designation quietly after the title ("Retry … #2481") and Where is the place alone.
+      titleSuffix: (item) => item.row.designation,
+      where: (item) => <TriageRowWhere pluginId={item.row.entryRef.source.pluginId} label={readTriageRowPlaceV1(item.row)} />,
+      // The list has room for both, and for who opened it ("tidewater/payments-api #2481 · Mara Oduya").
+      byline: (item) => {
+        const { row } = item;
+        const where = row.designation === null ? readTriageRowPlaceV1(row) : `${row.scopeLabel} ${row.designation}`;
+        return (
+          <TriageRowWhere
+            pluginId={row.entryRef.source.pluginId}
+            label={row.authorLabel === null ? where : `${where} · ${row.authorLabel}`}
+          />
+        );
+      },
       reason: (item) => {
         const { row } = item;
         if (row.detail === null || row.detailKind === 'summary') return null;
-        const tone: TextTone = row.detailKind === 'attention'
-          ? 'accent'
-          : row.detailKind === 'presence' && row.tone !== 'neutral' ? row.tone : 'secondary';
-        // The row's one loud fact is a tinted chip; a quiet note ("Waiting on Priya") stays plain words.
-        return tone === 'secondary'
-          ? <Text variant="body" tone={tone} value={row.detail} numberOfLines={1} />
-          : <Badge variant="tinted" tone={tone} value={row.detail} />;
+        // One tone owner for the trailing detail: needs-you in the attention ink (blue stays for focus and links).
+        const tone: TextTone = readTriageRowDetailToneV1(row) ?? 'secondary';
+        // The row's one loud fact is a tinted chip led by its reason's mark; a quiet note ("Waiting on Priya")
+        // stays plain words.
+        if (tone === 'secondary') return <Text variant="body" tone={tone} value={row.detail} numberOfLines={1} />;
+        const icon = row.detailIcon !== null && isHappierIconName(row.detailIcon) ? row.detailIcon : undefined;
+        return <Badge variant="tinted" tone={tone} value={row.detail} {...(icon === undefined ? {} : { icon })} />;
       },
       ...(withSignal ? {
         signal: (item: TriageListItemV1) => (item.signal === null ? null : (
@@ -564,7 +628,8 @@ export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean; or
       agent: (item) => (item.agent === null ? null : (
         <TriageCellState
           mark={readTriageAgentCellMarkV1(item.agent)}
-          label={text(item.agent.labelKey, item.agent.label)}
+          label={text(item.agent.labelKey, item.agent.label, item.agent.labelParams)}
+          {...(item.agent.agent?.brand === undefined ? {} : { brandPluginId: item.agent.agent.brand.pluginId })}
         />
       )),
       age: (item) => (item.row.activityAtMs === null
@@ -580,7 +645,7 @@ export function useTriageListAnatomyV1(input: Readonly<{ withSignal: boolean; or
         text,
         cells: {
           ...(withSignal && item.signal !== null ? { signalLabel: item.signal.label } : {}),
-          ...(item.agent === null ? {} : { agentLabel: text(item.agent.labelKey, item.agent.label) }),
+          ...(item.agent === null ? {} : { agentLabel: text(item.agent.labelKey, item.agent.label, item.agent.labelParams) }),
         },
       }).accessibilityHint,
       testID: (item) => triageListRowTestId(item.row.key),

@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
+import { readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
 
 /**
  * The one display projection of a window row.
@@ -85,6 +86,15 @@ export type TriageEntryDisplayV1 = Readonly<{
    * quiet summary. `null` when there is no detail.
    */
   detailKind: TriageEntryDetailKindV1 | null;
+  /** An attention reason's chip mark (a shared icon token name), or `null`. */
+  detailIcon: string | null;
+  /**
+   * Who opened the entry: "You" when the reader did, else the source's author
+   * name, else `null` (a kind with no author, or a source that did not say).
+   */
+  authorLabel: string | null;
+  /** The entry's short native designation ("#2481", "!88"), or `null` when its source names none. */
+  designation: string | null;
   /** The lifecycle presentation behind `lifecycleLabel`, for the row's mark. */
   lifecyclePresentation: TriageSourceEntrySnapshotV1['state']['presentation'] | null;
   /**
@@ -157,6 +167,11 @@ export function projectTriageEntryDisplay(
         ? 'summary'
         : null;
 
+  const viewer = row.content?.outcome.viewer;
+  const authorLabel = viewer?.involvement.includes('author') === true
+    ? text('plugins.triage.surface.row.you', 'You')
+    : snapshot?.authorLabel ?? null;
+
   return Object.freeze({
     key: triageEntryRowKey(row.entryRef),
     // The identity-only fallback is deliberately the canonical reference rather
@@ -169,6 +184,11 @@ export function projectTriageEntryDisplay(
     detail,
     tone: presence.tone,
     detailKind,
+    detailIcon: (detailKind === 'attention' || detailKind === 'suggestion') && row.attention != null
+      ? readTriageAttentionReasonIconV1(row.attention.reasonId)
+      : null,
+    authorLabel,
+    designation: snapshot?.designation ?? null,
     lifecyclePresentation: snapshot?.state.presentation ?? null,
     activityAtMs: row.content?.outcome.sourceUpdatedAtMs ?? null,
     kindId: row.entryRef.kindId,

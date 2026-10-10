@@ -33,14 +33,12 @@ import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
-import { readScmHostingProviderRuntimeDescriptor } from '../hostingProviders/runtimeDescriptor.js';
 import { gitRemoteAdd, gitRemoteSetUrl } from './remoteManagementOperations.js';
 import { gitRemotePublish } from './publishOperations.js';
 import { readGitSnapshotForChecks } from './snapshotChecks.js';
+import { classifyHostingProviderError } from '../hostingProviders/providerFailure.js';
 
-type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getRepositoryPublishing'> & Readonly<{
-    providers?: readonly unknown[];
-}>;
+type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getRepositoryPublishing' | 'listDeployments'>;
 
 type ScmHostingProviderRepositoryGetInput = Readonly<{
     provider: ScmHostingProviderRef;
@@ -86,19 +84,6 @@ function errorResponse(
         error,
         errorCode,
         ...extra,
-    };
-}
-
-function mapProviderError(error: unknown): Readonly<{ message: string; code: ScmOperationErrorCode }> {
-    const message = error instanceof Error ? error.message : 'Hosting repository provider operation failed';
-    const code = typeof error === 'object' && error !== null
-        ? (error as { errorCode?: unknown }).errorCode
-        : undefined;
-    return {
-        message,
-        code: typeof code === 'string' && Object.values(SCM_OPERATION_ERROR_CODES).includes(code as ScmOperationErrorCode)
-            ? code as ScmOperationErrorCode
-            : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
     };
 }
 
@@ -212,31 +197,27 @@ function invalidateAfterPublishMutation(input: Readonly<{
     });
 }
 
-function providerRefFromDescriptor(input: Readonly<{
+function admittedProviderRefs(input: Readonly<{
     registry: HostingRepositoryRegistry;
     providerId?: string;
     providerKind?: ScmHostingProviderKind;
-}>): ScmHostingProviderRef | null {
-    const provider = input.registry.providers
-        ?.map(readScmHostingProviderRuntimeDescriptor)
-        .filter((entry) => entry !== null)
-        .find((entry) => input.providerId
-            ? entry.id === input.providerId && (!input.providerKind || entry.kind === input.providerKind)
-            : !input.providerKind || entry.kind === input.providerKind);
-    if (!provider) return null;
-    const providerKind = ScmHostingProviderKindSchema.safeParse(provider.kind);
-    if (!providerKind.success) return null;
-    return {
-        id: provider.id,
-        kind: providerKind.data,
-        displayName: provider.displayName,
-        baseUrl: provider.baseUrl,
-        urlSafety: {
-            ...(provider.urlSafety?.allowedBaseUrls ? { allowedBaseUrls: [...provider.urlSafety.allowedBaseUrls] } : {}),
-            ...(provider.urlSafety?.allowedOrigins ? { allowedOrigins: [...provider.urlSafety.allowedOrigins] } : {}),
-            allowedSchemes: [...(provider.urlSafety?.allowedSchemes ?? ['https:'])],
-        },
-    };
+}>): ScmHostingProviderRef[] {
+    return (input.registry.listDeployments?.({ providerId: input.providerId, providerKind: input.providerKind }) ?? [])
+        .flatMap((provider) => {
+            const providerKind = ScmHostingProviderKindSchema.safeParse(provider.providerKind ?? provider.kind);
+            if (!providerKind.success) return [];
+            return [{
+                id: provider.id,
+                kind: providerKind.data,
+                displayName: provider.displayName,
+                baseUrl: provider.baseUrl,
+                urlSafety: {
+                    ...(provider.urlSafety?.allowedBaseUrls ? { allowedBaseUrls: [...provider.urlSafety.allowedBaseUrls] } : {}),
+                    ...(provider.urlSafety?.allowedOrigins ? { allowedOrigins: [...provider.urlSafety.allowedOrigins] } : {}),
+                    allowedSchemes: [...(provider.urlSafety?.allowedSchemes ?? ['https:'])],
+                },
+            }];
+        });
 }
 
 async function readHasCurrentCommit(input: Readonly<{ context: ScmBackendContext }>): Promise<boolean> {
@@ -334,12 +315,12 @@ export function createGitHostingRepositoryPublishOperation(
             const remoteConflictStrategy = request.remoteConflictStrategy ?? 'fail';
 
             const registry = await readRegistry();
-            const provider = providerRefFromDescriptor({
+            const providers = admittedProviderRefs({
                 registry,
                 ...(request.providerId ? { providerId: request.providerId } : {}),
                 providerKind: request.providerKind,
             });
-            if (!provider) {
+            if (providers.length === 0) {
                 return errorResponse(
                     request.providerId
                         ? `No SCM hosting provider is registered for "${request.providerId}".`
@@ -352,6 +333,13 @@ export function createGitHostingRepositoryPublishOperation(
                     },
                 );
             }
+            const matchingDeployments = request.providerBaseUrl
+                ? providers.filter((provider) => provider.baseUrl === request.providerBaseUrl)
+                : providers;
+            if (matchingDeployments.length !== 1) {
+                return errorResponse('Select one admitted hosting provider deployment before publishing.', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
+            }
+            const provider = matchingDeployments[0];
 
             const adapter = registry.getRepositoryPublishing(provider.id);
             if (!adapter) {
@@ -375,8 +363,8 @@ export function createGitHostingRepositoryPublishOperation(
                     runtimeServices: readRuntimeServices(),
                 });
             } catch (error) {
-                const mapped = mapProviderError(error);
-                return errorResponse(mapped.message, mapped.code);
+                const mapped = classifyHostingProviderError(error);
+                return errorResponse(mapped.message, mapped.code, mapped.details);
             }
 
             const remoteUrl = remoteUrlForRepository(repository, request.remoteUrlKind);
@@ -480,12 +468,12 @@ export function createGitHostingRepositoryPublishOperation(
         },
         async describePublishTargets({ context, request }) {
             const registry = await readRegistry();
-            const provider = providerRefFromDescriptor({
+            const providers = admittedProviderRefs({
                 registry,
                 ...(request.providerId ? { providerId: request.providerId } : {}),
                 ...(request.providerKind ? { providerKind: request.providerKind } : {}),
             });
-            if (!provider) {
+            if (providers.length === 0) {
                 return errorResponse(
                     request.providerId
                         ? `No SCM hosting provider is registered for "${request.providerId}".`
@@ -495,10 +483,13 @@ export function createGitHostingRepositoryPublishOperation(
                 ) as ScmHostingRepositoryDescribePublishTargetsResponse;
             }
 
-            const adapter = registry.getRepositoryPublishing(provider.id);
-            if (!adapter) {
+            const publishProviders = providers.flatMap((provider) => {
+                const adapter = registry.getRepositoryPublishing(provider.id);
+                return adapter ? [{ provider, adapter }] : [];
+            });
+            if (publishProviders.length === 0) {
                 return errorResponse(
-                    `The selected hosting provider "${provider.displayName}" does not support repository publish target discovery.`,
+                    'The selected hosting providers do not support repository publish target discovery.',
                     SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
                     { remediation: { kind: 'unsupported_provider' } },
                 ) as ScmHostingRepositoryDescribePublishTargetsResponse;
@@ -506,20 +497,19 @@ export function createGitHostingRepositoryPublishOperation(
 
             try {
                 const defaultRepositoryName = basename(context.detection.rootPath ?? context.cwd) || 'repository';
-                const result = await adapter.describePublishTargets({
-                    provider,
-                    defaultRepositoryName,
-                    runtimeServices: readRuntimeServices(),
-                });
+                const results = [];
+                for (const { provider, adapter } of publishProviders) {
+                    results.push(await adapter.describePublishTargets({ provider, defaultRepositoryName, runtimeServices: readRuntimeServices() }));
+                }
                 return {
                     success: true,
-                    auth: result.auth,
+                    auth: (results.find((result) => result.targets.length > 0) ?? results[0]).auth,
                     defaultRepositoryName,
-                    targets: [...result.targets],
+                    targets: results.flatMap((result) => result.targets),
                 };
             } catch (error) {
-                const mapped = mapProviderError(error);
-                return errorResponse(mapped.message, mapped.code) as ScmHostingRepositoryDescribePublishTargetsResponse;
+                const mapped = classifyHostingProviderError(error);
+                return errorResponse(mapped.message, mapped.code, mapped.details) as ScmHostingRepositoryDescribePublishTargetsResponse;
             }
         },
     });

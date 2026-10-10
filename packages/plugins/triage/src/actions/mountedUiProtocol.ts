@@ -20,6 +20,7 @@ export const TriageMountedUiOperationV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('openDetail'), entryRef: TriageEntryRefV1Schema, tab: identifier.optional() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('closeDetail') }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('selectDetailTab'), tab: identifier }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('selectLinkedSession'), sessionId: identifier }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('switchView'), view: defineProtocolUnion([defineProtocolLiteral('list'), defineProtocolLiteral('board')]) }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('setLens'), query: TriageListSettledQueryV1Schema, filters: TriageListFilterSelectionV1Schema,
     order: defineProtocolUnion([defineProtocolLiteral('newest'), defineProtocolLiteral('oldest'), defineProtocolLiteral('smart')]) }, closed),

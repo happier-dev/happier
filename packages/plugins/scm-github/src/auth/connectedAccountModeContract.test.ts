@@ -58,11 +58,15 @@ describe('GitHub Connected Account mode contract', () => {
       if (!authentication || authentication.kind !== 'manual') return;
 
       const request = vi.fn()
-        .mockResolvedValueOnce({
-          status: 200,
-          finalUrl: 'https://api.github.com/user',
-          headers: { 'x-oauth-scopes': 'repo, read:org' },
-          body: encodeJson({ id: 12_345, login: 'octocat', email: 'octocat@example.com' }),
+        .mockImplementationOnce(async (input: Readonly<{ headers: Readonly<Record<string, string>> }>) => {
+          // GitHub rejects identity requests without an application User-Agent.
+          const userAgent = Object.entries(input.headers).find(([name]) => name.toLowerCase() === 'user-agent')?.[1];
+          return userAgent?.trim() ? {
+            status: 200,
+            finalUrl: 'https://api.github.com/user',
+            headers: { 'x-oauth-scopes': 'repo, read:org' },
+            body: encodeJson({ id: 12_345, login: 'octocat', email: 'octocat@example.com' }),
+          } : { status: 403, headers: {}, body: encodeJson({ message: 'User-Agent required' }) };
         })
         .mockResolvedValueOnce({
           status: 200,

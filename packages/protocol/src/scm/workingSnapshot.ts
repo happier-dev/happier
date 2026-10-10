@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { ScmBackendIdSchema } from './backendIdentity.js';
@@ -13,13 +14,13 @@ import {
   ScmPullRequestStatusProjectionSchema,
 } from './pullRequests.js';
 
-export const ScmRepoModeSchema = z.enum(['.git', '.sl']);
+export const ScmRepoModeSchema = lazyZodSchema(() => z.enum(['.git', '.sl']));
 export type ScmRepoMode = z.infer<typeof ScmRepoModeSchema>;
 
-export const ScmDiffAreaSchema = z.enum(['included', 'pending', 'both']);
+export const ScmDiffAreaSchema = lazyZodSchema(() => z.enum(['included', 'pending', 'both']));
 export type ScmDiffArea = z.infer<typeof ScmDiffAreaSchema>;
 
-export const ScmChangeSetModelSchema = z.enum(['index', 'working-copy']);
+export const ScmChangeSetModelSchema = lazyZodSchema(() => z.enum(['index', 'working-copy']));
 export type ScmChangeSetModel = z.infer<typeof ScmChangeSetModelSchema>;
 
 export {
@@ -27,12 +28,13 @@ export {
   type ScmDefaultBranchPushPolicy,
 } from './defaultBranchPushPolicy.js';
 
-const ScmCapabilitiesSchemaCore = z.object({
+const ScmCapabilitiesSchemaCore = lazyZodSchema(() => z.object({
   capabilityScope: z.literal('local-backend').default('local-backend'),
   readStatus: z.boolean(),
   readDiffFile: z.boolean(),
   readDiffCommit: z.boolean(),
   readLog: z.boolean(),
+  readHistoryEntries: z.boolean().optional(),
   readBranches: z.boolean().optional(),
   readStash: z.boolean().optional(),
   writeInclude: z.boolean(),
@@ -92,8 +94,8 @@ const ScmCapabilitiesSchemaCore = z.object({
       push: z.string().optional(),
     })
     .optional(),
-});
-export const ScmCapabilitiesSchema = z.preprocess((value) => {
+}));
+export const ScmCapabilitiesSchema = lazyZodSchema(() => z.preprocess((value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return value;
   }
@@ -105,10 +107,10 @@ export const ScmCapabilitiesSchema = z.preprocess((value) => {
     ...record,
     worktreeCreate: record.workspaceWorktreeCreate,
   };
-}, ScmCapabilitiesSchemaCore);
+}, ScmCapabilitiesSchemaCore));
 export type ScmCapabilities = z.infer<typeof ScmCapabilitiesSchema>;
 
-export const ScmEntryKindSchema = z.enum([
+export const ScmEntryKindSchema = lazyZodSchema(() => z.enum([
   'modified',
   'added',
   'deleted',
@@ -116,10 +118,10 @@ export const ScmEntryKindSchema = z.enum([
   'copied',
   'untracked',
   'conflicted',
-]);
+]));
 export type ScmEntryKind = z.infer<typeof ScmEntryKindSchema>;
 
-export const ScmPathStatsSchema = z.object({
+export const ScmPathStatsSchema = lazyZodSchema(() => z.object({
   includedAdded: z.number().int().nonnegative().default(0),
   includedRemoved: z.number().int().nonnegative().default(0),
   pendingAdded: z.number().int().nonnegative().default(0),
@@ -127,10 +129,10 @@ export const ScmPathStatsSchema = z.object({
   isBinary: z.boolean().default(false),
   // False means bounded enrichment could not measure all line counts.
   isComplete: z.boolean().optional(),
-});
+}));
 export type ScmPathStats = z.infer<typeof ScmPathStatsSchema>;
 
-export const ScmWorkingEntrySchema = z.object({
+export const ScmWorkingEntrySchema = lazyZodSchema(() => z.object({
   path: z.string(),
   previousPath: z.string().nullable().default(null),
   kind: ScmEntryKindSchema,
@@ -139,10 +141,10 @@ export const ScmWorkingEntrySchema = z.object({
   hasIncludedDelta: z.boolean().default(false),
   hasPendingDelta: z.boolean().default(false),
   stats: ScmPathStatsSchema.prefault({}),
-});
+}));
 export type ScmWorkingEntry = z.infer<typeof ScmWorkingEntrySchema>;
 
-export const ScmWorktreeSchema = z.object({
+export const ScmWorktreeSchema = lazyZodSchema(() => z.object({
   id: z.string().min(1).optional(),
   path: z.string(),
   branch: z.string().nullable(),
@@ -151,17 +153,17 @@ export const ScmWorktreeSchema = z.object({
   isPrunable: z.boolean().optional(),
   changeCount: z.number().int().nonnegative().optional(),
   lastActivityAt: z.number().int().nonnegative().optional(),
-});
+}));
 export type ScmWorktree = z.infer<typeof ScmWorktreeSchema>;
 
-export const ScmRemoteInfoSchema = z.object({
+export const ScmRemoteInfoSchema = lazyZodSchema(() => z.object({
   name: z.string().min(1),
   fetchUrl: z.string().optional(),
   pushUrl: z.string().optional(),
-});
+}));
 export type ScmRemoteInfo = z.infer<typeof ScmRemoteInfoSchema>;
 
-export const ScmWorkingSnapshotSchema = z.object({
+export const ScmWorkingSnapshotSchema = lazyZodSchema(() => z.object({
   projectKey: z.string(),
   fetchedAt: z.number().int(),
   freshness: VcsLocalStateFreshnessSchema.optional(),
@@ -202,7 +204,7 @@ export const ScmWorkingSnapshotSchema = z.object({
     pendingRemoved: z.number().int().nonnegative(),
     isComplete: z.boolean().optional(),
   }),
-});
+}));
 export type ScmWorkingSnapshot = z.infer<typeof ScmWorkingSnapshotSchema>;
 /** RPC input may omit neutral facts; parsed/domain snapshots remain fully populated. */
 export type ScmWorkingSnapshotInput = Omit<z.input<typeof ScmWorkingSnapshotSchema>, 'capabilities'> & {

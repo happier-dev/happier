@@ -2,6 +2,7 @@ import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-acco
 import { describe, expect, it } from 'vitest';
 
 import { classifyGithubTransportFailure } from '../triage/errors.js';
+import { GITHUB_API_VERSION } from './githubProviderContracts.js';
 
 import {
   createGithubListedAccountApiClient,
@@ -88,7 +89,10 @@ describe('GitHub API URL admission', () => {
             headers?: Readonly<Record<string, string>>;
           }>) {
             attempted.push(input);
-            return { status: 200, headers: {}, body: new TextEncoder().encode('{}') };
+            // GitHub rejects requests without an application User-Agent, including
+            // authenticated reads. The pinned HTTP transport adds no implicit one.
+            const userAgent = Object.entries(input.headers ?? {}).find(([key]) => key.toLowerCase() === 'user-agent')?.[1];
+            return { status: userAgent?.trim() ? 200 : 403, headers: {}, body: new TextEncoder().encode('{}') };
           },
         },
       },
@@ -99,7 +103,16 @@ describe('GitHub API URL admission', () => {
       ACCOUNT_REF,
     );
 
-    await expect(client.request({ url: 'https://api.github.com/repos/o/r' })).resolves.toBeDefined();
+    await expect(client.request({
+      url: 'https://api.github.com/repos/o/r',
+      headers: {
+        accept: 'text/plain',
+        authorization: 'Bearer caller-override',
+        'user-agent': '',
+        'x-github-api-version': 'caller-override',
+        'Content-Type': 'application/json',
+      },
+    })).resolves.toMatchObject({ status: 200 });
     for (const refused of [
       'https://api.github.com.evil.test/repos/o/r',
       'http://api.github.com/repos/o/r',
@@ -116,7 +129,13 @@ describe('GitHub API URL admission', () => {
     expect(attempted).toEqual([expect.objectContaining({
       url: 'https://api.github.com/repos/o/r',
       method: 'GET',
-      headers: expect.objectContaining({ Authorization: 'Bearer t' }),
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: 'Bearer t',
+        'User-Agent': 'happier.scm.forge.github',
+        'X-GitHub-Api-Version': GITHUB_API_VERSION,
+        'Content-Type': 'application/json',
+      },
     })]);
   });
 });

@@ -69,6 +69,10 @@ function snapshot(contributions: readonly unknown[]): PluginUiTargetedContributi
 }
 
 describe('the way out of an unconfigured PRs & Issues', () => {
+  it('offers no source destination before an Account mount has an admitted contribution snapshot', () => {
+    expect(planTriageConfigureSourceOffersV1(undefined)).toEqual([]);
+  });
+
   it('qualifies the page with the contributor the host admitted, never with one a descriptor named', () => {
     const offers = planTriageConfigureSourceOffersV1(snapshot([
       contribution({

@@ -22,6 +22,8 @@ type InvolvementReason = Readonly<{
     level: 'required' | 'suggested';
     reasonId: string;
     reasonLabel: string;
+    /** The reason chip's mark, a shared icon token (`PLUGIN_UI_ICON_TOKENS_V1`); words alone when absent. */
+    reasonIcon?: string;
 }>;
 
 /**
@@ -33,9 +35,9 @@ const INVOLVEMENT_REASONS: readonly (readonly [
     TriageSourceViewerFactsV1['involvement'][number],
     InvolvementReason,
 ])[] = Object.freeze([
-    ['reviewRequested', { level: 'required', reasonId: 'involvement/review-requested', reasonLabel: 'Your review was requested' }],
-    ['assignee', { level: 'required', reasonId: 'involvement/assignee', reasonLabel: 'Assigned to you' }],
-    ['mentioned', { level: 'suggested', reasonId: 'involvement/mentioned', reasonLabel: 'You were mentioned' }],
+    ['reviewRequested', { level: 'required', reasonId: 'involvement/review-requested', reasonLabel: 'Your review was requested', reasonIcon: 'review' }],
+    ['assignee', { level: 'required', reasonId: 'involvement/assignee', reasonLabel: 'Assigned to you', reasonIcon: 'assigned' }],
+    ['mentioned', { level: 'suggested', reasonId: 'involvement/mentioned', reasonLabel: 'You were mentioned', reasonIcon: 'mention' }],
     ['author', { level: 'suggested', reasonId: 'involvement/author', reasonLabel: 'You opened it' }],
     ['participating', { level: 'suggested', reasonId: 'involvement/participating', reasonLabel: 'You are participating' }],
     ['subscribed', { level: 'suggested', reasonId: 'involvement/subscribed', reasonLabel: 'You are subscribed' }],
@@ -83,7 +85,12 @@ export function deriveDisplayedAttention(
         if (observation.outcome.kind !== 'present') continue;
         const candidate = candidateFor(observation.outcome.viewer);
         if (!candidate) continue;
-        candidates.push({ ...candidate, fromSourceInstanceId: observation.sourceInstanceId });
+        candidates.push({
+        level: candidate.level,
+        reasonId: candidate.reasonId,
+        reasonLabel: candidate.reasonLabel,
+        fromSourceInstanceId: observation.sourceInstanceId,
+    });
     }
     if (candidates.length === 0) return null;
     // Level descending, then the stable source-instance id ascending. The one
@@ -95,4 +102,16 @@ export function deriveDisplayedAttention(
         || (left.fromSourceInstanceId < right.fromSourceInstanceId ? -1 : left.fromSourceInstanceId > right.fromSourceInstanceId ? 1 : 0)
     ));
     return candidates[0] ?? null;
+}
+
+/**
+ * The chip mark of a displayed reason, from the one table that owns the
+ * aggregate's involvement reasons. A source-declared reason names no mark, so it
+ * is drawn as its words alone rather than with a guess from them.
+ */
+export function readTriageAttentionReasonIconV1(reasonId: string): string | null {
+    for (const [, reason] of INVOLVEMENT_REASONS) {
+        if (reason.reasonId === reasonId) return reason.reasonIcon ?? null;
+    }
+    return null;
 }

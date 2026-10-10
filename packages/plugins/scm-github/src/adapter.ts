@@ -56,11 +56,11 @@ function isSafeNameWithOwner(value: string): boolean {
   ));
 }
 
-function readTrustedBaseUrl(provider: ScmHostingProviderRef, matchesHost: GithubHostMatcher): string | null {
+function readTrustedBaseUrl(baseUrl: string, matchesHost: GithubHostMatcher): string | null {
   try {
-    const parsed = new URL(provider.baseUrl);
+    const parsed = new URL(baseUrl);
     if (parsed.protocol !== 'https:' || parsed.pathname.replace(/\/+$/, '') !== '') return null;
-    if (parsed.port || parsed.search || parsed.hash || !matchesHost(parsed.hostname)) return null;
+    if (parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash || !matchesHost(parsed.hostname)) return null;
     return parsed.origin;
   } catch {
     return null;
@@ -72,11 +72,21 @@ export function createGithubScmHostingProviderAdapter(
 ): GithubScmHostingProviderAdapter {
   const matchesHost = options?.hostMatcher
     ?? createExactHostMatcher(options?.exactHosts ?? GITHUB_REMOTE_HOST_MATCHERS.exactHosts);
+  const defaultHosts = options?.exactHosts ?? (options?.hostMatcher ? [] : GITHUB_REMOTE_HOST_MATCHERS.exactHosts);
+  const admittedBases = (connectedAccountBases: readonly string[] = []) => new Set([
+    ...defaultHosts.map((host) => readTrustedBaseUrl(`https://${host}`, matchesHost)),
+    ...connectedAccountBases.map((base) => readTrustedBaseUrl(base, () => true)),
+  ].filter((base): base is string => base !== null));
 
   return Object.freeze({
+    listDeployments(input: Readonly<{ connectedAccountBases?: readonly string[] }>) {
+      return [...admittedBases(input.connectedAccountBases)].map((baseUrl) => ({
+        id: GITHUB_SCM_HOSTING_PROVIDER_ID, kind: 'github' as const, displayName: 'GitHub', baseUrl,
+      }));
+    },
     detectRemote(input: ScmHostingProviderRemoteDetectionInput) {
       const parsed = parseScmRemoteUrl(input.remoteUrl);
-      if (!parsed || !matchesHost(parsed.host)) return null;
+      if (!parsed || (!matchesHost(parsed.host) && !admittedBases(input.connectedAccountBases).has(`https://${parsed.host}`))) return null;
       // An exactly matched host is the binding's own origin, which carries no port. A ported
       // remote names a different endpoint and must never be re-spelled as `https://<host>`.
       if (parsed.syntax === 'url' && parsed.port !== null) return null;
@@ -109,7 +119,8 @@ export function createGithubScmHostingProviderAdapter(
       ) {
         return null;
       }
-      const baseUrl = readTrustedBaseUrl(provider, matchesHost);
+      const baseUrl = readTrustedBaseUrl(provider.baseUrl, (host) => matchesHost(host)
+        || admittedBases(input.connectedAccountBases).has(`https://${host}`));
       if (!baseUrl) return null;
       return `${stripTrailingSlash(baseUrl)}/${provider.nameWithOwner}/compare/${encodeCompareRef(input.base)}...${encodeCompareRef(input.head)}`;
     },

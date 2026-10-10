@@ -63,8 +63,11 @@ import { renderSurface as renderShellSurface } from './surface.js';
 import { TriageListShell } from './shell/root.js';
 import { TRIAGE_UI_TRANSLATIONS } from './translations.js';
 import { toolbarMenuItem } from './shell/toolbarMenus.test-support.js';
+import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
+import { invokeTriageMountedUiAction } from './mountedActions.js';
 import {
     buildTriageRouteSubPathV1,
+    parseTriageRouteSubPathV1,
     TRIAGE_ROUTE_DEFAULT_LENS_V1,
 } from './navigation/location.js';
 
@@ -239,6 +242,7 @@ function createHarness() {
     const actionCalls: string[] = [];
     const unroutedActions: string[] = [];
     const publishedContexts: (PluginUiContextEnrichmentV1 | null)[] = [];
+    const settledLocations: string[] = [];
     const accountKv = createTestkitAccountKv();
 
     /**
@@ -294,6 +298,7 @@ function createHarness() {
         executeAction,
         ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         publishedContexts,
+        settledLocations,
         scanCalls,
         state,
         unroutedActions,
@@ -335,7 +340,10 @@ async function mountSurface(
                 // Lens edits are route-owned. These cases exercise list/window
                 // projection, so let the host settle their canonical location;
                 // rejection/rollback is covered at the mounted route boundary.
-                replacePageLocation: ({ subPath }) => subPath,
+                replacePageLocation: ({ subPath }) => {
+                    harness.settledLocations.push(subPath);
+                    return subPath;
+                },
             },
         });
     });
@@ -404,6 +412,40 @@ const SOURCE_REACHING_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 
 describe('the mounted PRs & Issues surface', () => {
+    it('applies Smart precedence through the addressed mounted Action and retains it when omitted', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-smart-parity');
+        await settleWindow('view', shell);
+        const detail = harness.publishedContexts.at(-1)?.detail;
+        if (!detail || typeof detail !== 'object' || Array.isArray(detail)) throw new Error('Missing current UI context');
+        const address = detail.mountedAction;
+        if (!address || typeof address !== 'object' || Array.isArray(address)) throw new Error('Missing mounted address');
+        const smartPolicy = { v: 1, precedence: ['activity', 'attention'] } as const;
+        for (const policy of [smartPolicy, undefined]) {
+            const input = TriageMountedUiInputV1Schema.parse({ mountId: address.mountId, operation: {
+                kind: 'setLens', query: '', filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, order: 'smart',
+                ...(policy === undefined ? {} : { smartPolicy: policy }),
+            } });
+            await act(async () => {
+                expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, input.mountId, input.operation,
+                    new AbortController().signal)).toEqual({ status: 'applied' });
+            });
+            expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ order: 'smart', smartPolicy });
+        }
+        const invalid = TriageMountedUiInputV1Schema.parse({ mountId: address.mountId, operation: {
+            kind: 'setLens', query: '', filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, order: 'smart',
+            smartPolicy: { v: 1, precedence: ['activity', 'activity'] },
+        } });
+        await act(async () => {
+            expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, invalid.mountId, invalid.operation,
+                new AbortController().signal)).toEqual({ status: 'rejected' });
+        });
+        expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ smartPolicy });
+        await shell.dispose();
+        expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, String(address.mountId),
+            { kind: 'closeDetail' }, new AbortController().signal)).toEqual({ status: 'unavailable' });
+    });
+
     it('resolves its executable chrome from the plugin translation bundle', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', {

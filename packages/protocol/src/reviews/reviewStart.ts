@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -6,10 +7,11 @@ import {
 } from './scmPullRequestScope.js';
 import { ReviewScmScopeV1Schema } from './scope.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentials/resourceV1.js';
-import { ExecutionRunTeamCredentialSessionBindingConsentV1Schema } from '../execution/runs/startRequest.js';
+import { ExecutionRunStartRequestBaseSchema, ExecutionRunTeamCredentialSessionBindingConsentV1Schema } from '../execution/runs/startRequest.js';
 import { SecretReferenceOverlayV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { ReviewNarratorSelectionSchema } from './reviewNarration.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -18,29 +20,29 @@ import { ReviewNarratorSelectionSchema } from './reviewNarration.js';
  * can be interpreted by different review engines (LLM prompt reviews, native CLIs).
  */
 
-export const ReviewChangeTypeSchema = z.enum(['all', 'committed', 'uncommitted']);
+export const ReviewChangeTypeSchema = lazyZodSchema(() => z.enum(['all', 'committed', 'uncommitted']));
 export type ReviewChangeType = z.infer<typeof ReviewChangeTypeSchema>;
 
-export const ReviewBaseSchema = z.union([
+export const ReviewBaseSchema = lazyZodSchema(() => z.union([
   z.object({ kind: z.literal('none') }).passthrough(),
   z.object({ kind: z.literal('branch'), baseBranch: z.string().min(1) }).passthrough(),
   z.object({ kind: z.literal('commit'), baseCommit: z.string().min(1) }).passthrough(),
-]);
+]));
 export type ReviewBase = z.infer<typeof ReviewBaseSchema>;
 
-export const ReviewEngineIdSchema = z.string().trim().min(1);
+export const ReviewEngineIdSchema = lazyZodSchema(() => z.string().trim().min(1));
 export type ReviewEngineId = z.infer<typeof ReviewEngineIdSchema>;
 
-export const ReviewEngineInputSchema = z.object({}).passthrough();
+export const ReviewEngineInputSchema = lazyZodSchema(() => z.object({}).passthrough());
 export type ReviewEngineInput = z.infer<typeof ReviewEngineInputSchema>;
 
-export const ReviewEngineInputsSchema = z.record(ReviewEngineIdSchema, ReviewEngineInputSchema).default({});
+export const ReviewEngineInputsSchema = lazyZodSchema(() => z.record(ReviewEngineIdSchema, ReviewEngineInputSchema).default({}));
 export type ReviewEngineInputs = z.infer<typeof ReviewEngineInputsSchema>;
 const DEFAULT_REVIEW_ENGINE_INPUTS: ReviewEngineInputs = ReviewEngineInputsSchema.parse({});
 
 export const REVIEW_SCM_SCOPE_INPUT_KEY = 'scmReviewScope';
 
-export const ReviewStartInputSchema = z
+export const ReviewStartInputSchema = lazyZodSchema(() => z
   .object({
     roleId: z.string().trim().min(1).optional(),
     launchProfileId: z.string().trim().min(1).optional(),
@@ -66,7 +68,12 @@ export const ReviewStartInputSchema = z
     permissionMode: z.string().min(1).default('read_only'),
     profileId: z.string().trim().min(1).optional(),
     profileSourceCustody: PluginSourceCustodyV1Schema.optional(),
+    // Match the other fan-out Actions: exact target entries override the blanket selection.
+    // The shared Action composer normalizes these before any Run starts.
+    connectedServices: StrictJsonValueSchema.optional(),
+    connectedServicesByBackendTargetKey: z.record(z.string(), StrictJsonValueSchema).optional(),
     secretReferenceOverlay: SecretReferenceOverlayV1Schema.optional(),
+    modelSelection: ExecutionRunStartRequestBaseSchema.shape.modelSelection,
     teamCredentialModel: TeamCredentialProviderModelSelectionV1Schema.optional(),
     teamCredentialSessionBindingConsent: ExecutionRunTeamCredentialSessionBindingConsentV1Schema.optional(),
   })
@@ -105,7 +112,7 @@ export const ReviewStartInputSchema = z
         });
       }
     }
-  })
+  }))
   // Intentionally no engine-specific requirements here: this is a generalized,
   // cross-surface intent input. Engines may interpret optional `engines.*` blocks.
   ;

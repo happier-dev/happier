@@ -174,7 +174,7 @@ export function readGithubContentCreationThrottleRetryAfterMs(
 }
 
 function withoutReservedGithubHeaders(headers: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
-  const reserved = new Set(['accept', 'authorization', 'x-github-api-version']);
+  const reserved = new Set(['accept', 'authorization', 'user-agent', 'x-github-api-version']);
   return Object.freeze(Object.fromEntries(
     Object.entries(headers).filter(([name]) => !reserved.has(name.toLowerCase())),
   ));
@@ -249,6 +249,7 @@ function createGithubApiClientWithAuthorization(
         ...withoutReservedGithubHeaders(input.headers ?? {}),
         Accept: 'application/vnd.github+json',
         Authorization: authorizationHeader,
+        'User-Agent': context.plugin.id,
         'X-GitHub-Api-Version': GITHUB_API_VERSION,
       },
       ...(input.body === undefined ? {} : { body: input.body }),

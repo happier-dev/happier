@@ -347,11 +347,16 @@ export function mapSentryIssueForInvokedInstance(
   );
   truncated ||= scopeLabel.truncated;
 
+  // The short id as Sentry writes it, one bounded display line; presentation only, never identity.
+  const shortId = readString(raw.shortId);
+  const designation = shortId === null ? null : projectTriageDisplayTextV1(shortId, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+  truncated ||= designation?.truncated === true;
+
   const locator = buildSentryLocator({
     permalink: readString(raw.permalink),
     organizationSlug: input.organizationSlug,
     projectSlug,
-    shortId: readString(raw.shortId),
+    shortId,
     deploymentOrigin: input.configured.deploymentOrigin,
     organizationId: input.configured.organizationId,
     entryId,
@@ -369,6 +374,7 @@ export function mapSentryIssueForInvokedInstance(
       }),
       title: title.value.length === 0 ? entryId : title.value,
       scopeLabel: scopeLabel.value.length === 0 ? input.configured.organizationId : scopeLabel.value,
+      ...(designation === null || designation.value.length === 0 ? {} : { designation: designation.value }),
       state: mapSentryIssueState(raw.status, raw.substatus),
       locator,
       facts,

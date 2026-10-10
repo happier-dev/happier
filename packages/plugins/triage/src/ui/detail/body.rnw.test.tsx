@@ -247,6 +247,21 @@ describe('the tabbed detail body (r0.42)', () => {
     await expect(body.getByText(FALLBACK)).resolves.toBeDefined();
   });
 
+  it('names a tab\'s count beside its title when the source summarized it', async () => {
+    const plan = planTriageDetailTabsV1({
+      workflowSubject: 'pullRequest',
+      entryTabs: [{ kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'files' }, { kind: 'shared', id: 'checks', summaryFact: 'example/checks' }],
+      entryFacts: [{ id: 'example/checks', importance: 'primary', value: { kind: 'status', value: '2 failing', tone: 'danger' } }],
+      fixPullRequest: null,
+    });
+    const body = await mountBody(plan.kind === 'tabs' ? plan.tabs : []);
+    const strip = document.querySelector('[role="tablist"]')?.textContent ?? '';
+    expect(strip).toContain('Checks2 failing');
+    // Files has no summary, so it says nothing rather than an invented zero.
+    expect(strip).toContain('FilesChecks');
+    await body.dispose();
+  });
+
   it('mounts the source asking for exactly the tab it shows', async () => {
     const body = await mountBody(PR_TABS.kind === 'tabs' ? PR_TABS.tabs : []);
 

@@ -24,21 +24,26 @@ afterEach(async () => {
 });
 
 describe('the first paint of PRs & Issues', () => {
-    it('is the list region itself, loading, rather than a stand-in that is swapped out', async () => {
+    it.each(['session', 'account'] as const)('keeps the list region and toolbar loading on a %s mount', async (scope) => {
         const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
+        const surfaceContext = createSurfaceContextFixture({
+            mount: {
+                kind: 'destination',
+                destination: { pluginId: 'happier.triage', localId: 'triage' },
+                container: 'appPage',
+            },
+        });
+        if (scope === 'account') {
+            surfaceContext.target = { kind: 'app' };
+            delete surfaceContext.targetedContributions;
+        }
         let fixture!: PluginUiTestkit;
         await act(async () => {
             fixture = await createPluginUiTestkit({
                 identity: { instanceId: 'fixture-instance-first-paint', mountNonce: 'fixture-mount-first-paint' },
                 authorPlugin: { id: 'happier.triage', version: '0.0.0' },
                 surface: renderShellSurface,
-                surfaceContext: createSurfaceContextFixture({
-                    mount: {
-                        kind: 'destination',
-                        destination: { pluginId: 'happier.triage', localId: 'triage' },
-                        container: 'appPage',
-                    },
-                }),
+                surfaceContext,
                 adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
                 handlers: {
                     publishCurrentUiContext: () => undefined,

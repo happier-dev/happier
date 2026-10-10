@@ -8,6 +8,7 @@ import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeService
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAzureDevopsOperationsAdapter } from './azureDevopsAdapter.js';
+import { mapAzurePullRequest } from './mapping.js';
 
 const provider: ScmHostingProviderRef = {
   id: 'happier.scm.forge.azure-devops/azure-devops',
@@ -51,6 +52,7 @@ function createAzurePullRequest(overrides?: Readonly<Record<string, unknown>>): 
     pullRequestId: 42,
     title: 'Add Azure support',
     status: 'active',
+    creationDate: '2026-10-01T12:00:00Z',
     isDraft: false,
     sourceRefName: 'refs/heads/feature/azure',
     targetRefName: 'refs/heads/main',
@@ -94,10 +96,41 @@ function getOpenOrReusePullRequest(adapter: ReturnType<typeof createAzureDevopsO
 }
 
 describe('Azure DevOps operations adapter', () => {
-  it('lists valid Azure pull requests and skips malformed rows', async () => {
+  it.each([
+    { status: 'active', state: 'draft' },
+    { status: 'completed', state: 'merged' },
+    { status: 'abandoned', state: 'closed' },
+  ] as const)('retains native $status outcome separately from its draft flag', ({ status, state }) => {
+    const mapped = mapAzurePullRequest(provider, createAzurePullRequest({
+      status,
+      isDraft: true,
+      closedDate: '2026-10-02T12:00:00Z',
+    }));
+    expect(mapped).toMatchObject({ number: 42, state, isDraft: true });
+    if (state === 'merged') expect(mapped).toHaveProperty('mergedAtMs', Date.parse('2026-10-02T12:00:00Z'));
+    else expect(mapped).not.toHaveProperty('mergedAtMs');
+  });
+  it('uses native completed close time for merge time while abandoned and invalid times remain distinct', () => {
+    const nativeClose = '2026-10-02T12:00:00Z';
+    const merged = mapAzurePullRequest(provider, createAzurePullRequest({ status: 'completed', closedDate: nativeClose }));
+    expect(merged).toMatchObject({ state: 'merged', closedAtMs: Date.parse(nativeClose), mergedAtMs: Date.parse(nativeClose) });
+    const abandoned = mapAzurePullRequest(provider, createAzurePullRequest({ status: 'abandoned', closedDate: nativeClose }));
+    expect(abandoned).toMatchObject({ state: 'closed', closedAtMs: Date.parse(nativeClose) });
+    expect(abandoned).not.toHaveProperty('mergedAtMs');
+    const invalid = mapAzurePullRequest(provider, createAzurePullRequest({ status: 'completed', creationDate: 'invalid', closedDate: 'invalid' }));
+    expect(invalid).toMatchObject({ number: 42, state: 'merged' });
+    expect(invalid).not.toHaveProperty('createdAtMs');
+    expect(invalid).not.toHaveProperty('closedAtMs');
+    expect(invalid).not.toHaveProperty('mergedAtMs');
+  });
+  it.each([
+    { state: 'open', nativeStatus: 'active' },
+    { state: 'closed', nativeStatus: 'abandoned' },
+    { state: 'merged', nativeStatus: 'completed' },
+  ] as const)('lists $state Azure pull requests and skips malformed rows', async ({ state, nativeStatus }) => {
     const runtimeServices = createRuntimeServices({
-      'repos pr list --organization https://dev.azure.com/happier-dev --project platform --repository happier --source-branch feature/azure --target-branch main --status active --output json': [
-        createAzurePullRequest(),
+      [`repos pr list --organization https://dev.azure.com/happier-dev --project platform --repository happier --source-branch feature/azure --target-branch main --status ${nativeStatus} --output json`]: [
+        createAzurePullRequest({ status: nativeStatus }),
         { pullRequestId: 99, title: '', sourceRefName: 'refs/heads/bad' },
       ],
     });
@@ -107,7 +140,7 @@ describe('Azure DevOps operations adapter', () => {
       provider,
       base: 'main',
       head: 'feature/azure',
-      state: 'open',
+      state,
       runtimeServices,
     })).resolves.toEqual([
       expect.objectContaining({
@@ -116,7 +149,8 @@ describe('Azure DevOps operations adapter', () => {
         baseBranch: 'main',
         headBranch: 'feature/azure',
         headRepositoryNameWithOwner: 'happier-dev/platform/happier',
-        state: 'open',
+        state,
+        createdAtMs: Date.parse('2026-10-01T12:00:00Z'),
       }),
     ]);
   });

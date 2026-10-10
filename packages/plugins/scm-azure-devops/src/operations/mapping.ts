@@ -6,7 +6,7 @@ import type {
   ScmPullRequestState,
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
-import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
+import { isRecord, parseTimestampMs, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 import {
   buildAzureRepositoryWebUrl,
@@ -78,11 +78,11 @@ function readAzurePullRequestHeadRepository(input: Readonly<{
 }
 
 function mapAzurePullRequestState(raw: Record<string, unknown>): ScmPullRequestState {
-  if (raw.isDraft === true) return 'draft';
   const status = readString(raw.status)?.toLowerCase();
-  if (status === 'active') return 'open';
   if (status === 'completed') return 'merged';
   if (status === 'abandoned') return 'closed';
+  if (raw.isDraft === true) return 'draft';
+  if (status === 'active') return 'open';
   return 'unknown';
 }
 
@@ -123,6 +123,9 @@ export function mapAzurePullRequest(
   const baseSha = readNestedString(raw, 'lastMergeTargetCommit', 'commitId');
   const isDraft = typeof raw.isDraft === 'boolean' ? raw.isDraft : undefined;
   const author = readAuthor(raw);
+  const state = mapAzurePullRequestState(raw);
+  const createdAtMs = parseTimestampMs(raw.creationDate);
+  const closedAtMs = parseTimestampMs(raw.closedDate);
 
   return {
     provider,
@@ -136,7 +139,10 @@ export function mapAzurePullRequest(
     isCrossRepository: headRepositoryNameWithOwner.toLowerCase() !== coordinates.nameWithOwner.toLowerCase(),
     ...(headSha !== null ? { headSha } : {}),
     ...(baseSha !== null ? { baseSha } : {}),
-    state: mapAzurePullRequestState(raw),
+    state,
+    ...(createdAtMs !== null ? { createdAtMs } : {}),
+    ...(closedAtMs !== null ? { closedAtMs } : {}),
+    ...(state === 'merged' && closedAtMs !== null ? { mergedAtMs: closedAtMs } : {}),
     ...(typeof isDraft === 'boolean' ? { isDraft } : {}),
     ...(author ? { author } : {}),
   };

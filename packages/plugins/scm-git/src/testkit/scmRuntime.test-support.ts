@@ -7,12 +7,14 @@ import {
 import {
     runWithBackendRuntimeServices as runWithScmBackendRuntimeServices,
     type BackendCommandRunInput as ScmBackendCommandRunInput,
+    type BackendCommandStreamInput,
     type BackendCommandRunResult as ScmBackendCommandRunResult,
     type BackendRuntimeServices as ScmBackendRuntimeServices,
 } from '@happier-dev/plugin-sdk/scm/backend';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
+import { runScmCommand as runHostScmCommand } from '@/scm/runtime';
 
-export type GitScmCommandRunner = (input: ScmBackendCommandRunInput) => Promise<ScmBackendCommandRunResult>;
+export type GitScmCommandRunner = (input: ScmBackendCommandRunInput | BackendCommandStreamInput) => Promise<ScmBackendCommandRunResult>;
 
 // Real OS/Git boundary for tests that must pause a prepared ref transaction.
 function runInteractiveGitCommand(input: ScmBackendCommandRunInput): Promise<ScmBackendCommandRunResult> {
@@ -91,6 +93,11 @@ function runInteractiveGitCommand(input: ScmBackendCommandRunInput): Promise<Scm
 
 export function createRealGitScmBackendRuntimeServices(): ScmBackendRuntimeServices {
     return {
+        // Real incremental reads use the canonical host process owner, including
+        // byte admission, cancellation and owned cleanup, rather than a second runner.
+        async runCommandStreaming(input) {
+            return runHostScmCommand({ ...input, bin: input.command, args: [...input.args] });
+        },
         async runCommand(input) {
             if (input.command !== 'git') {
                 return {
@@ -182,6 +189,7 @@ export function runWithRealGitScmRuntime<T>(
 
 export function runWithGitScmCommandRunner<T>(runner: GitScmCommandRunner, callback: () => T): T {
     return runWithScmBackendRuntimeServices({
+        runCommandStreaming: runner,
         async runCommand(input) {
             if (input.command !== 'git') {
                 return {

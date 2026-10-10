@@ -6,7 +6,7 @@ import type {
   ScmPullRequestState,
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
-import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
+import { isRecord, parseTimestampMs, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 import { readBitbucketCloneUrl } from '../bitbucketCloneUrl.js';
 import {
@@ -50,10 +50,10 @@ function sameNameWithOwner(left: string, right: string): boolean {
 
 function mapBitbucketState(raw: Record<string, unknown>): ScmPullRequestState {
   const state = readString(raw.state)?.toUpperCase();
-  if (readString(raw.draft) === 'true' || raw.draft === true) return 'draft';
-  if (state === 'OPEN') return 'open';
   if (state === 'MERGED') return 'merged';
   if (state === 'DECLINED' || state === 'SUPERSEDED') return 'closed';
+  if (readString(raw.draft) === 'true' || raw.draft === true) return 'draft';
+  if (state === 'OPEN') return 'open';
   return 'unknown';
 }
 
@@ -94,6 +94,7 @@ export function mapBitbucketPullRequest(
   const headSha = readNestedString(raw, 'source', 'commit', 'hash');
   const isDraft = typeof raw.draft === 'boolean' ? raw.draft : undefined;
   const author = readBitbucketAuthor(raw);
+  const createdAtMs = parseTimestampMs(raw.created_on);
 
   return {
     provider,
@@ -110,6 +111,7 @@ export function mapBitbucketPullRequest(
     ...(headSha !== null ? { headSha } : {}),
     ...(baseSha !== null ? { baseSha } : {}),
     state: mapBitbucketState(raw),
+    ...(createdAtMs !== null ? { createdAtMs } : {}),
     ...(typeof isDraft === 'boolean' ? { isDraft } : {}),
     ...(author ? { author } : {}),
   };

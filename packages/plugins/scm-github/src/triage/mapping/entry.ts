@@ -340,6 +340,12 @@ export function projectGithubEntry(
   const state = view.kindId === 'pull-request'
     ? mapGithubPullRequestState(view.state)
     : mapGithubIssueState(view.state);
+  // Who opened it, as one bounded display line beside the row facts' own copy of the login.
+  const author = view.authorLogin === null
+    ? null
+    : projectTriageDisplayTextV1(view.authorLogin, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+  // The number as GitHub writes it, one bounded display line; presentation only.
+  const designation = projectTriageDisplayTextV1(`#${view.number}`, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
   const facts = buildGithubRowFacts({
     kindId: view.kindId,
     number: view.number,
@@ -363,6 +369,8 @@ export function projectGithubEntry(
       kindId: view.kindId,
       title: title.value,
       scopeLabel: scopeLabel.value,
+      ...(author === null || author.value === '' ? {} : { authorLabel: author.value }),
+      ...(designation.value === '' ? {} : { designation: designation.value }),
       webUrl: locator.webUrl,
       nameWithOwner: buildGithubNameWithOwner(view.owner, view.name),
       createdAtMs: view.createdAtMs,
@@ -370,7 +378,8 @@ export function projectGithubEntry(
       nativeRevision: view.nativeRevision,
       state,
       rowFacts: facts.rowFacts,
-      projectionTruncated: title.truncated || scopeLabel.truncated || facts.truncated,
+      projectionTruncated: title.truncated || scopeLabel.truncated || author?.truncated === true
+        || designation.truncated || facts.truncated,
     }),
   });
 }

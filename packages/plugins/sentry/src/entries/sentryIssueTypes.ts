@@ -58,6 +58,8 @@ export type SentryIssueSnapshotV1 = Readonly<{
   localRef: SentryLocalRefV1;
   title: string;
   scopeLabel: string;
+  /** Sentry's short id ("CHECKOUT-WEB-4F2"), one bounded display line; absent when Sentry sends none. */
+  designation?: string;
   state: SentryEntryStateV1;
   locator: SentryLocatorV1;
   facts: readonly SentryRowFactV1[];

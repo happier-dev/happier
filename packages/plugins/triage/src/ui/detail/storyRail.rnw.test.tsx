@@ -77,7 +77,7 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
-async function mountRail(nextProposals: readonly ReviewCommentV1[] = []): Promise<PluginUiTestkit> {
+async function mountRail(nextProposals: readonly ReviewCommentV1[] = [], session: SessionStateV1 = SESSION): Promise<PluginUiTestkit> {
   answers.length = 0;
   opened.length = 0;
   proposals = nextProposals;
@@ -90,7 +90,7 @@ async function mountRail(nextProposals: readonly ReviewCommentV1[] = []): Promis
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
-        readSession: () => SESSION,
+        readSession: () => session,
         watchSession: () => undefined,
         respondToSessionPermission: (input) => {
           answers.push(input.request);
@@ -108,6 +108,22 @@ async function mountRail(nextProposals: readonly ReviewCommentV1[] = []): Promis
 }
 
 describe('the story rail\'s live agent', () => {
+  it('names the Agent that needs permission, independent of the linked Session title', async () => {
+    const rail = await mountRail([], {
+      ...SESSION,
+      agent: { agentId: 'codex', displayName: 'Codex', brand: { pluginId: 'happier.agent.codex' } },
+    });
+    await rail.findByRole('button', { name: 'Allow once' });
+    await expect(rail.getByText('Codex needs you')).resolves.toBeDefined();
+  });
+
+  it('keeps the generic permission sentence when Agent identity is absent', async () => {
+    const rail = await mountRail();
+    await rail.findByRole('button', { name: 'Allow once' });
+    await expect(rail.getByText('Needs your permission')).resolves.toBeDefined();
+    await expect(rail.queryByText('Codex needs you')).resolves.toBeUndefined();
+  });
+
   it('uses the linked Session destination when scoped review rows omit their optional Session id', async () => {
     const { sessionId: _sessionId, ...scopedFinding } = finding('4', 'session-a');
     const rail = await mountRail([finding('1', 'session-a'), finding('2', 'session-a'),

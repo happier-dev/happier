@@ -227,23 +227,28 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         await expect(toolbarMenuItem(shell, 'Views', 'menuitemradio', { name: 'No saved view' })).resolves.toBeDefined();
     });
 
-    it('keeps every selected constraint visible and removable outside the overlay', async () => {
+    it('keeps every selected constraint visible and removable as a token in the search field, in both arms', async () => {
         const shell = await mountShell();
         await measureFillRegion(WIDE_WIDTH);
         const openFacet = await toolbarMenuItem(shell, 'State', 'menuitemcheckbox', { name: 'Open' });
         await act(async () => { await shell.press(openFacet); });
 
+        // The narrowing in force is said in the one place a reader looks for what they are looking at: the
+        // search field, as a token. The wide toolbar's State menu stays the way to add one.
+        await expect(shell.getByRole('button', { name: 'Remove State Open' })).resolves.toBeDefined();
+
         await measureFillRegion(COMPACT_WIDTH);
 
-        // The constraint is still applied and the control that showed it is now
-        // behind a trigger, so the chip is the only thing naming it. Without it
-        // the reader is looking at a narrowed list with no visible cause.
-        const chip = await shell.getByRole('button', { name: 'Remove filter State: Open' });
-        await act(async () => { await shell.press(chip); });
+        // The facet controls are now behind a trigger, so the token is the only thing naming the constraint.
+        // There is one such place, never a token and a chip saying it twice.
+        const token = await shell.getByRole('button', { name: 'Remove State Open' });
+        const buttons = await shell.queryAllByRole('button');
+        expect(buttons.filter((button) => (button.name ?? '').startsWith('Remove filter'))).toEqual([]);
+        await act(async () => { await shell.press(token); });
 
-        await expect(shell.queryByRole('button', { name: 'Remove filter State: Open' }))
+        await expect(shell.queryByRole('button', { name: 'Remove State Open' }))
             .resolves.toBeUndefined();
-        // The chip removed the constraint itself rather than only its own label.
+        // The token removed the constraint itself rather than only its own label.
         await measureFillRegion(WIDE_WIDTH);
         await expect(toolbarMenuItem(shell, 'State', 'menuitemcheckbox', {
             name: 'Open',
@@ -261,7 +266,7 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         // facets to clear.
         await expect(shell.queryByRole('button', { name: 'Clear filters' })).resolves.toBeUndefined();
         const buttons = await shell.queryAllByRole('button');
-        expect(buttons.filter((button) => (button.name ?? '').startsWith('Remove filter'))).toEqual([]);
+        expect(buttons.filter((button) => /^Remove (filter|State|Attention)/u.test(button.name ?? ''))).toEqual([]);
     });
 
     it('keeps the facets exposed until a measurement actually says they do not fit', async () => {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ScmHostingProviderCapabilitiesSchema,
   ScmPullRequestOpenOrReuseRequestSchema,
+  ScmPullRequestOpenOrReuseResponseSchema,
   ScmPullRequestListResponseSchema,
   ScmPullRequestStatusProjectionSchema,
   resolveScmHostingProviderFollowupAllowedBaseUrl,
@@ -18,6 +19,15 @@ const provider = {
 };
 
 describe('SCM pull-request freshness protocol', () => {
+  it('validates canonical forge retry metadata while retaining PR-only failure fields', () => {
+    const failure = { success: false, error: 'Forge rate limit reached', errorCode: 'REMOTE_RATE_LIMITED',
+      retryNotBeforeMs: 1900000000000, remediation: { kind: 'retry' } };
+    expect(ScmPullRequestListResponseSchema.parse(failure)).toMatchObject(failure);
+    expect(ScmPullRequestListResponseSchema.safeParse({ ...failure, retryNotBeforeMs: '1900000000000' }).success).toBe(false);
+    expect(ScmPullRequestOpenOrReuseResponseSchema.parse({ ...failure,
+      result: 'opened_compose', composeUrl: 'https://github.com/happier-dev/happier/compare/main...feature',
+    })).toMatchObject({ ...failure, result: 'opened_compose', composeUrl: expect.any(String) });
+  });
   it('preserves remote hosting-provider capability scope metadata', () => {
     expect(ScmHostingProviderCapabilitiesSchema.parse({})).toMatchObject({
       capabilityScope: 'remote-hosting-provider',

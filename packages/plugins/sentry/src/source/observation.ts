@@ -129,6 +129,7 @@ export function toTriagePresentObservation(
       v: 1 as const,
       title: snapshot.title,
       scopeLabel: snapshot.scopeLabel,
+      ...(snapshot.designation === undefined ? {} : { designation: snapshot.designation }),
       state: Object.freeze({
         presentation: snapshot.state.presentation,
         // Sentry's `status` is a bare provider string and an unrecognized value reaches

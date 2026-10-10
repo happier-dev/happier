@@ -168,7 +168,8 @@ const SENTRY_SOURCE_DESCRIPTOR = {
       { kind: 'shared' as const, id: 'overview' as const },
       { kind: 'shared' as const, id: 'activity' as const },
       { kind: 'source' as const, id: 'stack-trace', title: 'Stack trace', titleKey: 'plugins.sentry.ui.tab.stackTrace' },
-      { kind: 'source' as const, id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.sentry.ui.tab.occurrences' },
+      // The row's own event count is the Occurrences tab's summary.
+      { kind: 'source' as const, id: 'occurrences', title: 'Occurrences', titleKey: 'plugins.sentry.ui.tab.occurrences', summaryFact: 'events' },
       { kind: 'source' as const, id: 'release', title: 'Release', titleKey: 'plugins.sentry.ui.tab.release' },
     ],
   }],

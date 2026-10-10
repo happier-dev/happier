@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ProjectKeyV1 } from '@happier-dev/plugin-sdk/sessions';
 
 import {
     isTriageBulkSharedPlacementCompatibleV1,
@@ -103,6 +104,60 @@ describe('bulk New Session placement seeding', () => {
         });
 
         expect(result).toEqual({ kind: 'none' });
+    });
+
+    it.each([
+        {
+            name: 'different Project anchors',
+            left: { serverId: 'server-a', projectKey: 'project-a' },
+            right: { serverId: 'server-a', projectKey: 'project-b' },
+            matches: false,
+        },
+        {
+            name: 'the same Project anchor',
+            left: { serverId: 'server-a', projectKey: 'project-a' },
+            right: { serverId: 'server-a', projectKey: 'project-a' },
+            matches: true,
+        },
+        {
+            name: 'different Home-qualified checkout ids',
+            left: { serverId: 'server-a', id: 'workspace-a' },
+            right: { serverId: 'server-b', id: 'workspace-a' },
+            matches: false,
+        },
+        {
+            name: 'an anchor and a legacy checkout scope',
+            left: { serverId: 'server-a', projectKey: 'project-a' },
+            right: { serverId: 'server-a', machineId: 'machine-a', rootPath: '/checkout' },
+            matches: false,
+        },
+        {
+            name: 'the same legacy checkout scope',
+            left: { serverId: 'server-a', machineId: 'machine-a', rootPath: '/checkout' },
+            right: { serverId: 'server-a', machineId: 'machine-a', rootPath: '/checkout' },
+            matches: true,
+        },
+    ] satisfies readonly Readonly<{
+        name: string;
+        left: ProjectKeyV1;
+        right: ProjectKeyV1;
+        matches: boolean;
+    }>[])('retains an exact candidate only when its project identity agrees: $name', ({ left, right, matches }) => {
+        const otherRepository = { ...REPOSITORY, repository: 'example/other-repository' };
+        const first = {
+            ...candidate({ projectId: 'workspace-a', machineId: 'machine-a', rootPath: '/checkout' }),
+            projectKey: left,
+        };
+        const result = resolveTriageBulkSeedPlacementV1({
+            workspaceMode: 'repository',
+            entries: [{ repository: REPOSITORY }, { repository: otherRepository }],
+            projects: [first, { ...first, projectKey: right, forge: otherRepository }],
+            registryComplete: true,
+        });
+
+        expect(result).toMatchObject({ kind: 'exact' });
+        expect(result.kind === 'exact' ? result.candidate?.projectKey : undefined)
+            .toEqual(matches ? left : undefined);
     });
 });
 

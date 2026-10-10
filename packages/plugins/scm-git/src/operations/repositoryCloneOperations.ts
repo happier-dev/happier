@@ -1,6 +1,5 @@
 import {
   SCM_OPERATION_ERROR_CODES,
-  ScmRepositoryProvisioningFailureResponseSchema,
   normalizeScmOperationOutcome,
   type ScmHostingRepositoryAuthSummary,
   type ScmHostingRepositorySummary,
@@ -26,6 +25,7 @@ import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv
 import { mapGitErrorCode } from '../remote.js';
 import { detectGitRepo, getGitSnapshot } from '../repository.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
+import { classifyHostingProviderError } from '../hostingProviders/providerFailure.js';
 import {
     readScmHostingProviderRuntimeDescriptor,
     type ScmHostingProviderRuntimeDescriptor,
@@ -305,24 +305,11 @@ async function describeCloneTargets(input: Readonly<{
         });
         return selectCloneTarget(description, input.request.protocol, registeredProvider);
     } catch (error) {
-        const message = error instanceof Error ? error.message : 'Hosting provider clone target discovery failed.';
-        const code = typeof error === 'object' && error !== null
-            ? (error as { errorCode?: unknown }).errorCode
-            : undefined;
-        const details = ScmRepositoryProvisioningFailureResponseSchema.safeParse({
-            ...(typeof error === 'object' && error !== null ? error : {}),
-            success: false, error: message,
-        });
+        const failure = classifyHostingProviderError(error);
         return {
             ok: false,
             response: errorResponse(
-                message,
-                typeof code === 'string' && Object.values(SCM_OPERATION_ERROR_CODES).includes(code as ScmOperationErrorCode)
-                    ? code as ScmOperationErrorCode
-                    : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-                details.success && details.data.errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_RATE_LIMITED
-                    ? { retryNotBeforeMs: details.data.retryNotBeforeMs,
-                    remediation: details.data.remediation } : undefined,
+                failure.message, failure.code, failure.details,
             ),
         };
     }

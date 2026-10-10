@@ -121,6 +121,17 @@ describe('per-kind detail tab declarations (r0.42)', () => {
         ]);
     });
 
+    it('carries the row fact that summarizes a tab, on shared and source tabs alike', () => {
+        const tabs = [
+            { kind: 'shared', id: 'checks', summaryFact: 'example/checks' },
+            { kind: 'source', id: 'occurrences', title: 'Occurrences', summaryFact: 'example/events' },
+        ];
+        const admitted = admitTriageSourceDescriptorV1(withTabs(tabs));
+        expect(admitted.ok && admitted.descriptor.kinds[0]?.detailTabs).toEqual(tabs);
+        expect(admitTriageSourceDescriptorV1(withTabs([{ kind: 'shared', id: 'checks', summaryFact: '' }])))
+            .toEqual({ ok: false, reason: 'invalid' });
+    });
+
     it('keeps a kind with no declaration as the whole-detail source it was', () => {
         const admitted = admitTriageSourceDescriptorV1(MINIMAL);
         expect(admitted.ok && 'detailTabs' in admitted.descriptor.kinds[0]!).toBe(false);

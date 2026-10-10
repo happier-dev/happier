@@ -185,6 +185,8 @@ export type HostingProviderResolvedRegistry = Readonly<{
     getPullRequestCheckout: (id: string) => HostingProviderPullRequestCheckoutCapability | undefined;
     getRepositoryPublishing: (id: string) => HostingProviderRepositoryPublishingCapability | undefined;
     getRepositoryClone: (id: string) => HostingProviderRepositoryCloneCapability | undefined;
+    /** Enumerate concrete deployments admitted by their routing owner, never declarations. */
+    listDeployments?: (input?: Readonly<{ providerId?: string; providerKind?: string }>) => readonly HostingProviderResolvedRemote[];
     detectRemote: (input: HostingProviderRemoteDetectionInput) => HostingProviderRemoteDetectionResult;
     buildCompareUrl: (input: Readonly<{
         provider: HostingProviderResolvedRemote | HostingProviderUnresolvedRemote;
@@ -329,6 +331,8 @@ export type HostingProviderRepositoryDescribeCloneTargetsInput = Readonly<{
 export type HostingProviderRoutingCapability = Readonly<{
     detectRemote: (input: HostingProviderRemoteDetectionInput) => HostingProviderResolvedRemote | null;
     buildCompareUrl: (input: HostingProviderCompareUrlInput) => string | null;
+    /** Product-owned defaults plus this provider's configured Connected Account service bases. */
+    listDeployments?: (input: Readonly<{ connectedAccountBases?: readonly string[] }>) => readonly HostingProviderResolvedRemote[];
 }>;
 
 export type HostingProviderPullRequestsCapability = Readonly<{

@@ -13,7 +13,7 @@ import {
     testkitViewer,
 } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
-import { projectTriageDetailHeaderV1 } from './header.js';
+import { projectTriageDetailHeaderV1, readTriageDetailContextLineV1 } from './header.js';
 
 /**
  * The common header's own boundary.
@@ -77,6 +77,18 @@ const HEALTHY_LANE: TriageListLaneV1 = {
 };
 
 describe('projectTriageDetailHeaderV1', () => {
+    it('gives the attention chip the same mark as its row chip', () => {
+        const projected = projectTriageDetailHeaderV1({
+            row: { ...row(), attention: { level: 'required', fromSourceInstanceId: INSTANCE, reasonId: 'involvement/review-requested', reasonLabel: 'Your review was requested' } },
+            lanes: [HEALTHY_LANE],
+            connectionLabel: null,
+            sourceDescriptor: DESCRIPTOR,
+            linkedSessions: [],
+            linkedSessionsHasMore: false,
+        });
+        expect(projected.attention).toEqual({ level: 'required', reasonLabel: 'Your review was requested', icon: 'review' });
+    });
+
     it('says nothing about a connection no pass asked', () => {
         // `projection/sourceHealth.ts` excludes `unavailable` deliberately: the
         // invocation never settled into provider evidence, so there is nothing to
@@ -140,5 +152,71 @@ describe('projectTriageDetailHeaderV1', () => {
             health: { kind: 'failed', failure: { class: 'permission', code: 'forbidden' } },
             exhausted: false,
         }).sourceReadFailed).toBe(false);
+    });
+});
+
+describe('the detail header line (lab meta: where the entry lives, then who opened it)', () => {
+    const CREATED = 1_760_000_000_000;
+    const NOW = CREATED + 42 * 60_000;
+    const english = (_key: string, fallback = '', values: Readonly<Record<string, string>> = {}) =>
+        fallback.replace(/\{(\w+)\}/gu, (_match, name: string) => values[name] ?? '');
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+
+    function observed(viewer = testkitViewer(), authorLabel: string | null = 'Mara Oduya') {
+        return testkitPresentOutcome({
+            locator: testkitLocator(),
+            snapshot: testkitSnapshot({ title: 'Fix the parser', createdAtMs: CREATED, ...(authorLabel === null ? {} : { authorLabel }) }),
+            viewer,
+        });
+    }
+
+    const lane = (sourceInstanceId: string): TriageListLaneV1 => ({
+        sourceInstanceId, source: SOURCE, health: { kind: 'unavailable' }, exhausted: false,
+    });
+
+    function lineFor(input: Readonly<{ outcome?: ReturnType<typeof observed>; second?: boolean; secondConfigured?: boolean }>) {
+        const outcome = input.outcome ?? observed();
+        const base = row();
+        const entry: TriageListRowV1 = {
+            ...base,
+            content: { sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome },
+            observations: [
+                { sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome },
+                ...(input.second === true ? [{ sourceInstanceId: OTHER, observedAtMs: 1_000, outcome }] : []),
+            ],
+        };
+        const projected = projectTriageDetailHeaderV1({
+            row: entry,
+            lanes: [lane(INSTANCE), ...(input.second === true || input.secondConfigured === true ? [lane(OTHER)] : [])],
+            connectionLabel: 'Example account',
+            sourceDescriptor: DESCRIPTOR,
+            linkedSessions: [],
+            linkedSessionsHasMore: false,
+            text: english,
+        });
+        return readTriageDetailContextLineV1(projected, english, { locale: 'en', nowMs: NOW });
+    }
+
+    it('names the entry\'s address and who opened it when, without the source name or the state word', () => {
+        expect(lineFor({})).toBe('example/repository #17 · Mara Oduya opened 42 minutes ago');
+    });
+
+    it('says "You" when the reader opened it, through the row display\'s one rule', () => {
+        expect(lineFor({ outcome: observed(testkitViewer({ involvement: ['author'] })) }))
+            .toBe('example/repository #17 · You opened 42 minutes ago');
+    });
+
+    it('says when it was opened without inventing who, when the source names nobody', () => {
+        expect(lineFor({ outcome: observed(testkitViewer(), null) }))
+            .toBe('example/repository #17 · Opened 42 minutes ago');
+    });
+
+    it('names the connection only when the reader has more than one connection to this source', () => {
+        expect(lineFor({ second: true }))
+            .toBe('example/repository #17 · Mara Oduya opened 42 minutes ago · via Example account');
+        // A second configured connection that does not observe the entry still makes the choice real: a launch can
+        // name it, and the header must say which one this detail is read through.
+        expect(lineFor({ secondConfigured: true }))
+            .toBe('example/repository #17 · Mara Oduya opened 42 minutes ago · via Example account');
     });
 });

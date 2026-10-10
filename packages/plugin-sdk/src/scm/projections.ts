@@ -1237,6 +1237,11 @@ export type ScmPullRequestWorkEvidence = {
     pullRequest: ScmPullRequestSummary;
 };
 
+type ScmPullRequestErrorResponse = Extract<ScmRepositoryCloneOutput, { success: false }> & {
+    result?: 'opened_compose';
+    composeUrl?: string;
+};
+
 export type ScmPullRequestListResponse =
     | ({
         [key: string]: unknown;
@@ -1251,12 +1256,7 @@ export type ScmPullRequestListResponse =
         };
         refreshPolicy?: ScmRefreshPolicy;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-    });
+    | ScmPullRequestErrorResponse;
 
 export type ScmPullRequestGetRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     [key: string]: unknown;
@@ -1278,12 +1278,7 @@ export type ScmPullRequestGetResponse =
         };
         refreshPolicy?: ScmRefreshPolicy;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-    });
+    | ScmPullRequestErrorResponse;
 
 export type ScmPullRequestOpenComposeRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     [key: string]: unknown;
@@ -1300,13 +1295,7 @@ export type ScmPullRequestOpenComposeResponse =
         nextAction: ScmFollowupAction;
         composeUrl?: string;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-    });
+    | ScmPullRequestErrorResponse;
 
 export type ScmPullRequestOpenOrReuseRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     [key: string]: unknown;
@@ -1331,13 +1320,7 @@ export type ScmPullRequestOpenOrReuseResponse =
         nextAction: ScmFollowupAction;
         authState?: ScmPullRequestAuthState;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-    });
+    | ScmPullRequestErrorResponse;
 
 export type ScmPullRequestCheckoutRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     [key: string]: unknown;
@@ -1354,13 +1337,7 @@ export type ScmPullRequestCheckoutResponse =
         headSha?: string | null;
         baseSha?: string | null;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-    });
+    | ScmPullRequestErrorResponse;
 
 export type ScmPullRequestPrepareWorktreeRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     [key: string]: unknown;
@@ -1378,13 +1355,7 @@ export type ScmPullRequestPrepareWorktreeResponse =
         branch?: string;
         pullRequest?: ScmPullRequestSummary | null;
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
-    });
+    | ScmPullRequestErrorResponse;
 
 export type ScmPullRequestRunStackedPhase = 'branch' | 'commit' | 'push' | 'pr';
 export type ScmPullRequestRunStackedProgressEvent = {
@@ -1428,14 +1399,9 @@ export type ScmPullRequestRunStackedResponse =
         nextAction: ScmFollowupAction;
         events: ScmPullRequestRunStackedProgressEvent[];
     })
-    | ({
-        [key: string]: unknown;
-        success: false;
-        outcome?: ScmOperationOutcome;
+    | (ScmPullRequestErrorResponse & {
         commitSha?: string | null;
         commitPublication?: ScmCommitPublication;
-        error: string;
-        errorCode?: ScmOperationErrorCode;
         events: ScmPullRequestRunStackedProgressEvent[];
     });
 

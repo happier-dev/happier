@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
+    MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     TRIAGE_DETAIL_ACTIONS_PANEL_V1,
     TRIAGE_DETAIL_SHARED_TABS_V1,
 } from './bounds.js';
@@ -14,6 +15,7 @@ import {
     TriageSourceWorkflowSubjectV1Schema,
     TriageTextV1ProtocolSchema,
 } from './identity.js';
+import { defineTriageSingleLineStringV1 } from './strings.js';
 
 /**
  * One tab a source's detail offers for an entry kind (r0.42).
@@ -24,6 +26,15 @@ import {
  * a release); the source names it, and the target renders it after the shared
  * tabs in declared order. Both are closed: a tab id routes a mount.
  */
+/**
+ * The id of the row fact (`TriageRowFactV1.id`, same bound) whose value
+ * summarizes a tab beside its title: "Checks 2 failing", "Occurrences 1.2K".
+ * The target reads it from the entry's own snapshot facts; a snapshot without
+ * that fact shows no summary, so a source never declares a count it does not
+ * already state on the row.
+ */
+const triageDetailTabSummaryFactV1 = defineTriageSingleLineStringV1(MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1).optional();
+
 export const TriageSourceDetailTabV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('shared'),
@@ -33,6 +44,7 @@ export const TriageSourceDetailTabV1Schema = defineProtocolUnion([
             defineProtocolLiteral(TRIAGE_DETAIL_SHARED_TABS_V1[2]),
             defineProtocolLiteral(TRIAGE_DETAIL_SHARED_TABS_V1[3]),
         ]),
+        summaryFact: triageDetailTabSummaryFactV1,
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('source'),
@@ -40,6 +52,7 @@ export const TriageSourceDetailTabV1Schema = defineProtocolUnion([
         title: TriageTextV1ProtocolSchema,
         /** Resolved through the source's admitted translation projection; title is the fallback. */
         titleKey: TriageTextV1ProtocolSchema.optional(),
+        summaryFact: triageDetailTabSummaryFactV1,
     }, { policy: 'closed' }),
 ]);
 export type TriageSourceDetailTabV1 = ReturnType<typeof TriageSourceDetailTabV1Schema.parse>;

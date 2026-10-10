@@ -1,4 +1,5 @@
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
+import { createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -7,10 +8,17 @@ import {
     TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
+import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
 
 import {
     resolveTriageSourceDescriptorV1,
     resolveTriageSourceDetailContributionV1,
+    readTriageSourceDescriptorV1,
+    readTriageSourceDetailContributionV1,
+    readTriageSourceGetOperationV1,
+    readTriageSourcePrepareReviewWorkspaceOperationV1,
+    readTriageSourcePreparesReviewWorkspaceV1,
+    resolveTriageSourceWorkflowSubjectV1,
 } from './sourceSurface.js';
 
 /**
@@ -81,6 +89,20 @@ const VALID_DESCRIPTOR = Object.freeze({
 });
 
 describe('the source detail contribution lookup', () => {
+    it('keeps source rendering and execution unavailable on an Account mount without an admitted occurrence', () => {
+        const context = createSurfaceContextFixture({
+            target: { kind: 'app' },
+        });
+        delete context.targetedContributions;
+
+        expect(readTriageSourceDetailContributionV1(context, SOURCE)).toEqual({ kind: 'absent' });
+        expect(readTriageSourceDescriptorV1(context, SOURCE)).toBeNull();
+        expect(readTriageSourcePreparesReviewWorkspaceV1(context, SOURCE)).toBe(false);
+        expect(readTriageSourcePrepareReviewWorkspaceOperationV1(context, SOURCE)).toBeUndefined();
+        expect(readTriageSourceGetOperationV1(context, SOURCE)).toBeUndefined();
+        expect(resolveTriageSourceWorkflowSubjectV1(context.targetedContributions, testkitEntryRef())).toBeNull();
+    });
+
     it('refuses a contribution at a protocol epoch this contract does not speak', () => {
         expect(resolveTriageSourceDetailContributionV1(
             snapshot({ protocolVersion: PROTOCOL.version + 1 }),

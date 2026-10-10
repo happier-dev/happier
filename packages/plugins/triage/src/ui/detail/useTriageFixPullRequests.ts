@@ -18,7 +18,7 @@ import {
   type TriageReadFixPullRequestsResultV1,
   type TriageSetFixPullRequestInputV1,
   type TriageSetFixPullRequestResultV1,
-} from '../../actions/fixPullRequestsProtocol.js';
+} from '@happier-dev/triage-protocol/v1';
 import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
 import type { TriageFixPullRequestProjectionV1 } from '../../corpus/marks/fixPullRequests.js';
 import { useTriageDurableAccount } from '../durable/accountDurableState.js';

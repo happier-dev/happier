@@ -80,6 +80,20 @@ function entry(overrides: Partial<AzurePullRequestEntry> = {}): AzurePullRequest
   };
 }
 
+describe('Azure DevOps present observation author', () => {
+  it('publishes who opened the pull request as the snapshot author, and omits it when Azure names nobody', () => {
+    expect(projectAzurePresentObservation({ entry: entry(), involvement: ['author'] }).snapshot.authorLabel).toBe('Ada');
+    expect(projectAzurePresentObservation({ entry: entry({ authorDisplayName: null }), involvement: [] }).snapshot)
+      .not.toHaveProperty('authorLabel');
+  });
+});
+
+describe('Azure DevOps present observation designation', () => {
+  it('publishes the pull request id the way Azure DevOps writes it', () => {
+    expect(projectAzurePresentObservation({ entry: entry(), involvement: [] }).snapshot.designation).toBe('!17');
+  });
+});
+
 describe('Azure DevOps Triage descriptor', () => {
   it('declares the pull-request-only kind vocabulary through the published schema', () => {
     const parsed = TriageSourceDescriptorV1Schema.parse(AZURE_DEVOPS_TRIAGE_DESCRIPTOR);

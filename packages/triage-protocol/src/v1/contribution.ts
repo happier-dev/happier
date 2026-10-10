@@ -49,7 +49,7 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
             required: true,
             input: { kind: 'protocolDefined', schema: TriageListInstancesInputV1Schema },
             resultSchema: TriageListInstancesResultV1Schema,
-            action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+            action: { surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe' },
         },
         scan: {
             required: true,

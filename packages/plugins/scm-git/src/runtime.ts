@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   type BackendCommandRunInput,
+  type BackendCommandStreamInput,
   resolveBackendCommandMaxOutputBytes as resolveScmBackendCommandMaxOutputBytes,
   runBackendCommand as runScmBackendCommand } from '@happier-dev/plugin-sdk/scm/backend';
 import {
@@ -25,6 +26,7 @@ export type ScmExecResult = {
   exitCode: number;
   timedOut?: boolean;
   outputLimitExceeded?: boolean;
+  stoppedEarly?: boolean;
 };
 
 export function getScmCommandIndeterminateErrorCode(result: ScmExecResult): ScmOperationErrorCode | null {
@@ -51,6 +53,7 @@ export function runScmCommand(input: {
   maxOutputBytes?: number;
   env?: Record<string, string | undefined>;
   signal?: AbortSignal;
+  stdoutConsumer?: BackendCommandStreamInput['stdoutConsumer'];
 }): Promise<ScmExecResult> {
   return runScmBackendCommand({
     installableKey: GIT_INSTALLABLE_DEP_ID,
@@ -67,6 +70,7 @@ export function runScmCommand(input: {
       GIT_ALLOW_PROTOCOL: SAFE_GIT_ALLOW_PROTOCOL,
     },
     signal: input.signal,
+    ...(input.stdoutConsumer ? { stdoutConsumer: input.stdoutConsumer } : {}),
   });
 }
 

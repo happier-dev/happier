@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ScmOperationOutcomeSchema } from './operationOutcome.js';
 import { ScmCommitPublicationSchema } from './commitPublication.js';
+import { ScmRepositoryProvisioningFailureResponseSchema } from './repositoryProvisioning.js';
 
 import {
   ProviderRefreshPolicySchema,
@@ -10,13 +11,13 @@ import {
 import { ScmSelectedMutationPathSchema } from './selectedMutationPath.js';
 import { ScmBackendPreferenceSchema } from './backendIdentity.js';
 import { ScmDefaultBranchPushPolicySchema } from './defaultBranchPushPolicy.js';
-import { ScmOperationErrorCodeSchema } from './operationError.js';
 import {
   ScmBranchSourceRefSchema,
   ScmOptionalBranchSourceRefSchema,
   normalizeScmBranchSourceRef as normalizeScmPullRequestBranchSourceRef,
 } from './remoteNormalization.js';
 import { ScmRequestBaseSchema } from './requestBase.js';
+import { RepositoryCheckpointCommitEvidenceSchema } from '../sessions/changes/schemas.js';
 
 export {
   ScmDefaultBranchPushPolicySchema,
@@ -267,6 +268,9 @@ export const ScmPullRequestSummarySchema = lazyZodSchema(() => z
     headSha: z.string().min(1).nullable().optional(),
     baseSha: z.string().min(1).nullable().optional(),
     state: ScmPullRequestStateSchema,
+    createdAtMs: z.number().int().nonnegative().optional(),
+    closedAtMs: z.number().int().nonnegative().optional(),
+    mergedAtMs: z.number().int().nonnegative().optional(),
     isDraft: z.boolean().optional(),
     author: ScmPullRequestAuthorSchema.optional(),
     checks: ScmPullRequestChecksSummarySchema.optional(),
@@ -274,12 +278,22 @@ export const ScmPullRequestSummarySchema = lazyZodSchema(() => z
   .passthrough());
 export type ScmPullRequestSummary = z.infer<typeof ScmPullRequestSummarySchema>;
 
-const ScmPullRequestReferenceBaseSchema = z.union([
+/** Private authorized SCM read projection, never accounting event metadata. */
+export const ScmPullRequestWorkEvidenceSchema = lazyZodSchema(() => RepositoryCheckpointCommitEvidenceSchema.extend({
+  pullRequest: ScmPullRequestSummarySchema,
+}).strict());
+export type ScmPullRequestWorkEvidence = z.infer<typeof ScmPullRequestWorkEvidenceSchema>;
+const ScmPullRequestWorkEvidenceRequestSchema = lazyZodSchema(() => z.object({
+  sessionId: z.string().min(1),
+}).strict());
+const ScmPullRequestWorkEvidenceStatusSchema = lazyZodSchema(() => z.enum(['available', 'partial', 'unavailable']));
+
+const ScmPullRequestReferenceBaseSchema = lazyZodSchema(() => z.union([
   z.object({ number: z.number().int().positive() }).passthrough(),
   z.object({ url: z.string().url() }).passthrough(),
   z.object({ headBranch: ScmBranchSourceRefSchema }).passthrough(),
-]);
-export const ScmPullRequestReferenceSchema = ScmPullRequestReferenceBaseSchema.superRefine((value, ctx) => {
+]));
+export const ScmPullRequestReferenceSchema = lazyZodSchema(() => ScmPullRequestReferenceBaseSchema.superRefine((value, ctx) => {
   const headBranch = (value as { headBranch?: unknown }).headBranch;
   if (headBranch === undefined) return;
   const result = normalizeScmPullRequestBranchSourceRef(typeof headBranch === 'string' ? headBranch : undefined);
@@ -290,7 +304,7 @@ export const ScmPullRequestReferenceSchema = ScmPullRequestReferenceBaseSchema.s
       message: result.ok ? 'Source ref contains unsupported syntax' : result.error,
     });
   }
-});
+}));
 export type ScmPullRequestReference = z.infer<typeof ScmPullRequestReferenceSchema>;
 
 export const ScmPullRequestAuthStateSchema = lazyZodSchema(() => z.enum([
@@ -331,14 +345,10 @@ export const ScmFollowupActionSchema = lazyZodSchema(() => z.union([
 ]));
 export type ScmFollowupAction = z.infer<typeof ScmFollowupActionSchema>;
 
-const ScmPullRequestErrorResponseSchema = lazyZodSchema(() => z
-  .object({
-    success: z.literal(false),
+const ScmPullRequestErrorResponseSchema = lazyZodSchema(() => ScmRepositoryProvisioningFailureResponseSchema
+  .extend({
     result: z.literal('opened_compose').optional(),
     composeUrl: z.string().url().optional(),
-    outcome: ScmOperationOutcomeSchema.optional(),
-    error: z.string().min(1),
-    errorCode: ScmOperationErrorCodeSchema.optional(),
   })
   .passthrough());
 export type ScmPullRequestErrorResponse = z.infer<typeof ScmPullRequestErrorResponseSchema>;
@@ -348,6 +358,7 @@ export const ScmPullRequestListRequestSchema = lazyZodSchema(() => ScmRequestBas
   base: ScmOptionalBranchSourceRefSchema,
   head: ScmOptionalBranchSourceRefSchema,
   state: ScmPullRequestStateSchema.optional(),
+  workEvidence: ScmPullRequestWorkEvidenceRequestSchema.optional(),
 }).passthrough());
 export type ScmPullRequestListRequest = z.infer<typeof ScmPullRequestListRequestSchema>;
 
@@ -356,6 +367,8 @@ export const ScmPullRequestListResponseSchema = lazyZodSchema(() => z.union([
     .object({
       success: z.literal(true),
       pullRequests: z.array(ScmPullRequestSummarySchema),
+      workEvidence: z.array(ScmPullRequestWorkEvidenceSchema).optional(),
+      workEvidenceStatus: ScmPullRequestWorkEvidenceStatusSchema.optional(),
       freshness: VcsRemoteStateFreshnessSchema.optional(),
       refreshPolicy: ProviderRefreshPolicySchema.optional(),
     })
@@ -366,6 +379,7 @@ export type ScmPullRequestListResponse = z.infer<typeof ScmPullRequestListRespon
 
 export const ScmPullRequestGetRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   prReference: ScmPullRequestReferenceSchema,
+  workEvidence: ScmPullRequestWorkEvidenceRequestSchema.optional(),
 }).passthrough());
 export type ScmPullRequestGetRequest = z.infer<typeof ScmPullRequestGetRequestSchema>;
 
@@ -374,6 +388,8 @@ export const ScmPullRequestGetResponseSchema = lazyZodSchema(() => z.union([
     .object({
       success: z.literal(true),
       pullRequest: ScmPullRequestSummarySchema.nullable(),
+      workEvidence: z.array(ScmPullRequestWorkEvidenceSchema).optional(),
+      workEvidenceStatus: ScmPullRequestWorkEvidenceStatusSchema.optional(),
       freshness: VcsRemoteStateFreshnessSchema.optional(),
       refreshPolicy: ProviderRefreshPolicySchema.optional(),
     })

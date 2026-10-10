@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import type {
   ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
@@ -10,9 +14,14 @@ import type {
 import type { ScmBackendContext } from '../types.js';
 import {
     runWithGitScmCommandRunner,
+    runWithRealGitScmRuntime,
     type GitScmCommandRunner,
 } from '../testkit/scmRuntime.test-support.js';
 import { createGitPullRequestCheckoutOperations } from './pullRequestCheckoutOperations.js';
+import { createGithubRestAdapter } from '../../../scm-github/src/pullRequests/restAdapter.js';
+import { githubHostingProviderAdapter, GITHUB_SCM_HOSTING_PROVIDER_LOCAL_ID } from '../../../scm-github/src/adapter.js';
+import { GITHUB_PLUGIN_ID } from '../../../scm-github/src/observations/githubProviderContracts.js';
+import { createScmHostingProviderRegistry } from '../../../../../apps/cli/src/scm/hostingProviders/registry';
 
 const provider: ScmHostingProviderRef = {
     id: 'scm.github',
@@ -95,6 +104,40 @@ function createRegistry(input?: Readonly<{
 }
 
 describe('git pull request checkout operations', () => {
+    it('returns the forge throttle instant from checkout and worktree preparation before Git effects', async () => {
+        const adapter = createGithubRestAdapter({
+            resolveToken: async () => ({ kind: 'available', token: 'fixture-token' }),
+            fetcher: async () => ({
+                ok: false, status: 403, statusText: 'Forbidden',
+                headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }),
+                json: async () => ({ message: 'API rate limit exceeded.' }),
+                text: async () => 'API rate limit exceeded.',
+            }),
+        });
+        const registry = createScmHostingProviderRegistry({
+            providers: [{ id: GITHUB_SCM_HOSTING_PROVIDER_LOCAL_ID, pluginId: GITHUB_PLUGIN_ID,
+                kind: 'github', displayName: 'GitHub', capabilities: [] }],
+            runtimeRegistrations: [{ pluginId: GITHUB_PLUGIN_ID, occurrenceId: 'fixture', registration: {
+                id: GITHUB_SCM_HOSTING_PROVIDER_LOCAL_ID,
+                adapter: { routing: githubHostingProviderAdapter, pullRequestCheckout: adapter },
+            } }],
+        });
+        const runtimeServices = { resolveScmHostingProviderRegistry: async () => registry };
+        const operations = createGitPullRequestCheckoutOperations({ registry, runtimeServices });
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-pr-checkout-throttle-'));
+        const git = (args: string[]) => execFileSync('git', args, { cwd: workspace, encoding: 'utf8' }).trim();
+        git(['init', '-b', 'main']);
+        git(['remote', 'add', 'origin', 'https://github.com/happier-dev/happier.git']);
+        const actualContext = { ...context, cwd: workspace, detection: { ...context.detection, rootPath: workspace } };
+        const expected = { success: false, errorCode: 'REMOTE_RATE_LIMITED', retryNotBeforeMs: 1900000000000 };
+        await runWithRealGitScmRuntime(async () => {
+            expect(await operations.checkout({ context: actualContext, request: { prReference: { number: 7 } } })).toMatchObject(expected);
+            expect(await operations.prepareWorktree({ context: actualContext,
+                request: { sourcePath: workspace, prReference: { number: 7 }, mode: 'worktree' } })).toMatchObject(expected);
+        }, { hostingProviderRuntimeServices: runtimeServices });
+        expect(git(['remote', 'get-url', 'origin'])).toBe('https://github.com/happier-dev/happier.git');
+        expect(git(['branch', '--list'])).toBe('');
+    });
     it('fetches adapter-owned checkout refs and switches to a matching local PR branch without force or stash', async () => {
         const runner = vi.fn<GitScmCommandRunner>()
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })

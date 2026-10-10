@@ -78,7 +78,7 @@ import {
     TriageReadFixPullRequestsResultV1Schema,
     TriageSetFixPullRequestInputV1Schema,
     TriageSetFixPullRequestResultV1Schema,
-} from './fixPullRequestsProtocol.js';
+} from '@happier-dev/triage-protocol/v1';
 
 /**
  * Serialized-size regression coverage for this aggregate's Action values.

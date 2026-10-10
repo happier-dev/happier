@@ -1,5 +1,6 @@
 export type { BackendCommandInput } from '../backend.js';
 export type { BackendCommandRunInput } from '../backend.js';
+export type { BackendCommandStreamInput } from '../backend.js';
 export type { BackendCommandRunResult } from '../backend.js';
 export type { BackendCommandSpec } from '../backend.js';
 export type { BackendRuntime } from '../backend.js';

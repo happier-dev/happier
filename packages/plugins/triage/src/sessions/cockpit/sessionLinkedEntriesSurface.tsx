@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginUiTargetedContributionsV1, RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
+import type { SurfaceContext, RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
     Avatar,
     Button,
@@ -88,7 +88,7 @@ function entryOf(row: LinkedRow): LinkedEntry | null {
     return row.presentation.kind === 'linked' ? row.presentation.entry : null;
 }
 
-function rowKind(row: LinkedRow, sources: PluginUiTargetedContributionsV1): 'pullRequest' | 'issue' | 'other' {
+function rowKind(row: LinkedRow, sources: SurfaceContext['targetedContributions']): 'pullRequest' | 'issue' | 'other' {
     const entry = entryOf(row);
     if (entry !== null) return entry.kind;
     if (row.presentation.kind !== 'linked') return 'other';
@@ -110,7 +110,7 @@ function rowTitle(row: LinkedRow, text: Translate): string {
 }
 
 /** The one glyph an entry wears (the PRs & Issues row owner), coloured by where its lifecycle is. */
-function entryMark(row: LinkedRow, sources: PluginUiTargetedContributionsV1): Readonly<{ name: IconName; tone: TextTone }> {
+function entryMark(row: LinkedRow, sources: SurfaceContext['targetedContributions']): Readonly<{ name: IconName; tone: TextTone }> {
     const entry = entryOf(row);
     const kind = rowKind(row, sources);
     const subject = kind === 'other' ? null : kind;
@@ -521,7 +521,7 @@ function linkedEntryRefs(rows: readonly LinkedRow[]): readonly TriageEntryRefV1[
     return rows.flatMap((row) => (row.presentation.kind === 'linked' ? [row.presentation.entryRef] : []));
 }
 
-function buildSections(rows: readonly LinkedRow[], text: Translate, sources: PluginUiTargetedContributionsV1): readonly ListSectionData<LinkedRow>[] {
+function buildSections(rows: readonly LinkedRow[], text: Translate, sources: SurfaceContext['targetedContributions']): readonly ListSectionData<LinkedRow>[] {
     const pulls = rows.filter((row) => rowKind(row, sources) === 'pullRequest');
     const issues = rows.filter((row) => rowKind(row, sources) === 'issue');
     const other = rows.filter((row) => rowKind(row, sources) === 'other');

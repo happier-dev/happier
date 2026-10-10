@@ -226,36 +226,39 @@ async function mountCockpit(
     accountReachable = true,
     openSurfaceError: unknown = null,
     statusFixture?: Readonly<{ scope: PluginUiEphemeralSharedScope; readStatus: () => Promise<TriagePullRequestStatusV1> }>,
+    sourceOccurrencePresent = true,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
+    const surfaceContext = createSurfaceContextFixture({
+        mount: {
+            kind: 'destination',
+            destination: { pluginId: PLUGIN_ID, localId: 'session-linked-entries' },
+            container: 'rightSidebarTab',
+        },
+        target,
+        targetedContributions: {
+            ...createSurfaceContextFixture().targetedContributions!,
+            points: [{ pointId: 'sources', protocols: [{ protocol: { id: 'happier.triage/sources', version: 1 },
+                contributions: [{
+                    contributor: { pluginId: 'happier.example.source', contributionId: 'example-forge',
+                        occurrenceId: 'example-forge-1', sourceCustody: { kind: 'development', registeredRootId: 'example-root' } },
+                    protocol: { id: 'happier.triage/sources', version: 1 },
+                    descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge',
+                        kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' },
+                            { id: 'merge-request', workflowSubject: 'pullRequest', displayName: 'Merge request' },
+                            { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' }] },
+                    operations: [], surfaces: [],
+                }],
+            }] }],
+        },
+    });
+    if (!sourceOccurrencePresent) delete surfaceContext.targetedContributions;
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-165', mountNonce: 'fixture-mount-165' },
             authorPlugin: { id: PLUGIN_ID, version: '0.0.0' },
             surface: renderSessionLinkedEntriesSurface,
-            surfaceContext: createSurfaceContextFixture({
-                mount: {
-                    kind: 'destination',
-                    destination: { pluginId: PLUGIN_ID, localId: 'session-linked-entries' },
-                    container: 'rightSidebarTab',
-                },
-                target,
-                targetedContributions: {
-                    ...createSurfaceContextFixture().targetedContributions!,
-                    points: [{ pointId: 'sources', protocols: [{ protocol: { id: 'happier.triage/sources', version: 1 },
-                        contributions: [{
-                            contributor: { pluginId: 'happier.example.source', contributionId: 'example-forge',
-                                occurrenceId: 'example-forge-1', sourceCustody: { kind: 'development', registeredRootId: 'example-root' } },
-                            protocol: { id: 'happier.triage/sources', version: 1 },
-                            descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge',
-                                kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' },
-                                    { id: 'merge-request', workflowSubject: 'pullRequest', displayName: 'Merge request' },
-                                    { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' }] },
-                            operations: [], surfaces: [],
-                        }],
-                    }] }],
-                },
-            }),
+            surfaceContext,
             adapter: createCockpitAdapter(accountReachable ? harness.client : null, statusFixture?.scope),
             handlers: {
                 executeAction: async ({ action, input }) => {
@@ -384,7 +387,7 @@ async function unlinkThroughConfirm(fixture: PluginUiTestkit, name: string): Pro
 }
 
 describe('the Session tab, round 2', () => {
-    it('groups the links as Pull requests and Issues, reading each by its path until PRs & Issues knows it', async () => {
+    it.each([true, false])('retains linked rows with a source occurrence present: %s', async (sourceOccurrencePresent) => {
         const issueRef = {
             source: { pluginId: 'happier.example.source', localId: 'example-forge' },
             kindId: 'issue',
@@ -398,11 +401,18 @@ describe('the Session tab, round 2', () => {
                 ['link-b', linkRow({ displayPathAtLink: 'example/repository#7', entryRef: issueRef, identityEntryRef: issueRef })],
             ]),
         });
-        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, null, true, null, undefined, sourceOccurrencePresent);
 
         await expect(fixture.findByRole('button', { name: 'example/repository#42' })).resolves.toBeDefined();
-        await expect(fixture.getByText('Pull requests')).resolves.toBeDefined();
-        await expect(fixture.getByText('Issues')).resolves.toBeDefined();
+        await expect(fixture.findByRole('button', { name: 'example/repository#7' })).resolves.toBeDefined();
+        if (sourceOccurrencePresent) {
+            await expect(fixture.getByText('Pull requests')).resolves.toBeDefined();
+            await expect(fixture.getByText('Issues')).resolves.toBeDefined();
+        } else {
+            await expect(fixture.getByText('Other links')).resolves.toBeDefined();
+            expect(await fixture.queryByText('Pull requests')).toBeUndefined();
+            expect(await fixture.queryByText('Issues')).toBeUndefined();
+        }
         // Rows are not a list of Unlink buttons any more: removing a link is one step down, in the open row.
         expect((await fixture.queryAllByRole('button')).filter((button) => button.name === 'Unlink')).toHaveLength(0);
     });

@@ -1,5 +1,5 @@
 import type { ConnectedAccountRef, ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
-import { TriageListInstancesResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageListInstancesResultV1Schema, TriageSourceAdministrationActionInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
@@ -8,7 +8,8 @@ import {
   GITHUB_AUTHENTICATED_USER_RESPONSE,
   GITHUB_SECOND_AUTHENTICATED_USER_RESPONSE,
 } from './__fixtures__/githubResponses.js';
-import { decodeGithubTriageConfiguration } from './configuration.js';
+import { decodeGithubTriageConfiguration, encodeGithubTriageConfiguration } from './configuration.js';
+import { GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 } from './contribution.js';
 import { listGithubTriageInstances } from './instances.js';
 import { listGithubTriageInstancesOperation } from './operations.js';
 import {
@@ -77,7 +78,7 @@ describe('GitHub Triage discovery', () => {
       nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: `Bearer ${nativeToken}` } },
     });
 
-    const result = await listGithubTriageInstances(stub.context);
+    const result = await listGithubTriageInstancesOperation({ v: 1 }, stub.context);
 
     expect(result.kind).toBe('complete');
     if (result.kind !== 'complete') throw new Error('expected complete discovery');
@@ -90,6 +91,21 @@ describe('GitHub Triage discovery', () => {
     expect(stub.requests[0]?.headers.Authorization).toBe(`Bearer ${nativeToken}`);
     expect(JSON.stringify(result)).not.toContain(nativeToken);
     expect(stub.materializations).toEqual([]);
+
+    // Agents use the same source-owned scope encoding as the Settings editor,
+    // without changing the discovered native binding or creating an Account.
+    const draft = result.candidates[0];
+    const configuration = { v: 1, scope: { kind: 'repository', repositoryKey: 'acme/widgets' } } as const;
+    const token = encodeGithubTriageConfiguration(configuration);
+    if (!draft || token === null) throw new Error('Missing native discovery/scope fixture');
+    const create = TriageSourceAdministrationActionInputV1Schema.parse({
+      v: 1, kind: 'create', source: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 },
+      draft: { ...draft, configuration: { v: 1, token } },
+    });
+    if (create.kind !== 'create') throw new Error('Expected source creation');
+    expect(create.draft.binding).toEqual(draft.binding);
+    expect(decodeGithubTriageConfiguration(create.draft.configuration.token)).toEqual({ ok: true, configuration });
+    expect(JSON.stringify(create)).not.toContain(nativeToken);
   });
 
   it('does not replace a failed explicit selection with the machine login after the listing becomes unbound', async () => {

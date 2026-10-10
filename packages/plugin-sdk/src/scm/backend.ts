@@ -677,6 +677,11 @@ export type BackendCommandRunInput = Readonly<{
     signal?: AbortSignal;
 }>;
 
+export type BackendCommandStreamInput = BackendCommandRunInput & Readonly<{
+    /** Consume admitted stdout bytes without buffering; stop acknowledges a settled read. */
+    stdoutConsumer(chunk: Uint8Array): 'continue' | 'stop';
+}>;
+
 export type BackendCommandRunResult = Readonly<{
     success: boolean;
     stdout: string;
@@ -684,10 +689,14 @@ export type BackendCommandRunResult = Readonly<{
     exitCode: number;
     timedOut?: boolean;
     outputLimitExceeded?: boolean;
+    /** The consumer settled its read and the host completed owned process cleanup. */
+    stoppedEarly?: boolean;
 }>;
 
 export type BackendRuntimeServices = Readonly<{
     runCommand(input: BackendCommandRunInput): Promise<BackendCommandRunResult>;
+    /** Optional operation: a buffered-only host cannot silently satisfy a streamed read. */
+    runCommandStreaming?(input: BackendCommandStreamInput): Promise<BackendCommandRunResult>;
 }>;
 
 export {

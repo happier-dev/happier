@@ -38,6 +38,12 @@ export type TriageListDisplayRowV1 = Readonly<{
   tone: 'neutral' | 'warning' | 'danger';
   /** What `detail` is, so the row can make an attention reason its one loud fact. */
   detailKind: TriageEntryDetailKindV1 | null;
+  /** The attention reason's chip mark (a shared icon token name), or `null`. */
+  detailIcon: string | null;
+  /** Who opened the entry ("You", a name), for the list's byline; `null` when nobody is known. */
+  authorLabel: string | null;
+  /** The entry's short native designation ("#2481"), quiet after the title; `null` when its source names none. */
+  designation: string | null;
   /** The lifecycle presentation behind `lifecycleLabel`, for the row's mark. */
   lifecyclePresentation: TriageEntryDisplayV1['lifecyclePresentation'];
   /** The provider's own last-activity moment (display only), or `null`. */
@@ -110,6 +116,9 @@ export function projectTriageWindowRow(
     detail: display.detail,
     tone: display.tone,
     detailKind: display.detailKind,
+    detailIcon: display.detailIcon,
+    authorLabel: display.authorLabel,
+    designation: display.designation,
     lifecyclePresentation: display.lifecyclePresentation,
     activityAtMs: display.activityAtMs,
     pinned: pins.has(display.key),
@@ -142,6 +151,9 @@ export function projectTriagePinnedRow(
       detail: display.detail,
       tone: display.tone,
       detailKind: display.detailKind,
+      detailIcon: display.detailIcon,
+      authorLabel: display.authorLabel,
+      designation: display.designation,
       lifecyclePresentation: display.lifecyclePresentation,
       activityAtMs: display.activityAtMs,
       pinned: true,
@@ -167,6 +179,9 @@ export function projectTriagePinnedRow(
       : text(UNMATERIALIZED_PIN_DETAIL_KEY, UNMATERIALIZED_PIN_DETAIL),
     tone: 'neutral',
     detailKind: 'presence',
+    detailIcon: null,
+    authorLabel: null,
+    designation: null,
     lifecyclePresentation: null,
     activityAtMs: null,
     pinned: true,

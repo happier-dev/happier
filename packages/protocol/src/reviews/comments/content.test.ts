@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
+import { sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import {
   createReviewCommentLinkedIssueIdV1,
@@ -18,6 +19,7 @@ import {
   openStoredReviewCommentV1,
   ReviewCommentAccountEncryptionMigrationInventoryResponseV1Schema,
   ReviewCommentSensitiveMigrationSourceV1Schema,
+  ReviewCommentSensitivePayloadV1Schema,
   sealReviewCommentSensitiveEnvelopeV1,
   sealReviewCommentEventSensitiveEnvelopeV1,
   splitReviewCommentV1,
@@ -192,6 +194,26 @@ describe('workspace-scoped Review Comment encryption binding', () => {
 });
 
 describe('Review Comment structural/sensitive content', () => {
+  it.each(['plain', 'e2ee'] as const)('drops additive stored sensitive payload fields without weakening binding or known fields (%s)', (mode) => {
+    const source = comment();
+    const split = splitReviewCommentV1(source);
+    const sealed = sealReviewCommentSensitiveEnvelopeV1({ ...split, mode: 'plain' });
+    if (sealed.t !== 'plain') throw new Error('Expected plain fixture');
+    const payload = ReviewCommentSensitivePayloadV1Schema.parse(sealed.v);
+    const extended = { ...payload, future: true, content: { ...payload.content, future: true,
+      anchor: { ...payload.content.anchor, future: true } } };
+    const envelope = mode === 'plain' ? { t: 'plain' as const, v: extended }
+      : { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'review_comment_sensitive', material: MATERIAL, payload: extended,
+        randomBytes: (length) => new Uint8Array(length).fill(14) }) };
+    expect(openReviewCommentSensitiveEnvelopeV1({ structural: split.structural, envelope, mode, material: mode === 'e2ee' ? MATERIAL : undefined }))
+      .toEqual({ status: 'available', comment: source });
+    expect(() => ReviewCommentSensitivePayloadV1Schema.parse(extended)).toThrow();
+    expect(openReviewCommentSensitiveEnvelopeV1({ structural: { ...split.structural, id: 'different' }, envelope, mode, material: MATERIAL }))
+      .toMatchObject({ status: 'locked', reason: 'content_binding_mismatch' });
+    expect(openReviewCommentSensitiveEnvelopeV1({ structural: split.structural, envelope: { t: 'plain', v: {
+      ...extended, content: { ...extended.content, anchor: { ...extended.content.anchor, kind: 'invalid' } },
+    } }, mode: 'plain' })).toMatchObject({ status: 'locked', reason: 'content_unreadable' });
+  });
   it('parses a provenance-scoped legacy split migration source without pretending it is one ciphertext', () => {
     const source = comment();
     expect(ReviewCommentSensitiveMigrationSourceV1Schema.parse({
@@ -515,12 +537,11 @@ describe('Review Comment event-sensitive binding', () => {
     });
     expect(JSON.parse(createCanonicalJsonSigningInput(requestBinding)))
       .toEqual(requestBinding);
-    const sensitive = sealReviewCommentEventSensitiveEnvelopeV1({
-      payload: { v: 1, requestBinding, details: source.event },
-      mode: 'e2ee',
-      material: MATERIAL,
+    const sensitive = { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({
+      kind: 'review_comment_event_sensitive', material: MATERIAL,
+      payload: { v: 1, requestBinding, details: source.event, future: true },
       randomBytes: (length) => new Uint8Array(length).fill(14),
-    });
+    }) };
     const bound = bindReviewCommentEventSensitiveEnvelopeV1({
       event: source,
       requestBinding,

@@ -18,7 +18,7 @@ import type {
 import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
-import { readGithubDecodedResponseFacts } from '../observations/githubApiClient.js';
+import { readGithubDecodedResponseFacts, readGithubRetryAfterMs } from '../observations/githubApiClient.js';
 import {
   classifyGithubResponseFacts,
   isGithubInaccessibleResourceFailure,
@@ -201,18 +201,20 @@ async function resolveToken(
  * reconnect a working account.
  */
 function mapGithubRestError(context: ScmForgeHttpErrorContext): Error {
+  const now = Date.now();
   const failure = classifyGithubResponseFacts(
     readGithubDecodedResponseFacts({
       status: context.status,
       headers: context.response.headers,
       body: context.body,
     }),
-    Date.now(),
+    now,
   );
   // A withheld permission stays an authentication repair here: the owner fixes it
   // by reconnecting an account whose scopes cover the operation.
+  const retryAfterMs = failure.class === 'rateLimit' ? readGithubRetryAfterMs(context.response.headers, now) : null;
   const error = failure.class === 'rateLimit'
-    ? createGithubRateLimitedError(failure.retryNotBeforeMs)
+    ? createGithubRateLimitedError(retryAfterMs === null ? undefined : now + retryAfterMs)
     : failure.class === 'authentication' || failure.class === 'permission'
       ? createGithubAuthRequiredError('GitHub REST authentication failed')
       : isGithubInaccessibleResourceFailure(failure)

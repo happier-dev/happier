@@ -56,6 +56,39 @@ function projectRow(projectPath: string) {
   return projectGitlabPresentObservation(decoded.entry);
 }
 
+describe('projectGitlabPresentObservation author', () => {
+  it('publishes who opened the entry by their GitLab name, and omits it when GitLab names nobody', () => {
+    const decoded = decodeGitlabRow({
+      kindId: 'merge-request',
+      origin: GITLAB_COM,
+      row: { ...mergeRequestRow('example-group/example-project'), author: { id: 9, username: 'moduya', name: 'Mara Oduya' } },
+      laneInvolvement: 'author',
+    });
+    if (decoded.kind !== 'mapped') throw new Error(decoded.reason);
+    expect(projectGitlabPresentObservation(decoded.entry).snapshot.authorLabel).toBe('Mara Oduya');
+    expect(projectRow('example-group/example-project').snapshot).not.toHaveProperty('authorLabel');
+  });
+});
+
+describe('projectGitlabPresentObservation designation', () => {
+  it('publishes a merge request as !iid and an issue as #iid', () => {
+    expect(projectRow('example-group/example-project').snapshot.designation).toBe('!7');
+    const issue = decodeGitlabRow({
+      kindId: 'issue',
+      origin: GITLAB_COM,
+      row: {
+        id: 2, iid: 12, project_id: 3, title: 'Broken link', state: 'opened',
+        references: { full: 'example-group/example-project#12' },
+        web_url: 'https://gitlab.com/example-group/example-project/-/issues/12',
+        updated_at: '2026-08-01T10:00:00Z', created_at: '2026-07-30T10:00:00Z',
+      },
+      laneInvolvement: 'author',
+    });
+    if (issue.kind !== 'mapped') throw new Error(issue.reason);
+    expect(projectGitlabPresentObservation(issue.entry).snapshot.designation).toBe('#12');
+  });
+});
+
 describe('projectGitlabPresentObservation locator bounds', () => {
   it('parses through the closed scan observation schema for an ordinary nested group', () => {
     const observation = projectRow('example-group/example-subgroup/example-project');

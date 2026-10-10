@@ -64,7 +64,7 @@ import {
   TriageReadFixPullRequestsResultV1Schema,
   TriageSetFixPullRequestInputV1Schema,
   TriageSetFixPullRequestResultV1Schema,
-} from './actions/fixPullRequestsProtocol.js';
+} from '@happier-dev/triage-protocol/v1';
 import {
   TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
   TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1,
@@ -231,7 +231,7 @@ function createTriagePlugin() {
       },
       [TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1]: {
         title: 'Control the mounted PRs & Issues view',
-        description: 'Control the addressed mounted page, including detail, tabs, views, lenses, bulk selection, refresh, paging and active source occurrence selection/ordering. Read current UI context for its mountId and available commands. Sensitive reveal and insertion use their separate named Actions.',
+        description: 'Control the addressed mounted page, including detail, tabs, linked-session selection, views, lenses, bulk selection, refresh, paging and active source occurrence selection/ordering. Read current UI context for its mountId and available commands. Sensitive reveal and insertion use their separate named Actions.',
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'createTriageMountedUiActionHandler' }, platforms: ['web', 'ios', 'android'] },
@@ -585,7 +585,7 @@ function createTriagePlugin() {
         target: { kind: 'app' },
         renderer: 'list-page',
         title: TRIAGE_DISPLAY_NAME,
-        icon: 'action',
+        icon: 'change-open',
         placement: { kind: 'rail' },
         column: { renderer: 'views-column' },
       }, { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
@@ -594,7 +594,7 @@ function createTriagePlugin() {
         target: { kind: 'app' },
         renderer: 'latest-widget',
         title: { key: 'plugins.triage.widget.latest', fallback: 'New in PRs & Issues' },
-        icon: 'action',
+        icon: 'change-open',
         home: { default: 'shown' },
       }, {
         // One Session-targeted contribution, mounted by the incumbent
@@ -606,7 +606,7 @@ function createTriagePlugin() {
         target: { kind: 'session' },
         renderer: 'session-entries-panel',
         title: TRIAGE_DISPLAY_NAME,
-        icon: 'action',
+        icon: 'change-open',
       }],
       renderers: [{
         id: 'list-page',

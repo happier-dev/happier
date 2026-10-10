@@ -20,6 +20,7 @@ import type { ScmBackendContext } from '../types.js';
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
 import { createGitPullRequestOpenOrReuseOperation as createOperation } from './pullRequestOpenOrReuseOperation.js';
 import { createEmptyScmHostingProviderRegistry, runWithGitScmCommandRunner, runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
+import { createGithubRestAdapter } from '../../../scm-github/src/pullRequests/restAdapter.js';
 
 function createGitPullRequestOpenOrReuseOperation(...args: Parameters<typeof createOperation>) {
     const operation = createOperation(...args);
@@ -191,6 +192,23 @@ async function runWithRealPullRequestRepository(adapter: Partial<HostingProvider
 }
 
 describe('git pull request open-or-reuse operation', () => {
+    it('retains a real forge creation throttle as a definite non-effect with the exact retry instant', async () => {
+        const adapter = createGithubRestAdapter({
+            resolveToken: async () => ({ kind: 'available', token: 'fixture-token' }),
+            fetcher: async (_url, init) => {
+                const throttled = init?.method === 'POST';
+                return {
+                    ok: !throttled, status: throttled ? 403 : 200, statusText: throttled ? 'Forbidden' : 'OK',
+                    headers: new Headers(throttled ? { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' } : {}),
+                    json: async () => throttled ? { message: 'API rate limit exceeded.' } : [],
+                    text: async () => '',
+                };
+            },
+        });
+        expect(await runWithRealPullRequestRepository(adapter, { base: 'main', body: '' })).toMatchObject({
+            success: false, errorCode: 'REMOTE_RATE_LIMITED', retryNotBeforeMs: 1900000000000,
+        });
+    });
     it('retains a provider pre-effect validation as actionable input rather than an unknown creation', async () => {
         const error = Object.assign(new Error('Choose a valid provider input'), { errorCode: 'INVALID_REQUEST', effectNotApplied: true });
         await expect(runWithRealPullRequestRepository({ createPullRequest: async () => { throw error; } },

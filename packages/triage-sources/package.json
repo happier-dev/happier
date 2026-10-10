@@ -8,26 +8,32 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./runtime": {
+      "happier-source": "./src/runtime.ts",
       "types": "./dist/runtime.d.ts",
       "default": "./dist/runtime.js"
     },
     "./projection/actionResultText": {
+      "happier-source": "./src/projection/actionResultText.ts",
       "types": "./dist/projection/actionResultText.d.ts",
       "default": "./dist/projection/actionResultText.js"
     },
     "./projection/actionResultSequence": {
+      "happier-source": "./src/projection/actionResultSequence.ts",
       "types": "./dist/projection/actionResultSequence.d.ts",
       "default": "./dist/projection/actionResultSequence.js"
     },
     "./translations": {
+      "happier-source": "./src/translations.ts",
       "types": "./dist/translations.d.ts",
       "default": "./dist/translations.js"
     },
     "./ui": {
+      "happier-source": "./src/ui.ts",
       "types": "./dist/ui.d.ts",
       "default": "./dist/ui.js"
     }

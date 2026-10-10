@@ -4,9 +4,15 @@ import {
 } from '@happier-dev/protocol';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/host/registration';
 import { describe, expect, it } from 'vitest';
+import { compilePluginJsonSchema, describePluginJsonSchemaValueIssues } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { testkitEntryRef } from '../testkit/observations.test-support.js';
+import { toCorpusStoredValue } from './rowCodec.js';
+import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from './ids.js';
 
-import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { PLUGIN_MANIFEST, collectionMigrations } from '../../manifest.js';
 import {
     CORPUS_ACCOUNT_COLLECTIONS,
     CORPUS_SESSION_LINKS_COLLECTION,
@@ -39,7 +45,7 @@ function collectSchemaMemberNames(node: JsonSchemaNode, into: Set<string>): Set<
 }
 
 function admit(definition: (typeof CORPUS_ACCOUNT_COLLECTIONS)[number]) {
-    const contribution = PluginAccountCollectionContributionV1Schema.parse(definition);
+    const contribution = PluginAccountCollectionContributionV1Schema.parse(projectPluginAccountCollectionDeclaration(definition.id, definition));
     return normalizePluginAccountCollectionContractV1({
         pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
         contribution,
@@ -72,7 +78,29 @@ describe('durable Collection declarations', () => {
         ]);
         for (const contract of admitted) {
             expect(contract.contractDigest).toMatch(/^[A-Za-z0-9_-]+$/);
-            expect(contract.schemaVersion).toBe(1);
+        }
+        expect(admitted.map((contract) => contract.schemaVersion)).toEqual([2, 1, 2]);
+    });
+
+    it('preserves existing source configuration and user intent through the widening migrations', async () => {
+        for (const definition of [CORPUS_SOURCE_INSTANCES_COLLECTION, CORPUS_USER_MARKS_COLLECTION]) {
+            const contract = admit(definition);
+            expect(contract.readableSchemaVersions).toEqual([1, 2]);
+            const migration = collectionMigrations[definition.id]![0]!;
+            expect(migration).toMatchObject({ fromSchemaVersion: 1, toSchemaVersion: 2 });
+            const retained = definition.id === 'source-instances'
+                ? toCorpusStoredValue({
+                    instanceTag: `a${'0'.repeat(42)}`, sourceQualifiedId: 'happier.example.source/example-forge', lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
+                    configured: { v: 1, instance: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, sourceInstanceId: '00000000-0000-4000-8000-000000000001' },
+                        binding: { purpose: 'triage-source', account: { service: { pluginId: 'happier.example.source', localId: 'accounts' }, accountId: 'retained-account' } },
+                        localInstanceKey: 'retained-scope', configuration: { v: 1, token: 'retained-routing-token' }, locator: { v: 1, displayLabel: 'Retained source' } },
+                })
+                : toCorpusStoredValue({ markTag: `a${'1'.repeat(42)}`, pinned: true, markedAtMs: 1, entryRef: testkitEntryRef(), displayAtMark: { title: 'Retained issue', scopeLabel: 'example/repository' } });
+            const migrated = await migration.migrate(retained);
+            expect(migrated).toEqual(retained);
+            const validate = compilePluginJsonSchema(contract.schema);
+            const valid = isValidPluginJsonSchemaValue(validate, migrated);
+            expect(valid, `${definition.id}: ${JSON.stringify(describePluginJsonSchemaValueIssues(validate))}`).toBe(true);
         }
     });
 
@@ -99,13 +127,13 @@ describe('durable Collection declarations', () => {
             id: definition.id,
             fields: definition.identityFields,
         }))).toEqual(expectedIdentityFields);
-        expect(PLUGIN_MANIFEST.contributes?.accountCollections).toEqual(CORPUS_ACCOUNT_COLLECTIONS);
+        expect(PLUGIN_MANIFEST.contributes?.accountCollections).toEqual(CORPUS_ACCOUNT_COLLECTIONS.map((definition) => projectPluginAccountCollectionDeclaration(definition.id, definition)));
 
         for (const definition of CORPUS_ACCOUNT_COLLECTIONS) {
             const declared = admit(definition);
             const withoutIdentityFields = normalizePluginAccountCollectionContractV1({
                 pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-                contribution: { ...definition, identityFields: [] },
+                contribution: PluginAccountCollectionContributionV1Schema.parse({ ...projectPluginAccountCollectionDeclaration(definition.id, definition), identityFields: [] }),
             });
             expect(declared.contractDigest).not.toBe(withoutIdentityFields.contractDigest);
         }

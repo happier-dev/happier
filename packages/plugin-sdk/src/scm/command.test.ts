@@ -7,6 +7,21 @@ import {
 } from './command.js';
 
 describe('SCM backend command helpers', () => {
+    it('refuses a streaming read on a host that only supports buffered commands', async () => {
+        let buffered = false;
+        const result = await runWithBackendRuntimeServices({
+            async runCommand() {
+                buffered = true;
+                return { success: true, stdout: 'unobserved', stderr: '', exitCode: 0 };
+            },
+        }, () => runScmBackendCommand({ installableKey: 'dep.git', command: 'git' }, {
+            cwd: '/repo', args: ['log'], stdoutConsumer: () => 'stop',
+        }));
+        expect(result.success).toBe(false);
+        expect(result.stderr).toContain('unavailable');
+        expect(buffered).toBe(false);
+    });
+
     it('delegates command execution to the host SCM backend runtime service', async () => {
         const calls: unknown[] = [];
         const controller = new AbortController();

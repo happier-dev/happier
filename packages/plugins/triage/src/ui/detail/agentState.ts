@@ -7,8 +7,12 @@ import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
  * supplies Triage's story copy inside the host's chosen Work bucket.
  */
 export type TriageAgentStatusV1 = Readonly<{
+  /** Which of the status sentences this is, so a mark can follow the same decision as the words. */
+  kind: TriageAgentStatusKindV1;
   labelKey: string;
   label: string;
+  labelParams?: Readonly<Record<string, string>>;
+  agent?: SessionStateV1['agent'];
   tone: SessionStateV1['workStatus']['tone'];
   /** The agent is working now; the status pulses (reduced motion keeps it still). */
   live: boolean;
@@ -25,10 +29,17 @@ const COPY = {
   archived: 'Archived',
 } as const;
 
-function status(id: keyof typeof COPY, state: SessionStateV1): TriageAgentStatusV1 {
+export type TriageAgentStatusKindV1 = keyof typeof COPY;
+
+function status(id: TriageAgentStatusKindV1, state: SessionStateV1): TriageAgentStatusV1 {
+  const namedAttention = state.agent !== undefined && state.workStatus.bucket === 'needs_you'
+    && (id === 'permission' || id === 'action' || id === 'input');
   return {
-    labelKey: `plugins.triage.surface.detail.agent.${id}`,
-    label: COPY[id],
+    kind: id,
+    labelKey: `plugins.triage.surface.detail.agent.${namedAttention ? 'needsYou' : id}`,
+    label: namedAttention ? '{agent} needs you' : COPY[id],
+    ...(namedAttention ? { labelParams: { agent: state.agent!.displayName } } : {}),
+    ...(state.agent === undefined ? {} : { agent: state.agent }),
     tone: state.workStatus.tone,
     live: state.workStatus.bucket === 'working',
   };

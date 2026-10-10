@@ -13,6 +13,7 @@ import type {
 import { SCM_OPERATION_ERROR_CODES, ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '@happier-dev/plugin-sdk/scm';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { parseGitComparisonOutput } from '@happier-dev/cli-common/scm/gitComparisonOutput';
 import type { ScmBackendContext } from '../types.js';
@@ -25,40 +26,77 @@ const GIT_LOG_FIELDS_PER_ENTRY = 7;
  * --no-renames keeps this pair grammar and explicitly does not follow old names.
  * Commit headers are separate NUL fields; filenames never pass through trim/line parsing.
  */
-function parseEntryHistory(raw: string, demanded: readonly { path: string; historyPath: string; directory: boolean }[], shallow: ReadonlySet<string>): ScmEntryHistoryV1[] {
-    if (raw !== '' && !raw.endsWith('\0')) throw new Error('Unterminated history frame');
-    const tokens = raw.split('\0');
+function createEntryHistoryReader(demanded: readonly { path: string; historyPath: string; directory: boolean }[], shallow: ReadonlySet<string>) {
+    const decoder = new StringDecoder('utf8');
+    const pending: string[] = [];
     const settled = new Map<string, ScmEntryHistoryV1>();
+    const demandedCount = new Set(demanded.map(entry => entry.path)).size;
     let commit: Extract<ScmEntryHistoryV1, { kind: 'commit' }>['commit'] | undefined;
-    for (let index = 0; index < tokens.length;) {
-        const token = tokens[index++]!;
-        if (token === '' || token === '\n') continue;
+    let phase: 'frame' | 'author' | 'timestamp' | 'subject' | 'path' = 'frame';
+    let oid = '';
+    let authorName = '';
+    let committedAt = 0;
+    const consumeToken = (token: string) => {
+        if (phase === 'author') { authorName = token; phase = 'timestamp'; return; }
+        if (phase === 'timestamp') {
+            if (!/^-?\d+$/.test(token)) throw new Error('Invalid history timestamp frame');
+            committedAt = Number(token) * 1000;
+            phase = 'subject';
+            return;
+        }
+        if (phase === 'subject') {
+            commit = { oid, authorName, committedAt, subject: token };
+            phase = 'frame';
+            return;
+        }
+        if (phase === 'path') {
+            if (!commit || token === '') throw new Error('Missing history path frame');
+            phase = 'frame';
+            // Shallow root inventories cannot establish actual touches.
+            if (shallow.has(commit.oid)) return;
+            for (const entry of demanded) {
+                const matches = entry.directory
+                    ? entry.historyPath === '' || token.startsWith(`${entry.historyPath}/`)
+                    : token === entry.historyPath;
+                if (matches && !settled.has(entry.path)) settled.set(entry.path, { path: entry.path, kind: 'commit', commit });
+            }
+            return;
+        }
+        if (token === '' || token === '\n') return;
         const metadata = token.startsWith('\n') ? token.slice(1) : token;
         if (metadata.startsWith(':')) {
             if (!commit || !/^:[0-7]{6} [0-7]{6} [a-f0-9]+ [a-f0-9]+ [A-Z]$/.test(metadata)) throw new Error('Invalid history diff frame');
-            const changedPath = tokens[index++];
-            if (changedPath === undefined || changedPath === '') throw new Error('Missing history path frame');
-            // Git treats a shallow boundary as a root diff containing every file. Those
-            // inventory rows cannot establish that this commit actually touched a path.
-            if (shallow.has(commit.oid)) continue;
-            for (const entry of demanded) {
-                const matches = entry.directory
-                    ? entry.historyPath === '' || changedPath.startsWith(`${entry.historyPath}/`)
-                    : changedPath === entry.historyPath;
-                if (matches && !settled.has(entry.path)) settled.set(entry.path, { path: entry.path, kind: 'commit', commit });
-            }
-            continue;
+            phase = 'path';
+            return;
         }
-        if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(token) || index + 2 >= tokens.length) throw new Error('Invalid history commit frame');
-        const authorName = tokens[index++]!;
-        const timestamp = tokens[index++]!;
-        const subject = tokens[index++]!;
-        if (!/^-?\d+$/.test(timestamp)) throw new Error('Invalid history timestamp frame');
-        commit = { oid: token, authorName, committedAt: Number(timestamp) * 1000, subject };
-    }
-    return demanded.map(({ path }) => settled.get(path) ?? (shallow.size > 0
-        ? { path, kind: 'unavailable', reason: 'shallow_history' }
-        : { path, kind: 'none' }));
+        if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(token)) throw new Error('Invalid history commit frame');
+        oid = token;
+        phase = 'author';
+    };
+    return {
+        consume(chunk: Uint8Array): 'continue' | 'stop' {
+            const text = decoder.write(Buffer.from(chunk));
+            let start = 0;
+            let end: number;
+            while ((end = text.indexOf('\0', start)) >= 0) {
+                const token = pending.length > 0 ? [...pending, text.slice(start, end)].join('') : text.slice(start, end);
+                pending.length = 0;
+                consumeToken(token);
+                if (settled.size === demandedCount) return 'stop';
+                start = end + 1;
+            }
+            if (start < text.length) pending.push(text.slice(start));
+            return 'continue';
+        },
+        finish() {
+            if (decoder.end() !== '' || pending.length > 0 || phase !== 'frame') throw new Error('Unterminated history frame');
+        },
+        entries(incompleteReason?: string): ScmEntryHistoryV1[] {
+            return demanded.map(({ path }) => settled.get(path) ?? (incompleteReason || shallow.size > 0
+                ? { path, kind: 'unavailable', reason: incompleteReason ?? 'shallow_history' }
+                : { path, kind: 'none' }));
+        },
+    };
 }
 
 export async function gitHistoryEntries(input: {
@@ -72,7 +110,7 @@ export async function gitHistoryEntries(input: {
     const request = parsed.data;
     if (!context.detection.isRepo) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY };
     const cwd = context.detection.rootPath ?? context.cwd;
-    const signal = input.signal ?? context.signal;
+    const signal = input.signal;
     const command = (args: string[]) => runScmCommand({ bin: 'git', cwd, args, signal });
     const head = await command(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
     const headOid = head.success ? head.stdout.trim() : null;
@@ -129,15 +167,23 @@ export async function gitHistoryEntries(input: {
         if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') shallow = new Set();
         else return unavailable('history_probe_failed');
     }
-    const history = await command([
+    const reader = createEntryHistoryReader(demanded, shallow);
+    let invalidOutput = false;
+    const history = await runScmCommand({ bin: 'git', cwd, signal, args: [
         'log', '--full-history', '--date-order', '--raw', '-z', '--no-renames', '--root', '-m',
         '--format=%x00%H%x00%an%x00%ct%x00%s%x00',
         headOid!, '--', ...demanded.map(({ historyPath }) => toRepoRootLiteralPathspec(historyPath || '.')),
-    ]);
-    if (!history.success || signal?.aborted) return unavailable(signal?.aborted ? 'cancelled'
-        : history.outputLimitExceeded ? 'command_output_limit_exceeded' : history.timedOut ? 'command_timeout' : 'history_command_failed');
+    ], stdoutConsumer: chunk => {
+        try { return reader.consume(chunk); }
+        catch (error) { invalidOutput = true; throw error; }
+    } });
+    if (signal?.aborted) return unavailable('cancelled');
+    if (invalidOutput) return unavailable('invalid_history_output');
+    if (!history.success && !history.outputLimitExceeded) return unavailable(history.timedOut ? 'command_timeout' : 'history_command_failed');
     try {
-        return ScmHistoryEntriesResponseSchema.parse({ success: true, headOid, entries: parseEntryHistory(history.stdout, demanded, shallow) });
+        if (history.success && !history.stoppedEarly) reader.finish();
+        return ScmHistoryEntriesResponseSchema.parse({ success: true, headOid,
+            entries: reader.entries(history.outputLimitExceeded ? 'command_output_limit_exceeded' : undefined) });
     } catch { return unavailable('invalid_history_output'); }
 }
 

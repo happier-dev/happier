@@ -105,6 +105,9 @@ describe('GitHub REST pull request adapter', () => {
       resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token', profileKey: 'github:work' }),
       fetcher: async (url: string, init?: RequestInit) => {
         requests.push({ url, init });
+        if (!new Headers(init?.headers).get('user-agent')?.trim()) {
+          return jsonResponse({ message: 'User-Agent required' }, { status: 403 });
+        }
         return jsonResponse([
           {
             number: 1,
@@ -297,7 +300,7 @@ describe('GitHub REST pull request adapter', () => {
     });
   });
 
-  it('classifies a throttled GitHub 403 as a retryable backend limit, not a credential failure', async () => {
+  it('preserves a throttled GitHub 403 retry instant without credential repair', async () => {
     const adapter = createGithubRestAdapter({
       resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token' }),
       fetcher: async () => jsonResponse({ message: 'API rate limit exceeded for user ID 1.' }, {
@@ -305,7 +308,7 @@ describe('GitHub REST pull request adapter', () => {
         statusText: 'Forbidden',
         headers: {
           'X-RateLimit-Remaining': '0',
-          'X-RateLimit-Reset': '1700000000',
+          'X-RateLimit-Reset': '1900000000',
         },
       }),
     });
@@ -316,8 +319,19 @@ describe('GitHub REST pull request adapter', () => {
       provider: githubProvider,
       head: 'feature/rest',
     })).rejects.toMatchObject({
-      errorCode: 'BACKEND_UNAVAILABLE',
+      errorCode: 'REMOTE_RATE_LIMITED',
+      retryNotBeforeMs: 1900000000000,
     });
+  });
+
+  it('does not turn an unhinted throttle into a forge-provided retry instant', async () => {
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token' }),
+      fetcher: async () => jsonResponse({ message: 'API rate limit exceeded.' }, { status: 429 }),
+    });
+    const error = await adapter.listPullRequests({ provider: githubProvider }).catch((error: unknown) => error);
+    expect(error).toMatchObject({ errorCode: 'REMOTE_RATE_LIMITED' });
+    expect(error).not.toMatchObject({ retryNotBeforeMs: expect.any(Number) });
   });
 
   it('still reports an unthrottled GitHub 403 as remote authentication required', async () => {

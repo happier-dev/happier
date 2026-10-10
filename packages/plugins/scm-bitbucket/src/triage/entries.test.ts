@@ -83,6 +83,28 @@ describe('Bitbucket pull-request row mapping', () => {
       .toEqual({ presentation: 'closed', nativeLabel: 'Superseded' });
   });
 
+  it('publishes who opened the pull request as the snapshot author, and omits it when Bitbucket names nobody', () => {
+    const authorOf = (row: unknown) => {
+      const decoded = decodeBitbucketPullRequestRow(row);
+      if (!decoded.ok) throw new Error('expected a decodable row');
+      return toBitbucketPresentObservation(decoded.entry, {
+        laneInvolvement: 'author',
+        viewerAccountUuid: '{aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee}',
+      }).snapshot.authorLabel;
+    };
+    expect(authorOf(openRow)).toBe((openRow as { author: { display_name: string } }).author.display_name);
+    expect(authorOf({ ...openRow, author: null })).toBeUndefined();
+  });
+
+  it('publishes the pull request id as the snapshot designation', () => {
+    const decoded = decodeBitbucketPullRequestRow(openRow);
+    if (!decoded.ok) throw new Error('expected a decodable row');
+    expect(toBitbucketPresentObservation(decoded.entry, {
+      laneInvolvement: 'author',
+      viewerAccountUuid: '{aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee}',
+    }).snapshot.designation).toBe('#42');
+  });
+
   it('distinguishes a reviewer list the endpoint omits from a reviewer list that is empty', () => {
     const fromList = decodeBitbucketPullRequestRow(openRow);
     const fromSelf = decodeBitbucketPullRequestRow(pullRequestSelf);

@@ -21,7 +21,11 @@ describe('GitLab merge request mapping', () => {
       web_url: 'https://gitlab.com/happier-dev/mobile/app/-/merge_requests/17',
       source_branch: 'feature/gitlab-mrs',
       target_branch: 'main',
-      state: 'opened',
+      state: 'merged',
+      created_at: '2026-10-01T12:00:00Z',
+      merged_at: '2026-10-02T12:00:00Z',
+      closed_at: null,
+      diff_refs: { base_sha: 'base', head_sha: 'head' },
       description: 'body should not appear in summaries',
     })).toEqual({
       provider,
@@ -31,8 +35,29 @@ describe('GitLab merge request mapping', () => {
       url: 'https://gitlab.com/happier-dev/mobile/app/-/merge_requests/17',
       baseBranch: 'main',
       headBranch: 'feature/gitlab-mrs',
-      state: 'open',
+      state: 'merged',
+      createdAtMs: Date.parse('2026-10-01T12:00:00Z'),
+      mergedAtMs: Date.parse('2026-10-02T12:00:00Z'),
+      baseSha: 'base',
+      headSha: 'head',
     });
+  });
+
+  it('keeps native close time separate from absent merge time and omits invalid dates', () => {
+    const mapped = mapGitlabMergeRequest(provider, {
+      iid: 18,
+      title: 'Closed MR',
+      web_url: 'https://gitlab.com/happier-dev/mobile/app/-/merge_requests/18',
+      source_branch: 'feature/closed',
+      target_branch: 'main',
+      state: 'closed',
+      created_at: 'invalid',
+      closed_at: '2026-10-02T12:00:00Z',
+      merged_at: null,
+    });
+    expect(mapped).toMatchObject({ state: 'closed', closedAtMs: Date.parse('2026-10-02T12:00:00Z') });
+    expect(mapped).not.toHaveProperty('createdAtMs');
+    expect(mapped).not.toHaveProperty('mergedAtMs');
   });
 
   it('maps closed merged and unknown states without throwing', async () => {

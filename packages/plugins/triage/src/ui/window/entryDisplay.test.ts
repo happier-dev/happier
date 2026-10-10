@@ -178,6 +178,40 @@ describe('projectTriageEntryDisplay', () => {
     expect(display.tone).toBe('neutral');
   });
 
+  it('carries the reason\'s icon and who opened the entry, saying "You" when the reader did', () => {
+    const attention = {
+      level: 'required' as const,
+      fromSourceInstanceId: INSTANCE_A,
+      reasonId: 'involvement/review-requested',
+      reasonLabel: 'Your review was requested',
+    };
+    const byMara: ProjectedObservationV1 = {
+      sourceInstanceId: INSTANCE_A,
+      observedAtMs: 1_000,
+      outcome: {
+        kind: 'present',
+        locator: testkitLocator(),
+        snapshot: testkitSnapshot({ authorLabel: 'Mara Oduya', designation: '#2481' }),
+        viewer: testkitViewer(),
+      },
+    };
+    const display = projectTriageEntryDisplay(row({ observations: [byMara], attention }));
+    expect(display.detailIcon).toBe('review');
+    expect(display.authorLabel).toBe('Mara Oduya');
+    expect(display.designation).toBe('#2481');
+
+    const mine: ProjectedObservationV1 = {
+      ...byMara,
+      outcome: { ...byMara.outcome, viewer: testkitViewer({ involvement: ['author'] }) } as ProjectedObservationV1['outcome'],
+    };
+    expect(projectTriageEntryDisplay(row({ observations: [mine] })).authorLabel).toBe('You');
+    // No author reported and not the reader's: nothing is claimed.
+    const display2 = projectTriageEntryDisplay(row());
+    expect(display2.authorLabel).toBeNull();
+    expect(display2.detailIcon).toBeNull();
+    expect(display2.designation).toBeNull();
+  });
+
   /**
    * `core/SURFACE.md` §7.1 requires a row to announce its kind, its lifecycle
    * and its freshness state — none of which the row's visible slots carry,

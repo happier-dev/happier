@@ -6,7 +6,7 @@ import {
     testkitPresentOutcome,
     testkitViewer,
 } from '../testkit/observations.test-support.js';
-import { deriveDisplayedAttention } from './deriveAttention.js';
+import { deriveDisplayedAttention, readTriageAttentionReasonIconV1 } from './deriveAttention.js';
 
 const INSTANCE_A = '11111111-1111-4111-8111-111111111111';
 const INSTANCE_B = '22222222-2222-4222-8222-222222222222';
@@ -62,6 +62,15 @@ describe('deriveDisplayedAttention', () => {
             reasonId: 'involvement/review-requested',
             reasonLabel: 'Your review was requested',
         });
+    });
+
+    it('names the chip mark of the aggregate\'s own involvement reasons, and none for a source-declared reason', () => {
+        expect(readTriageAttentionReasonIconV1('involvement/review-requested')).toBe('review');
+        expect(readTriageAttentionReasonIconV1('involvement/assignee')).toBe('assigned');
+        expect(readTriageAttentionReasonIconV1('involvement/mentioned')).toBe('mention');
+        // An involvement with no fitting mark stays words alone, and so does a reason a source declared.
+        expect(readTriageAttentionReasonIconV1('involvement/subscribed')).toBeNull();
+        expect(readTriageAttentionReasonIconV1('example/review')).toBeNull();
     });
 
     it('returns null for no present observation and for present observations with only none attention', () => {

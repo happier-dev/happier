@@ -7,12 +7,13 @@ import {
   TargetedSurface,
   Text,
   usePluginTranslation,
+  useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { TriageDetailPanelNavigationProvider, type TriageDetailPanelNavigationV1 } from '@happier-dev/triage-sources/ui';
 
-import type { TriageDetailTabV1 } from './tabs.js';
+import { readTriageDetailTabSummaryV1, type TriageDetailTabV1 } from './tabs.js';
 
 /** One source detail mount: the admitted surface, its strict input and its identity. */
 export type TriageDetailSourceMountV1 = Readonly<{
@@ -113,13 +114,16 @@ export function TriageDetailTabbedBody(props: Readonly<{
   fallback: React.ReactNode;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const { locale } = useSurfaceContext();
   const [localSelected, setLocalSelected] = React.useState<string>('overview');
   const selected = props.tabSelection?.value ?? localSelected;
   const setSelected = props.tabSelection?.onChange ?? setLocalSelected;
   const hasSession = props.session !== undefined && props.session !== null;
+  // Keyed on the ids, not the plan: a re-read that only changes a tab's summary must not re-announce the tabs.
+  const tabIds = props.tabs.map((tab) => tab.id).join('\n');
   const availableTabs = React.useMemo(() => [
-    ...props.tabs.map((tab) => tab.id), ...(hasSession ? ['session'] : []),
-  ], [hasSession, props.tabs]);
+    ...(tabIds === '' ? [] : tabIds.split('\n')), ...(hasSession ? ['session'] : []),
+  ], [hasSession, tabIds]);
   const reportAvailableTabs = props.tabSelection?.onAvailableTabsChange;
   React.useLayoutEffect(() => { reportAvailableTabs?.(availableTabs); }, [availableTabs, reportAvailableTabs]);
   // A source control that points at a sibling panel selects it through this one owner.
@@ -183,15 +187,20 @@ export function TriageDetailTabbedBody(props: Readonly<{
           </TriageDetailPanelNavigationProvider>
         )}
       >
-        {props.tabs.map((tab) => (
-          <Tabs.Item
-            key={tab.id}
-            value={tab.id}
-            title={tab.kind === 'shared'
-              ? text(SHARED_TAB_COPY[tab.id].key, SHARED_TAB_COPY[tab.id].fallback)
-              : tab.titleKey === undefined ? tab.title : text(tab.titleKey, tab.title)}
-          />
-        ))}
+        {props.tabs.map((tab) => {
+          // The declaring source's own fact, said beside the title ("Checks 2 failing"); absent says nothing.
+          const summary = tab.summary === undefined ? null : readTriageDetailTabSummaryV1(tab.summary, locale);
+          return (
+            <Tabs.Item
+              key={tab.id}
+              value={tab.id}
+              title={tab.kind === 'shared'
+                ? text(SHARED_TAB_COPY[tab.id].key, SHARED_TAB_COPY[tab.id].fallback)
+                : tab.titleKey === undefined ? tab.title : text(tab.titleKey, tab.title)}
+              {...(summary === null ? {} : { badge: summary.value, badgeTone: summary.tone })}
+            />
+          );
+        })}
         {props.session === undefined || props.session === null ? null : (
           <Tabs.Item
             key="session"

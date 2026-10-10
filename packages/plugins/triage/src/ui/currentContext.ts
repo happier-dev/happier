@@ -35,6 +35,8 @@ type ContextDetailV1 = Readonly<{
    * leave nobody able to tell which happened.
    */
   filtered?: true;
+  linkedSessionIds?: readonly string[];
+  selectedLinkedSessionId?: string | null;
 } & Partial<CurrentUiContextBoundedIncompletenessV1>>;
 
 function utf8Bytes(value: unknown): number {
@@ -72,6 +74,7 @@ export function projectTriageCurrentUiContextV1(input: Readonly<{
   formatOpenEntryTitle: (title: string) => string;
   mountedCommands?: readonly CurrentUiCommandDeclarationV1[];
   mountedAction?: Readonly<{ action: Readonly<{ pluginId: string; localId: string }>; mountId: string }>;
+  linkedSessions?: Readonly<{ ids: readonly string[]; selectedId: string | null }>;
 }>): PluginUiContextEnrichmentV1 {
   const target = resolveTriageActionTargetV1(input.surface);
   const selectedKey = target.kind === 'entry'
@@ -146,8 +149,19 @@ export function projectTriageCurrentUiContextV1(input: Readonly<{
     }));
   }
 
-  const mountedDetail = input.mountedAction === undefined ? detail : { ...detail, mountedAction: input.mountedAction };
-  const complete = withCommands(base, mountedDetail, commands, routeOmitted || selectionHasNoDisplay);
+  const mountedDetail = { ...detail,
+    ...(input.mountedAction === undefined ? {} : { mountedAction: input.mountedAction }),
+    ...(input.linkedSessions === undefined || selectedKey === null ? {} : {
+      linkedSessionIds: [...input.linkedSessions.ids], selectedLinkedSessionId: input.linkedSessions.selectedId,
+    }),
+  };
+  let sessionsOmitted = false;
+  // Session relationships share the incumbent context byte budget, including large paged details.
+  while (mountedDetail.linkedSessionIds?.length && utf8Bytes(withCommands(base, mountedDetail, [], true)) > CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1) {
+    mountedDetail.linkedSessionIds.pop();
+    sessionsOmitted = true;
+  }
+  const complete = withCommands(base, mountedDetail, commands, routeOmitted || selectionHasNoDisplay || sessionsOmitted);
   if (!routeOmitted
     && commands.length <= CURRENT_UI_CONTEXT_MAX_COMMANDS_V1
     && utf8Bytes(complete) <= CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1) {

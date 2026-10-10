@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import {
+  BrandMark,
   Button,
   Dropdown,
   EmptyState,
@@ -11,6 +12,7 @@ import {
   Tabs,
   Text,
   usePluginTranslation,
+  useSessionState,
 } from '@happier-dev/plugin-ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -22,9 +24,9 @@ const TOOLBAR_STYLE = Object.freeze({ paddingHorizontal: 16, paddingVertical: 8,
 
 /**
  * The entry's linked investigation, live (plan 05 §4.6): the real Session — transcript, prompts
- * and composer — rendered by Happier through `SessionChat`, with the Session it shows chosen here
- * and one explicit way to open it in full. Selection is surface-local; the detail's instance key
- * resets it with the tab.
+ * and composer — rendered by Happier through `SessionChat`, with one explicit way to open it in
+ * full. Mounted details use the shell's surface-local selection and Action callback. The local
+ * fallback serves standalone presentation only; no mounted detail uses it.
  */
 export function TriageSessionPanel(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
@@ -38,6 +40,10 @@ export function TriageSessionPanel(props: Readonly<{
   // The first linked Session (projection order) until the person picks another; a pick that
   // leaves the projection falls back to the first rather than to nothing.
   const selected = props.sessions.find((session) => session.sessionId === (props.selectedSessionId ?? selectedId)) ?? props.sessions[0];
+  // The Agent mark comes only from the host's canonical Session projection: its admitted
+  // `agent.brand` is the exact BrandMark target. Without it the title stays unmarked; the
+  // Session title or any default never stands in for an Agent.
+  const agentBrandPluginId = useSessionState(selected?.sessionId ?? null).state?.agent?.brand?.pluginId;
   if (selected === undefined) return null;
   const titleOf = (session: TriageLinkedSessionProjectionV1) => (
     session.displayTitle ?? text('plugins.triage.surface.detail.session', 'Session')
@@ -46,6 +52,7 @@ export function TriageSessionPanel(props: Readonly<{
   return (
     <Stack style={FILL_STYLE}>
       <Row gap="small" align="center" style={TOOLBAR_STYLE}>
+        {agentBrandPluginId === undefined ? null : <BrandMark pluginId={agentBrandPluginId} size="small" />}
         <Stack style={FILL_STYLE}>
           {props.sessions.length > 1 ? (
             <Dropdown
@@ -62,8 +69,8 @@ export function TriageSessionPanel(props: Readonly<{
               }))}
               radioGroups={[{ id: 'linked-session', accessibilityLabel: pickerLabel, selectedId: selected.sessionId }]}
               onSelect={(sessionId) => {
-                setSelectedId(sessionId);
-                props.onSelectSession?.(sessionId);
+                if (props.onSelectSession === undefined) setSelectedId(sessionId);
+                else props.onSelectSession(sessionId);
                 setPickerOpen(false);
               }}
             />

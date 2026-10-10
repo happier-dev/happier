@@ -17,6 +17,7 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
 } from './manifest.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 } from './actions/listEntriesProtocol.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from './actions/mountedUiProtocol.js';
 import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 } from './composer/attachmentValue.js';
 import { TRIAGE_UI_TRANSLATIONS } from './ui/translations.js';
 import { createTestkitCorpusCollections } from './corpus/testkit/corpusCollections.test-support.js';
@@ -24,6 +25,22 @@ import { testkitEntryRef } from './corpus/testkit/observations.test-support.js';
 import { createTriageSetEntryPinnedActionHandler, listTriagePinnedEntries } from './actions/userMarks.js';
 
 describe('Triage plugin manifest', () => {
+  it('keeps linked-session selection requestable on the incumbent mounted client Action', async () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find((entry) => entry.id === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1);
+    if (!action) throw new Error('Mounted action must be declared');
+    expect(action.surfaces).toEqual(expect.arrayContaining(['ui', 'agent', 'mcp', 'cli']));
+    expect(action.execution).toMatchObject({ target: 'client', client: { exportName: 'createTriageMountedUiActionHandler' } });
+    const input = TriageMountedUiInputV1Schema.parse({ mountId: 'active-detail', operation: {
+      kind: 'selectLinkedSession', sessionId: 'linked-session',
+    } });
+    const gate = createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+      policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${action.id}`, occurrenceId: 'triage-occurrence',
+        dangerLevel: action.dangerLevel, scopes: action.scopes, surfaces: action.surfaces,
+        authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+          resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
+    }) });
+    expect(await gate.admit({ surface: 'agent', invocationSurface: 'agent', input })).toMatchObject({ status: 'admitted' });
+  });
   it('declares its qualified entry source and Session link target through the public families', () => {
     expect(PLUGIN_MANIFEST.contributes).toHaveProperty('dragSources', [expect.objectContaining({
       id: 'entry-reference', client: { artifactId: 'triage-entity-drag-drop-native', exportName: 'activate' },
@@ -120,8 +137,14 @@ describe('Triage plugin manifest', () => {
   });
 
   it('declares its rail page and a separate views column renderer', () => {
+    expect(PLUGIN_MANIFEST.contributes.ui.views.map(({ id, icon }) => ({ id, icon }))).toEqual([
+      { id: 'triage', icon: 'change-open' },
+      { id: 'latest', icon: 'change-open' },
+      { id: 'session-entries', icon: 'change-open' },
+    ]);
     expect(PLUGIN_MANIFEST.contributes.ui.views).toContainEqual(expect.objectContaining({
       id: 'triage',
+      icon: 'change-open',
       placement: { kind: 'rail' },
       column: { renderer: 'views-column' },
     }));

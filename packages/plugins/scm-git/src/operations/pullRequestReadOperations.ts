@@ -20,7 +20,8 @@ import {
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
-import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheErrorKind, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
+import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
+import { classifyHostingProviderError } from '../hostingProviders/providerFailure.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 import { createValidatedPullRequestFollowupAction } from './pullRequestFollowupAction.js';
 import {
@@ -53,7 +54,7 @@ type GitPullRequestReadOperationDeps = Readonly<{
     now?: () => number;
 }>;
 
-function errorResponse(error: string, errorCode: ScmOperationErrorCode): {
+function errorResponse(error: string, errorCode: ScmOperationErrorCode, details?: ReturnType<typeof classifyHostingProviderError>['details']): {
     success: false;
     error: string;
     errorCode: ScmOperationErrorCode;
@@ -62,6 +63,7 @@ function errorResponse(error: string, errorCode: ScmOperationErrorCode): {
         success: false,
         error,
         errorCode,
+        ...details,
     };
 }
 
@@ -104,24 +106,6 @@ function buildCacheKey(input: Readonly<{
 function readAuthProfileKey(adapter: HostingProviderPullRequestsCapability, provider: ScmHostingProviderRef): string | undefined {
     const key = adapter.getPullRequestAuthProfileKey({ provider })?.trim();
     return key ? key : undefined;
-}
-
-function classifyError(error: unknown): Readonly<{
-    message: string;
-    code: ScmOperationErrorCode;
-    cacheKind: PrStatusCacheErrorKind;
-}> {
-    const message = error instanceof Error ? error.message : 'Pull request provider operation failed';
-    const maybeCode = typeof error === 'object' && error !== null
-        ? (error as { errorCode?: unknown }).errorCode
-        : undefined;
-    if (maybeCode === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED) {
-        return { message, code: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED, cacheKind: 'auth' };
-    }
-    if (maybeCode === SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND) {
-        return { message, code: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND, cacheKind: 'notFound' };
-    }
-    return { message, code: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, cacheKind: 'network' };
 }
 
 export function createGitPullRequestReadOperations(
@@ -228,7 +212,7 @@ export function createGitPullRequestReadOperations(
             }
             return { success: true, pullRequests: [...pullRequests] };
         } catch (error) {
-            const classified = classifyError(error);
+            const classified = classifyHostingProviderError(error);
             const currentAuthProfileKey = resolved.adapter ? readAuthProfileKey(resolved.adapter, resolved.provider) : undefined;
             const writeKey = currentAuthProfileKey === authProfileKey
                 ? key
@@ -249,7 +233,7 @@ export function createGitPullRequestReadOperations(
                     errorKind: classified.cacheKind,
                 });
             }
-            return errorResponse(classified.message, classified.code);
+            return errorResponse(classified.message, classified.code, classified.details);
         }
     }
 
@@ -269,8 +253,8 @@ export function createGitPullRequestReadOperations(
                 });
                 return { success: true, pullRequest };
             } catch (error) {
-                const classified = classifyError(error);
-                return errorResponse(classified.message, classified.code);
+                const classified = classifyHostingProviderError(error);
+                return errorResponse(classified.message, classified.code, classified.details);
             }
         },
         async openCompose({ context, request }) {

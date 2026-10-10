@@ -59,7 +59,7 @@ export type ScmDiffSummaryCachePolicy =
   z.infer<typeof ScmDiffSummaryCachePolicySchema>;
 
 // Retain concrete identity for shared Control input JSON Schema references.
-export const ScmDiffSummaryGenerateInputSchema = z
+export const ScmDiffSummaryGenerateInputSchema = lazyZodSchema(() => z
   .object({
     cwd: z.string().min(1),
     sessionId: z.string().min(1).optional(),
@@ -116,13 +116,13 @@ export const ScmDiffSummaryGenerateInputSchema = z
         path: ['checkpointReceiptId'],
       });
     }
-  });
+  }));
 export type ScmDiffSummaryGenerateInput =
   z.infer<typeof ScmDiffSummaryGenerateInputSchema>;
 
 /** Capture current evidence, or read an exact retained comparison without model admission. */
 // Retain concrete identity for shared Control input JSON Schema references.
-export const ScmComparisonCaptureInputSchema = z.object({
+export const ScmComparisonCaptureInputSchema = lazyZodSchema(() => z.object({
   cwd: z.string().min(1), sessionId: z.string().min(1).optional(),
   comparisonId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   backendPreference: ScmBackendPreferenceSchema.optional(), source: ScmDiffSummarySourceSchema,
@@ -134,7 +134,7 @@ export const ScmComparisonCaptureInputSchema = z.object({
   if (!parsed.success) for (const issue of parsed.error.issues) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue.message, path: issue.path });
   }
-});
+}));
 export type ScmComparisonCaptureInput = z.infer<typeof ScmComparisonCaptureInputSchema>;
 
 export const ScmDiffSummaryTruncationReasonSchema = lazyZodSchema(() => z.enum([
@@ -209,9 +209,9 @@ export const ScmReviewExplanationRequesterSchema = lazyZodSchema(() => z.object(
 }).strict());
 export type ScmReviewExplanationRequester = z.infer<typeof ScmReviewExplanationRequesterSchema>;
 // Retain concrete identity for shared Control target JSON Schema references.
-export const ScmReviewExplanationTargetsSchema = z.array(z.object({
+export const ScmReviewExplanationTargetsSchema = lazyZodSchema(() => z.array(z.object({
   stopId: z.string().min(1), findingRefs: z.array(ScmReviewFindingIdentitySchema).min(1),
-}).strict()).min(1).refine(targets => new Set(targets.map(target => target.stopId)).size === targets.length, 'Explanation stop ids must be unique');
+}).strict()).min(1).refine(targets => new Set(targets.map(target => target.stopId)).size === targets.length, 'Explanation stop ids must be unique'));
 export const ScmReviewExplanationSchema = lazyZodSchema(() => z.object({
   markdown: z.string().trim().min(1), findingRefs: z.array(ScmReviewFindingIdentitySchema).min(1),
   provenance: z.object({ requestedBy: ScmReviewExplanationRequesterSchema,
@@ -350,6 +350,8 @@ export function normalizeScmDiffSummaryModelOutput(value: unknown, params: Reado
 
 export const ScmDiffSummaryGenerateSuccessSchema = lazyZodSchema(() => z.object({
   success: z.literal(true),
+  /** Actual authored initial Run input, for exact lifecycle observation. */
+  inputId: z.string().min(1).optional(),
   summaryMarkdown: z.string().min(1).optional(),
   sourceKey: z.string().min(1),
   checkpointReceiptId: z.string().min(1).optional(),

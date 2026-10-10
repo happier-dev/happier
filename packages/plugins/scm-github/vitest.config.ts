@@ -49,6 +49,8 @@ const reactNativeWebAliases = [
   { find: /^react-dom\/client$/u, replacement: resolve(repoRoot, 'apps/ui/node_modules/react-dom/client.js') },
   { find: /^react-dom$/u, replacement: resolve(repoRoot, 'apps/ui/node_modules/react-dom/index.js') },
   { find: /^react-native$/u, replacement: resolve(repoRoot, 'apps/ui/node_modules/react-native-web/dist/index.js') },
+  // Metro selects SVG's web implementation by platform extension; Vite needs the same boundary.
+  { find: /^react-native-svg$/u, replacement: resolve(repoRoot, 'apps/ui/node_modules/react-native-svg/lib/module/elements.web.js') },
 ];
 
 /** Source-only GitHub checks must not resolve stale copied SDK/Protocol packages. */

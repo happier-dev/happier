@@ -2,6 +2,7 @@ import {
     readCurrentBackendRuntimeServices,
     type BackendCommandRunInput,
     type BackendCommandRunResult,
+    type BackendCommandStreamInput,
 } from './backend.js';
 
 export type ScmBackendCommandSpec = Readonly<{
@@ -19,6 +20,7 @@ export type ScmBackendCommandInput = Readonly<{
     maxOutputBytes?: number;
     env?: Readonly<Record<string, string | undefined>>;
     signal?: AbortSignal;
+    stdoutConsumer?: BackendCommandStreamInput['stdoutConsumer'];
 }>;
 
 const DEFAULT_SCM_BACKEND_COMMAND_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -53,16 +55,16 @@ export function runScmBackendCommand(
     input: ScmBackendCommandInput,
 ): Promise<BackendCommandRunResult> {
     const runtimeServices = readCurrentBackendRuntimeServices();
-    if (!runtimeServices) {
+    if (!runtimeServices || (input.stdoutConsumer && !runtimeServices.runCommandStreaming)) {
         return Promise.resolve({
             success: false,
             stdout: '',
-            stderr: `SCM command runner is unavailable for ${command.unavailableLabel ?? command.command}`,
+            stderr: `SCM ${input.stdoutConsumer ? 'streaming ' : ''}command runner is unavailable for ${command.unavailableLabel ?? command.command}`,
             exitCode: -1,
         });
     }
 
-    return runtimeServices.runCommand({
+    const commandInput: BackendCommandRunInput = {
         installableKey: command.installableKey,
         command: command.command,
         cwd: input.cwd,
@@ -73,5 +75,8 @@ export function runScmBackendCommand(
         maxOutputBytes: input.maxOutputBytes,
         env: input.env,
         ...(input.signal ? { signal: input.signal } : {}),
-    });
+    };
+    return input.stdoutConsumer
+        ? runtimeServices.runCommandStreaming!({ ...commandInput, stdoutConsumer: input.stdoutConsumer })
+        : runtimeServices.runCommand(commandInput);
 }

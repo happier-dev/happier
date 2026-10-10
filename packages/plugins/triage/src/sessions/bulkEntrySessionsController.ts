@@ -475,7 +475,16 @@ function sameTriageBulkProjectKeyV1(
     left: TriageBulkPlacementCandidateV1['projectKey'],
     right: TriageBulkPlacementCandidateV1['projectKey'],
 ): boolean {
-    if ('id' in left || 'id' in right) return 'id' in left && 'id' in right && left.id === right.id;
+    if ('projectKey' in left || 'projectKey' in right) {
+        return 'projectKey' in left && 'projectKey' in right
+            && left.serverId === right.serverId
+            && left.projectKey === right.projectKey;
+    }
+    if ('id' in left || 'id' in right) {
+        return 'id' in left && 'id' in right
+            && left.serverId === right.serverId
+            && left.id === right.id;
+    }
     return left.serverId === right.serverId
         && left.machineId === right.machineId
         && left.rootPath === right.rootPath;

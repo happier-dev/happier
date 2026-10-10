@@ -119,6 +119,19 @@ function openSurfaceCommands(context: PluginUiContextEnrichmentV1) {
 }
 
 describe('Triage current UI context projection', () => {
+  it('reports linked-session selection and bounds paged relationship ids with the context owner budget', () => {
+    const input = { surface: selected('A'), visibleRows: [row({ entryId: 'A' })] };
+    const projected = projectTriageCurrentUiContextV1({ ...input,
+      linkedSessions: { ids: ['session-one', 'session-two'], selectedId: 'session-two' },
+    });
+    expect(projected.detail).toMatchObject({ linkedSessionIds: ['session-one', 'session-two'], selectedLinkedSessionId: 'session-two' });
+    const pagedIds = Array.from({ length: 200 }, (_, index) => `session-${index}-${'x'.repeat(100)}`);
+    const selectedId = pagedIds.at(-1) ?? null;
+    const large = projectTriageCurrentUiContextV1({ ...input, linkedSessions: { ids: pagedIds, selectedId } });
+    expect(PluginUiContextEnrichmentV1Schema.safeParse(large).success).toBe(true);
+    expect(large.detail).toMatchObject({ incomplete: true, selectedLinkedSessionId: selectedId });
+    expect(new TextEncoder().encode(JSON.stringify(large)).byteLength).toBeLessThanOrEqual(CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1);
+  });
   it('keeps empty and retained-missing selections truthful', () => {
     const empty = projectTriageCurrentUiContextV1({
       surface: TRIAGE_SURFACE_INITIAL_STATE_V1,

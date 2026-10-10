@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { BackendRuntimeContext } from '@happier-dev/plugin-sdk/scm/backend';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveBackendCommandMaxOutputBytes, type BackendRuntimeContext } from '@happier-dev/plugin-sdk/scm/backend';
 import { createRealGitScmBackendRuntimeServices, runWithGitScmCommandRunner, runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import * as reads from './readOperations.js';
 
@@ -29,7 +29,10 @@ describe('Git demanded entry history', () => {
         git(root, ['config', 'user.name', 'History Author']);
         git(root, ['config', 'user.email', 'history@example.test']);
     });
-    afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+    afterEach(async () => {
+        vi.unstubAllEnvs();
+        await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })));
+    });
     it('returns each file’s actual commit and a directory’s latest descendant, with literal path boundaries', async () => {
         const first = await commit('one.txt', 'first');
         await mkdir(join(root, 'dir'));
@@ -62,6 +65,46 @@ describe('Git demanded entry history', () => {
         const before = await commit('one', 'before');
         const after = await commit('one', 'after');
         expect(await history(['one'], before)).toMatchObject({ success: false, headOid: after, errorCode: 'SCM_SOURCE_CHANGED' });
+    });
+    it('settles recent demanded facts before older root history exceeds the command output boundary', async () => {
+        // Exercise the canonical default boundary, not an executor's permitted
+        // environment override. Keep that override intact for the other tests.
+        vi.stubEnv('HAPPIER_SCM_MAX_OUTPUT_BYTES', '');
+        const commandOutputBoundary = resolveBackendCommandMaxOutputBytes();
+        await writeFile(join(root, 'old'), 'old content');
+        git(root, ['add', 'old']);
+        // A real old commit subject makes the unrestricted root log exceed the
+        // existing 4 MiB process boundary without a slow thousands-commit fixture.
+        const oldSubjectFragment = 'old history ';
+        const oldSubject = oldSubjectFragment.repeat(Math.floor(commandOutputBoundary / oldSubjectFragment.length) + 1);
+        execFileSync('git', ['commit', '--quiet', '-F', '-'], { cwd: root, input: oldSubject });
+        const recent = await commit('recent', 'recent fact');
+        expect(Buffer.byteLength(execFileSync('git', ['log', '--format=%s'], {
+            cwd: root, maxBuffer: commandOutputBoundary * 2,
+        }))).toBeGreaterThan(commandOutputBoundary);
+        const services = createRealGitScmBackendRuntimeServices();
+        let bytesRead = 0;
+        const response = await runWithGitScmCommandRunner(input => {
+            if (!('stdoutConsumer' in input)) return services.runCommand(input);
+            return services.runCommandStreaming!({ ...input, stdoutConsumer: chunk => {
+                bytesRead += chunk.byteLength;
+                return input.stdoutConsumer(chunk);
+            } });
+        }, () => reads.gitHistoryEntries({ context: context(), request: { cwd: root, folder: '', paths: ['recent', '', 'recent'] } }));
+        expect(response).toMatchObject({ success: true, headOid: recent, entries: [
+            { path: 'recent', kind: 'commit', commit: { oid: recent, subject: 'recent fact' } },
+            { path: '', kind: 'commit', commit: { oid: recent, subject: 'recent fact' } },
+            { path: 'recent', kind: 'commit', commit: { oid: recent, subject: 'recent fact' } },
+        ] });
+        expect(bytesRead).toBeGreaterThan(0);
+        expect(bytesRead).toBeLessThan(commandOutputBoundary);
+        // An unsettled demand still needs exhaustion and must never turn an
+        // incomplete traversal into a fabricated no-touch fact.
+        expect(await history(['recent', 'missing', ''])).toMatchObject({ success: true, entries: [
+            { path: 'recent', kind: 'commit', commit: { oid: recent } },
+            { path: 'missing', kind: 'unavailable', reason: 'command_output_limit_exceeded' },
+            { path: '', kind: 'commit', commit: { oid: recent } },
+        ] });
     });
     it('keeps repository-relative literal identities when detection starts inside a workspace subdirectory', async () => {
         const repositoryFile = await commit('same', 'repository file');
@@ -131,7 +174,7 @@ describe('Git demanded entry history', () => {
         const services = createRealGitScmBackendRuntimeServices();
         let moved = false;
         const response = await runWithGitScmCommandRunner(async input => {
-                const result = await services.runCommand(input);
+                const result = await ('stdoutConsumer' in input ? services.runCommandStreaming!(input) : services.runCommand(input));
                 if (!moved && input.args.includes('HEAD^{commit}')) {
                     moved = true;
                     await commit('one', 'after');
@@ -140,6 +183,24 @@ describe('Git demanded entry history', () => {
             }, () => reads.gitHistoryEntries({ context: context(), request: { cwd: root, folder: '', paths: ['one'], headOid: before } }));
         expect(response).toMatchObject({ success: true, headOid: before, entries: [{ kind: 'commit', commit: { oid: before, subject: 'before' } }] });
         expect(git(root, ['rev-parse', 'HEAD'])).not.toBe(before);
+    });
+    it('preserves Unicode and literal newline paths when frames arrive one byte at a time', async () => {
+        git(root, ['config', 'user.name', 'History 🧪 Author']);
+        const path = 'é\nfile';
+        const oid = await commit(path, 'Unicode 🧪 subject');
+        const services = createRealGitScmBackendRuntimeServices();
+        const response = await runWithGitScmCommandRunner(input => {
+            if (!('stdoutConsumer' in input)) return services.runCommand(input);
+            // Fragment the real OS boundary, retaining Git and parsing logic.
+            return services.runCommandStreaming!({ ...input, stdoutConsumer: chunk => {
+                for (let index = 0; index < chunk.byteLength; index += 1) {
+                    if (input.stdoutConsumer(chunk.subarray(index, index + 1)) === 'stop') return 'stop';
+                }
+                return 'continue';
+            } });
+        }, () => reads.gitHistoryEntries({ context: context(), request: { cwd: root, folder: '', paths: [path] } }));
+        expect(response).toMatchObject({ success: true, entries: [{ path, kind: 'commit',
+            commit: { oid, subject: 'Unicode 🧪 subject', authorName: 'History 🧪 Author' } }] });
     });
     it('does not attribute shallow boundary inventory to that boundary commit', async () => {
         await commit('old', 'old root');
@@ -181,10 +242,13 @@ describe('Git demanded entry history', () => {
             const controller = new AbortController();
             const response = await runWithGitScmCommandRunner(async input => {
                 if (!input.args.includes('log')) return services.runCommand(input);
-                if (mode === 'frame') return { success: true, stdout: '\0incomplete', stderr: '', exitCode: 0 };
+                if (mode === 'frame') {
+                    if ('stdoutConsumer' in input) input.stdoutConsumer(Buffer.from('\0incomplete'));
+                    return { success: true, stdout: '', stderr: '', exitCode: 0 };
+                }
                 if (mode === 'cancel') controller.abort();
                 return { success: false, stdout: '', stderr: mode, exitCode: -1, ...(mode === 'limit' ? { outputLimitExceeded: true } : {}) };
-            }, () => reads.gitHistoryEntries({ context: { ...context(), signal: controller.signal }, request: { cwd: root, folder: '', paths: ['one'] } }));
+            }, () => reads.gitHistoryEntries({ context: context(), signal: controller.signal, request: { cwd: root, folder: '', paths: ['one'] } }));
             const reason = mode === 'frame' ? 'invalid_history_output' : mode === 'cancel' ? 'cancelled' : 'command_output_limit_exceeded';
             expect(response).toMatchObject({ success: true, entries: [{ path: 'one', kind: 'unavailable', reason }] });
         }

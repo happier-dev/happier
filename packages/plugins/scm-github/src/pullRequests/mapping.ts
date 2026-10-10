@@ -5,6 +5,7 @@ import type {
   ScmPullRequestState,
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -69,11 +70,12 @@ function sameNameWithOwner(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
-function mapGithubPullState(raw: Record<string, unknown>): ScmPullRequestState {
-  if (readGithubBoolean(raw.draft) === true || readGithubBoolean(raw.isDraft) === true) return 'draft';
-  if (readGithubString(raw.merged_at) || readGithubString(raw.mergedAt)) return 'merged';
+function mapGithubPullState(raw: Record<string, unknown>, mergedAtMs: number | null): ScmPullRequestState {
   const state = readGithubString(raw.state)?.toLowerCase();
-  if (state === 'open' || state === 'closed' || state === 'merged' || state === 'draft') return state;
+  if (readGithubBoolean(raw.merged) === true || state === 'merged' || mergedAtMs !== null) return 'merged';
+  if (state === 'closed') return 'closed';
+  if (readGithubBoolean(raw.draft) === true || readGithubBoolean(raw.isDraft) === true) return 'draft';
+  if (state === 'open' || state === 'draft') return state;
   return 'unknown';
 }
 
@@ -131,6 +133,9 @@ export function mapGithubPullRequest(
   const isDraft = readGithubBoolean(raw.draft) ?? readGithubBoolean(raw.isDraft) ?? undefined;
   const author = mapGithubAuthor(raw);
   const checks = mapGithubChecks(raw);
+  const createdAtMs = parseTimestampMs(raw.created_at) ?? parseTimestampMs(raw.createdAt);
+  const closedAtMs = parseTimestampMs(raw.closed_at) ?? parseTimestampMs(raw.closedAt);
+  const mergedAtMs = parseTimestampMs(raw.merged_at) ?? parseTimestampMs(raw.mergedAt);
 
   return {
     provider,
@@ -146,7 +151,10 @@ export function mapGithubPullRequest(
       : {}),
     ...(headSha !== null ? { headSha } : {}),
     ...(baseSha !== null ? { baseSha } : {}),
-    state: mapGithubPullState(raw),
+    state: mapGithubPullState(raw, mergedAtMs),
+    ...(createdAtMs !== null ? { createdAtMs } : {}),
+    ...(closedAtMs !== null ? { closedAtMs } : {}),
+    ...(mergedAtMs !== null ? { mergedAtMs } : {}),
     ...(typeof isDraft === 'boolean' ? { isDraft } : {}),
     ...(author ? { author } : {}),
     ...(checks ? { checks } : {}),

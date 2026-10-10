@@ -7,7 +7,6 @@ import type {
   PluginUiTargetedContributionSelectorV1,
   PluginUiTargetedContributionSurfaceV1,
   PluginUiTargetedContributionV1,
-  PluginUiTargetedContributionsV1,
   SurfaceContext,
 } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -34,8 +33,10 @@ const TRIAGE_GET_SOURCE_ENTRY_ROLE_V1 = 'get';
  * The one place the aggregate turns "this row belongs to that source" into the
  * exact admitted contribution handle its detail body mounts through.
  *
- * The mounted host already hands every surface its target-filtered admission
- * snapshot, and `TargetedSurface` accepts exactly the value that snapshot
+ * An executable mount receives its target-filtered admission snapshot;
+ * Account-only presentation can have no admitted occurrence yet. Absence
+ * means no source renderer, descriptor or operation, never a synthetic target.
+ * `TargetedSurface` accepts exactly the value an admitted snapshot
  * carries. So this file MATCHES — it never constructs a handle, never names a
  * renderer or an artifact, and never decides whether a mount is possible: the
  * physical host owns that, and the fallback the caller supplies is what a
@@ -81,10 +82,12 @@ function triageSourceSelectorV1(
 }
 
 function findTriageSourceContributionV1(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   source: TriageEntryRefV1['source'],
 ): PluginUiTargetedContributionV1 | undefined {
-  return selectTargetedContribution(targetedContributions, triageSourceSelectorV1(source));
+  return targetedContributions === undefined
+    ? undefined
+    : selectTargetedContribution(targetedContributions, triageSourceSelectorV1(source));
 }
 
 /**
@@ -96,7 +99,7 @@ function findTriageSourceContributionV1(
  * durable detail reads depend on a reachable daemon.
  */
 export function resolveTriageSourceDescriptorV1(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   source: TriageEntryRefV1['source'],
 ): TriageSourceDescriptorV1 | null {
   const contribution = findTriageSourceContributionV1(targetedContributions, source);
@@ -106,9 +109,10 @@ export function resolveTriageSourceDescriptorV1(
 }
 
 export function resolveTriageSourceDetailContributionV1(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   source: TriageEntryRefV1['source'],
 ): TriageSourceDetailContributionLookupV1 {
+  if (targetedContributions === undefined) return ABSENT;
   const surface = selectTargetedContributionSurface(targetedContributions, {
     ...triageSourceSelectorV1(source),
     role: TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
@@ -128,7 +132,7 @@ export function resolveTriageSourceDetailContributionV1(
  * disabled with a stated reason instead of failing after the press.
  */
 export function resolveTriageSourcePreparesReviewWorkspaceV1(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   source: TriageEntryRefV1['source'],
 ): boolean {
   return resolveTriageSourcePrepareReviewWorkspaceOperationV1(targetedContributions, source) !== undefined;
@@ -136,9 +140,10 @@ export function resolveTriageSourcePreparesReviewWorkspaceV1(
 
 /** The exact host-created source handle a selected-PR start must carry. */
 export function resolveTriageSourcePrepareReviewWorkspaceOperationV1(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   source: TriageEntryRefV1['source'],
 ) {
+  if (targetedContributions === undefined) return undefined;
   return selectTargetedContributionOperation(targetedContributions, {
     ...triageSourceSelectorV1(source),
     role: TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1,
@@ -152,7 +157,7 @@ export function resolveTriageSourcePrepareReviewWorkspaceOperationV1(
  * descriptor and never guesses from a provider id or kind name.
  */
 export function resolveTriageSourceWorkflowSubjectV1(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
   entryRef: TriageEntryRefV1,
 ): TriageSourceWorkflowSubjectV1 | null {
   return resolveTriageSourceDescriptorV1(targetedContributions, entryRef.source)
@@ -196,6 +201,7 @@ export function readTriageSourceGetOperationV1(
   context: SurfaceContext,
   source: TriageEntryRefV1['source'],
 ) {
+  if (context.targetedContributions === undefined) return undefined;
   return selectTargetedContributionOperation(context.targetedContributions, {
     ...triageSourceSelectorV1(source),
     role: TRIAGE_GET_SOURCE_ENTRY_ROLE_V1,

@@ -14,6 +14,7 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendContext } from '../types.js';
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
 import { createGitPullRequestReadOperations } from './pullRequestReadOperations.js';
+import { createGithubRestAdapter } from '../../../scm-github/src/pullRequests/restAdapter.js';
 
 const provider: ScmHostingProviderRef = {
     id: 'scm.github',
@@ -128,6 +129,24 @@ function createRegistry(adapter: Partial<HostingProviderPullRequestsCapability>,
 }
 
 describe('git pull request read operations', () => {
+    it('retains the real forge throttle and retry instant through list and get', async () => {
+        const adapter = createGithubRestAdapter({
+            resolveToken: async () => ({ kind: 'available', token: 'fixture-token', profileKey: 'bound' }),
+            fetcher: async () => ({
+                ok: false, status: 403, statusText: 'Forbidden',
+                headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }),
+                json: async () => ({ message: 'API rate limit exceeded.' }),
+                text: async () => 'API rate limit exceeded.',
+            }),
+        });
+        const operations = createGitPullRequestReadOperations({
+            registry: createRegistry(adapter), cache: createPrStatusCache(),
+            readSnapshot: async () => createSnapshot(),
+        });
+        const expected = { success: false, errorCode: 'REMOTE_RATE_LIMITED', retryNotBeforeMs: 1900000000000 };
+        expect(await operations.list({ context, request: {} })).toMatchObject(expected);
+        expect(await operations.get({ context, request: { prReference: { number: 42 } } })).toMatchObject(expected);
+    });
     it('resolves default hosting provider runtime services from the host only', () => {
         const source = readFileSync(new URL('./pullRequestReadOperations.ts', import.meta.url), 'utf8');
 

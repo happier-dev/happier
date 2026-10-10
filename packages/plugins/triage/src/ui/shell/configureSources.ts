@@ -1,4 +1,4 @@
-import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
+import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -48,8 +48,9 @@ const NONE: readonly TriageConfigureSourceOfferV1[] = Object.freeze([]);
  * the same reason.
  */
 export function planTriageConfigureSourceOffersV1(
-  targetedContributions: PluginUiTargetedContributionsV1,
+  targetedContributions: SurfaceContext['targetedContributions'],
 ): readonly TriageConfigureSourceOfferV1[] {
+  if (targetedContributions === undefined) return NONE;
   const point = targetedContributions.points.find(
     (candidate) => candidate.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   );

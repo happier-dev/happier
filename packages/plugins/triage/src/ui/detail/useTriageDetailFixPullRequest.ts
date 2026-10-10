@@ -3,6 +3,7 @@ import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import type {
   TriageEntryPresentationStateV1,
   TriageEntryRefV1,
+  TriageRowFactV1,
   TriageSourceDetailTabV1,
   TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -39,6 +40,8 @@ export type TriageDetailFixPullRequestV1 = Readonly<{
   state: TriageFixPullRequestsStateV1 | null;
   mount: TriageDetailSourceMountV1 | null;
   detailTabs: readonly TriageSourceDetailTabV1[] | undefined;
+  /** The fix PR's own snapshot facts (its tab summaries), when the projection holds it. */
+  facts: readonly TriageRowFactV1[] | undefined;
   /** Pull requests the reader can link, from their own projection. */
   pickable: readonly TriageFixPullRequestPickV1[];
 }>;
@@ -123,5 +126,6 @@ export function useTriageDetailFixPullRequest(input: Readonly<{
       : []
   ), [hasFix, rows, workflowSubjectOf]);
 
-  return useMemo(() => ({ state, mount, detailTabs, pickable }), [detailTabs, mount, pickable, state]);
+  const facts = selected?.observation.snapshot.facts;
+  return useMemo(() => ({ state, mount, detailTabs, facts, pickable }), [detailTabs, facts, mount, pickable, state]);
 }

@@ -19,7 +19,7 @@ describe('Triage sources contribution protocol', () => {
             .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'readPullRequestStatus', 'scan', 'verifyReviewWorkspace']);
         expect(operations.listInstances.declaration).toMatchObject({
             dangerLevel: 'safe',
-            surfaces: ['plugin', 'ui'],
+            surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
         });
         expect(operations.scan.declaration).toMatchObject({
             dangerLevel: 'safe',

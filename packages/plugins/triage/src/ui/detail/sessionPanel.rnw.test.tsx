@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import type { RenderContext, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
@@ -28,7 +28,23 @@ const calls: Array<Readonly<{ action: string; input: unknown }>> = [];
 const mounted: PluginUiTestkit[] = [];
 let openFails = false;
 
-async function mountBody(sessions: readonly TriageLinkedSessionProjectionV1[]) {
+/** The host's canonical Session projection; `agent` is present only when the host admits it. */
+function liveState(sessionId: string, agent?: SessionStateV1['agent']): SessionStateV1 {
+  return {
+    sessionId,
+    lifecycle: 'active',
+    runtime: 'waiting',
+    operational: 'ready',
+    workStatus: { bucket: 'idle', tone: 'neutral', word: 'Ready' },
+    pendingPermissions: [],
+    ...(agent === undefined ? {} : { agent }),
+  } as SessionStateV1;
+}
+
+async function mountBody(
+  sessions: readonly TriageLinkedSessionProjectionV1[],
+  readSession?: (sessionId: string) => SessionStateV1,
+) {
   calls.length = 0;
   openFails = false;
   const surface = defineUiSurface(function EntryBody(_context: RenderContext): React.ReactElement {
@@ -50,6 +66,7 @@ async function mountBody(sessions: readonly TriageLinkedSessionProjectionV1[]) {
         if (openFails) throw new Error('open failed');
         return {};
       },
+      ...(readSession === undefined ? {} : { readSession: ({ sessionId }: { sessionId: string }) => readSession(sessionId) }),
     },
   });
   mounted.push(fixture);
@@ -107,6 +124,24 @@ describe('Triage entry Session tab', () => {
       await body.press(await body.getByRole('button', { name: 'Open session' }));
     });
     expect(calls).toEqual([{ action: 'session.open', input: { sessionId: 'session-other' } }]);
+  });
+
+  it('marks the toolbar title with the linked Agent only when the host admits that identity', async () => {
+    // The testkit host carries no brand bytes or names, so a BrandMark draws its neutral monogram
+    // ("P" for the unnamed plugin): its presence is the mark's presence.
+    const single = [LINKED[0]!];
+    const anonymous = await mountBody(single, (sessionId) => liveState(sessionId));
+    await act(async () => { await anonymous.press(await anonymous.getByRole('tab', { name: 'Session' })); });
+    await expect(anonymous.getByText('Route repair')).resolves.toBeDefined();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    await expect(anonymous.queryByText('P')).resolves.toBeUndefined();
+
+    const admitted = await mountBody(single, (sessionId) => liveState(sessionId, {
+      agentId: 'codex', displayName: 'Codex', brand: { pluginId: 'happier.agent.codex' },
+    } as SessionStateV1['agent']));
+    await act(async () => { await admitted.press(await admitted.getByRole('tab', { name: 'Session' })); });
+    await expect(admitted.getByText('Route repair')).resolves.toBeDefined();
+    await expect.poll(async () => (await admitted.queryByText('P')) !== undefined).toBe(true);
   });
 
   it('keeps the source detail exactly as it was when the entry has no linked Session', async () => {

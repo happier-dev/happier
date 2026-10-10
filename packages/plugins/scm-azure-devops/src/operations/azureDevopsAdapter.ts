@@ -74,7 +74,8 @@ function readJson(stdout: string): unknown {
 }
 
 function mapListStatus(state: ScmPullRequestState | undefined): string {
-  if (state === 'closed' || state === 'merged') return 'completed';
+  if (state === 'closed') return 'abandoned';
+  if (state === 'merged') return 'completed';
   return 'active';
 }
 

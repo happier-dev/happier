@@ -20,9 +20,15 @@ import type { ScmBackendContext } from '../types.js';
 import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import { defaultPrStatusCache } from '../hostingProviders/prStatusCache.js';
 import { createGitHostingRepositoryPublishOperation } from './hostingRepositoryPublishOperations.js';
+import { createGithubRepositoryRestAdapter } from '../../../scm-github/src/repositoryProvisioning/githubRepositoryRestAdapter.js';
+import { createGithubRepositoryProvisioningAdapter } from '../../../scm-github/src/repositoryProvisioning/createRepositoryWithAuthFallback.js';
+import { createGithubScmHostingProviderAdapter, githubHostingProviderAdapter, GITHUB_SCM_HOSTING_PROVIDER_ID } from '../../../scm-github/src/adapter.js';
+import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '../../../scm-github/src/manifest.js';
+import { createScmHostingProviderRegistry } from '../../../../../apps/cli/src/scm/hostingProviders/registry';
+import { snapshotScmHostingProviderRuntime } from '../../../../plugin-sdk/src/host/registration/staticRegistrationSnapshots.js';
 
 const provider: ScmHostingProviderRef = {
-    id: 'scm.github',
+    id: GITHUB_SCM_HOSTING_PROVIDER_ID,
     kind: 'github',
     displayName: 'GitHub',
     baseUrl: 'https://github.com',
@@ -146,16 +152,26 @@ function completePublishingCapability(
 }
 
 function createRegistry(adapter: Partial<HostingProviderRepositoryPublishingCapability>) {
-    const capability = completePublishingCapability(adapter);
-    return {
-        providers: [{
-            ...provider,
-            capabilities: {},
-        }],
-        getRepositoryPublishing(id: string) {
-            return id === provider.id ? capability : undefined;
-        },
-    };
+    return createFixtureRegistry([{ provider, adapter }]);
+}
+
+function createFixtureRegistry(bindings: readonly Readonly<{
+    provider: ScmHostingProviderRef;
+    adapter: Partial<HostingProviderRepositoryPublishingCapability>;
+}>[]) {
+    return createScmHostingProviderRegistry({
+        providers: bindings.map(({ provider: ref }) => ({
+            id: ref.id.split('/').at(-1)!, pluginId: GITHUB_PLUGIN_MANIFEST.id, kind: ref.kind,
+            displayName: ref.displayName, capabilities: [],
+        })),
+        runtimeRegistrations: bindings.map(({ provider: ref, adapter }) => ({
+            pluginId: GITHUB_PLUGIN_MANIFEST.id, occurrenceId: ref.id,
+            registration: { id: ref.id.split('/').at(-1)!, adapter: {
+                routing: createGithubScmHostingProviderAdapter({ exactHosts: [new URL(ref.baseUrl).hostname] }),
+                repositoryPublishing: completePublishingCapability(adapter),
+            } },
+        })),
+    });
 }
 
 function createMultiProviderRegistry(
@@ -163,20 +179,11 @@ function createMultiProviderRegistry(
 ) {
     const providerTwo: ScmHostingProviderRef = {
         ...provider,
-        id: 'scm.github.enterprise',
+        id: `${GITHUB_SCM_HOSTING_PROVIDER_ID}.enterprise`,
         displayName: 'GitHub Enterprise',
         baseUrl: 'https://ghe.example.com',
     };
-    return {
-        providers: [
-            { ...provider, capabilities: {} },
-            { ...providerTwo, capabilities: {} },
-        ],
-        getRepositoryPublishing(id: string) {
-            const adapter = adapters[id];
-            return adapter ? completePublishingCapability(adapter) : undefined;
-        },
-    };
+    return createFixtureRegistry([provider, providerTwo].map((ref) => ({ provider: ref, adapter: adapters[ref.id] ?? {} })));
 }
 
 function remoteSuccess(remoteUrl: string): ScmRemoteManagementResponse {
@@ -204,6 +211,84 @@ function publishRequest(overrides: Partial<ScmHostingRepositoryPublishRequest> =
 }
 
 describe('git hosting repository publish operation', { timeout: 20_000 }, () => {
+    it('discovers and publishes an explicit deployment from a real registered declaration without an existing remote', async () => {
+        const requests: string[] = [];
+        const restAdapter = createGithubRepositoryRestAdapter({
+            resolveToken: async () => ({ kind: 'available', token: 'fixture-token' }),
+            fetcher: async (url) => {
+                requests.push(url);
+                return {
+                    ok: true, status: 200, statusText: 'OK',
+                    json: async () => url.endsWith('/user/orgs') ? []
+                        : url.endsWith('/user') ? { login: 'happier-dev' }
+                        : { full_name: 'happier-dev/project', html_url: 'https://github.com/happier-dev/project',
+                            clone_url: 'https://github.com/happier-dev/project.git', private: true },
+                    text: async () => '',
+                };
+            },
+        });
+        const declaration = GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders?.[0];
+        if (!declaration) throw new Error('GitHub declaration missing');
+        const { title, ...definition } = declaration;
+        const registry = createScmHostingProviderRegistry({
+            providers: [{ ...definition, pluginId: GITHUB_PLUGIN_MANIFEST.id,
+                displayName: typeof title === 'string' ? title : title.fallback }],
+            runtimeRegistrations: [{ pluginId: GITHUB_PLUGIN_MANIFEST.id, occurrenceId: 'fixture',
+                registration: { id: declaration.id, ...snapshotScmHostingProviderRuntime({ adapter: { routing: githubHostingProviderAdapter,
+                    repositoryPublishing: createGithubRepositoryProvisioningAdapter({ restAdapter }) } }) } }],
+            configuredDeploymentsByProviderId: new Map([[GITHUB_SCM_HOSTING_PROVIDER_ID,
+                { bases: ['https://ghe.example.com'], status: 'complete' }]]),
+        });
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-publish-registry-'));
+        git(workspace, ['init', '-b', 'main']);
+        const actualContext = { ...context, cwd: workspace, detection: { ...context.detection, rootPath: workspace } };
+        const operation = createGitHostingRepositoryPublishOperation({ registry, runtimeServices: {} });
+        const targets = await operation.describePublishTargets({ context: actualContext, request: { providerId: GITHUB_SCM_HOSTING_PROVIDER_ID } });
+        expect(targets).toMatchObject({ success: true, targets: [expect.objectContaining({
+            owner: 'happier-dev', provider: expect.objectContaining({ id: GITHUB_SCM_HOSTING_PROVIDER_ID, baseUrl: 'https://github.com' }),
+        })] });
+        const result = await publishWithRealGitRuntime(operation, { context: actualContext,
+            request: publishRequest({ providerId: GITHUB_SCM_HOSTING_PROVIDER_ID, providerBaseUrl: 'https://github.com', pushCurrentBranch: false }) });
+        expect(result).toMatchObject({ success: true, pushed: false });
+        expect(git(workspace, ['remote', 'get-url', 'origin'])).toBe('https://github.com/happier-dev/project.git');
+        expect(await publishWithRealGitRuntime(operation, { context: actualContext,
+            request: publishRequest({ providerId: GITHUB_SCM_HOSTING_PROVIDER_ID, providerBaseUrl: 'https://attacker.example' }) }))
+            .toMatchObject({ success: false, errorCode: 'INVALID_REQUEST' });
+        expect(await publishWithRealGitRuntime(operation, { context: actualContext,
+            request: publishRequest({ providerId: GITHUB_SCM_HOSTING_PROVIDER_ID }) }))
+            .toMatchObject({ success: false, errorCode: 'INVALID_REQUEST' });
+        expect(await publishWithRealGitRuntime(operation, { context: actualContext,
+            request: publishRequest({ providerId: 'missing/provider', providerBaseUrl: 'https://github.com' }) }))
+            .toMatchObject({ success: false, errorCode: 'FEATURE_UNSUPPORTED' });
+        expect(await publishWithRealGitRuntime(operation, { context: actualContext,
+            request: publishRequest({ providerId: GITHUB_SCM_HOSTING_PROVIDER_ID, providerKind: 'gitlab', providerBaseUrl: 'https://github.com' }) }))
+            .toMatchObject({ success: false, errorCode: 'FEATURE_UNSUPPORTED' });
+        expect(await publishWithRealGitRuntime(operation, { context: actualContext,
+            request: publishRequest({ providerId: GITHUB_SCM_HOSTING_PROVIDER_ID, providerBaseUrl: 'https://ghe.example.com' }) }))
+            .toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED' });
+        expect(requests.every((url) => url.startsWith('https://api.github.com/'))).toBe(true);
+    });
+    it('retains forge throttle details through publishing and target discovery before Git effects', async () => {
+        const adapter = createGithubRepositoryRestAdapter({
+            resolveToken: async () => ({ kind: 'available', token: 'fixture-token' }),
+            fetcher: async () => ({
+                ok: false, status: 403, statusText: 'Forbidden',
+                headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }),
+                json: async () => ({ message: 'API rate limit exceeded.' }),
+                text: async () => 'API rate limit exceeded.',
+            }),
+        });
+        const operation = createGitHostingRepositoryPublishOperation({
+            registry: createRegistry(adapter), runtimeServices: {},
+            readSnapshot: async () => snapshot(),
+        });
+        const expected = {
+            success: false, errorCode: 'REMOTE_RATE_LIMITED', retryNotBeforeMs: 1900000000000,
+            remediation: { kind: 'retry' },
+        };
+        expect(await operation.publish({ context, request: publishRequest() })).toMatchObject(expected);
+        expect(await operation.describePublishTargets({ context, request: { providerId: provider.id } })).toMatchObject(expected);
+    });
     it('resolves default hosting provider registries from host-injected runtime services only', () => {
         const source = readFileSync(new URL('./hostingRepositoryPublishOperations.ts', import.meta.url), 'utf8');
 
@@ -319,7 +404,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
             ...repository,
             provider: {
                 ...provider,
-                id: 'scm.github.enterprise',
+                id: `${GITHUB_SCM_HOSTING_PROVIDER_ID}.enterprise`,
                 displayName: 'GitHub Enterprise',
                 baseUrl: 'https://ghe.example.com',
             },
@@ -330,7 +415,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
         const operation = createGitHostingRepositoryPublishOperation({
             registry: createMultiProviderRegistry({
                 [provider.id]: { createRepository: githubCreate },
-                'scm.github.enterprise': { createRepository: enterpriseCreate },
+                [`${GITHUB_SCM_HOSTING_PROVIDER_ID}.enterprise`]: { createRepository: enterpriseCreate },
             }),
             readSnapshot: async () => snapshot(),
             hasCurrentCommit: async () => true,
@@ -339,7 +424,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
 
         const result = await publishWithRealGitRuntime(operation, {
             context,
-            request: publishRequest({ providerId: 'scm.github.enterprise' } as Partial<ScmHostingRepositoryPublishRequest>),
+            request: publishRequest({ providerId: `${GITHUB_SCM_HOSTING_PROVIDER_ID}.enterprise` }),
         });
 
         expect(result).toMatchObject({
@@ -350,27 +435,16 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
         expect(enterpriseCreate).toHaveBeenCalledTimes(1);
     });
 
-    it('passes host-injected URL safety fences to repository publish adapters', async () => {
+    it('passes registry-normalized deployment URL safety fences to repository publish adapters', async () => {
         const urlSafety = {
-            allowedSchemes: ['https:', 'ssh:'],
-            allowedBaseUrls: ['https://ghe.example.com/happier-dev/'],
-            allowedOrigins: ['https://ghe.example.com'],
+            allowedSchemes: ['https:'],
+            allowedBaseUrls: ['https://github.com'],
+            allowedOrigins: ['https://github.com'],
         } as const;
         const getRepository = vi.fn(async () => null);
         const createRepository = vi.fn(async () => repository);
         const operation = createGitHostingRepositoryPublishOperation({
-            registry: {
-                providers: [{
-                    ...provider,
-                    urlSafety,
-                    capabilities: {},
-                }],
-                getRepositoryPublishing(id: string) {
-                    return id === provider.id
-                        ? completePublishingCapability({ getRepository, createRepository })
-                        : undefined;
-                },
-            },
+            registry: createRegistry({ getRepository, createRepository }),
             readSnapshot: async () => snapshot(),
             hasCurrentCommit: async () => true,
             remoteAdd: vi.fn(async () => remoteSuccess(repository.cloneUrl!)),
@@ -400,7 +474,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
             targets: [{
                 provider: {
                     ...provider,
-                    id: 'scm.github.enterprise',
+                    id: `${GITHUB_SCM_HOSTING_PROVIDER_ID}.enterprise`,
                     displayName: 'GitHub Enterprise',
                     baseUrl: 'https://ghe.example.com',
                 },
@@ -414,7 +488,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
         const operation = createGitHostingRepositoryPublishOperation({
             registry: createMultiProviderRegistry({
                 [provider.id]: { describePublishTargets: githubDescribe },
-                'scm.github.enterprise': { describePublishTargets: enterpriseDescribe },
+                [`${GITHUB_SCM_HOSTING_PROVIDER_ID}.enterprise`]: { describePublishTargets: enterpriseDescribe },
             }),
         });
 
@@ -422,7 +496,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
             context,
             request: {
                 cwd: '/workspace',
-                providerId: 'scm.github.enterprise',
+                providerId: `${GITHUB_SCM_HOSTING_PROVIDER_ID}.enterprise`,
                 providerKind: 'github',
             },
         }));
@@ -432,7 +506,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
             auth: { profileKind: 'provider_cli' },
             defaultRepositoryName: 'workspace',
             targets: [expect.objectContaining({
-                provider: expect.objectContaining({ id: 'scm.github.enterprise' }),
+                provider: expect.objectContaining({ id: `${GITHUB_SCM_HOSTING_PROVIDER_ID}.enterprise` }),
             })],
         });
         expect(githubDescribe).not.toHaveBeenCalled();

@@ -17,7 +17,8 @@ import {
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
-import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheErrorKind, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
+import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
+import { classifyHostingProviderError } from '../hostingProviders/providerFailure.js';
 import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 import { gitRemotePublish } from './publishOperations.js';
@@ -103,35 +104,6 @@ function buildCacheKey(input: Readonly<{
         state: 'open',
         ...(input.authProfileKey ? { authProfileKey: input.authProfileKey } : {}),
     };
-}
-
-function classifyError(error: unknown): Readonly<{
-    message: string;
-    code: ScmOperationErrorCode;
-    cacheKind: PrStatusCacheErrorKind;
-}> {
-    const message = error instanceof Error ? error.message : 'Pull request provider operation failed';
-    const maybeCode = typeof error === 'object' && error !== null
-        ? (error as { errorCode?: unknown }).errorCode
-        : undefined;
-    if (maybeCode === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED) {
-        return { message, code: SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED, cacheKind: 'auth' };
-    }
-    if (maybeCode === SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND) {
-        return { message, code: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND, cacheKind: 'notFound' };
-    }
-    if (maybeCode === SCM_OPERATION_ERROR_CODES.REMOTE_ALREADY_EXISTS) {
-        return { message, code: SCM_OPERATION_ERROR_CODES.REMOTE_ALREADY_EXISTS, cacheKind: 'network' };
-    }
-    if (maybeCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
-        return { message, code: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, cacheKind: 'network' };
-    }
-    if (maybeCode === SCM_OPERATION_ERROR_CODES.INVALID_REQUEST
-        || maybeCode === SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE
-        || maybeCode === SCM_OPERATION_ERROR_CODES.REMOTE_REJECTED) {
-        return { message, code: maybeCode, cacheKind: 'network' };
-    }
-    return { message, code: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, cacheKind: 'network' };
 }
 
 function createSuccessfulResponse(input: Readonly<{
@@ -391,7 +363,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                     return createSuccessfulResponse({ pullRequest: existing, provider: resolvedProvider, reused: true });
                 }
             } catch (error) {
-                const classified = classifyError(error);
+                const classified = classifyHostingProviderError(error);
                 if (authProfileKey) {
                     cache.setError({
                         key: cacheKey,
@@ -403,7 +375,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                 if (classified.code === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED || classified.code === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
                     return composeFallback(classified.code);
                 }
-                return errorResponse(classified.message, classified.code);
+                return errorResponse(classified.message, classified.code, classified.details);
             }
 
             let body = request.body;
@@ -422,7 +394,9 @@ export function createGitPullRequestOpenOrReuseOperation(
                 body = template.body;
             }
 
-            const unknownCreateOutcome = (message: string, errorCode: ScmOperationErrorCode) => errorResponse(message, errorCode, {
+            const unknownCreateOutcome = (message: string, errorCode: ScmOperationErrorCode,
+                details?: ReturnType<typeof classifyHostingProviderError>['details']) => errorResponse(message, errorCode, {
+                ...details,
                 outcome: {
                     v: 1, kind: 'outcome_unknown', errorCode, nextActions: [],
                     reconciliation: {
@@ -525,15 +499,15 @@ export function createGitPullRequestOpenOrReuseOperation(
                     }
                     return createSuccessfulResponse({ pullRequest: listedAfterDuplicate, provider: resolvedProvider, reused: true });
                 }
-                const classified = classifyError(error);
+                const classified = classifyHostingProviderError(error);
                 if (classified.code === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED || classified.code === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
                     return composeFallback(classified.code);
                 }
                 const effectNotApplied = typeof error === 'object' && error !== null
                     && 'effectNotApplied' in error && error.effectNotApplied === true;
                 return effectNotApplied
-                    ? errorResponse(classified.message, classified.code)
-                    : unknownCreateOutcome(classified.message, classified.code);
+                    ? errorResponse(classified.message, classified.code, classified.details)
+                    : unknownCreateOutcome(classified.message, classified.code, classified.details);
             }
         },
     });

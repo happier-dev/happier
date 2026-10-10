@@ -316,6 +316,49 @@ describe('the mounted PRs & Issues source settings page', () => {
     ]);
   });
 
+  it('seeds each stateful source editor with its own persisted opaque configuration', async () => {
+    const Editor = ({ draft, onSubmit }: TriageSourceSettingsDraftEditorPropsV1) => {
+      const [configuration] = React.useState(draft.configuration);
+      return React.createElement(Button, {
+        title: 'Save source-specific configuration',
+        onPress: () => { void onSubmit({ ...draft, configuration }); },
+      });
+    };
+    const configurableSurface = createTriageSourceSettingsSurface({
+      pluginId: PLUGIN_ID,
+      listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
+      sourceDisplayName: SOURCE_DISPLAY_NAME,
+      DraftEditor: Editor,
+    });
+    const first = TriageSourceInstanceDraftV1Schema.parse(candidate('acme/api'));
+    const second = TriageSourceInstanceDraftV1Schema.parse(candidate('acme/tools', 'account-2'));
+    const sourceInstanceIds = [INSTANCE_ID, '22222222-2222-4222-8222-222222222222'];
+    const records = [first, second].map((draft, index) => ({
+      v: 1 as const, lifecycle: 'active', configured: {
+        v: 1 as const, binding: draft.binding, localInstanceKey: draft.localInstanceKey,
+        configuration: { v: 1 as const, token: `saved:${draft.localInstanceKey}` },
+        locator: { v: 1 as const, displayLabel: 'Previous label' },
+        instance: { source: { pluginId: PLUGIN_ID, localId: 'tracker' }, sourceInstanceId: sourceInstanceIds[index]! },
+      },
+    }));
+    const harness = createHarness({
+      discovery: { kind: 'complete', candidates: [first, second], failures: [] },
+      configured: { kind: 'read', status: 'complete', instances: records },
+      administration: sourceInstanceIds.map((sourceInstanceId) => ({ kind: 'reconfigured', sourceInstanceId })),
+    });
+    const page = await mountSettings(harness, {}, configurableSurface);
+    await pressControl(page, 'Update acme/api from the provider');
+    await pressControl(page, 'Save source-specific configuration');
+    await pressControl(page, 'Update acme/api from the provider');
+    await pressControl(page, 'Update acme/tools from the provider');
+    await pressControl(page, 'Save source-specific configuration');
+    expect(harness.administrations()).toEqual([first, second].map((draft, index) => ({
+      v: 1, kind: 'reconfigure', sourceInstanceId: sourceInstanceIds[index],
+      draft: { ...draft, configuration: { v: 1, token: `saved:${draft.localInstanceKey}` } },
+    })));
+  });
+
   it('asks the exact source it was handed, and the target for the rest', async () => {
     const harness = createHarness({
       discovery: { kind: 'complete', candidates: [candidate('acme/api')], failures: [] },

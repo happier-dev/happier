@@ -7,11 +7,13 @@ import { describeGithubRateLimitFailure } from '../observations/githubResponseFa
 
 export class GithubPullRequestAdapterError extends Error {
   readonly errorCode: ScmOperationErrorCode;
+  readonly retryNotBeforeMs?: number;
 
-  constructor(message: string, errorCode: ScmOperationErrorCode) {
+  constructor(message: string, errorCode: ScmOperationErrorCode, retryNotBeforeMs?: number) {
     super(message);
     this.name = 'GithubPullRequestAdapterError';
     this.errorCode = errorCode;
+    this.retryNotBeforeMs = retryNotBeforeMs;
   }
 }
 
@@ -28,7 +30,7 @@ export function createGithubCommandFailedError(message = 'GitHub pull request op
 }
 
 /**
- * A GitHub throttle is a temporarily unavailable backend, never a credential the
+ * A GitHub throttle is a typed remote limit, never a credential the
  * owner must repair. `isGithubAuthRequiredError` drives reconnect affordances, so
  * classifying a throttle as authentication sends the owner to fix an account that
  * works and hides the retry instruction GitHub actually supplied.
@@ -38,7 +40,8 @@ export function createGithubRateLimitedError(
 ): GithubPullRequestAdapterError {
   return new GithubPullRequestAdapterError(
     describeGithubRateLimitFailure(retryNotBeforeMs),
-    SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+    SCM_OPERATION_ERROR_CODES.REMOTE_RATE_LIMITED,
+    retryNotBeforeMs,
   );
 }
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { CurrentUiCommandDeclarationV1, PluginUiContextEnrichmentV1, PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
-import type { TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageSourceWorkflowSubjectV1, TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import {
   Banner,
@@ -61,7 +61,14 @@ import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, 
 import { planTriageDetailTabsV1 } from '../detail/tabs.js';
 import { projectTriageDetailHeaderV1 } from '../detail/header.js';
 import { useTriagePostMutationRow } from '../detail/useTriagePostMutationRow.js';
-import { readTriageDetailContextLineV1, TriageDetailHeaderActions, TriageDetailHeaderView, TriageDetailRegion } from '../detail/region.js';
+import {
+  readTriageDetailContextLineV1,
+  TriageDetailHeaderActions,
+  TriageDetailHeaderView,
+  TriageDetailKindMark,
+  TriageDetailRegion,
+  TriageDetailSourceMark,
+} from '../detail/region.js';
 import {
   resolveTriageSourcePrepareReviewWorkspaceOperationV1,
   resolveTriageSourceWorkflowSubjectV1,
@@ -997,6 +1004,19 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   );
 
   /**
+   * The narrowings in force, said as tokens inside the search field: one place names what the list is narrowed
+   * to, in either toolbar arm, and each token removes exactly its own facet value.
+   */
+  const searchTokens = React.useMemo(() => facets.flatMap((facet) => facet.options
+    .filter((option) => option.selected)
+    .map((option) => ({
+      key: option.key,
+      qualifier: facet.label,
+      label: option.label,
+      onRemove: () => { toggleFilterValue(option.selection); },
+    }))), [facets, toggleFilterValue]);
+
+  /**
    * The one aggregate action target, read once for this render.
    *
    * The published surface context already reads it through the same owner
@@ -1345,17 +1365,24 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }, [applyLensEdit, selectedKey, visibleOrder]);
   // Tabs not represented by the canonical route stay mount-local. The same
   // controlled value is consumed by source Tabs and the mounted Action.
-  const [detailTab, setDetailTab] = React.useState<Readonly<{ key: string; tab: string }> | null>(null);
+  const [detailTab, setDetailTab] = React.useState<Readonly<{ key: string; tab: string; sessionId?: string }> | null>(null);
   const [detailTabs, setDetailTabs] = React.useState<Readonly<{ key: string; tabs: readonly string[] }> | null>(null);
+  const [detailSessions, setDetailSessions] = React.useState<Readonly<{ key: string; sessions: readonly TriageLinkedSessionProjectionV1[] }> | null>(null);
   const chooseDetailTab = React.useCallback((tab: string) => {
-    if (selectedKey !== null) setDetailTab({ key: selectedKey, tab });
+    if (selectedKey !== null) setDetailTab((previous) => ({ ...(previous?.key === selectedKey ? previous : {}), key: selectedKey, tab }));
+  }, [selectedKey]);
+  const reportDetailSessions = React.useCallback((sessions: readonly TriageLinkedSessionProjectionV1[]) => {
+    if (selectedKey !== null) setDetailSessions((previous) => previous?.key === selectedKey
+      && previous.sessions.length === sessions.length && previous.sessions.every((session, index) =>
+        session.sessionId === sessions[index]?.sessionId && session.displayTitle === sessions[index]?.displayTitle)
+      ? previous : { key: selectedKey, sessions });
   }, [selectedKey]);
   const reportDetailTabs = React.useCallback((tabs: readonly string[]) => {
     if (selectedKey !== null) setDetailTabs((previous) => previous?.key === selectedKey
       && previous.tabs.length === tabs.length && previous.tabs.every((tab, index) => tab === tabs[index])
       ? previous : { key: selectedKey, tabs });
     setDetailTab((previous) => previous?.key === selectedKey && !tabs.includes(previous.tab)
-      ? { key: previous.key, tab: tabs[0] ?? 'overview' } : previous);
+      ? { ...previous, tab: tabs[0] ?? 'overview' } : previous);
   }, [selectedKey]);
   const sharedScope = usePluginUiEphemeralSharedScope();
   const mountId = React.useId();
@@ -1402,6 +1429,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         if (selectedKey === null || detailTabs?.key !== selectedKey || !detailTabs.tabs.includes(operation.tab)) return { status: 'unavailable' };
         chooseDetailTab(operation.tab);
         break;
+      case 'selectLinkedSession':
+        if (selectedKey === null || detailSessions?.key !== selectedKey
+          || !detailSessions.sessions.some((session) => session.sessionId === operation.sessionId)) return { status: 'unavailable' };
+        setDetailTab({ key: selectedKey, tab: 'session', sessionId: operation.sessionId });
+        break;
       case 'setLens':
         if (await settleLensEditBeforeDurable({ kind: 'savedViewApplied', viewId: surface.selectedViewId,
           query: operation.query, filters: operation.filters, order: operation.order, smartPolicy: surface.smartPolicy }) === null) return { status: 'rejected' };
@@ -1445,12 +1477,17 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       }
     }
     return { status: 'applied' };
-  }, [bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailTabs, loadMoreEntries, loadMorePins, readRowActivation, readProjectedSelectionAction, refresh, refreshState.kind, savedViews.saved, selectedKey, settleLensEditBeforeDurable, surface.selectedViewId, surface.smartPolicy, visibleOrder]);
+  }, [bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailTabs, detailSessions, loadMoreEntries, loadMorePins, readRowActivation, readProjectedSelectionAction, refresh, refreshState.kind, savedViews.saved, selectedKey, settleLensEditBeforeDurable, surface.selectedViewId, surface.smartPolicy, visibleOrder]);
   const mountedOperationRef = React.useRef(runMountedOperation);
   React.useLayoutEffect(() => { mountedOperationRef.current = runMountedOperation; }, [runMountedOperation]);
   React.useLayoutEffect(() => sharedScope === null || !surfaceActivity.active ? undefined : bindTriageMountedUiActions(
     sharedScope, mountId, (operation, signal) => mountedOperationRef.current(operation, signal),
   ), [mountId, sharedScope, surfaceActivity.active]);
+  const chooseLinkedSession = React.useCallback((sessionId: string) => {
+    void hostApi.executeAction(TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, {
+      mountId, operation: { kind: 'selectLinkedSession', sessionId },
+    }).catch(() => {});
+  }, [hostApi, mountId]);
   const mountedCommands = React.useMemo(() => {
     const command = (title: string, operation: TriageMountedUiOperationV1): CurrentUiCommandDeclarationV1 => ({
       title, command: { kind: 'executeAction', action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, input: { mountId, operation } },
@@ -1465,6 +1502,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       ...(detailTabs?.key !== selectedKey ? [] : detailTabs.tabs.map((tab) => command(
         text('plugins.triage.currentContext.selectTab', 'Select {tab} tab', { tab }), { kind: 'selectDetailTab', tab },
       ))),
+      ...(detailSessions?.key !== selectedKey ? [] : detailSessions.sessions.map((session) => command(
+        text('plugins.triage.currentContext.selectLinkedSession', 'Select session {title}', { title: session.displayTitle ?? session.sessionId }),
+        { kind: 'selectLinkedSession', sessionId: session.sessionId },
+      ))),
       ...(refreshState.kind !== 'blocked' ? [command(text('plugins.triage.currentContext.refresh', 'Refresh PRs & Issues'), { kind: 'refresh' })] : []),
       ...(collectionWindow.kind !== 'partial' ? [] : collectionWindow.continuations.flatMap((continuation) => continuation.busy ? [] : [
         command(continuation.label, { kind: 'loadMore', section: continuation.key === 'pins' ? 'pins' : 'entries' }),
@@ -1473,12 +1514,17 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       ...(bulkSessions.retryable ? [command(text('plugins.triage.surface.bulk.retry', 'Try again'), { kind: 'retryRun' })] : []),
       ...(isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase) ? [command(text('plugins.triage.surface.bulk.cancel', 'Stop'), { kind: 'cancelRun' })] : []),
     ];
-  }, [bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, mountId, refreshState.kind, selectedKey, sourcePanel.commands, text]);
+  }, [bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, detailSessions, mountId, refreshState.kind, selectedKey, sourcePanel.commands, text]);
   const currentUiContext = React.useMemo(() => projectTriageCurrentUiContextV1({
     surface, visibleRows: currentUiContextRows, mountedCommands,
     mountedAction: { action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 }, mountId },
+    ...(detailSessions?.key !== selectedKey ? {} : { linkedSessions: {
+      ids: detailSessions.sessions.map((session) => session.sessionId),
+      selectedId: detailSessions.sessions.find((session) => session.sessionId === (detailTab?.key === selectedKey ? detailTab.sessionId : null))?.sessionId
+        ?? detailSessions.sessions[0]?.sessionId ?? null,
+    } }),
     formatOpenEntryTitle: (title) => text('plugins.triage.currentContext.openEntry', 'Open {title}', { title }),
-  }), [currentUiContextRows, mountId, mountedCommands, surface, text]);
+  }), [currentUiContextRows, detailSessions, detailTab, selectedKey, mountId, mountedCommands, surface, text]);
   useTriageCurrentUiContextPublication(hostApi, currentUiContext);
   openChangeRef.current = (key) => {
     if (key === null) dismissDetail();
@@ -1824,8 +1870,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           presentation="segmented"
           value={collectionView}
           options={[
-            { value: 'list', label: text('plugins.triage.surface.view.list', 'List') },
-            { value: 'board', label: text('plugins.triage.surface.view.board', 'Board') },
+            { value: 'list', label: text('plugins.triage.surface.view.list', 'List'), icon: 'list' },
+            { value: 'board', label: text('plugins.triage.surface.view.board', 'Board'), icon: 'board' },
           ]}
           onChange={(value) => {
             if (value === 'list' || value === 'board') chooseCollectionView(value);
@@ -1915,6 +1961,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       <TriageDetailRegion
         sourcePanelActions={sourcePanel.actions}
         tabSelection={{ value: detailTab?.key === selectedKey ? detailTab.tab : 'overview', onChange: chooseDetailTab, onAvailableTabsChange: reportDetailTabs }}
+        sessionSelection={{ value: detailTab?.key === selectedKey ? detailTab.sessionId ?? null : null,
+          onChange: chooseLinkedSession, onAvailableSessionsChange: reportDetailSessions }}
         headerHosted={headerHosted}
         row={selectedRow}
         completePostMutation={completePostMutation}
@@ -2006,16 +2054,22 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     sourceDescriptor: readTriageSourceDescriptorV1(surfaceContext, selectedRow.entryRef.source),
     linkedSessions: [],
     linkedSessionsHasMore: false,
+    text,
   });
   const detailHeader = () => {
     if (selectedHeader === null) return { title: neverListedHere
       ? text('plugins.triage.surface.entryNotInFilter.heading', 'This entry is outside the current filter')
       : text('plugins.triage.surface.entryGone.heading', 'This entry is no longer in the list') };
-    const subtitle = readTriageDetailContextLineV1(selectedHeader, text);
+    const subtitle = readTriageDetailContextLineV1(selectedHeader, text, { locale: surfaceContext.locale, nowMs: Date.now() });
     const pinRow = selectedRow === null ? lastKnownPinRow : projectTriageWindowRow(selectedRow, pinsByEntry, { text });
     return {
       title: selectedHeader.title,
-      ...(subtitle === null ? {} : { subtitle }),
+      // The row's own kind glyph beside the title, and the source's mark leading the line (the lab's crumbs).
+      leading: <TriageDetailKindMark header={selectedHeader} />,
+      ...(subtitle === null ? {} : {
+        subtitle,
+        subtitleLeading: <TriageDetailSourceMark pluginId={selectedHeader.sourcePluginId} />,
+      }),
       actions: <TriageDetailHeaderActions header={selectedHeader} {...(pinRow === null ? {} : { pin: { row: pinRow, handlers: pinHandlers } })} />,
     };
   };
@@ -2317,6 +2371,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                   value: surface.search.query,
                   onValueChange: changeSearch,
                   onComposingValueChange: changeComposingSearch,
+                  tokens: searchTokens,
                 },
               })}
           footer={(

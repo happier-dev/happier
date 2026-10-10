@@ -1,13 +1,16 @@
-import type {
-  TriageLinkedSessionProjectionV1,
-  TriageSourceDescriptorV1,
-  TriageSourceEntrySnapshotV1,
-  TriageSourceWorkflowSubjectV1,
+import {
+  formatTriageTimestampV1,
+  type TriageLinkedSessionProjectionV1,
+  type TriageSourceDescriptorV1,
+  type TriageSourceEntrySnapshotV1,
+  type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
+import { readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
 
 import type { ProjectedObservationV1 } from '../../corpus/fold/projectedObservation.js';
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
 import { readTriageLaneFailure } from '../../projection/sourceHealth.js';
+import { projectTriageEntryDisplay, type TriageEntryDisplayTextV1, type TriageEntryDisplayV1 } from '../window/entryDisplay.js';
 
 /**
  * The aggregate-owned common header of one selected entry.
@@ -64,8 +67,23 @@ export type TriageDetailHeaderV1 = Readonly<{
   lifecyclePresentation: TriageSourceEntrySnapshotV1['state']['presentation'] | null;
   /** The configured connection this detail is being read through. */
   connectionLabel: string | null;
+  /** The source plugin, for its brand mark leading the detail line. */
+  sourcePluginId: string;
+  /** Where the entry lives, in the source's own address for it ("owner/repo #2476"). */
+  addressLabel: string | null;
+  /** Who opened it: "You" when the reader did, else the source's author name (the row display's rule). */
+  authorLabel: string | null;
+  /** When the source says it was opened, on the source's clock. */
+  openedAtMs: number | null;
+  /**
+   * How many of the reader's connections read this entry's source. The connection is named only when there is
+   * more than one, which is the only time the reader has one to tell apart (or launched a different one).
+   */
+  sourceConnections: number;
+  /** The facts the row's kind glyph and its tone are read from, so the header wears the row's own mark. */
+  markFacts: Pick<TriageEntryDisplayV1, 'lifecyclePresentation' | 'detailKind' | 'tone'>;
   /** Why this entry is asking for the reader, in the source's own words. */
-  attention: Readonly<{ level: 'required' | 'suggested'; reasonLabel: string }> | null;
+  attention: Readonly<{ level: 'required' | 'suggested'; reasonLabel: string; icon: string | null }> | null;
   /** How the aggregate's own knowledge of this entry stands right now. */
   presence: 'present' | 'absent' | 'unresolved';
   /**
@@ -117,6 +135,8 @@ export type TriageDetailHeaderInputV1 = Readonly<{
   sourceDescriptor: TriageSourceDescriptorV1 | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
   linkedSessionsHasMore: boolean;
+  /** The reader's words, for the author line ("You"); English fallbacks when absent. */
+  text?: TriageEntryDisplayTextV1;
 }>;
 
 export function projectTriageDetailHeaderV1(
@@ -132,6 +152,8 @@ export function projectTriageDetailHeaderV1(
 
   const descriptor = input.sourceDescriptor;
   const kind = descriptor?.kinds.find((candidate) => candidate.id === row.entryRef.kindId);
+  // The row's own display owner: the "You" rule and the mark's facts are read there, never re-derived here.
+  const display = projectTriageEntryDisplay(row, input.text);
 
   return Object.freeze({
     // An entry with no present answer anywhere still has an identity, and its
@@ -144,9 +166,22 @@ export function projectTriageDetailHeaderV1(
     stateLabel: present?.snapshot.state.nativeLabel ?? null,
     lifecyclePresentation: present?.snapshot.state.presentation ?? null,
     connectionLabel: input.connectionLabel,
+    sourcePluginId: row.entryRef.source.pluginId,
+    addressLabel: present?.locator.displayPath ?? present?.snapshot.scopeLabel ?? null,
+    authorLabel: display.authorLabel,
+    markFacts: Object.freeze({
+      lifecyclePresentation: display.lifecyclePresentation,
+      detailKind: display.detailKind,
+      tone: display.tone,
+    }),
+    openedAtMs: present?.snapshot.createdAtMs ?? null,
+    sourceConnections: input.lanes.filter((candidate) => candidate.source.pluginId === row.entryRef.source.pluginId
+      && candidate.source.localId === row.entryRef.source.localId).length,
     attention: row.attention === null ? null : Object.freeze({
       level: row.attention.level,
       reasonLabel: row.attention.reasonLabel,
+      // The same mark the row's chip leads with, from the one reason-icon owner.
+      icon: readTriageAttentionReasonIconV1(row.attention.reasonId),
     }),
     presence: row.presence.kind,
     // Only the connection this detail runs under, and only through the one
@@ -158,4 +193,33 @@ export function projectTriageDetailHeaderV1(
     linkedSessions: input.linkedSessions,
     linkedSessionsHasMore: input.linkedSessionsHasMore,
   });
+}
+
+/**
+ * The line under the detail title: where the entry lives, then who opened it and when ("example/repository #17 ·
+ * You opened 42 minutes ago"). The source's brand mark leads it and the kind glyph sits beside the title, so the
+ * source's name and the state word are not repeated in words. The connection is named only when the reader has
+ * more than one connection to this source, which is the only time there is one to tell apart.
+ */
+export function readTriageDetailContextLineV1(
+  header: TriageDetailHeaderV1,
+  text: (key: string, fallback?: string, values?: Readonly<Record<string, string>>) => string,
+  clock: Readonly<{ locale: string; nowMs: number }>,
+): string | null {
+  const age = header.openedAtMs === null
+    ? null
+    : formatTriageTimestampV1(clock.locale, header.openedAtMs, 'relative', clock.nowMs);
+  const opened = age === null
+    ? null
+    : header.authorLabel === null
+      ? text('plugins.triage.surface.detail.openedAt', 'Opened {age}', { age })
+      : text('plugins.triage.surface.detail.openedBy', '{author} opened {age}', { author: header.authorLabel, age });
+  const parts = [
+    header.addressLabel,
+    opened,
+    header.connectionLabel === null || header.sourceConnections < 2
+      ? null
+      : text('plugins.triage.surface.detail.via', 'via {name}', { name: header.connectionLabel }),
+  ].filter((part): part is string => part !== null && part.length > 0);
+  return parts.length === 0 ? null : parts.join(' · ');
 }
