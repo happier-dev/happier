@@ -20,6 +20,8 @@ import { frameSessionDataKeyBundleV0, sealAesGcmPayloadWebCrypto } from '@happie
 import { loadPublicShareViewerContent } from './publicShareViewerClient';
 import { writeSessionPublicShare } from '@/app/share/storedContentPublicShare';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
+import { deriveSessionSystemRecordAddressKeys } from '@/app/session/systemRecords/sessionSystemRecordAddressKeys';
+import { encodeSessionSystemRecordRevision } from '@/app/session/systemRecords/sessionSystemRecordRevision';
 
 describe("stored-content public share owner (real SQLite)", () => {
     let harness: LightSqliteHarness;
@@ -81,6 +83,81 @@ describe("stored-content public share owner (real SQLite)", () => {
             expect(stored.keyDerivation).toBe('fragment_v1');
             expect(Buffer.from(stored.tokenHash)).toEqual(createHash('sha256').update(lookupId).digest());
             expect(created.json().isolatedOrigin).toBe(resolveStoredContentPublicShareOrigin(stored.id));
+        });
+    });
+
+    it.each(['session', 'stored-content'] as const)('persists the network-off choice through the %s Session publication owner and anonymous read', async route => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{"v":1}', metadataLayoutVersion: 1,
+            ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: {} })) } });
+        const lookupId = crypto.randomUUID();
+        const url = route === 'session' ? `/v1/sessions/${session.id}/public-share` : '/v1/public-shares';
+        await withAuthenticatedTestApp(publicShareRoutes, async app => {
+            const created = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: {
+                lookupId, keyDerivation: 'fragment_v1', networkOff: true,
+                ...(route === 'stored-content' ? { subject: { kind: 'session', id: session.id } } : {}),
+            } });
+            expect(created.statusCode, created.body).toBe(200);
+            expect(created.json().publicShare.networkOff).toBe(true);
+            const read = await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`,
+                headers: { host: new URL(created.json().isolatedOrigin).host } });
+            expect(read.statusCode, read.body).toBe(200);
+            expect(read.json().networkOff).toBe(true);
+            // Share-level policy does not mutate the Session's own content.
+            expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).metadata).toBe('{"v":1}');
+        });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('restricts lazy %s visuals to admitted message associations and the live share cutoff', async mode => {
+        const owner = await db.account.create({ data: { ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}), encryptionMode: mode } });
+        const key = new Uint8Array(32).fill(17);
+        const secret = 'A'.repeat(43);
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: mode,
+            metadata: mode === 'plain' ? '{"v":1}' : privacyKit.encodeBase64(await sealSessionDataKeyBundleV0({ v: 1 }, key)), metadataLayoutVersion: 1,
+            ownerMetadata: mode === 'plain' ? JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: {} }))
+                : JSON.stringify({ t: 'encrypted', c: 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==' }),
+            seq: 3, currentStorageState: 'snapshot_complete', materializationPublicationId: crypto.randomUUID(), materializedThroughSourceAt: 1n, publishedThroughServerSeq: 1,
+        } });
+        const envelope = async (value: Record<string, unknown>) => mode === 'plain' ? { t: 'plain', v: value } : { t: 'encrypted', c: privacyKit.encodeBase64(await sealSessionDataKeyBundleV0(value, key)) };
+        const address = { ownerKind: 'host' as const, pluginId: null, namespace: 'surface', localId: 'visual' };
+        const recordId = crypto.randomUUID();
+        const item = { v: 1, destination: 'transcript', title: 'Published visual', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Published bytes' } } } };
+        const recordData = { accountId: owner.id, sessionId: session.id, ...address, ...deriveSessionSystemRecordAddressKeys(address),
+            kind: 'item.v1', version: 1, content: await envelope(item) };
+        await db.sessionSystemRecord.create({ data: { id: recordId, ...recordData } });
+        const reference = { v: 1, itemId: 'visual', itemRevision: encodeSessionSystemRecordRevision({ id: recordId, version: 1 }), sourceAddress: { serverId: 'home', sessionId: session.id } };
+        const admitted = await db.sessionMessage.create({ data: { sessionId: session.id, seq: 1, content: await envelope({ text: 'Published' }), surfaceItemReference: reference } });
+        const unpublished = await db.sessionMessage.create({ data: { sessionId: session.id, seq: 2, content: await envelope({ text: 'Not published' }), surfaceItemReference: reference } });
+        const sidechain = await db.sessionMessage.create({ data: { sessionId: session.id, seq: 3, sidechainId: 'private', content: await envelope({ text: 'Private branch' }), surfaceItemReference: reference } });
+        const lookupId = crypto.randomUUID();
+        await withAuthenticatedTestApp(publicShareRoutes, async app => {
+            const created = await app.inject({ method: 'POST', url: '/v1/public-shares', headers: { 'x-test-user-id': owner.id }, payload: {
+                subject: { kind: 'session', id: session.id }, lookupId, keyDerivation: 'fragment_v1', networkOff: true, isConsentRequired: true, maxUses: 1,
+                ...(mode === 'e2ee' ? { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }) } : {}),
+            } });
+            expect(created.statusCode, created.body).toBe(200);
+            const headers = { host: new URL(created.json().isolatedOrigin).host };
+            const page = await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content?consent=true`, headers });
+            expect(page.statusCode, page.body).toBe(200);
+            expect(page.json().content.messages.map((message: { id: string }) => message.id)).toEqual([admitted.id]);
+            const grantHeaders = { ...headers, 'x-public-share-messages-access-token': page.json().messagesAccessToken };
+            const url = `/v1/public-shares/${lookupId}/visual/${admitted.id}`;
+            expect((await app.inject({ method: 'GET', url: url + '?consent=true', headers })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url, headers: grantHeaders })).statusCode).toBe(403);
+            const visual = await app.inject({ method: 'GET', url: url + '?consent=true', headers: grantHeaders });
+            expect(visual.statusCode, visual.body).toBe(200);
+            expect(visual.json()).toMatchObject({ messageId: admitted.id, networkOff: true, record: { id: recordId, content: recordData.content } });
+            for (const denied of [unpublished.id, sidechain.id, 'arbitrary-item-id']) {
+                expect((await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/visual/${denied}?consent=true`, headers: grantHeaders })).statusCode).toBe(404);
+            }
+            expect((await db.publicSessionShare.findUniqueOrThrow({ where: { sessionId: session.id } })).useCount).toBe(1);
+            expect(await db.publicShareAccessLog.count({ where: { publicShareId: created.json().publicShare.id } })).toBe(1);
+            await db.sessionSystemRecord.delete({ where: { id: recordId } });
+            await db.sessionSystemRecord.create({ data: { id: crypto.randomUUID(), ...recordData } });
+            expect((await app.inject({ method: 'GET', url: url + '?consent=true', headers: grantHeaders })).statusCode).toBe(404);
+            await db.publicSessionShare.update({ where: { sessionId: session.id }, data: { expiresAt: new Date(1) } });
+            expect((await app.inject({ method: 'GET', url: url + '?consent=true', headers: grantHeaders })).statusCode).toBe(404);
         });
     });
 

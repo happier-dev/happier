@@ -8,9 +8,23 @@ import {
     readSessionDataKeyBundleV0, openAesGcmPayloadWebCrypto, type ArtifactHtmlBundleV1,
 } from "@happier-dev/protocol/sharing/public-viewer";
 import { renderArtifactHtmlViewer } from './artifactHtmlViewer';
+import { StoredContentPublicShareVisualReadResponseV1Schema } from '@happier-dev/protocol/sharing/public-viewer';
+import { isSessionSurfaceItemIdentityCorrespondingV1, SessionSurfaceItemV1StoredSchema, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board/item';
+import type { SessionTranscriptSurfaceItemReferenceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import type { SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { readPublicSessionVisualMessages } from './publicSessionVisuals';
+
+export type PublicSessionVisualResult = { status: 'ready'; item: SessionSurfaceItemV1; networkOff: boolean }
+    | { status: 'unavailable' | 'invalid_content' | 'network_error' };
+export type PublicSessionOpenedMessage = Readonly<{
+    id: string; publishedSessionId: string; seq: number; localId: string | null; createdAt: number; raw: unknown; text: string;
+    reference: SessionTranscriptSurfaceItemReferenceV1 | null;
+    messageRole?: SessionMessageRole;
+    loadVisual?: () => Promise<PublicSessionVisualResult>;
+}>;
 
 export type PublicShareViewerResult =
-    | { status: "ready"; title: string; text: string; html?: ArtifactHtmlBundleV1; binary?: { bytes: Uint8Array; mime: string }; nextBeforeSeq: number | null; messagesAccessToken: string | null }
+    | { status: "ready"; title: string; text: string; messages?: readonly PublicSessionOpenedMessage[]; html?: ArtifactHtmlBundleV1; binary?: { bytes: Uint8Array; mime: string }; nextBeforeSeq: number | null; messagesAccessToken: string | null }
     | { status: "invalid_link" | "unavailable" | "invalid_content" | "consent_required" | "network_error" | "metadata_privacy_upgrade_required" };
 
 interface ViewerInput {
@@ -105,36 +119,155 @@ export async function loadPublicShareViewerContent(input: ViewerInput): Promise<
             return { status: "ready", title: typeof header.title === "string" ? header.title : "Shared Artifact",
                 text: typeof body.body === 'string' ? body.body : '', ...(html ? { html } : {}), ...(binary ? { binary } : {}), nextBeforeSeq: null, messagesAccessToken: null };
         }
-        const messages = await Promise.all(share.content.messages.map(async message => {
-            if (share.encryptionMode === "plain") {
-                if (message.content.t !== "plain") throw new Error("Content mode mismatch");
-                return { seq: message.seq, text: contentText(message.content.v) };
-            }
-            if (message.content.t !== "encrypted") throw new Error("Content mode mismatch");
-            return { seq: message.seq, text: contentText(await open(message.content.c)) };
+        const messages = await Promise.all(share.content.messages.map(async (message): Promise<PublicSessionOpenedMessage> => {
+            if ((share.encryptionMode === 'plain') !== (message.content.t === 'plain')) throw new Error('Content mode mismatch');
+            const raw = message.content.t === 'plain' ? message.content.v : await open(message.content.c);
+            const reference = message.surfaceItemReference ?? null;
+            const loadVisual = reference && share.messagesAccessToken ? async (): Promise<PublicSessionVisualResult> => {
+                const visualUrl = new URL(`/v1/public-shares/${encodeURIComponent(lookupId)}/visual/${encodeURIComponent(message.id)}`, input.location.origin);
+                if (input.consent) visualUrl.searchParams.set('consent', 'true');
+                let response: Response;
+                try { response = await input.fetch(visualUrl.toString(), { credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer', cache: 'no-store',
+                    headers: { 'x-public-share-messages-access-token': share.messagesAccessToken! } }); }
+                catch { return { status: 'network_error' }; }
+                if (!response.ok) return { status: response.status === 503 ? 'network_error' : 'unavailable' };
+                try {
+                    const visual = StoredContentPublicShareVisualReadResponseV1Schema.parse(await response.json());
+                    if (visual.messageId !== message.id || visual.encryptionMode !== share.encryptionMode
+                        || visual.reference.itemId !== reference.itemId || visual.reference.itemRevision !== reference.itemRevision
+                        || visual.reference.sourceAddress.serverId !== reference.sourceAddress.serverId
+                        || visual.reference.sourceAddress.sessionId !== reference.sourceAddress.sessionId) return { status: 'invalid_content' };
+                    const content = visual.record.content;
+                    const value = content.t === 'plain' ? content.v : await open(content.c);
+                    const item = SessionSurfaceItemV1StoredSchema.parse(value);
+                    if (!isSessionSurfaceItemIdentityCorrespondingV1(reference.itemId, item)) return { status: 'invalid_content' };
+                    if (item.destination !== 'transcript' && item.destination !== 'both') return { status: 'unavailable' };
+                    return { status: 'ready', item, networkOff: visual.networkOff };
+                } catch { return { status: 'invalid_content' }; }
+            } : undefined;
+            return { id: message.id, publishedSessionId: share.subject.id, seq: message.seq, localId: message.localId ?? null, createdAt: message.createdAt,
+                raw, text: contentText(raw), reference, ...(message.messageRole ? { messageRole: message.messageRole } : {}), ...(loadVisual ? { loadVisual } : {}) };
         }));
-        return { status: "ready", title: "Shared Session", text: messages.sort((a, b) => a.seq - b.seq).map(message => message.text).join("\n\n"),
+        messages.sort((a, b) => a.seq - b.seq);
+        return { status: "ready", title: "Shared Session", messages, text: messages.map(message => message.text).join("\n\n"),
             nextBeforeSeq: share.content.hasMore ? share.content.nextBeforeSeq : null,
             messagesAccessToken: share.messagesAccessToken ?? null };
     } catch { return { status: "invalid_content" }; }
 }
 
 const binaryObjectUrls = new WeakMap<HTMLElement, string>();
+type SessionVisualRow = { element: HTMLElement; body: HTMLElement; source: PublicSessionOpenedMessage;
+    loading: boolean; loaded: boolean; dispose?: () => void; observer?: IntersectionObserver };
+type SessionPresentation = { active: boolean; rows: Map<string, SessionVisualRow> };
+const sessionPresentations = new WeakMap<HTMLElement, SessionPresentation>();
 
 /** Release opened bytes when their DOM presentation is replaced or the link changes. */
 export function disposePublicShareViewerContent(root: HTMLElement): void {
     const url = binaryObjectUrls.get(root);
     if (url) URL.revokeObjectURL(url);
     binaryObjectUrls.delete(root);
+    const presentation = sessionPresentations.get(root);
+    if (presentation) {
+        presentation.active = false;
+        for (const row of presentation.rows.values()) { row.observer?.disconnect(); row.dispose?.(); }
+        sessionPresentations.delete(root);
+    }
+}
+
+function renderSessionMessages(root: HTMLElement, messages: readonly PublicSessionOpenedMessage[], title: HTMLElement, action?: () => void): void {
+    const document = root.ownerDocument;
+    let presentation = sessionPresentations.get(root);
+    if (!presentation) { presentation = { active: true, rows: new Map() }; sessionPresentations.set(root, presentation); }
+    const current = presentation;
+    const visible = readPublicSessionVisualMessages(messages);
+    const elements = [...messages].sort((left, right) => left.seq - right.seq).map(message => {
+        let row = current.rows.get(message.id);
+        if (!row) {
+            const element = document.createElement('section');
+            element.setAttribute('data-message-id', message.id);
+            const text = document.createElement('pre');
+            text.textContent = message.text;
+            element.append(text);
+            const body = document.createElement('div');
+            body.setAttribute('aria-live', 'polite');
+            element.append(body);
+            row = { element, body, source: message, loading: false, loaded: false };
+            current.rows.set(message.id, row);
+        }
+        const target = row;
+        if (visible.has(message.id) && !target.loaded && !target.loading && target.body.childNodes.length === 0) {
+            const open = async (): Promise<void> => {
+                if (target.loading || target.loaded || !current.active || !target.source.loadVisual) return;
+                target.loading = true;
+                target.observer?.disconnect();
+                target.body.textContent = 'Opening visual…';
+                const result = await target.source.loadVisual();
+                if (!current.active) return;
+                target.loading = false;
+                if (result.status !== 'ready') {
+                    target.body.textContent = result.status === 'network_error' ? 'This visual could not be reached.'
+                        : result.status === 'invalid_content' ? 'This visual could not be opened.' : 'This visual is no longer available in this shared Session.';
+                    if (result.status === 'network_error') offerOpen('Try again');
+                    return;
+                }
+                target.loaded = true;
+                const { item } = result;
+                const heading = document.createElement('h2');
+                heading.textContent = item.title;
+                const surface = document.createElement('div');
+                target.body.replaceChildren(heading, surface);
+                if (item.snapshot) {
+                    const provenance = document.createElement('p');
+                    provenance.textContent = `Snapshot · As of ${item.snapshot.asOf}${item.snapshot.provenance.length ? ' · ' + item.snapshot.provenance.map(entry => entry.label).join(' · ') : ''}`;
+                    target.body.append(provenance);
+                }
+                if (item.source.kind === 'declarative') {
+                    try {
+                        const { mountPublicSessionDeclarative } = await import('./publicDeclarativeViewer');
+                        if (current.active) target.dispose = mountPublicSessionDeclarative(surface, item.source.document);
+                    } catch { if (current.active) surface.textContent = 'This visual could not be displayed.'; }
+                } else if (item.source.kind === 'hostedHtml') {
+                    // The shared bundle/document owner closes network by default. Its admitted
+                    // network-policy extension supplies an explicit share-level off override.
+                    try { renderArtifactHtmlViewer(surface, item.source.source, item.title); }
+                    catch { surface.textContent = 'This HTML visual could not be displayed.'; }
+                } else {
+                    surface.textContent = item.source.kind === 'widget'
+                        ? 'This live widget needs an available viewer connection in Happier. The author’s credentials are never used by this public link.'
+                        : 'This walkthrough requires the Session’s Changed files view in Happier.';
+                }
+            };
+            const offerOpen = (label: string): void => {
+                const button = document.createElement('button');
+                button.type = 'button'; button.textContent = label;
+                button.setAttribute('aria-label', `${label} attached to message ${message.seq}`);
+                button.addEventListener('click', () => { void open(); }, { once: true });
+                target.body.append(button);
+            };
+            offerOpen('Open visual');
+            if (typeof globalThis.IntersectionObserver === 'function') {
+                target.observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void open(); });
+                target.observer.observe(target.element);
+            }
+        }
+        return target.element;
+    });
+    root.replaceChildren(title, ...elements);
+    if (action) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.textContent = 'Load earlier messages';
+        button.addEventListener('click', action, { once: true }); root.append(button);
+    }
 }
 
 export function renderPublicShareViewer(root: HTMLElement, result: PublicShareViewerResult, action?: () => void): void {
-    disposePublicShareViewerContent(root);
+    if (result.status !== 'ready' || !result.messages) disposePublicShareViewerContent(root);
     const document = root.ownerDocument;
     const title = document.createElement("h1");
     const content = document.createElement(result.status === "ready" ? "pre" : "p");
     if (result.status === "ready") {
         title.textContent = result.title;
+        if (result.messages) { renderSessionMessages(root, result.messages, title, action); return; }
         if (result.html) {
             try { renderArtifactHtmlViewer(root, result.html, result.title); }
             catch { renderPublicShareViewer(root, { status: 'invalid_content' }); }

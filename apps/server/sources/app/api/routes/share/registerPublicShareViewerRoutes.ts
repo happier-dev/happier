@@ -8,7 +8,7 @@ const style = "html{color-scheme:light dark;font-family:system-ui,sans-serif}bod
 // srcdoc inherits this policy. The guest adds its stricter connect/frame policy;
 // srcdoc needs no frame source permission. Refuse every guest self-navigation:
 // a data/blob document would otherwise regain this shell's fetch permission.
-export const ARTIFACT_HTML_SHELL_CSP = `default-src 'none'; script-src 'self' 'unsafe-inline' data: blob:; style-src 'unsafe-inline' data: blob:; img-src data: blob:; font-src data: blob:; media-src data: blob:; frame-src 'none'; worker-src 'none'; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src blob:`;
+export const ARTIFACT_HTML_SHELL_CSP = `default-src 'none'; script-src 'self' 'unsafe-inline' data: blob:; style-src 'unsafe-inline' data: blob:; img-src data: blob:; font-src data: blob:; media-src data: blob:; frame-src 'none'; worker-src 'none'; connect-src 'self' data:; base-uri 'none'; form-action 'none'; object-src blob:`;
 const csp = `${ARTIFACT_HTML_SHELL_CSP}; frame-ancestors 'none'`;
 
 /** Private preview needs ordinary Artifact access, not public-link availability. */

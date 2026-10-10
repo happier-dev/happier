@@ -1,23 +1,12 @@
 /// <reference lib="dom" />
 
-import { disposePublicShareViewerContent, loadPublicShareViewerContent, renderPublicShareViewer } from "./publicShareViewerClient";
-import { readArtifactHtmlPreviewBundleV1 } from '@happier-dev/protocol/sharing/public-viewer';
-import { renderArtifactHtmlViewer } from './artifactHtmlViewer';
+import { disposePublicShareViewerContent, loadPublicShareViewerContent, renderPublicShareViewer, type PublicSessionOpenedMessage } from "./publicShareViewerClient";
 
 const root = document.getElementById("public-share-viewer");
 if (root) {
-    if (/^\/a\/[^/]+\/?$/u.test(location.pathname)) {
-        const render = (): void => {
-            try {
-                if (location.protocol !== 'https:') throw new Error('HTTPS is required');
-                renderArtifactHtmlViewer(root, readArtifactHtmlPreviewBundleV1(location.hash), 'HTML Artifact');
-            } catch { root.textContent = 'This HTML document could not be opened. JavaScript modules and external assets are unsupported; publish a classic script bundle with local assets.'; }
-        };
-        globalThis.addEventListener('hashchange', render);
-        render();
-    } else {
     let consent = false;
     let text = "";
+    let messages: readonly PublicSessionOpenedMessage[] = [];
     let token: string | null = null;
     let current: Extract<Awaited<ReturnType<typeof loadPublicShareViewerContent>>, { status: "ready" }> | null = null;
     const load = async (beforeSeq?: number): Promise<void> => {
@@ -27,7 +16,13 @@ if (root) {
         if (result.status === "ready") {
             token = result.messagesAccessToken ?? token;
             text = beforeSeq === undefined ? result.text : [result.text, text].filter(Boolean).join("\n\n");
-            current = { ...result, text };
+            if (result.messages) {
+                const byId = new Map((beforeSeq === undefined ? [] : messages).map(message => [message.id, message]));
+                for (const message of result.messages) byId.set(message.id, message);
+                messages = [...byId.values()].sort((left, right) => left.seq - right.seq);
+                text = messages.map(message => message.text).join('\n\n');
+            }
+            current = { ...result, text, ...(result.messages ? { messages } : {}) };
             renderPublicShareViewer(root, current, result.nextBeforeSeq === null ? undefined : () => { void load(result.nextBeforeSeq!); });
         } else if (result.status === "network_error" && current && beforeSeq !== undefined) {
             renderPublicShareViewer(root, current, () => { void load(beforeSeq); });
@@ -43,11 +38,11 @@ if (root) {
         disposePublicShareViewerContent(root);
         consent = false;
         text = "";
+        messages = [];
         token = null;
         current = null;
         root.textContent = "Opening shared content…";
         void load();
     });
     void load();
-    }
 }

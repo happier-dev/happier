@@ -84,9 +84,10 @@ export type SessionPublicShareWrite = Readonly<{
     expiresAt?: number;
     maxUses?: number;
     isConsentRequired?: boolean;
+    networkOff?: boolean;
 }>;
 export async function writeSessionPublicShare(input: SessionPublicShareWrite) {
-    const { userId, sessionId, authentication, encryptedDataKey, expiresAt, maxUses, isConsentRequired } = input;
+    const { userId, sessionId, authentication, encryptedDataKey, expiresAt, maxUses, isConsentRequired, networkOff } = input;
     const token = input.lookupId;
     // Only owner can create public shares
     const admission = await resolveSessionAccessForOperation(db, {
@@ -175,7 +176,7 @@ export async function writeSessionPublicShare(input: SessionPublicShareWrite) {
             subject: { kind: "session", id: sessionId }, userId, existing,
             mode: sessionEncryptionMode, material: token,
             keyDerivation: nextKeyDerivation,
-            encryptedDataKey, expiresAt, maxUses, isConsentRequired,
+            encryptedDataKey, expiresAt, maxUses, isConsentRequired, networkOff,
         });
         if (written.type !== "ok")
             return written;
@@ -213,7 +214,7 @@ export type StoredContentPublicShareSubject = Readonly<{
 export function projectStoredContentPublicShare(row: ShareRow) {
     return { id: row.id, subject: row.sessionId ? { kind: "session" as const, id: row.sessionId } : { kind: "artifact" as const, id: row.artifactId! },
         expiresAt: row.expiresAt?.getTime() ?? null, maxUses: row.maxUses, useCount: row.useCount,
-        isConsentRequired: row.isConsentRequired, createdAt: row.createdAt.getTime(), updatedAt: row.updatedAt.getTime(),
+        isConsentRequired: row.isConsentRequired, networkOff: row.networkOff, createdAt: row.createdAt.getTime(), updatedAt: row.updatedAt.getTime(),
         keyDerivation: row.keyDerivation };
 }
 async function persistStoredContentPublicShare(tx: Tx, input: Readonly<{
@@ -227,6 +228,7 @@ async function persistStoredContentPublicShare(tx: Tx, input: Readonly<{
     expiresAt?: number;
     maxUses?: number;
     isConsentRequired?: boolean;
+    networkOff?: boolean;
 }>) {
     const { existing } = input;
     const id = existing?.id ?? randomUUID();
@@ -256,11 +258,12 @@ async function persistStoredContentPublicShare(tx: Tx, input: Readonly<{
     const expiresAt = input.expiresAt === undefined ? null : new Date(input.expiresAt);
     const maxUses = input.maxUses ?? null;
     const isConsentRequired = input.isConsentRequired ?? false;
+    const networkOff = input.networkOff ?? false;
     const changed = !existing || rotates || !equalBytes(encryptedDataKey, existing.encryptedDataKey)
-        || !equalDates(expiresAt, existing.expiresAt) || maxUses !== existing.maxUses || isConsentRequired !== existing.isConsentRequired;
+        || !equalDates(expiresAt, existing.expiresAt) || maxUses !== existing.maxUses || isConsentRequired !== existing.isConsentRequired || networkOff !== (existing.networkOff ?? false);
     if (!changed && existing)
         return { type: "ok" as const, publicShare: existing, changed: false };
-    const data = { encryptedDataKey, expiresAt, maxUses, isConsentRequired, keyDerivation: input.keyDerivation,
+    const data = { encryptedDataKey, expiresAt, maxUses, isConsentRequired, networkOff, keyDerivation: input.keyDerivation,
         ...(rotates ? { tokenHash: hash!, useCount: 0 } : {}) };
     const publicShare = existing ? await tx.publicSessionShare.update({ where: { id }, data })
         : await tx.publicSessionShare.create({ data: { ...data, id, createdByUserId: input.userId, tokenHash: hash!,

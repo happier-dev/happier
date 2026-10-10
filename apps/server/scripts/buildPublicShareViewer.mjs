@@ -13,6 +13,16 @@ export async function buildPublicShareViewerBundle({ projectDir = defaultProject
         absWorkingDir: projectDir,
         entryPoints: [resolve(sourceDir, 'publicShareViewerBrowser.ts')],
         bundle: true, write: false, minify: true, platform: 'browser', format: 'iife', target: ['es2022'],
+        conditions: ['happier-source'],
+        // Source builds bind portable presentation to the workspace's existing web host runtime.
+        nodePaths: [resolve(projectDir, '../ui/node_modules')],
+        alias: {
+            'react': resolve(projectDir, '../ui/node_modules/react'),
+            'react-dom': resolve(projectDir, '../ui/node_modules/react-dom'),
+            'react-native': resolve(projectDir, '../ui/node_modules/react-native-web/dist/index.js'),
+            'react-native-svg': resolve(projectDir, '../ui/node_modules/react-native-svg/lib/module/elements.web.js'),
+        },
+        define: { 'process.env.NODE_ENV': '"production"', '__DEV__': 'false' },
         legalComments: 'eof',
         plugins: [{ name: 'public-viewer-protocol-source', setup(builder) {
             builder.onResolve({ filter: /^@happier-dev\/protocol\/sharing\/public-viewer$/ }, () => ({

@@ -29,14 +29,15 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
                 encryptedDataKey: z.string().optional(), // base64 encoded (required when creating or rotating)
                 expiresAt: z.number().optional(), // timestamp
                 maxUses: z.number().int().positive().optional(),
-                isConsentRequired: z.boolean().optional() // require consent for detailed logging
+                isConsentRequired: z.boolean().optional(), // require consent for detailed logging
+                networkOff: z.boolean().optional(),
             }).strict()
         }
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
         const authentication = readSessionAccessAuthenticationFromRequest(request);
-        const { lookupId, encryptedDataKey, expiresAt, maxUses, isConsentRequired } = request.body;
+        const { lookupId, encryptedDataKey, expiresAt, maxUses, isConsentRequired, networkOff } = request.body;
 
         // Only owner can create public shares
         const admission = await resolveSessionAccessForOperation(db, {
@@ -49,7 +50,7 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
             return reply.code(403).send({ error: 'session_access_forbidden' });
         }
 
-        const result = await writeSessionPublicShare({ userId, sessionId, authentication, lookupId, encryptedDataKey, expiresAt, maxUses, isConsentRequired });
+        const result = await writeSessionPublicShare({ userId, sessionId, authentication, lookupId, encryptedDataKey, expiresAt, maxUses, isConsentRequired, networkOff });
 
         if (result.type === "forbidden") {
             return reply.code(403).send({ error: "session_access_forbidden" });
@@ -87,6 +88,7 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
                 maxUses: publicShare.maxUses,
                 useCount: publicShare.useCount,
                 isConsentRequired: publicShare.isConsentRequired,
+                networkOff: publicShare.networkOff,
                 createdAt: publicShare.createdAt.getTime(),
                 updatedAt: publicShare.updatedAt.getTime()
             }
@@ -137,6 +139,7 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
                 maxUses: publicShare.maxUses,
                 useCount: publicShare.useCount,
                 isConsentRequired: publicShare.isConsentRequired,
+                networkOff: publicShare.networkOff,
                 createdAt: publicShare.createdAt.getTime(),
                 updatedAt: publicShare.updatedAt.getTime()
             }

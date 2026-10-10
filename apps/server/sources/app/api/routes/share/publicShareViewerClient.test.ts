@@ -6,6 +6,7 @@ import { ARTIFACT_HTML_BUNDLE_MIME_V1, encodeBase64 } from "@happier-dev/protoco
 import { createHash } from 'node:crypto';
 import { loadPublicShareViewerContent, renderPublicShareViewer } from "./publicShareViewerClient";
 import { PUBLIC_SHARE_VIEWER_SCRIPT } from "./publicShareViewerBundle.generated";
+import { readPublicSessionVisualMessages } from './publicSessionVisuals';
 
 const secret = "A".repeat(43);
 const location = { origin: "https://share.preview.example.test", pathname: "/s/lookup", hash: `#k=${secret}` };
@@ -20,6 +21,9 @@ interface ElementBoundary {
     tag: string; textContent: string | null; click?: () => void;
     src?: string; data?: string; href?: string; download?: string; type?: string; alt?: string;
     style: { cssText: string }; attributes: Record<string, string>;
+    childNodes: ElementBoundary[];
+    append(...children: ElementBoundary[]): void;
+    replaceChildren(...children: ElementBoundary[]): void;
     setAttribute(name: string, value: string): void;
     addEventListener(type: string, callback: () => void): void;
 }
@@ -28,16 +32,102 @@ interface DocumentBoundary { getElementById(): RootBoundary; createElement(tag: 
 function createBrowserBoundary() {
     const elements: ElementBoundary[] = [];
     const document: DocumentBoundary = { getElementById: () => root, createElement: (tag: string): ElementBoundary => ({ tag, textContent: null,
-        style: { cssText: '' }, attributes: {}, setAttribute(name, value) { this.attributes[name] = value; },
+        style: { cssText: '' }, attributes: {}, childNodes: [],
+        append(...children) { this.childNodes.push(...children); },
+        replaceChildren(...children) { this.childNodes.splice(0, this.childNodes.length, ...children); },
+        setAttribute(name, value) { this.attributes[name] = value; },
         addEventListener(_type, callback) { this.click = callback; },
     }) };
     const root: RootBoundary = { ownerDocument: document, replaceChildren: (...children: ElementBoundary[]) => { elements.splice(0, elements.length, ...children); },
         append: (element: ElementBoundary) => elements.push(element),
-        set textContent(value: string) { elements.splice(0, elements.length, { tag: "#text", textContent: value, style: { cssText: '' }, attributes: {}, setAttribute() {}, addEventListener() {} }); } };
+        set textContent(value: string) { elements.splice(0, elements.length, { tag: "#text", textContent: value, style: { cssText: '' }, attributes: {}, childNodes: [], append() {}, replaceChildren() {}, setAttribute() {}, addEventListener() {} }); } };
     return { elements, document, root };
 }
 
 describe("isolated public viewer browser boundary", () => {
+    it('recognizes only completed acknowledged transcript visuals from the real message reducer, including a call/result page boundary', () => {
+        const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
+        const item = { v: 1, title: 'Result', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Result' } } } };
+        const input = { itemId: 'visual', expectedItemRevision: null, destination: 'transcript', item };
+        const result = { v: 1, serverId: 'home', sessionId: 'session', result: { operation: 'upsert_item', itemId: 'visual', outcome: 'created', itemRevision: revision },
+            destination: null, itemDestination: 'transcript' };
+        const call = { id: 'call-message', publishedSessionId: 'session', seq: 1, localId: null, createdAt: 1, text: '', reference: null,
+            raw: { role: 'agent', content: { type: 'codex', data: { type: 'tool-call', callId: 'call', name: 'session_board_item_upsert', input, id: 'call' } } } };
+        const answer = { id: 'answer-message', publishedSessionId: 'session', seq: 2, localId: null, createdAt: 2, text: '',
+            reference: { v: 1 as const, itemId: 'visual', itemRevision: revision, sourceAddress: { serverId: 'home', sessionId: 'session' } },
+            loadVisual: async () => ({ status: 'unavailable' as const }),
+            raw: { role: 'agent', content: { type: 'codex', data: { type: 'tool-call-result', callId: 'call', output: JSON.stringify(result), id: 'answer', isError: false } } } };
+        expect([...readPublicSessionVisualMessages([answer])]).toEqual([]);
+        expect([...readPublicSessionVisualMessages([answer, call])]).toEqual(['answer-message']);
+        expect([...readPublicSessionVisualMessages([{ ...answer, raw: { text: JSON.stringify(result) } }, call])]).toEqual([]);
+        expect([...readPublicSessionVisualMessages([{ ...answer, reference: null }, call])]).toEqual([]);
+        const boardCall = { ...call, raw: { role: 'agent', content: { type: 'codex', data: {
+            ...call.raw.content.data, input: { ...input, destination: 'board', expectedItemRevision: revision },
+        } } } };
+        const boardAnswer = { ...answer, raw: { role: 'agent', content: { type: 'codex', data: {
+            ...answer.raw.content.data, output: JSON.stringify({ ...result, result: { ...result.result, outcome: 'updated' }, itemDestination: 'board' }),
+        } } } };
+        expect([...readPublicSessionVisualMessages([boardAnswer, boardCall])]).toEqual([]);
+        // A v3 historical import retains the immutable original Board acknowledgement,
+        // but its server-stamped association names the independently owned child copy.
+        expect([...readPublicSessionVisualMessages([{ ...boardAnswer, publishedSessionId: 'child-session',
+            reference: { ...answer.reference, itemId: 'child-visual', itemRevision: 'ssr1.AAAACHN5c3JlY18yAAAAAQ' } }, boardCall])]).toEqual(['answer-message']);
+        expect([...readPublicSessionVisualMessages([{ ...answer,
+            reference: { ...answer.reference, itemId: 'substituted-visual' } }, call])]).toEqual([]);
+        expect([...readPublicSessionVisualMessages([{ ...answer,
+            reference: { ...answer.reference, itemRevision: 'ssr1.AAAACHN5c3JlY18yAAAAAQ' } }, call])]).toEqual([]);
+    });
+    it('renders each admitted Session message as a stable addressed row instead of flattening the public page', () => {
+        const { root, elements } = createBrowserBoundary();
+        renderPublicShareViewer(root as unknown as HTMLElement, { status: 'ready', title: 'Shared Session', text: 'Published text',
+            messages: [{ id: 'message', publishedSessionId: 'session', seq: 3, localId: null, createdAt: 1, text: 'Published text', raw: { text: 'Published text' }, reference: null }],
+            nextBeforeSeq: null, messagesAccessToken: 'grant' });
+        expect(elements.some(element => element.attributes['data-message-id'] === 'message')).toBe(true);
+    });
+    it('retains admitted Session message identity for lazy visual publication without fetching items eagerly', async () => {
+        const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({
+            subject: { kind: 'session', id: 'session' }, encryptionMode: 'plain', encryptedDataKey: null,
+            keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: true, messagesAccessToken: 'grant',
+            content: { kind: 'session', metadata: null, metadataVersion: 0, agentState: null, agentStateVersion: 0,
+                messages: [{ id: 'published-message', seq: 3, localId: null, createdAt: 1, content: { t: 'plain', v: { text: 'Published text' } } }],
+                hasMore: true, nextBeforeSeq: 3 },
+        })));
+        const result = await loadPublicShareViewerContent({ location, fetch });
+        expect(result).toMatchObject({ status: 'ready', messages: [{ id: 'published-message', seq: 3, text: 'Published text' }], nextBeforeSeq: 3 });
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+    it.each(['plain', 'e2ee'] as const)('lazily opens a message-anchored %s visual with the fragment key and refuses a substituted item', async mode => {
+        const key = new Uint8Array(32).fill(9);
+        const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
+        const reference = { v: 1, itemId: 'visual', itemRevision: revision, sourceAddress: { serverId: 'home', sessionId: 'session' } };
+        const item = { v: 1, destination: 'transcript', title: 'Opened visual', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Visible declarative content' } } } };
+        const envelope = async (value: unknown) => mode === 'plain' ? { t: 'plain', v: value } : { t: 'encrypted', c: encodeBase64(await sealSessionDataKeyBundleV0(value, key)) };
+        const payload = { subject: { kind: 'session', id: 'session' }, encryptionMode: mode,
+            encryptedDataKey: mode === 'plain' ? null : sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }),
+            keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: true, messagesAccessToken: 'grant',
+            content: { kind: 'session', metadata: null, metadataVersion: 0, agentState: null, agentStateVersion: 0,
+                messages: [{ id: 'published-message', seq: 3, localId: null, createdAt: 1, content: await envelope({ text: 'Published text' }), surfaceItemReference: reference }],
+                hasMore: false, nextBeforeSeq: null } };
+        const visual = { messageId: 'published-message', encryptionMode: mode, networkOff: true, reference,
+            record: { id: 'record', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' }, revision,
+                content: await envelope(item), createdAt: '2026-10-10T00:00:00.000Z', updatedAt: '2026-10-10T00:00:00.000Z' } };
+        const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(new Response(JSON.stringify(payload)))
+            .mockResolvedValueOnce(new Response(JSON.stringify(visual)))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ...visual, record: { ...visual.record, address: { ...visual.record.address, localId: 'other' } } })))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ...visual, record: { ...visual.record, content: await envelope({ ...item, destination: 'board' }) } })));
+        const result = await loadPublicShareViewerContent({ location, fetch });
+        expect(fetch).toHaveBeenCalledTimes(1);
+        if (result.status !== 'ready') throw new Error('Expected admitted Session page');
+        expect(await result.messages![0].loadVisual!()).toMatchObject({ status: 'ready', item, networkOff: true });
+        expect(fetch.mock.calls[1]).toEqual([`${location.origin}/v1/public-shares/lookup/visual/published-message`, expect.objectContaining({
+            credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer', headers: { 'x-public-share-messages-access-token': 'grant' },
+        })]);
+        expect(JSON.stringify(fetch.mock.calls)).not.toContain(secret);
+        expect(await result.messages![0].loadVisual!()).toEqual({ status: 'invalid_content' });
+        expect(await result.messages![0].loadVisual!()).toEqual({ status: 'unavailable' });
+    });
     it("opens explicit HTML kind as a document bundle while ordinary content stays text", async () => {
         const html = { ...plain, content: { ...plain.content,
             header: encodePlainArtifactStoredContent({ title: "HTML", kind: "html" }),

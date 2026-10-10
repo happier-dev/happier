@@ -148,6 +148,12 @@ Model and permission-mode restrictions are enforced, not just hidden. Attachment
 upload, preview and retry use the Session-bound transfer path; arbitrary workspace
 and generated-file downloads are outside v1.
 
+Opening the OS file picker inside a standalone third-party embed is an explicit
+Action-parity exclusion: choosing local files remains a human UI interaction.
+Agents attach files through the existing attachment Actions instead. The
+connected-app Action channel does not target the standalone frame to open its
+picker; attachment grants and transfer checks still apply.
+
 With React, `style` configures the chat inside the iframe; `containerStyle` and
 `className` apply only to its host box. With the DOM API, the returned handle's
 `update({ title, ui, style })` changes presentation, `open(sessionId)` switches

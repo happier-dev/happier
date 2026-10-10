@@ -177,6 +177,13 @@ the v1 contract.
 
 ### Session-bound attachments
 
+Opening the OS file picker inside a standalone third-party embed frame is an
+explicit Action-parity exclusion. Selecting local files remains a human UI
+interaction; agents attach files through the existing attachment Actions instead.
+The frame is not a recipient of connected-app reverse dispatch. This exclusion
+does not add a frame recipient identity, extend `ComposerRef`, or change attachment
+admission and transfer ownership.
+
 `sessionAttachmentTransfers.ts` selects the Session-bound carrier supplied by the
 current embed sync scope. It uses the existing encrypted Session RPC transport and
 chunk/finalize/recovery owners, without acquiring a Machine carrier or Account
