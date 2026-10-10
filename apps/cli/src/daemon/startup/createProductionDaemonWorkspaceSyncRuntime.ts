@@ -21,7 +21,8 @@ import type {
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ProjectWorkerCopyRetireInputV1Schema } from '@happier-dev/protocol';
 import { ProjectWorkerDependencyV1Schema, type ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
-import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncPrepareBetweenResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncPrepareBetweenResultV1Schema,
+  type HandoffTargetReplacementPreflightResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveCredentialActionAdmissionV1, resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourceContextV1 } from '@happier-dev/protocol/socketRpc';
@@ -538,6 +539,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     isCurrent?: () => Promise<boolean>;
     /** Actual target-child socket, preserving the original Home-admitted requester. */
     callWorkspaceTargetPhase?: (descriptor: WorkspaceSyncTargetPhaseDescriptor, context: RpcHandlerContext) => Promise<unknown>;
+    /** Current installed physical TARGET socket, never the borrower's Parent Account transport. */
+    callWorkspaceSeedExport?: (descriptor: Readonly<{ machineId: string;
+      request: import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncSeedExportPrepareV1;
+      signal?: AbortSignal }>, context: RpcHandlerContext) => Promise<unknown>;
     /** The actual installed target admission owner, never a count-derived projection. */
     readProjectWorkerDependencies?: (workspaceRefId: string, relationshipId?: string) => readonly ProjectWorkerDependencyV1[];
     openMachineCarrierTunnel?: WorkspaceSyncMachineTunnelOpen;
@@ -750,20 +755,28 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       }),
       ...(input.openMachineCarrierTunnel && input.requestDirectTransferPayloadFile
         ? { materializeRemoteSeed: async (request) => {
-            const preparedRaw = await factories.callMachineRpc({
+            const seedRequest = {
+              t: 'workspace_sync_seed_v1' as const,
+              operationId: request.operationId,
+              sourceWorkspaceRefId: request.sourceWorkspaceRefId,
+              targetMachineId: input.localMachineId,
+              contentPolicy: request.contentPolicy,
+            };
+            const seedContext = request.context?.callerInputAuthorization?.binding.actionId === 'projects.open'
+              && request.context.workspaceSyncSourceWriterTargetRouting !== undefined ? request.context : undefined;
+            const prepare = seedContext
+              ? input.callWorkspaceSeedExport
+                ? input.callWorkspaceSeedExport({ machineId: request.sourceMachineId, request: seedRequest,
+                    ...(request.signal ? { signal: request.signal } : {}) }, seedContext)
+                : Promise.reject(compositionError('workspace_sync_update_required', 'The installed SOURCE seed transport is unavailable'))
+              : factories.callMachineRpc({
                 credentials: input.credentials,
                 machineId: request.sourceMachineId,
                 method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
-                request: {
-                  t: 'workspace_sync_seed_v1',
-                  operationId: request.operationId,
-                  sourceWorkspaceRefId: request.sourceWorkspaceRefId,
-                  targetMachineId: input.localMachineId,
-                  contentPolicy: request.contentPolicy,
-                },
+                request: seedRequest,
                 ...(request.signal ? { signal: request.signal } : {}),
-              })
-              .catch(() => {
+              });
+            const preparedRaw = await prepare.catch(() => {
                 request.signal?.throwIfAborted();
                 throw compositionError('target_bootstrap_offline', 'Workspace sync source seed is unavailable');
               });
@@ -1040,7 +1053,27 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       }
     }
     assertOriginalTargetAuthority(request, accepted.input, authority, context);
-    return { input: accepted.input, assertCurrent: async () => {
+    let targetPreflight: HandoffTargetReplacementPreflightResultV1 | undefined;
+    let executionInput = accepted.input;
+    if (authority && request.action.kind === 'copy_once' && !request.targetWorkspaceRefId
+      && context?.callerInputAuthorization?.binding.actionId === 'projects.open'
+      && context.workspaceSyncSourceRouting && context.workspaceSyncSourceExecution) {
+      // A Project Root names D's namespace, not a Workspace row in P1's Account.
+      // Only the reached target owner can qualify its existing physical row.
+      targetPreflight = await targetAuthority.preflightHandoffTargetReplacementAtTarget({
+        v: 1, operationId: request.operationId, serverId: semanticServerId,
+        machineId: request.targetMachineId, targetPath: request.targetRootPath,
+        destinationIntent: 'materialize_from_source_workspace', ...(request.signal ? { signal: request.signal } : {}),
+      }, context);
+      const target = targetPreflight.targetWorkspace;
+      if (!target || !targetPreflight.physicalEndpoint || target.serverId !== semanticServerId
+        || target.machineId !== targetPreflight.physicalEndpoint.machineId) {
+        throw compositionError('workspace_sync_update_required', 'The qualified target Workspace is unavailable');
+      }
+      executionInput = { ...accepted.input, targetWorkspaceRefId: target.id,
+        targetMachineId: target.machineId, targetRootPath: target.rootPath };
+    }
+    return { input: executionInput, ...(targetPreflight ? { targetPreflight } : {}), assertCurrent: async () => {
       const current = await readHandoffExecutionBasis(request, context, authority);
       if (current.childMachines.length !== accepted.childMachines.length
         || accepted.childMachines.some(child => {
@@ -1162,10 +1195,19 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     },
     handoffPrepareBetween,
     resolveHandoffExecutionInput,
-    bootstrap: async (bootstrapInput, admittedInput, authority, context) => {
+    bootstrap: async (bootstrapInput, admittedInput, authority, context, targetPreflight) => {
       const basis = await readHandoffExecutionBasis(authority && admittedInput
         ? { ...admittedInput, signal: bootstrapInput.signal } : bootstrapInput, context, authority);
       bootstrapInput = basis.input;
+      if (targetPreflight) {
+        const target = targetPreflight.targetWorkspace;
+        if (!target || !targetPreflight.physicalEndpoint || target.serverId !== semanticServerId
+          || target.machineId !== targetPreflight.physicalEndpoint.machineId) {
+          throw compositionError('workspace_sync_child_unavailable', 'The qualified target Workspace changed before preparation');
+        }
+        bootstrapInput = { ...bootstrapInput, targetWorkspaceRefId: target.id,
+          targetMachineId: target.machineId, targetRootPath: target.rootPath };
+      }
       if (sameExecutionWorkspace(bootstrapInput)) {
         return { release: async () => undefined };
       }
@@ -1218,6 +1260,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         machineId: admittedInput.targetMachineId, rootPath: admittedInput.targetRootPath,
       } : undefined;
       let physicalTargetEndpoint: MachineInstallationPublicIdentityV1 | undefined;
+      let sourceSeedTargetWorkspace: WorkspaceRefV1 | undefined;
       let acceptedTargetWorkspace: WorkspaceRefV1 | undefined;
       let retainedTargetCleanupContext: RpcHandlerContext | undefined;
       const releaseTarget = async (reason: 'abort' | 'copy_committed' | 'relationship_committed') => {
@@ -1239,7 +1282,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       try {
         const sourceRouting = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
         if (context?.callerInputAuthorization && sourceRouting && admittedTarget) {
-          const preflight = await targetAuthority.preflightHandoffTargetReplacementAtTarget({
+          const preflight = targetPreflight ?? await targetAuthority.preflightHandoffTargetReplacementAtTarget({
             v: 1, serverId: semanticServerId, operationId: prepareRequest.bootstrapOperationId,
             machineId: admittedTarget.machineId, targetPath: admittedTarget.rootPath,
             destinationIntent: prepareRequest.targetBootstrap,
@@ -1273,6 +1316,15 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             workspaceSyncSourceWriterTargetRouting: retainedRouting,
           };
           physicalTargetEndpoint = preflight.physicalEndpoint;
+          if (preflight.targetWorkspace) {
+            const target = preflight.targetWorkspace;
+            if (bootstrapInput.action.kind !== 'copy_once' || target.serverId !== semanticServerId
+              || target.id !== prepareRequest.targetWorkspaceRefId || target.machineId !== physicalTargetEndpoint.machineId
+              || target.machineId !== bootstrapInput.targetMachineId || target.rootPath !== bootstrapInput.targetRootPath) {
+              throw compositionError('workspace_sync_child_unavailable', 'The qualified seed target changed before preparation');
+            }
+            sourceSeedTargetWorkspace = target;
+          }
         }
         const prepareTarget = async () => await targetAuthority.prepareBootstrapAtTarget({
           ...prepareRequest, ...(admittedTarget ? { admittedTarget } : {}),
@@ -1286,10 +1338,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
               alphaWorkspaceRefId: copySourceWorkspaceRefId,
               betaWorkspaceRefId: copyTargetWorkspaceRefId,
               contentPolicy: bootstrapInput.action.contentPolicy,
-            }, [sourceOwnership], prepareTarget)
+            }, [sourceOwnership], prepareTarget, sourceSeedTargetWorkspace)
           : await prepareTarget();
         if (physicalTargetEndpoint && !isDeepStrictEqual(preparedTarget.physicalEndpoint, physicalTargetEndpoint)) {
           throw compositionError('workspace_sync_child_unavailable', 'The installed target changed during preparation');
+        }
+        if (targetPreflight?.targetWorkspace && !isDeepStrictEqual(preparedTarget.targetWorkspace, targetPreflight.targetWorkspace)) {
+          throw compositionError('workspace_sync_child_unavailable', 'The qualified target Workspace changed during preparation');
         }
         if (physicalTargetEndpoint && bootstrapInput.action.kind === 'copy_once') {
           const target = preparedTarget.targetWorkspace;

@@ -24,6 +24,7 @@ import {
   type WorkspaceSyncHandoffSourcePhaseResultV1,
   type WorkspaceSyncHandoffPreparedV1,
   type WorkspaceSyncHandoffSettledV1,
+  type HandoffTargetReplacementPreflightResultV1,
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import { isDeepStrictEqual } from 'node:util';
@@ -91,6 +92,7 @@ export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
     context?: RpcHandlerContext) => Promise<Readonly<{
     input: PrepareWorkspaceSyncHandoffInput;
     assertCurrent(): Promise<void>;
+    targetPreflight?: HandoffTargetReplacementPreflightResultV1;
   }>>;
   relationshipController?: Pick<ManagedWorkspaceSync, 'flush'>;
   prepareBetween?: (
@@ -100,7 +102,8 @@ export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
   ) => Promise<WorkspaceSyncPrepareBetweenResultV1>;
   relationshipOwner?: Pick<WorkspaceSyncRelationshipOwner, 'materializeEndpoints' | 'prepareCreate'>;
   bootstrap: (input: PrepareWorkspaceSyncHandoffInput, admittedInput?: PrepareWorkspaceSyncHandoffInput,
-    authority?: WorkspaceSyncHandoffSourcePhaseAuthority, context?: RpcHandlerContext) => Promise<Readonly<{
+    authority?: WorkspaceSyncHandoffSourcePhaseAuthority, context?: RpcHandlerContext,
+    targetPreflight?: HandoffTargetReplacementPreflightResultV1) => Promise<Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
     ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
     targetWorkspace?: WorkspaceRefV1;
@@ -411,7 +414,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       }
       const sameWorkspace = (input.action.kind === 'linked_workspace' || input.action.kind === 'copy_once')
         && sameExecutionWorkspace(input);
-      const fence = input.action.kind === 'none' || sameWorkspace ? undefined : await deps.bootstrap(effectiveInput, admittedInput, authority, context);
+      const fence = input.action.kind === 'none' || sameWorkspace ? undefined
+        : await deps.bootstrap(effectiveInput, admittedInput, authority, context, execution?.targetPreflight);
       try {
         if (input.action.kind === 'copy_once' && fence?.targetWorkspace) {
           const target = fence.targetWorkspace;

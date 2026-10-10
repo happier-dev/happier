@@ -8,7 +8,8 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
 type HostRequesterContext = Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'
     | 'requesterSessionBootstrap' | 'sessionActionOrigin' | 'callerInputAuthorization' | 'callerInputConstraints'
-    | 'workspaceSyncSourceRouting' | 'workspaceSyncSourceWriterTargetRouting' | 'originalActionEnvelope' | 'workspaceSyncSourceExecution'>;
+    | 'workspaceSyncSourceRouting' | 'workspaceSyncTargetRouting' | 'workspaceSyncSourceWriterTargetRouting' | 'workspaceSyncSeedRouting'
+    | 'originalActionEnvelope' | 'workspaceSyncSourceExecution'>;
 
 export type RpcActionExecutorContext = ActionExecutorContext & HostRequesterContext & Readonly<{
     signal?: AbortSignal;
@@ -100,7 +101,8 @@ export function buildActionExecutorContextForRpc(
             || defaultSessionId && defaultSessionId !== handoff.sessionId) return undefined;
         return authorization;
     })();
-    const workspaceSourceContext = params.workspaceSyncSourceWriterTargetRouting?.source.sourceContext;
+    const workspaceSourceContext = params.workspaceSyncSourceWriterTargetRouting?.source.sourceContext
+        ?? params.workspaceSyncSeedRouting?.sourceWriterTarget.source.sourceContext;
 
     return {
         ...(params.machineAdmission ? { machineAdmission: params.machineAdmission } : {}),
@@ -110,9 +112,11 @@ export function buildActionExecutorContextForRpc(
         ...(params.callerInputAuthorization ? { callerInputAuthorization: params.callerInputAuthorization } : {}),
         ...(params.callerInputConstraints ? { callerInputConstraints: params.callerInputConstraints } : {}),
         ...(params.workspaceSyncSourceRouting ? { workspaceSyncSourceRouting: params.workspaceSyncSourceRouting } : {}),
+        ...(params.workspaceSyncTargetRouting ? { workspaceSyncTargetRouting: params.workspaceSyncTargetRouting } : {}),
         ...(params.workspaceSyncSourceExecution ? { workspaceSyncSourceExecution: params.workspaceSyncSourceExecution } : {}),
         ...(params.originalActionEnvelope ? { originalActionEnvelope: params.originalActionEnvelope } : {}),
         ...(params.workspaceSyncSourceWriterTargetRouting ? { workspaceSyncSourceWriterTargetRouting: params.workspaceSyncSourceWriterTargetRouting } : {}),
+        ...(params.workspaceSyncSeedRouting ? { workspaceSyncSeedRouting: params.workspaceSyncSeedRouting } : {}),
         ...(defaultSessionId ? { defaultSessionId } : {}),
         ...(serverId ? { serverId } : {}),
         ...(params.externalActionTarget ? { externalActionTarget: params.externalActionTarget } : {}),
