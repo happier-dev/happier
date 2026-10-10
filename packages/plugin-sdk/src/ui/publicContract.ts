@@ -2,6 +2,7 @@ import type { PluginUiToneV1 as DtoPluginUiToneV1, PluginUiAttachmentToneV1 as D
 import type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
 import type { ProjectKeyV1, SessionServerStartSpawnDraftV1 } from '../services/sessions.js';
 import type { JsonValue } from '../identity.js';
+import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type { WorkBoardPreviewLayoutV1 as ProtocolWorkBoardPreviewLayoutV1 } from '@happier-dev/protocol';
 import type {
@@ -188,6 +189,13 @@ type PluginUiHostApiSurfaceTypographyMetricV1 = {
 /** SDK-local declaration projection of the Protocol-owned semantic theme. */
 export type PluginUiHostApiSurfaceThemeV1 = {
     version: 1;
+    /** Optional, safely ignorable presentation overlays; absence renders the existing flat finish. */
+    surfaceFinish?: Partial<Record<'card' | 'floating' | 'composer' | 'primaryButton' | 'secondaryButton', {
+        colors: [string, string, ...string[]];
+        locations?: [number, number, ...number[]];
+        start?: { x: number; y: number };
+        end?: { x: number; y: number };
+    } | null>>;
     colors: {
         canvas: string;
         surface: string;
@@ -208,6 +216,15 @@ export type PluginUiHostApiSurfaceThemeV1 = {
         control: string;
         controlDisabled: string;
         overlay: string;
+    };
+    /** Text on tinted status surfaces; marker/icon colours remain in `colors`. Older snapshots omit it. */
+    statusText?: {
+        success: string;
+        warning: string;
+        attention: string;
+        danger: string;
+        info: string;
+        neutral: string;
     };
     spacing: {
         xsmall: number;
@@ -276,7 +293,8 @@ export type PluginUiHostApiSurfaceContextV1 = {
     };
     theme: PluginUiHostApiSurfaceThemeV1;
     translations: Record<string, string>;
-    targetedContributions: PluginUiTargetedContributionsV1;
+    /** Absent for Account-visible presentation without an executable occurrence. */
+    targetedContributions?: PluginUiTargetedContributionsV1;
 };
 
 export type PluginUiResourceSubscriptionEventV1 =
@@ -528,6 +546,9 @@ export type ComposerUnavailableReasonV1 = Extract<
  * lifecycle, runtime and operational state are the canonical Session awareness
  * projection's own vocabulary. `workStatus` is the host's shared Work
  * presentation, including report-aware settlement, not a plugin derivation.
+ * Optional `agent` is catalog presentation identity, not the Session title.
+ * Its optional `brand.pluginId` is an exact public BrandMark target; absence
+ * means callers retain generic wording and marks, never assume a default Agent.
  */
 export type SessionStateV1 = ProtocolPluginUiSessionStateV1;
 export type SessionPendingPermissionV1 = ProtocolPluginUiSessionPendingPermissionV1;
@@ -628,7 +649,7 @@ export type PluginUiRendererV2 =
     | {
         id: string;
         kind: 'hostedHtml';
-        source: { kind: 'html'; html: string };
+        source: ArtifactHtmlBundleV1;
         requiredHostMethods?: PluginUiHostMethodV1[];
         /**
          * The reach a self-contained document asks for beyond its host methods.

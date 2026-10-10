@@ -1,9 +1,17 @@
 export { ComposerReferenceCandidateIdV1Schema } from './composerReferenceProviders.js';
 export type { ComposerReferenceCandidatePageV1 } from './composerReferenceProviders.js';
+export type {
+    PluginProjectNativeAdapterDefinitionV1, PluginProjectNativeAdapterDeclarationV1, PluginProjectNativeAdapterRuntimeV1,
+    PluginProjectNativeInspectionV1, PluginProjectNativeFileFactV1, PluginProjectNativeCommandV1,
+    PluginProjectNativeCommandRequestV1, PluginProjectNativeCommandResultV1,
+    PluginProjectNativeEnvironmentRequestV1, PluginProjectNativeEnvironmentResultV1, PluginProjectNativeFailureV1,
+    ProjectDefinitionDetectionV1, ProjectNativeRefV1, ProjectEnvironmentSelectionV1, ProjectNativeAdapterRoleV1,
+} from './projectNativeAdapters.js';
 export type { ComposerReferenceRuntime } from './activation.js';
 export type { PluginDragSourceRuntime, PluginDropTargetRuntime, EntityDragItemV1, EntityDragScopeV1, EntityDragKindV1, EntityDropAdmissionV1, EntityDropEffectV1, EntityDropPreviewV1, EntityDropReasonV1, EntityDropOutcomeV1 } from './entityDragDrop.js';
 export type { PluginDragSourceContributionV1, PluginDropTargetContributionV1 } from './manifest.js';
 export type { PluginProjectNativeAdapterContributionV1 } from './manifest.js';
+export type { PluginInputTypeReferenceV1 } from './manifest.js';
 export { MAX_PLUGIN_SEARCH_ITEMS_V1 } from './searchProviders.js';
 export { MAX_PLUGIN_SEARCH_ITEM_ID_UTF8_BYTES_V1 } from './searchProviders.js';
 export { MAX_PLUGIN_SEARCH_QUERY_UTF8_BYTES_V1 } from './searchProviders.js';

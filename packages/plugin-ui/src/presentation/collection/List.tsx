@@ -47,6 +47,7 @@ import {
   useHappierCollectionTableRow,
 } from './CollectionList.js';
 import { resolveHappierTextStepStyle } from '../layout/pageText.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 /**
  * The portable list semantics shared by Happier core, executable Plugin UI and
@@ -457,6 +458,7 @@ export function HappierListItem({
   accessibilityRowIndex,
   accessibilityRowCount,
 }: HappierListItemProps) {
+  const paintColor = useHappierMaterialColorResolver();
   const environmentTheme = useOptionalHappierUiTheme();
   const hostTypography = useOptionalHappierUiTypography();
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
@@ -478,15 +480,15 @@ export function HappierListItem({
   const navigationPalette = useOptionalHappierUiPalette(theme ?? environmentTheme);
   // Inside a Collection's table or list a row takes the dense collection anatomy (full bleed, hairline,
   // whole-row hover and open fills, the open row's leading edge); see `HappierCollectionTableRowContext`.
-  const collectionRow = useHappierCollectionTableRow() && pageSection === null && !navigationRow;
+  const collectionItem = useHappierCollectionTableRow();
+  const collectionRow = collectionItem && pageSection === null && !navigationRow;
   // The open row (its detail is showing) carries the edge; a row in the bulk set is filled without one.
   const openRow = useContext(HappierListRowOpenContext);
   const [collectionRowHovered, setCollectionRowHovered] = useState(false);
   const reducedMotion = useOptionalHappierUiAccessibility()?.reducedMotion === true;
-  // A page row whose control is wide (`accessoryWraps`) measures itself, like
-  // Happier core's adaptive page rows: too narrow for a label column and a
-  // control column side by side, the control moves beneath the label.
-  const measuresPageRow = pageSection !== null && accessoryWraps === true
+  // Page and Collection rows with wrapping controls share the existing narrow
+  // row measurement: controls move below rather than squeezing the label.
+  const measuresPageRow = (pageSection !== null || collectionItem) && accessoryWraps === true
     && accessory !== undefined && accessory !== null;
   const [pageRowNarrow, setPageRowNarrow] = useState(false);
   const handlePageRowLayout = useCallback((event: Readonly<{ nativeEvent: Readonly<{ layout: Readonly<{ width: number }> }> }>) => {
@@ -557,7 +559,23 @@ export function HappierListItem({
     : baseTargetSize;
 
   const renderSemanticContent = (isBusy: boolean, includeAccessory: boolean) => {
-    if (!hasSemanticContent || !resolvedTheme) return customContent;
+    if (!resolvedTheme) return customContent;
+    const busyIndicator = isBusy ? (
+      <HappierSpinner
+        aria-hidden
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        size="small"
+        color={resolvedTheme.colors.secondaryText}
+      />
+    ) : null;
+    if (!hasSemanticContent) return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', minWidth: 0 }}>
+        {/* This slot stays mounted when pending changes; custom row state belongs to its author. */}
+        <View style={{ flex: 1, minWidth: 0 }}>{customContent}</View>
+        {busyIndicator}
+      </View>
+    );
 
     const titleColor = resolvedTheme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]];
     const pageCompact = behavior.density === 'compact' || behavior.density === 'tight';
@@ -680,15 +698,7 @@ export function HappierListItem({
             ? <View style={stackPageAccessory ? { alignSelf: 'stretch', alignItems: 'stretch' } : null}>{accessory}</View>
             : accessory)
           : null}
-        {isBusy ? (
-          <HappierSpinner
-            aria-hidden
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            size="small"
-            color={resolvedTheme.colors.secondaryText}
-          />
-        ) : null}
+        {busyIndicator}
       </View>
     );
   };
@@ -729,8 +739,8 @@ export function HappierListItem({
         // Inset, like every list row: rows stack flush in a scrolling column that clips outside them.
         ...happierFocusRingStyle({ visible: state.focused, color: resolvedTheme.colors.focus, placement: 'inset' }),
         backgroundColor: selected === true
-          ? navigationPalette?.navigationSelected ?? resolvedTheme.colors.elevatedSurface
-          : state.hovered && !state.disabled ? navigationPalette?.navigationHover ?? 'transparent' : 'transparent',
+          ? paintColor(navigationPalette?.navigationSelected ?? resolvedTheme.colors.elevatedSurface)
+          : state.hovered && !state.disabled ? paintColor(navigationPalette?.navigationHover ?? 'transparent') : 'transparent',
         opacity: state.disabled && !state.busy
           ? 0.5
           : state.pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1,
@@ -761,7 +771,7 @@ export function HappierListItem({
         // paints only the ring above. They are separate axes, so a focused row
         // is never mistaken for the open one and the open one stays visible on
         // touch.
-        backgroundColor: selected === true ? resolvedTheme.colors.control : 'transparent',
+        backgroundColor: selected === true ? paintColor(resolvedTheme.colors.control) : 'transparent',
         // Rows are high-frequency and text-led: the gentle dip, never a scale.
         opacity: state.disabled && !state.busy
           ? 0.5
@@ -777,7 +787,7 @@ export function HappierListItem({
     behavior.accessoryPlacement === 'outside' ? (
       <>
         {/* @ts-expect-error React Native's role union omits RNW's standard gridcell role. */}
-        <View role="gridcell" style={{ flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
+        <View role="gridcell" style={stackPageAccessory ? { width: '100%', minWidth: 0 } : { flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
         {/* @ts-expect-error React Native's role union omits RNW's standard gridcell role. */}
         {accessory ? <View role="gridcell">{accessory}</View> : null}
       </>
@@ -813,12 +823,12 @@ export function HappierListItem({
     </View>
   ) : behavior.accessoryPlacement === 'outside' ? (
     <View style={{
-      flexDirection: 'row',
-      alignItems: 'center',
+      flexDirection: stackPageAccessory ? 'column' : 'row',
+      alignItems: stackPageAccessory ? 'stretch' : 'center',
       flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
       minWidth: 0,
     }}>
-      <View style={{ flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
+      <View style={stackPageAccessory ? null : { flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
       {accessory}
     </View>
   ) : row;
@@ -854,23 +864,24 @@ export function HappierListItem({
           }
         : {})}
       testID={isInteractive ? undefined : testID}
-      onLayout={measuresPageRow ? handlePageRowLayout : undefined}
+      // RNW observes only at mount, so retain the measurement when a compound accessory arrives later.
+      onLayout={pageSection !== null || collectionItem ? handlePageRowLayout : undefined}
       {...(collectionRow && isInteractive ? {
         onPointerEnter: () => { setCollectionRowHovered(true); },
         onPointerLeave: () => { setCollectionRowHovered(false); },
       } : {})}
       style={[itemStyle, isGridRow ? {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: stackPageAccessory ? 'column' : 'row',
+        alignItems: stackPageAccessory ? 'stretch' : 'center',
         flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
         minWidth: 0,
       } : undefined, collectionRow && resolvedTheme ? {
         // The pointer's fill eases in at the fast step (web); selection lands at once.
         ...(reducedMotion ? {} : COLLECTION_ROW_FILL_TRANSITION),
         backgroundColor: selected === true || openRow
-          ? collectionPalette(resolvedTheme, navigationPalette).navigationSelected
+          ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationSelected)
           : collectionRowHovered && isInteractive && disabled !== true
-            ? collectionPalette(resolvedTheme, navigationPalette).navigationHover
+            ? paintColor(collectionPalette(resolvedTheme, navigationPalette).navigationHover)
             : 'transparent',
       } : undefined, style]}
     >

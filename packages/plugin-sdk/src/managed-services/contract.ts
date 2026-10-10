@@ -7,6 +7,7 @@ import type {
     ProviderConnectionId,
     ProviderModelLoadStateV1,
 } from '@happier-dev/protocol';
+import type { PluginContributionIdentity as PluginContributionIdentityV1 } from '../manifest.js';
 
 import type {
     ConnectedAccountMaterializationRequest,
@@ -17,6 +18,7 @@ import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type { PluginExecSpawnRequest } from '../services/io.js';
 import type { HttpMethod } from '../services/io.js';
+import type { PluginInvocationContext } from '../invocation.js';
 
 export type ProviderLocalId = PluginContributionLocalId;
 export const ManagedServiceLocalIdSchema: Readonly<{
@@ -232,6 +234,7 @@ export type ManagedServiceSpec = Readonly<{
             kind: 'spawn';
             launch: ExecSpawnRequest;
             endpoint:
+                | Readonly<{ kind: 'none' }>
                 | Readonly<{
                     kind: 'detectAfterLaunch';
                     minimumConfidence?: 'high' | 'medium' | 'low';
@@ -258,17 +261,37 @@ export type ManagedServiceSpec = Readonly<{
                 }>;
         }>;
         /**
-         * Injects the host's existing Connected Account request-auth
-         * capability document path into this owned child. The author declares
-         * only the child environment destination; the host owns the path and
-         * capability contents.
+         * Injects a host-owned Connected Account request-auth document path.
+         * Capability mode binds one operation. Consumer-access mode gives a
+         * connection-machine shared service a current census of independent
+         * opaque bearers and their exact capability paths. The author declares
+         * `managedRuntime.sharing: 'connectionMachine'` for this mode. The
+         * private census is `{v:1, consumers:[{token, capabilityPath, purposes}]}`;
+         * purposes are qualified Connected Account purpose references. Read
+         * current authority for every request; the process hostBearer is only
+         * management/health access, never a consumer grant. After removing a
+         * consumer, the host POSTs `{token}` to
+         * `/_happier/consumer-access/settle` with that management bearer. Return
+         * 200 only after cancelling and settling that consumer's complete
+         * HTTP, streaming and WebSocket lifetimes; retained tokens return 409.
+         * The author declares only the child environment destination; the host owns all authority
+         * and releases each consumer independently.
          */
         requestAuth?: Readonly<{
-            kind: 'connectedAccountCapabilityPath';
+            kind: 'connectedAccountCapabilityPath' | 'connectedAccountConsumerAccessPath';
             injectEnvironmentKey: string;
         }>;
         clientAccess?: ManagedServiceClientAccess;
         durableLog?: Readonly<{ enabled: boolean; keepCount?: number }>;
+    }>
+    | Readonly<{
+        mode: Readonly<{
+            kind: 'native';
+            launch: ExecSpawnRequest;
+            instance: ManagedServiceNativeInstanceV1;
+        }>;
+        clientAccess?: never;
+        durableLog?: never;
     }>
     | Readonly<{
         mode: Readonly<{ kind: 'attach'; baseUrl: string }>;
@@ -277,17 +300,42 @@ export type ManagedServiceSpec = Readonly<{
     }>
 );
 
+export type ManagedServiceNativeInstanceV1 = Readonly<{
+    adapter: PluginContributionIdentityV1;
+    nativeResourceId: string;
+}>;
+
+export type ManagedServiceNativeObservationV1 = Readonly<{
+    phase: 'running' | 'stopped' | 'unknown';
+    readiness: 'ready' | 'not_ready' | 'not_reported';
+    endpoint: string | null;
+}>;
+
+export interface ManagedServiceNativeLifecycleV1 {
+    /** Project-native hosts supply admitted services as the additive third argument.
+     * Existing resource-only adapters may ignore it; it is never serialized or plugin-supplied.
+     */
+    inspect(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<ManagedServiceNativeObservationV1>;
+    stop(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<Readonly<{
+        status: 'stopped' | 'accepted' | 'unsupported' | 'termination_incomplete';
+    }>>;
+}
+
 export type ManagedServiceSnapshot = Readonly<{
     id: ManagedServiceLocalId;
     state:
         | 'starting'
+        | 'running'
         | 'detecting'
         | 'healthy'
         | 'unhealthy'
         | 'stopping'
         | 'stopped'
         | 'failed';
-    mode: 'spawn' | 'attach';
+    mode: 'spawn' | 'attach' | 'native';
+    /** Native readiness is independent of an observed HTTP address. */
+    readiness?: ManagedServiceNativeObservationV1['readiness'];
+    nativePhase?: ManagedServiceNativeObservationV1['phase'];
     /**
      * The validated base URL required by endpoint-producing contracts such as
      * MCP discovery: a loopback `http:` address for a service the host spawned,
@@ -331,6 +379,7 @@ export type ManagedServiceErrorCode =
     | 'plugin_managed_service_unavailable'
     | 'plugin_managed_service_establishment_failed'
     | 'plugin_managed_service_health_timeout'
+    | 'plugin_managed_server_termination_incomplete'
     | 'plugin_operation_aborted'
     | 'plugin_managed_provider_result_invalid';
 

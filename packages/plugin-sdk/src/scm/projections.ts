@@ -5,6 +5,7 @@ import { normalizeScmBranchSourceRef as canonicalNormalizeScmBranchSourceRef, no
 import { normalizeScmHostingRepositoryIdentity as canonicalNormalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity as canonicalSameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { resolveScmScopedChangedPaths as canonicalResolveScmScopedChangedPaths } from '@happier-dev/protocol/scm/pathScope';
 import { SCM_OPERATION_ERROR_CODES as canonicalScmOperationErrorCodes } from '@happier-dev/protocol/scm/operationError';
+import { ScmRepositoryProvisioningFailureResponseSchema as canonicalProvisioningFailure } from '@happier-dev/protocol/scm';
 import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN as canonicalScmWorktreeRemoveAuthorizationToken } from '@happier-dev/protocol/scm/worktrees';
 import { ProviderRefreshPolicySchema as canonicalScmRefreshPolicySchema } from '@happier-dev/protocol/scm/freshness';
 import { ScmCapabilitiesSchema as canonicalScmCapabilitiesSchema, ScmWorkingSnapshotSchema as canonicalScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm/workingSnapshot';
@@ -176,6 +177,7 @@ export type ScmOperationErrorCode =
     | 'REMOTE_NON_FAST_FORWARD'
     | 'REMOTE_FF_ONLY_REQUIRED'
     | 'REMOTE_REJECTED'
+    | 'REMOTE_RATE_LIMITED'
     | 'REMOTE_NOT_FOUND'
     | 'REMOTE_ALREADY_EXISTS'
     | 'BRANCH_OPERATION_IN_PROGRESS'
@@ -363,6 +365,9 @@ export type ScmPullRequestSummary = {
     headSha?: string | null;
     baseSha?: string | null;
     state: ScmPullRequestState;
+    createdAtMs?: number;
+    closedAtMs?: number;
+    mergedAtMs?: number;
     isDraft?: boolean;
     author?: {
         [key: string]: unknown;
@@ -968,6 +973,7 @@ export type ScmHostingRepositoryDescribePublishTargetsResponse =
         outcome?: ScmOperationOutcome;
         error: string;
         errorCode?: ScmOperationErrorCode;
+        retryNotBeforeMs?: number;
         remediation?: {
             [key: string]: unknown;
             kind:
@@ -1022,6 +1028,7 @@ export type ScmHostingRepositoryPublishResponse =
         outcome?: ScmOperationOutcome;
         error: string;
         errorCode?: ScmOperationErrorCode;
+        retryNotBeforeMs?: number;
         remediation?: {
             [key: string]: unknown;
             kind:
@@ -1170,6 +1177,7 @@ export type ScmRepositoryCloneOutput =
         outcome?: ScmOperationOutcome;
         error: string;
         errorCode?: ScmOperationErrorCode;
+        retryNotBeforeMs?: number;
         remediation?: {
             [key: string]: unknown;
             kind:
@@ -1188,6 +1196,14 @@ export type ScmRepositoryCloneOutput =
         stderr?: string;
     });
 
+/** Parse with the Protocol owner; no plugin-owned failure validator. */
+export const ScmRepositoryProvisioningFailureResponseSchema: {
+    parse(value: unknown): Extract<ScmRepositoryCloneOutput, { success: false }>;
+    safeParse(value: unknown):
+        | { success: true; data: Extract<ScmRepositoryCloneOutput, { success: false }> }
+        | { success: false; error: unknown };
+} = canonicalProvisioningFailure;
+
 export type ScmFollowupAction =
     | ({
         [key: string]: unknown;
@@ -1205,6 +1221,19 @@ export type ScmPullRequestListRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | '
     base?: string;
     head?: string;
     state?: ScmPullRequestState;
+    workEvidence?: { sessionId: string };
+};
+
+/** Private read evidence, supplied only after Session and repository admission. */
+export type ScmPullRequestWorkEvidence = {
+    sessionId: string;
+    turnId: string;
+    repositoryKey: string;
+    checkpointRef: string;
+    checkpointCommitSha: string;
+    commitSha: string;
+    attributionScope: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown';
+    pullRequest: ScmPullRequestSummary;
 };
 
 export type ScmPullRequestListResponse =
@@ -1212,6 +1241,8 @@ export type ScmPullRequestListResponse =
         [key: string]: unknown;
         success: true;
         pullRequests: ScmPullRequestSummary[];
+        workEvidence?: ScmPullRequestWorkEvidence[];
+        workEvidenceStatus?: 'available' | 'partial' | 'unavailable';
         freshness?: {
             source: 'live-local' | 'cached-local' | 'cached-remote' | 'explicit-remote';
             observedAt: number;
@@ -1229,6 +1260,7 @@ export type ScmPullRequestListResponse =
 export type ScmPullRequestGetRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
     [key: string]: unknown;
     prReference: ScmPullRequestReference;
+    workEvidence?: { sessionId: string };
 };
 
 export type ScmPullRequestGetResponse =
@@ -1236,6 +1268,8 @@ export type ScmPullRequestGetResponse =
         [key: string]: unknown;
         success: true;
         pullRequest: ScmPullRequestSummary | null;
+        workEvidence?: ScmPullRequestWorkEvidence[];
+        workEvidenceStatus?: 'available' | 'partial' | 'unavailable';
         freshness?: {
             source: 'live-local' | 'cached-local' | 'cached-remote' | 'explicit-remote';
             observedAt: number;
@@ -1444,6 +1478,7 @@ export const SCM_OPERATION_ERROR_CODES: Readonly<{
     REMOTE_NON_FAST_FORWARD: 'REMOTE_NON_FAST_FORWARD';
     REMOTE_FF_ONLY_REQUIRED: 'REMOTE_FF_ONLY_REQUIRED';
     REMOTE_REJECTED: 'REMOTE_REJECTED';
+    REMOTE_RATE_LIMITED: 'REMOTE_RATE_LIMITED';
     REMOTE_NOT_FOUND: 'REMOTE_NOT_FOUND';
     REMOTE_ALREADY_EXISTS: 'REMOTE_ALREADY_EXISTS';
     BRANCH_OPERATION_IN_PROGRESS: 'BRANCH_OPERATION_IN_PROGRESS';
