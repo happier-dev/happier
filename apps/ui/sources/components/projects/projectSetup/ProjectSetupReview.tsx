@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { happierPageRowDividerWidth, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
@@ -144,15 +145,7 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
   );
   return (
     <View style={styles.facts}>
-      <View
-        style={[
-          styles.effect,
-          {
-            borderColor: theme.colors.border.subtle,
-            backgroundColor: theme.colors.surface.base,
-          },
-        ]}
-      >
+      <SurfaceCard padding="none" style={styles.effect}>
         {effect.map((line, index) => (
           <View
             key={line.key}
@@ -162,7 +155,7 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
               index > 0
                 ? {
                     borderTopColor: theme.colors.border.subtle,
-                    borderTopWidth: StyleSheet.hairlineWidth,
+                    borderTopWidth: happierPageRowDividerWidth(),
                   }
                 : null,
             ]}
@@ -193,7 +186,7 @@ export const ProjectSetupReviewFacts = React.memo(function ProjectSetupReviewFac
             </Text>
           </View>
         ))}
-      </View>
+      </SurfaceCard>
       <View style={styles.provenance}>
         <Icon name="file-text" size={14} color={theme.colors.text.tertiary} />
         <Text
@@ -343,8 +336,6 @@ const styles = StyleSheet.create(() => ({
   mono: { ...Typography.mono(), ...happierPageTextMetrics('rowDescription') },
   grow: { flex: 1, minWidth: 0 },
   effect: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
     overflow: 'hidden',
   },
   effectRow: {
