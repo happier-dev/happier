@@ -19,7 +19,7 @@ export type ProjectNativeAdapterLeaseV1 = Readonly<{
     occurrenceId: string;
     runtime: Pick<PluginProjectNativeAdapterRuntimeV1, 'detect'>;
     /** Captured once by managed service admission; only its exact resource may settle after retirement. */
-    captureNativeServiceLifecycle(instance: ManagedServiceNativeInstanceV1): ProjectNativeServiceLifecycleCaptureV1;
+    captureNativeServiceLifecycle(instance: ManagedServiceNativeInstanceV1, input: ProjectNativeAdapterProductionInputV1): ProjectNativeServiceLifecycleCaptureV1;
     /** Retained by host final-launch custody, never supplied by a plugin Action. */
     acquireProduction(input: ProjectNativeAdapterProductionInputV1): ProjectNativeAdapterProductionResultV1;
     isCurrent(): boolean;
@@ -33,6 +33,8 @@ export type ProjectNativeAdapterProductionV1 = Readonly<{
     /** Selected installed plugin provenance, not an installed native-tool version. */
     pluginVersion: string;
     exec: PluginInvocationContext['services']['exec'];
+    /** Host-private capture; plugins receive this only as an admitted callback argument. */
+    invocationContext: PluginInvocationContext;
     resolveCommand(request: PluginProjectNativeCommandRequestV1, options?: PluginCancellationOptions): Promise<PluginProjectNativeCommandResultV1>;
     produceEnvironment(request: PluginProjectNativeEnvironmentRequestV1, options?: PluginCancellationOptions): Promise<PluginProjectNativeEnvironmentResultV1>;
     isCurrent(): boolean;
@@ -46,7 +48,7 @@ export type ProjectNativeAdapterProductionV1 = Readonly<{
 export type ProjectNativeAdapterProductionResultV1 = Readonly<{
     kind: 'ready'; production: ProjectNativeAdapterProductionV1;
 }> | PluginProjectNativeFailureV1;
-export type ProjectNativeServiceLifecycleCaptureV1 = Readonly<{ kind: 'ready'; lifecycle: ManagedServiceNativeLifecycleV1 }> | Readonly<{
+export type ProjectNativeServiceLifecycleCaptureV1 = Readonly<{ kind: 'ready'; lifecycle: ManagedServiceNativeLifecycleV1; release(): Promise<void> }> | Readonly<{
     kind: 'refused';
     code: 'native_adapter_retired' | 'native_adapter_unsupported' | 'native_adapter_reference_mismatch';
 }>;
@@ -227,6 +229,7 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
         return { kind: 'ready', production: Object.freeze({
             pluginVersion: target!.manifest.version,
             exec: invocation.context.services.exec,
+            invocationContext: invocation.context,
             resolveCommand: (request: PluginProjectNativeCommandRequestV1, options?: PluginCancellationOptions) => invoke(request, runtime.resolveCommand, options),
             produceEnvironment: (request: PluginProjectNativeEnvironmentRequestV1, options?: PluginCancellationOptions) => invoke(request, runtime.produceEnvironment, options),
             isCurrent: () => !released && !stopRequested && !invocation.context.signal.aborted && current(),
@@ -254,25 +257,36 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
     };
     const passiveRuntime = Object.freeze({ ...(runtime.detect ? { detect: runtime.detect } : {}) });
     return { kind: 'ready', lease: Object.freeze({ declaration, pluginVersion: target!.manifest.version, occurrenceId: occurrenceId!, runtime: passiveRuntime, isCurrent: current, acquireProduction,
-        captureNativeServiceLifecycle(instance: ManagedServiceNativeInstanceV1): ProjectNativeServiceLifecycleCaptureV1 {
+        captureNativeServiceLifecycle(instance: ManagedServiceNativeInstanceV1, input: ProjectNativeAdapterProductionInputV1): ProjectNativeServiceLifecycleCaptureV1 {
             if (!current()) return { kind: 'refused', code: 'native_adapter_retired' };
             if (!matches(instance.adapter)) return { kind: 'refused', code: 'native_adapter_reference_mismatch' };
             const lifecycle = registered.nativeServiceLifecycle;
             if (!lifecycle) return { kind: 'refused', code: 'native_adapter_unsupported' };
             const retained = Object.freeze({ adapter: Object.freeze({ ...instance.adapter }), nativeResourceId: instance.nativeResourceId });
             const matchesInstance = (candidate: ManagedServiceNativeInstanceV1) => matches(candidate.adapter) && candidate.nativeResourceId === retained.nativeResourceId;
-            return { kind: 'ready', lifecycle: Object.freeze({
+            let production: ProjectNativeAdapterProductionV1 | undefined;
+            const context = () => {
+                if (!production) {
+                    // The lifecycle role alone can acquire its own admitted services.
+                    // Recovery never runs resolveCommand or the native starter again.
+                    const acquired = acquireProduction(input);
+                    if (acquired.kind !== 'ready') throw new ProjectNativeAdapterInvocationError(acquired.code);
+                    production = acquired.production;
+                }
+                return production.invocationContext;
+            };
+            return { kind: 'ready', release: async () => { await production?.release(); }, lifecycle: Object.freeze({
                 async inspect(candidate: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions) {
                     if (!current()) throw new ProjectNativeAdapterInvocationError('native_adapter_retired');
                     if (!matchesInstance(candidate)) throw new ProjectNativeAdapterInvocationError('native_adapter_reference_mismatch');
-                    const result = await lifecycle.inspect(retained, options);
+                    const result = await lifecycle.inspect(retained, options, context());
                     if (!current()) throw new ProjectNativeAdapterInvocationError('native_adapter_retired');
                     return result;
                 },
                 async stop(candidate: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions) {
                     if (!matchesInstance(candidate)) return { status: 'unsupported' as const };
                     // The incumbent service supervisor owns settlement, not adapter currentness.
-                    return await lifecycle.stop(retained, options);
+                    return await lifecycle.stop(retained, options, context());
                 },
             }) };
         },

@@ -91,7 +91,7 @@ describe('Compose exact native resource lifetime', () => {
             control.bindLaunch({ command, args: [...prefix, ...args], cwd: root, env: {}, release() {} });
             return control;
         };
-        const yaml = 'services:\n  worker:\n    image: busybox:1.37\n    command: ["sh", "-c", "echo fx16-out; echo fx16-err >&2; mkdir -p /www; echo fx16-http > /www/index.html; exec httpd -f -p 8080 -h /www"]\n    ports: ["127.0.0.1::8080"]\n';
+        const yaml = 'services:\n  worker:\n    image: busybox:1.37\n    command: ["sh", "-c", "echo fx16-out; echo fx16-err >&2; mkdir -p /www; echo fx16-http > /www/index.html; httpd -f -p 8080 -h /www & trap \'\' TERM; wait"]\n    ports: ["127.0.0.1::8080"]\n';
         try {
             await writeFile(file, yaml);
             expect((await run([...compose, 'up', '--detach', 'missing'])).exitCode).not.toBe(0);
@@ -109,8 +109,28 @@ describe('Compose exact native resource lifetime', () => {
             expect(await first.lifecycle.logs?.()).toContain('fx16-out');
             expect(await first.lifecycle.logs?.()).toContain('fx16-err');
             const cancelled = new AbortController();
-            cancelled.abort();
-            await expect(first.lifecycle.stop({ signal: cancelled.signal })).rejects.toThrow();
+            // Docker's exact-resource kill event proves Stop reached the daemon
+            // before cancellation. The fixture ignores TERM, using Docker's own
+            // grace period (no new product timeout or cancellation polling).
+            const events = execFile(command, [...prefix, 'events', '--since', new Date().toISOString(),
+                '--filter', `container=${id}`, '--filter', 'event=kill', '--format', '{{json .}}']);
+            const eventsExited = new Promise<void>(resolve => {
+                events.once('exit', () => resolve());
+                events.once('error', () => resolve());
+            });
+            let nativeKillObserved = false;
+            let eventOutput = '';
+            events.stdout?.on('data', chunk => {
+                eventOutput += String(chunk);
+                if (eventOutput.includes('\n')) { nativeKillObserved = true; cancelled.abort(); }
+            });
+            try {
+                await expect(first.lifecycle.stop({ signal: cancelled.signal })).rejects.toThrow();
+                expect(nativeKillObserved).toBe(true);
+            } finally {
+                events.kill('SIGTERM');
+                await eventsExited;
+            }
             expect(await first.lifecycle.inspect()).toMatchObject({ phase: 'running' });
             // Daemon replacement obtains a fresh codec, without repeating the starter.
             const recovered = capture();

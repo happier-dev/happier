@@ -341,8 +341,41 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect((await getBindings()).targets).toEqual([]);
     });
 
-    it.each(['no_setup_live_root', 'setup_live_root', 'setup_exited_root_with_live_descendant', 'no_setup_with_native_helper', 'pre_final_native_helper', 'detached_native_resource', 'detached_native_resource_accepted_stop'] as const)('retains the actual selected plugin environment through Service Start and unconfirmed Stop until owned tree settlement (%s)', async fixtureKind => {
+    it.skipIf(!process.env.FX16_DOCKER_PATH)('qualifies installed detached Compose through declaration admission, observation and exact Stop', async () => {
+        const h = await fixture(false, { kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'worker' });
+        await writeFile(join(h.root, 'compose.yaml'), 'services:\n  worker:\n    image: alpine:3.22\n    command: [sh, -c, "echo fx16-service-output; echo fx16-service-error >&2; exec sleep 3600"]\n');
+        h.setNativeTool({ executablePath: process.env.FX16_DOCKER_PATH!, args: JSON.parse(process.env.FX16_DOCKER_ARGS ?? '[]') });
+        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        expect(review).toMatchObject({ status: 'denied', reasonCode: 'project_service_effect_review_required' });
+        const effect = review.reviewedEffect;
+        if (!effect || typeof effect !== 'object' || Array.isArray(effect) || !effect.command || typeof effect.command !== 'object' || Array.isArray(effect.command)
+            || !Array.isArray(effect.command.args) || !effect.command.args.every(arg => typeof arg === 'string')) throw new Error('Expected reviewed native argv');
+        const nativeArgs = effect.command.args;
+        const cleanupArgs = [...JSON.parse(process.env.FX16_DOCKER_ARGS ?? '[]'), ...nativeArgs.slice(0, nativeArgs.indexOf('up')), 'down'];
+        try {
+            const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
+            expect(started).toMatchObject({ status: 'succeeded' });
+            const handle = h.owner.listProjectServices()[0]!;
+            expect(handle.snapshot()).toMatchObject({ state: 'running', mode: 'native', baseUrl: null });
+            expect(handle.snapshot().diagnostics).toContainEqual(expect.objectContaining({ code: 'native_service_output', message: expect.stringContaining('fx16-service-error') }));
+            expect(h.setupProcesses).toEqual([]);
+            const feed = await h.routes.getSnapshot();
+            expect(feed.targets).toContainEqual(expect.objectContaining({ source: 'managed_service', serviceState: 'running' }));
+            expect(feed.targets.find(target => target.sourceClass?.kind === 'managed_service')?.endpointUrl).toBeUndefined();
+            try { await handle.stop(); }
+            catch (error) { throw new Error(`Native Stop failed: ${JSON.stringify(handle.snapshot())}`, { cause: error }); }
+            expect(handle.snapshot()).toMatchObject({ state: 'stopped' });
+        } finally {
+            // The fixture's exact reviewed native project owns containers/networks.
+            // Down preserves volumes and cannot address another lane's project.
+            await h.runtime.environmentIo.run({ command: process.env.FX16_DOCKER_PATH!, args: cleanupArgs, cwd: h.root, env: {} });
+            await h.owner.listProjectServices()[0]?.stop();
+        }
+    }, 120_000);
+
+    it.each(['foreground_native_service', 'no_setup_live_root', 'setup_live_root', 'setup_exited_root_with_live_descendant', 'no_setup_with_native_helper', 'pre_final_native_helper', 'detached_native_resource', 'detached_native_resource_accepted_stop'] as const)('retains the actual selected plugin environment through Service Start and unconfirmed Stop until owned tree settlement (%s)', async fixtureKind => {
         const detachedNative = fixtureKind.startsWith('detached_native_resource');
+        const foregroundNative = fixtureKind === 'foreground_native_service';
         let acceptedNativeStop = fixtureKind === 'detached_native_resource_accepted_stop';
         const withSetup = fixtureKind.startsWith('setup_');
         const preFinalHelper = fixtureKind === 'pre_final_native_helper';
@@ -359,7 +392,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             `fs.writeFileSync(${JSON.stringify(pidPath)}, JSON.stringify({ parentPid: process.pid, childPid: child.pid }));`,
             'setInterval(() => {}, 1000);',
         ].join(' ');
-        const manifest = detachedNative ? { ...h.manifest, services: { worker: {
+        const manifest = detachedNative || foregroundNative ? { ...h.manifest, services: { worker: {
             source: { kind: 'pluginNative', adapter: pixiAdapter, file: 'pixi.toml', target: 'check' },
         } } } : !exitedRoot ? h.manifest : { ...h.manifest, services: { worker: {
             source: { kind: 'command', command: `exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(treeScript)}` },
@@ -378,7 +411,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         let nativeObservation: 'known' | 'unknown' | 'failed' = 'known';
         const stoppedResources: ManagedServiceNativeInstanceV1[] = [];
         const installedToolPath = join(h.root, process.platform === 'win32' ? 'pixi.exe' : 'pixi');
-        if (withNativeHelper || detachedNative) {
+        if (withNativeHelper || detachedNative || foregroundNative) {
             await copyFile(process.execPath, installedToolPath);
             if (process.platform !== 'win32') await chmod(installedToolPath, 0o755);
         }
@@ -402,24 +435,28 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                 activate(api: PluginApi) {
                     api.projectNativeAdapters.register(pixiAdapter.localId, {
                         ...pixiRuntime,
-                        ...(detachedNative ? {
+                        ...(detachedNative || foregroundNative ? {
                             async resolveCommand(request: Parameters<NonNullable<typeof pixiRuntime.resolveCommand>>[0]) {
                                 return { kind: 'resolved' as const, executable: { kind: 'systemTool' as const, id: 'pixi' },
-                                    args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); process.exit(0)`],
-                                    cwd: request.root, reviewInputs: request.files, nativeInstance };
+                                    args: ['-e', foregroundNative ? treeScript : `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); process.exit(0)`],
+                                    cwd: request.root, reviewInputs: request.files, ...(detachedNative ? { nativeInstance } : {}) };
                             },
-                            nativeServiceLifecycle: {
-                                async inspect(instance: typeof nativeInstance) {
+                            ...(detachedNative ? { nativeServiceLifecycle: {
+                                async inspect(instance: typeof nativeInstance, _options, context) {
                                     expect(instance).toEqual(nativeInstance);
+                                    if (!context) throw new Error('Native lifecycle lost admitted invocation services');
+                                    const bytes = await context.services.fs.readFile({ root: 'workspace', relativePath: 'pixi.toml' });
+                                    expect(new TextDecoder().decode(bytes)).toBe(configContent);
                                     if (nativeObservation === 'failed') throw new Error('Native resource inspection is unavailable');
                                     return { phase: nativeObservation === 'unknown' ? 'unknown' as const
                                         : nativeStopped ? 'stopped' as const : 'running' as const, readiness: 'not_reported' as const, endpoint: null };
                                 },
-                                async stop(instance: typeof nativeInstance) {
+                                async stop(instance: typeof nativeInstance, _options, context) {
+                                    if (!context) throw new Error('Native Stop lost admitted invocation services');
                                     stoppedResources.push(instance);
                                     return { status: nativeStopped && !acceptedNativeStop ? 'stopped' as const : 'accepted' as const };
                                 },
-                            },
+                            } } : {}),
                         } : {}),
                         async produceEnvironment(request, context) {
                             environmentObservation.signal = context.signal;
@@ -443,7 +480,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} }, exec: {
             resolvePath: async () => h.root,
             resolveExecutable: async reference => {
-                if ((!withNativeHelper && !detachedNative) || reference.kind !== 'systemTool' || reference.id !== 'pixi') throw new Error('This environment does not launch a native wrapper');
+                if ((!withNativeHelper && !detachedNative && !foregroundNative) || reference.kind !== 'systemTool' || reference.id !== 'pixi') throw new Error('This environment does not launch a native wrapper');
                 const resolved = await toolResolution.resolveSystemTool({ toolId: 'pixi', lookupNames: ['pixi'], reason: 'Resolve actual installed native helper fixture' });
                 if (!resolved.ok) throw new Error(resolved.reasonCode);
                 return { command: resolved.command, args: resolved.args };
@@ -536,6 +573,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(handle?.snapshot()).toMatchObject({ state: 'running' });
         expect(environmentObservation.signal?.aborted).toBe(false);
         if (!handle) throw new Error('Expected actual owned Service');
+        if (foregroundNative) expect(handle.snapshot().mode).toBe('spawn');
         if (detachedNative) {
             try {
                 await expect.poll(async () => {
@@ -869,7 +907,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
     });
 
     it.each([
-        [{ kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'web' }, 'native_service_lifecycle_unsupported'],
+        [{ kind: 'native', tool: 'flox', file: '.flox/env/manifest.toml', target: 'web' }, 'native_service_lifecycle_unsupported'],
         [{ kind: 'pluginNative', adapter: { pluginId: 'acme.native', localId: 'service' }, file: 'service.json', target: 'web' }, 'native_service_instance_unavailable'],
     ])('refuses a detached source lacking an actual native instance/lifecycle witness', async (source, reasonCode) => {
         const h = await fixture(false, source);
