@@ -1,4 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStore } from 'zustand/vanilla';
+import { createProjectAccountRowsDomain, readCurrentProjectAccountRows, readProjectWorkspaceRefs, type ProjectAccountRowsDomain } from '@/sync/store/domains/projectAccountRows';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+
+const relocationBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(relocationBoundary.rpc);
+});
 
 import { REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL } from '@happier-dev/protocol';
 import type {
@@ -162,6 +171,78 @@ const previewRevokeResponse = {
 } satisfies DaemonLocalServicePreviewRevokeResponseV1;
 
 describe('UI local-services runtime action executor', () => {
+    beforeEach(() => relocationBoundary.rpc.mockReset());
+
+    it('reads relocation refs from current accepted Project rows in the default composition', async () => {
+        const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const previous = storage.getState();
+        const scope = { serverId: 'source-home', accountId: 'account-a' };
+        try {
+            storage.setState({ profileScope: scope });
+            storage.getState().activateProjectAccountRowsScope(scope);
+            storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete', workspaceRefs: [
+                { id: 'source-ref', serverId: scope.serverId, machineId: 'source-controller', rootPath: '/source', createdAtMs: 1 },
+            ], organizations: [], relationships: [], revisionsByPhysicalKey: {} });
+            const execute = createDefaultRuntimeActionExecutor();
+            const args = runtimeArgs({ actionId: 'projects.service.relocate', input: {
+                workspace: { serverId: scope.serverId, refId: 'source-ref' }, serviceName: 'web', requestId: 'move-1',
+                currentTarget: { kind: 'managed_service', managedServiceId: 'native-old', machineId: 'old-worker' },
+                destination: { kind: 'primary' },
+            }, context: { serverId: scope.serverId, runtimeAccountId: scope.accountId } });
+            await expect(execute(args)).resolves.toEqual({ status: 'unsupported', reasonCode: 'service_relocation_unavailable' });
+            storage.getState().setProjectAccountRowsStatusForScope(scope, 'locked');
+            await expect(execute(args)).resolves.toEqual({ status: 'refused', reasonCode: 'workspace_refs_unavailable' });
+            expect(relocationBoundary.rpc).not.toHaveBeenCalled();
+        } finally {
+            storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows,
+                pinnedWorkspaceRefIds: previous.pinnedWorkspaceRefIds });
+        }
+    });
+
+    it('requires the accepted source ref for relocation without falling back to the current worker or session machine', async () => {
+        const { createLocalServicesRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const scope = { serverId: 'source-home', accountId: 'account-a' };
+        const rows = createStore<ProjectAccountRowsDomain & { profileScope: ServerAccountScope | null }>()((set, get) => ({
+            ...createProjectAccountRowsDomain({ set, get }), profileScope: scope,
+        }));
+        rows.getState().activateProjectAccountRowsScope(scope);
+        rows.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete', workspaceRefs: [
+            { id: 'source-ref', serverId: scope.serverId, machineId: 'source-controller', rootPath: '/source', createdAtMs: 1 },
+        ], organizations: [], relationships: [], revisionsByPhysicalKey: {} });
+        const readWorkspaceRefs = () => {
+            const state = rows.getState();
+            const current = readCurrentProjectAccountRows(state);
+            return current?.status === 'ready' ? { ...current.scope, refs: readProjectWorkspaceRefs(state) } : null;
+        };
+        const fallbackMachine = vi.fn(() => 'session-machine');
+        const execute = createLocalServicesRuntimeActionExecutor({ readWorkspaceRefs, resolveMachineId: fallbackMachine });
+        const request = { workspace: { serverId: scope.serverId, refId: 'source-ref' }, serviceName: 'web', requestId: 'move-1',
+            currentTarget: { kind: 'managed_service' as const, managedServiceId: 'native-old', machineId: 'old-worker' },
+            destination: { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'new-worker' } } };
+        await expect(execute(runtimeArgs({ actionId: 'projects.service.relocate', input: request,
+            context: { serverId: scope.serverId, runtimeAccountId: scope.accountId, defaultSessionId: 'session-1' } }))).resolves.toEqual({
+                status: 'unsupported', reasonCode: 'service_relocation_unavailable',
+            });
+        expect(fallbackMachine).not.toHaveBeenCalled();
+
+        relocationBoundary.rpc.mockClear();
+        await expect(execute(runtimeArgs({ actionId: 'projects.service.relocate', input: request,
+            context: { serverId: 'other-home', runtimeAccountId: scope.accountId } }))).resolves.toEqual({ status: 'refused', reasonCode: 'workspace_ref_wrong_home' });
+        rows.getState().setProjectAccountRowsStatusForScope(scope, 'locked');
+        await expect(execute(runtimeArgs({ actionId: 'projects.service.relocate', input: request,
+            context: { serverId: scope.serverId, runtimeAccountId: scope.accountId } }))).resolves.toEqual({ status: 'refused', reasonCode: 'workspace_refs_unavailable' });
+        rows.getState().setProjectAccountRowsStatusForScope(scope, 'ready');
+        await expect(execute(runtimeArgs({ actionId: 'projects.service.relocate', input: { ...request, workspace: { ...request.workspace, refId: 'not-accepted' } },
+            context: { serverId: scope.serverId, runtimeAccountId: scope.accountId } }))).resolves.toEqual({ status: 'refused', reasonCode: 'workspace_ref_not_accepted' });
+        await expect(execute(runtimeArgs({ actionId: 'projects.service.relocate', input: request,
+            context: { serverId: scope.serverId, runtimeAccountId: 'different-account' } }))).resolves.toEqual({ status: 'refused', reasonCode: 'workspace_refs_unavailable' });
+        rows.setState({ profileScope: { ...scope, accountId: 'different-account' } });
+        await expect(execute(runtimeArgs({ actionId: 'projects.service.relocate', input: request,
+            context: { serverId: scope.serverId } }))).resolves.toEqual({ status: 'refused', reasonCode: 'workspace_refs_unavailable' });
+        expect(relocationBoundary.rpc).not.toHaveBeenCalled();
+    });
+
     it('maps localServices.launcher.snapshot to the local-services launcher snapshot client', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 

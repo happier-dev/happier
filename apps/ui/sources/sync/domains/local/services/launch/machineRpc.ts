@@ -66,10 +66,13 @@ export async function fetchLocalServiceLauncherSnapshotViaMachineRpc(
             // The UI passes the raw repo root through unchanged; ~-expansion + Windows-safe
             // containment happen at the daemon boundary (the canonical single owner).
             ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
+            ...(input.projection ? { projection: input.projection } : {}),
         });
         const raw = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId: input.machineId,
             serverId: input.serverId,
+            ...(input.accountId ? { accountId: input.accountId } : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
             method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
             payload,
         });
@@ -98,6 +101,10 @@ export async function startLocalServiceLauncherTargetViaMachineRpc(
             targetId: input.targetId,
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
             ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+            ...(input.choice ? { choice: input.choice } : {}),
+            ...(input.workspace ? { workspace: input.workspace } : {}),
+            ...(input.declaration ? { declaration: input.declaration } : {}),
+            ...(input.expectedEffectDigest ? { expectedEffectDigest: input.expectedEffectDigest } : {}),
         });
         const raw = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId: payload.machineId,
@@ -205,12 +212,17 @@ export async function clearLocalServiceLauncherHistoryViaMachineRpc(
         const payload = DaemonLocalServiceLauncherLeafRequestV1Schema.parse({
             machineId: input.machineId,
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            ...(input.scope ? { scope: input.scope } : {}),
+            ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
+            ...(input.targetId ? { targetId: input.targetId } : {}),
         });
         const raw = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId: payload.machineId,
             serverId: input.serverId,
             method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR,
             payload,
+            ...(input.accountId ? { accountId: input.accountId } : {}),
+            ...(input.signal ? { signal: input.signal } : {}),
         });
         if (isRpcUnavailableResult(raw)) {
             return { ok: false, reason: 'unavailable' };

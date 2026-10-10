@@ -3,9 +3,15 @@ import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServic
 import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, redactLocalServicePublicPreviewCreateResponseForAgentEgress, redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress, type LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema, type DaemonLocalServiceLauncherLeafRequestV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
 import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
+import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
+import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 
 import {
     executeLocalServiceActionViaRequest,
@@ -75,6 +81,7 @@ import { publishLocalServicePublicPreviewSnapshot } from '../publicPreview/share
 
 export type CreateLocalServicesRuntimeActionExecutorInput = Readonly<{
     resolveMachineId?: (args: RuntimeActionExecuteArgs) => string | null | undefined;
+    readWorkspaceRefs?: () => Readonly<{ serverId: string; accountId: string; refs: readonly WorkspaceRefV1[] }> | null;
     request?: LocalServiceInventorySnapshotRequest
         | LocalServiceLauncherSnapshotRequest
         | LocalServicePreviewSnapshotRequest
@@ -91,7 +98,7 @@ export type CreateLocalServicesRuntimeActionExecutorInput = Readonly<{
     fetchLauncherSnapshot?: (
         input: LocalServiceLauncherSnapshotClientInput,
     ) => Promise<LocalServiceLauncherSnapshotClientResult>;
-    onLauncherSnapshot?: (input: Readonly<{
+    onLauncherSnapshot?: (input: Pick<DaemonLocalServiceLauncherLeafRequestV1, 'scope' | 'workspaceRoot'> & Readonly<{
         machineId: string;
         serverId?: string;
         sessionId?: string;
@@ -327,6 +334,8 @@ export function createLocalServicesRuntimeActionExecutor(
                 machineId: published.machineId,
                 serverId: published.serverId,
                 sessionId: published.sessionId,
+                scope: published.scope,
+                workspaceRoot: published.workspaceRoot,
             },
             published.snapshot,
         ));
@@ -367,6 +376,26 @@ export function createLocalServicesRuntimeActionExecutor(
         const parsed = parseRuntimeActionInput(args);
         if (!parsed.ok) return parsed.result;
 
+        if (args.actionId === 'projects.service.relocate') {
+            const request = ProjectServiceRelocateInputV1Schema.parse(parsed.input);
+            const refuse = (reasonCode: string) => ({ status: 'refused' as const, reasonCode });
+            if (args.context.serverId && !areServerProfileIdentifiersEquivalent(args.context.serverId, request.workspace.serverId)) {
+                return refuse('workspace_ref_wrong_home');
+            }
+            const accepted = input.readWorkspaceRefs?.();
+            if (!accepted || (args.context.runtimeAccountId && args.context.runtimeAccountId !== accepted.accountId)) {
+                return refuse('workspace_refs_unavailable');
+            }
+            if (!areServerProfileIdentifiersEquivalent(accepted.serverId, request.workspace.serverId)) {
+                return refuse('workspace_ref_wrong_home');
+            }
+            const source = resolveWorkspaceRefById(accepted.refs, request.workspace.refId, request.workspace.serverId);
+            if (source.kind !== 'resolved') {
+                return refuse(source.kind === 'missing' ? 'workspace_ref_not_accepted' : `workspace_ref_${source.kind}`);
+            }
+            return { status: 'unsupported' as const, reasonCode: 'service_relocation_unavailable' };
+        }
+
         const machineId = resolveMachineId({
             parsedInput: parsed.input,
             args,
@@ -392,14 +421,19 @@ export function createLocalServicesRuntimeActionExecutor(
 
         if (args.actionId === 'localServices.launcher.snapshot') {
             if (!machineId) return disabledResult('local_services_machine_unavailable');
+            const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.safeParse({
+                machineId, sessionId,
+                ...(isRecord(parsed.input) && parsed.input.scope !== undefined ? { scope: parsed.input.scope } : {}),
+                ...(isRecord(parsed.input) && parsed.input.workspaceRoot !== undefined ? { workspaceRoot: parsed.input.workspaceRoot } : {}),
+            });
+            if (!request.success) return invalidParametersResult;
             const result = await fetchLauncherSnapshot({
-                machineId,
+                ...request.data,
                 serverId,
-                sessionId,
                 request: input.request,
             });
             if (!result.ok) return routeFailureResult('launcher', result.reason);
-            onLauncherSnapshot({ machineId, serverId, sessionId, snapshot: result.snapshot });
+            onLauncherSnapshot({ ...request.data, serverId, snapshot: result.snapshot });
             return result.snapshot;
         }
 
@@ -408,15 +442,22 @@ export function createLocalServicesRuntimeActionExecutor(
             const targetId = readTargetIdFromInput(parsed.input);
             if (!targetId) return invalidParametersResult;
             if (!startLauncherTarget) return routeFailureResult('launcher', 'unavailable');
+            const request = DaemonLocalServiceLauncherStartRequestV1Schema.parse(parsed.input);
             const result = await startLauncherTarget({
                 machineId,
                 targetId,
                 serverId,
                 sessionId,
                 workspaceId,
+                ...(request.choice ? { choice: request.choice } : {}),
+                ...(request.workspace ? { workspace: request.workspace } : {}),
+                ...(request.declaration ? { declaration: request.declaration } : {}),
+                ...(request.expectedEffectDigest ? { expectedEffectDigest: request.expectedEffectDigest } : {}),
             });
             if (!result.ok) return routeFailureResult('launcher', result.reason);
-            onLauncherSnapshot({ machineId, serverId, sessionId, snapshot: result.response.snapshot });
+            onLauncherSnapshot({ machineId, serverId, sessionId,
+                ...(request.workspace ? { scope: 'workspace' as const, workspaceRoot: request.workspace.rootPath } : {}),
+                snapshot: result.response.snapshot });
             return result.response;
         }
 
@@ -438,9 +479,21 @@ export function createLocalServicesRuntimeActionExecutor(
 
         if (args.actionId === 'localServices.launcher.history.clear') {
             if (!machineId) return disabledResult('local_services_machine_unavailable');
-            const result = await clearLauncherHistory({ machineId, serverId, sessionId });
+            const request = DaemonLocalServiceLauncherLeafRequestV1Schema.parse({
+                machineId,
+                ...(sessionId ? { sessionId } : {}),
+                ...(isRecord(parsed.input) && parsed.input.scope ? { scope: parsed.input.scope } : {}),
+                ...(isRecord(parsed.input) && parsed.input.workspaceRoot ? { workspaceRoot: parsed.input.workspaceRoot } : {}),
+                ...(readTargetIdFromInput(parsed.input) ? { targetId: readTargetIdFromInput(parsed.input) } : {}),
+            });
+            const context: UiActionExecutorContext = args.context;
+            const accountId = context.expectedAccountId ?? context.runtimeAccountId;
+            const result = await clearLauncherHistory({ ...request, serverId,
+                ...(accountId ? { accountId } : {}),
+                ...(context.signal ? { signal: context.signal } : {}),
+            });
             if (!result.ok) return routeFailureResult('launcher', result.reason);
-            onLauncherSnapshot({ machineId, serverId, sessionId, snapshot: result.response.snapshot });
+            onLauncherSnapshot({ ...request, serverId, snapshot: result.response.snapshot });
             return result.response;
         }
 
