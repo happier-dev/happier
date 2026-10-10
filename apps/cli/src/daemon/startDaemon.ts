@@ -22,6 +22,11 @@ import {
   requestSessionPendingQueueWakeV1,
 } from './sessions/pendingQueueWake';
 import { publishSessionPendingQueueWake } from './sessions/publishSessionPendingQueueWake';
+import { checkRuntimeAuthUsageLimitRecovery } from './connectedServices/runtimeAuth/checkRuntimeAuthUsageLimitRecovery';
+import { isCurrentUsageLimitRecoveryCredential } from './connectedServices/runtimeAuth/isCurrentUsageLimitRecoveryCredential';
+import { continueSessionAfterUsageLimitReset } from './connectedServices/continuation/continueSessionAfterUsageLimitReset';
+import { buildRuntimeAuthUsageLimitRecoveryMetadataUpdater } from './connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryUsageLimitMetadata';
+import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol';
 import { createRuntimeAuthRecoverySchedulerForDaemon } from './connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon';
 import { projectTemporaryThrottleRecoveryMetadata } from './connectedServices/runtimeAuth/projection/temporaryThrottleRecoveryMetadata';
 import { deriveConnectedServiceBrokerRefreshToken } from './connectedServices/broker/brokerRefreshCapabilityToken';
@@ -800,10 +805,14 @@ async function listRetainedConnectedServiceMaterializationIdentityIds(params: Re
 async function resumeInactiveSessionWhenUsageLimitReady(params: Readonly<{
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   fallbackMachineId: string;
+  credentials: Credentials;
+  customResumePrompt?: string | null;
   sessionId: string;
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
 }>): Promise<boolean> {
+  const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(params.metadata.sessionUsageLimitRecoveryV1);
+  if (!recovery.success) return false;
   const spawnOptions = buildInactiveUsageLimitResumeSpawnOptions({
     sessionId: params.sessionId,
     fallbackMachineId: params.fallbackMachineId,
@@ -811,8 +820,20 @@ async function resumeInactiveSessionWhenUsageLimitReady(params: Readonly<{
     metadata: params.metadata,
   });
   if (!spawnOptions) return false;
-  const result = await params.spawnSession(spawnOptions);
-  return result.type === 'success';
+  const result = await continueSessionAfterUsageLimitReset({
+    ...params, recovery: recovery.data, nowMs: Date.now(),
+    isCurrent: async () => {
+      const fresh = await fetchSessionByIdCompat({ token: params.credentials.token, sessionId: params.sessionId });
+      if (!fresh || fresh.archivedAt != null) return false;
+      const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: fresh });
+      const current = SessionUsageLimitRecoveryV1Schema.safeParse(metadata?.sessionUsageLimitRecoveryV1);
+      return current.success && current.data.status !== 'cancelled' && current.data.status !== 'exhausted'
+        && current.data.issueFingerprint === recovery.data.issueFingerprint
+        && current.data.armedAtMs === recovery.data.armedAtMs;
+    },
+    ensureRuntime: async () => (await params.spawnSession(spawnOptions)).type === 'success',
+  });
+  return result.status === 'continued';
 }
 
 async function persistExplicitSessionStopRecoveryCancellation(params: Readonly<{
@@ -6073,6 +6094,37 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           });
         };
 
+        const authorizeRuntimeAuthFailureForSession = async (input: Readonly<{
+          sessionId: string;
+          classification: ConnectedServiceRuntimeFailureClassification | null;
+          recoveryInvocationSource?: 'scheduler_retry';
+        }>) => {
+          const { sessionId, classification } = input;
+
+          const runtimeAuthApply = classification
+            ? await resolveRuntimeAuthApplyForFailureSource({
+                sessionId,
+                serviceId: ConnectedServiceIdSchema.parse(classification.serviceId),
+              })
+            : null;
+          return await authorizeConnectedServiceRuntimeAuthFailureSource({
+            recoveryInvocationSource: input.recoveryInvocationSource,
+            getChildren: getCurrentChildren,
+            sessionId,
+            classification,
+            resolveDurableSessionForRuntimeAuthRecovery: async ({ sessionId: durableSessionId, classification: durableClassification }) =>
+              await resolveDurableConnectedServiceRuntimeAuthRecoverySession({
+                credentials,
+                sessionId: durableSessionId,
+                serviceId: durableClassification.serviceId,
+              }),
+            resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
+            resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
+            resolveProviderQualifiedRuntimeAuthFailureSource,
+            runtimeAuthApply,
+          });
+        };
+
         const handleConnectedServiceRuntimeAuthRecovery = async (input: Readonly<{
           sessionId: string;
           switchesThisTurn: number;
@@ -6634,6 +6686,58 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             5,
             { min: 1, max: 25 },
           ),
+          continueAfterUsageLimitReset: async (intent) => {
+            const rawSession = await fetchSessionByIdCompat({ token: credentials.token, sessionId: intent.sessionId });
+            if (!rawSession) throw new Error('usage_limit_recovery_session_unavailable');
+            const storedMetadata = tryDecryptSessionMetadata({ credentials, rawSession });
+            const project = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({ intent });
+            if (!storedMetadata || !project) return { status: 'recovery_superseded', reason: 'usage_limit_recovery_source_unavailable' };
+            const metadata = project(storedMetadata);
+            const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(metadata.sessionUsageLimitRecoveryV1);
+            if (!recovery.success) return { status: 'recovery_superseded', reason: 'usage_limit_recovery_source_unavailable' };
+            const recoveryKey = buildRuntimeAuthRecoveryKey(intent);
+            const isCurrent = async () => {
+              const current = runtimeAuthRecoveryScheduler?.readByKey(recoveryKey);
+              if (!current || current.attemptId !== intent.attemptId
+                || current.status === 'cancelled' || current.status === 'exhausted' || current.status === 'recovered'
+                || current.classification.resetsAtMs !== intent.classification.resetsAtMs) return false;
+              const binding = connectedServiceRuntimeRegistry.getBySessionId(intent.sessionId)
+                ?.activeBindings.find((candidate) => candidate.serviceId === intent.serviceId);
+              if (binding && (binding.profileId !== intent.profileId || binding.groupId !== intent.groupId)) return false;
+              if (!connectedServiceRuntimeRegistry.getBySessionId(intent.sessionId)
+                && !getCurrentChildren().some((child) => child.happySessionId === intent.sessionId)) {
+                const serviceId = ConnectedServiceIdSchema.parse(intent.serviceId);
+                if (!intent.profileId) return false;
+                const resolved = await resolveConnectedServiceCredentialsWithRevisions({
+                  credentials, api, bindings: [{ serviceId, profileId: intent.profileId }],
+                });
+                const credential = resolved.get(serviceId);
+                return Boolean(credential && isCurrentUsageLimitRecoveryCredential({
+                  classification: intent.classification, record: credential.record,
+                  credentialRevision: credential.revisionSemantics === 'revisioned' ? credential.credentialRevision : null,
+                }));
+              }
+              const authorization = await authorizeRuntimeAuthFailureForSession({
+                sessionId: intent.sessionId, classification: intent.classification, recoveryInvocationSource: 'scheduler_retry',
+              });
+              return authorization.status === 'authorized' || authorization.status === 'current_credential_revision';
+            };
+            const spawnOptions = buildInactiveUsageLimitResumeSpawnOptions({
+              sessionId: intent.sessionId, fallbackMachineId: machineId, rawSession, metadata,
+            });
+            const result = await continueSessionAfterUsageLimitReset({
+              credentials, sessionId: intent.sessionId, rawSession, metadata, recovery: recovery.data,
+              customResumePrompt: readContinuationCustomResumePrompt(getActiveAccountSettingsSnapshot()?.settings ?? null),
+              nowMs: Date.now(), isCurrent,
+              ensureRuntime: async () => Boolean(spawnOptions && (await spawnSession(spawnOptions)).type === 'success'),
+            });
+            if (result.status === 'continued') return { ok: true, status: 'continuation_enqueued' };
+            if (result.status === 'runtime_unavailable') return { status: 'daemon_lifecycle_unavailable' };
+            if (result.status === 'suppressed' || result.status === 'disabled') {
+              return { status: 'continuation_cancelled', reason: `usage_limit_continuation_${result.status}` };
+            }
+            return { status: 'recovery_superseded', reason: `usage_limit_continuation_${result.status}` };
+          },
           recover: handleConnectedServiceRuntimeAuthRecovery,
           gate: ({ intent }) => {
             const nowMs = Date.now();
@@ -7138,29 +7242,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         return resultWithDiagnostics;
       },
       handleConnectedServiceRuntimeAuthFailure: handleConnectedServiceRuntimeAuthRecovery,
-      authorizeConnectedServiceRuntimeAuthFailure: async ({ sessionId, classification }) => {
-        const runtimeAuthApply = classification
-          ? await resolveRuntimeAuthApplyForFailureSource({
-              sessionId,
-              serviceId: ConnectedServiceIdSchema.parse(classification.serviceId),
-            })
-          : null;
-        return await authorizeConnectedServiceRuntimeAuthFailureSource({
-          getChildren: getCurrentChildren,
-          sessionId,
-          classification,
-          resolveDurableSessionForRuntimeAuthRecovery: async ({ sessionId: durableSessionId, classification: durableClassification }) =>
-            await resolveDurableConnectedServiceRuntimeAuthRecoverySession({
-              credentials,
-              sessionId: durableSessionId,
-              serviceId: durableClassification.serviceId,
-          }),
-          resolveRegisteredRuntimeAuthFailureSource: resolveRegisteredRuntimeAuthFailureSourceForSession,
-          resolveCurrentRuntimeAuthFailureSource: resolveCurrentRuntimeAuthFailureSourceForSession,
-          resolveProviderQualifiedRuntimeAuthFailureSource,
-          runtimeAuthApply,
-        });
-      },
+      authorizeConnectedServiceRuntimeAuthFailure: authorizeRuntimeAuthFailureForSession,
       resolveConnectedServiceRuntimeAuthResumePromptMode: async ({ classification, explicit }) =>
         await resolveContinuationResumePromptMode({
           credentials,
@@ -8653,10 +8735,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     }
                   : {}),
               }, {
+                checkRuntimeAuthUsageLimitRecovery: async (input) => await checkRuntimeAuthUsageLimitRecovery({
+                  scheduler: runtimeAuthRecoveryScheduler, ...input,
+                }),
                 resumeInactiveSessionWhenUsageLimitReady: async ({ sessionId, rawSession, metadata }) =>
                   await resumeInactiveSessionWhenUsageLimitReady({
                     spawnSession,
                     fallbackMachineId: machineId,
+                    credentials,
+                    customResumePrompt: readContinuationCustomResumePrompt(getActiveAccountSettingsSnapshot()?.settings ?? null),
                     sessionId,
                     rawSession,
                     metadata,

@@ -1,9 +1,12 @@
 import {
   ConnectedServiceIdSchema,
+  ConnectedServiceBindingsV1Schema,
   type ConnectedServiceId,
   type SessionRuntimeIssueV1,
   type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
+
+import { isNativeLocalCredentialUsageSourceProfileId } from '@/daemon/connectedServices/accountUsage/nativeSourceIdentity';
 
 function readConnectedServiceId(value: unknown): ConnectedServiceId | null {
   const parsed = ConnectedServiceIdSchema.safeParse(value);
@@ -19,6 +22,8 @@ export function resolveUsageLimitRecoverySelectedAuthFromIssue(input: Readonly<{
   issue: SessionRuntimeIssueV1;
   defaultNativeServiceId?: ConnectedServiceId | null;
   requiredConnectedServiceId?: ConnectedServiceId | null;
+  /** Null means known absence; omission preserves inference without binding evidence. */
+  connectedServices?: unknown;
 }>): SessionUsageLimitRecoveryV1['selectedAuth'] | null {
   const connectedService = input.issue.usageLimit?.connectedService;
   const connectedServiceId = readConnectedServiceId(connectedService?.serviceId);
@@ -37,7 +42,14 @@ export function resolveUsageLimitRecoverySelectedAuthFromIssue(input: Readonly<{
       profileId,
     };
   }
-  if (profileId && serviceId) {
+  const currentBindings = input.connectedServices !== undefined
+    ? ConnectedServiceBindingsV1Schema.safeParse(input.connectedServices ?? { v: 1, bindingsByServiceId: {} })
+    : null;
+  const currentBinding = currentBindings?.success && serviceId ? currentBindings.data.bindingsByServiceId[serviceId] : null;
+  const nativeQuotaSource = profileId && isNativeLocalCredentialUsageSourceProfileId(profileId)
+    && currentBindings?.success
+    && !(currentBinding?.source === 'connected' && currentBinding.selection === 'profile' && currentBinding.profileId === profileId);
+  if (profileId && serviceId && !nativeQuotaSource) {
     return {
       kind: 'profile',
       serviceId,

@@ -56,16 +56,11 @@ type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
   retryTemporaryThrottleNow?: (input: Readonly<{
     sessionId: string;
   }>) => Promise<unknown> | unknown;
+  checkRuntimeAuthUsageLimitRecovery?: (input: Readonly<{ sessionId: string; attemptId: string }>) => Promise<unknown>;
   resumeInactiveSessionWhenReady?: (input: Readonly<{
     sessionId: string;
     rawSession: RawSessionRecord;
     metadata: Record<string, unknown>;
-  }>) => Promise<boolean> | boolean;
-  ensureSessionRuntimeForPendingInput?: (input: Readonly<{
-    sessionId: string;
-    rawSession: RawSessionRecord;
-    metadata: Record<string, unknown>;
-    requestId: string;
   }>) => Promise<boolean> | boolean;
   resolveAdapter?: ResolveSessionUsageLimitRecoveryControlAdapter;
   readTemporaryThrottleRecovery?: (sessionId: string) => Readonly<{ issueFingerprint: string; armedAtMs: number }> | null;
@@ -188,13 +183,6 @@ function shouldFallbackFromLiveSessionUsageLimitRpc(result: unknown): boolean {
   ]);
 }
 
-function shouldEnsureSessionRuntimeAfterLiveFailure(result: unknown): boolean {
-  return hasLiveSessionUsageLimitRpcFailureCode(result, [
-    'session_rpc_failed',
-    'codex_app_server_control_unavailable',
-  ]);
-}
-
 async function buildAdapterParams(
   params: RouteSessionUsageLimitRecoveryControlParams,
   metadata: Record<string, unknown>,
@@ -286,6 +274,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
     rawSession: RawSessionRecord;
     issueFingerprint?: string;
     resumePromptMode: 'standard' | 'off' | 'custom';
+    connectedServices?: unknown;
   }>,
 ): SessionUsageLimitRecoveryV1 | null {
   const issue = readLatestUsageLimitFailureIssue(params.rawSession);
@@ -293,6 +282,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
 
   const selectedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({
     issue,
+    connectedServices: params.connectedServices ?? null,
   }) ?? { kind: 'native' };
 
   const timing = deriveUsageLimitRecoveryTiming({
@@ -334,6 +324,7 @@ async function buildEnabledRecoveryIntent(
   const base = existing ?? buildRecoveryIntentFromLatestUsageLimitIssue({
     rawSession: params.rawSession,
     resumePromptMode,
+    connectedServices: metadata.connectedServices ?? null,
     ...(issueFingerprint ? { issueFingerprint } : {}),
   });
   if (!base) return null;
@@ -533,30 +524,24 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     );
   }
 
+  const ownedAttemptId = parseRecoveryIntent(params.metadata ?? {})?.runtimeAuthRecoveryAttemptId;
+  if (operation === 'checkNow' && ownedAttemptId) {
+    const context = await ensureLocalInactiveControlContext(params);
+    if (!context.ok) return operationResult(params, context.result);
+    if (!params.checkRuntimeAuthUsageLimitRecovery) {
+      return operationResult(params, stableError('session_usage_limit_recovery_control_inactive'));
+    }
+    return operationResult(params, await params.checkRuntimeAuthUsageLimitRecovery({
+      sessionId: params.sessionId, attemptId: ownedAttemptId,
+    }));
+  }
+
   if (operation === 'checkNow' && params.rawSession.active === true) {
     const liveResult = await params.callLiveSessionRpc();
     if (!shouldFallbackFromLiveSessionUsageLimitRpc(liveResult)) {
       return operationResult(params, liveResult);
     }
-    const latestUsageLimitIssue = params.rawSession.latestTurnStatus === 'failed'
-      ? readLatestUsageLimitFailureIssue(params.rawSession)
-      : null;
-    if (
-      latestUsageLimitIssue
-      && params.metadata
-      && params.ensureSessionRuntimeForPendingInput
-      && shouldEnsureSessionRuntimeAfterLiveFailure(liveResult)
-    ) {
-      const ensured = await params.ensureSessionRuntimeForPendingInput({
-        sessionId: params.sessionId,
-        rawSession: params.rawSession,
-        metadata: params.metadata,
-        requestId: `session.usageLimit.checkNow:${latestUsageLimitIssue.providerTurnId ?? latestUsageLimitIssue.occurredAt}`,
-      });
-      return ensured
-        ? operationResult(params, { ok: true, status: 'resumed', sessionId: params.sessionId })
-        : operationResult(params, liveResult);
-    }
+
   }
 
   const context = await ensureLocalInactiveControlContext(params);
@@ -581,6 +566,10 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
   );
   const resultMetadata = readMetadataResult(result);
   const normalizedResult = operationResult(params, result);
+  const readyRecovery = parseRecoveryIntent(resultMetadata ?? context.metadata);
+  if (normalizedResult.ok && normalizedResult.status === 'ready' && readyRecovery?.resumePromptMode === 'off') {
+    return attachCliSessionUsageLimitRecoveryOperationMetadata(normalizedResult, resultMetadata);
+  }
   if (normalizedResult.ok && normalizedResult.status === 'ready' && params.resumeInactiveSessionWhenReady) {
     const resumed = await params.resumeInactiveSessionWhenReady({
       sessionId: params.sessionId,

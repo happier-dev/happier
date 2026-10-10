@@ -51,6 +51,7 @@ type RegisterMachineSessionGoalRpcHandlersDeps = Readonly<{
     | 'sessionUsageLimitConsumeResetCredit'
   >;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
+  checkRuntimeAuthUsageLimitRecovery?: (input: Readonly<{ sessionId: string; attemptId: string }>) => Promise<unknown>;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
   cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
   cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
@@ -355,6 +356,7 @@ async function executeResolvedUsageLimitRecoveryControl(params: Readonly<{
     rawSession: transport.rawSession,
     ctx: transport.ctx,
     mode: transport.mode,
+    checkRuntimeAuthUsageLimitRecovery: params.deps?.checkRuntimeAuthUsageLimitRecovery,
     ...(params.deps?.resumeInactiveSessionWhenUsageLimitReady
       ? { resumeInactiveSessionWhenUsageLimitReady: params.deps.resumeInactiveSessionWhenUsageLimitReady }
       : {}),

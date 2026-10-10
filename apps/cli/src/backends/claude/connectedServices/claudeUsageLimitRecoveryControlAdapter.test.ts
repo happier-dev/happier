@@ -5,6 +5,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import type { SessionUsageLimitRecoveryControlAdapterParams } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
+import { buildNativeProviderAccountUsageSourceProfileId } from '@/daemon/connectedServices/accountUsage/nativeSourceIdentity';
 import { createClaudeUsageLimitRecoveryControlAdapter } from './claudeUsageLimitRecoveryControlAdapter';
 
 function createParams(
@@ -124,6 +125,79 @@ describe('claudeUsageLimitRecoveryControlAdapter', () => {
         },
       },
     });
+  });
+
+  it('keeps native quota-source usage evidence on native authentication when arming backoff', async () => {
+    const issue = createClaudeUsageLimitIssue();
+    const sourceId = buildNativeProviderAccountUsageSourceProfileId({ kind: 'localCredential', providerId: 'claude', material: '/native/config' });
+    const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => 1_700_000_060_000 });
+    await expect(adapter.checkNow?.(createParams({}, { latestTurnStatus: 'failed',
+      lastRuntimeIssue: { ...issue, usageLimit: { ...issue.usageLimit,
+        connectedService: { serviceId: 'claude-subscription', profileId: sourceId, groupId: null } } },
+    }))).resolves.toMatchObject({ ok: true, status: 'ready', metadata: {
+      sessionUsageLimitRecoveryV1: { selectedAuth: { kind: 'native', serviceId: 'claude-subscription' } },
+    } });
+  });
+
+  it.each(['native', 'profile'] as const)('reads an older waiting quota-source identity under %s authority without replacing its recovery boundary', async (kind) => {
+    const sourceId = buildNativeProviderAccountUsageSourceProfileId({ kind: 'localCredential', providerId: 'claude', material: '/native/config' });
+    const intent: SessionUsageLimitRecoveryV1 = {
+      v: 1, status: 'waiting', issueFingerprint: 'usage-limit:claude:turn-1:1700000000000:1700000060000',
+      armedAtMs: 1_700_000_000_000, resetAtMs: 1_700_000_060_000, nextCheckAtMs: 1_700_000_060_000,
+      attemptCount: 0, maxAttempts: 3, lastProbeError: null, resumePromptMode: 'standard',
+      selectedAuth: { kind: 'profile', serviceId: 'claude-subscription', profileId: sourceId },
+    };
+    const issue = createClaudeUsageLimitIssue({ resetAtMs: intent.resetAtMs });
+    const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => 1_700_000_060_000 });
+    const metadata = { sessionUsageLimitRecoveryV1: intent,
+      ...(kind === 'profile' ? { connectedServices: { v: 1, bindingsByServiceId: {
+        'claude-subscription': { source: 'connected', profileId: sourceId },
+      } } } : {}),
+    };
+    await expect(adapter.checkNow?.(createParams(metadata, {
+      latestTurnStatus: 'failed', lastRuntimeIssue: { ...issue, usageLimit: { ...issue.usageLimit,
+        connectedService: { serviceId: 'claude-subscription', profileId: sourceId, groupId: null } } },
+    }))).resolves.toMatchObject({ ok: true, status: 'ready', metadata: {
+      sessionUsageLimitRecoveryV1: { ...intent, status: 'paused', nextCheckAtMs: null, attemptCount: 1,
+        selectedAuth: kind === 'native' ? { kind: 'native', serviceId: 'claude-subscription' } : intent.selectedAuth },
+    } });
+  });
+
+  it('reads an unowned predecessor paused native surrogate as ready without replacing its identity', async () => {
+    const sourceId = buildNativeProviderAccountUsageSourceProfileId({ kind: 'localCredential', providerId: 'claude', material: '/native/config' });
+    const intent: SessionUsageLimitRecoveryV1 = {
+      v: 1, status: 'paused', issueFingerprint: 'usage-limit:claude:turn-1:1700000000000:1700000060000',
+      armedAtMs: 1_700_000_000_000, resetAtMs: 1_700_000_060_000, nextCheckAtMs: null,
+      attemptCount: 1, maxAttempts: 3, lastProbeError: null, resumePromptMode: 'standard',
+      selectedAuth: { kind: 'profile', serviceId: 'claude-subscription', profileId: sourceId },
+    };
+    const issue = createClaudeUsageLimitIssue({ resetAtMs: intent.resetAtMs });
+    const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => 1_700_000_060_000 });
+    await expect(adapter.checkNow?.(createParams({ sessionUsageLimitRecoveryV1: intent }, {
+      latestTurnStatus: 'failed', lastRuntimeIssue: { ...issue, usageLimit: { ...issue.usageLimit,
+        connectedService: { serviceId: 'claude-subscription', profileId: sourceId, groupId: null } } },
+    }))).resolves.toMatchObject({ ok: true, status: 'ready', metadata: {
+      sessionUsageLimitRecoveryV1: { ...intent, attemptCount: 2,
+        selectedAuth: { kind: 'native', serviceId: 'claude-subscription' } },
+    } });
+  });
+
+  it('does not normalize a waiting daemon-owned profile from native-looking source evidence', async () => {
+    const sourceId = buildNativeProviderAccountUsageSourceProfileId({ kind: 'localCredential', providerId: 'claude', material: '/native/config' });
+    const intent: SessionUsageLimitRecoveryV1 = {
+      v: 1, status: 'waiting', issueFingerprint: 'owned-attempt', runtimeAuthRecoveryAttemptId: 'owned-attempt',
+      armedAtMs: 1_700_000_000_000, resetAtMs: 1_700_000_060_000, nextCheckAtMs: 1_700_000_060_000,
+      attemptCount: 0, maxAttempts: 3, lastProbeError: null, resumePromptMode: 'standard',
+      selectedAuth: { kind: 'profile', serviceId: 'claude-subscription', profileId: sourceId },
+    };
+    const issue = createClaudeUsageLimitIssue({ resetAtMs: intent.resetAtMs });
+    const adapter = createClaudeUsageLimitRecoveryControlAdapter({ nowMs: () => 1_700_000_060_000 });
+    await expect(adapter.checkNow?.(createParams({ sessionUsageLimitRecoveryV1: intent }, {
+      latestTurnStatus: 'failed', lastRuntimeIssue: { ...issue, usageLimit: { ...issue.usageLimit,
+        connectedService: { serviceId: 'claude-subscription', profileId: sourceId, groupId: null } } },
+    }))).resolves.toMatchObject({ metadata: { sessionUsageLimitRecoveryV1: {
+      runtimeAuthRecoveryAttemptId: intent.runtimeAuthRecoveryAttemptId, selectedAuth: intent.selectedAuth,
+    } } });
   });
 
   it('exhausts stale Claude recovery intents instead of retrying forever', async () => {

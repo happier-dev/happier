@@ -47,6 +47,7 @@ export function createConnectedServiceContinuationMessageDispatcher(
       sessionId: string;
       prompt: string;
       localId: string;
+      isCurrent?: Parameters<typeof sendSessionMessage>[0]['canAdmit'];
     }>): Promise<Readonly<{ suppressed: boolean }>> {
       const sent = await sendMessage({
         credentials: deps.credentials,
@@ -55,6 +56,7 @@ export function createConnectedServiceContinuationMessageDispatcher(
         localId: input.localId,
         requestedAction: { v: 1, kind: 'send_now' },
         pendingAdmissionMode: 'continuation_if_no_queued_user_input',
+        ...(input.isCurrent ? { canAdmit: input.isCurrent } : {}),
         resumeInactiveSession: false,
         wait: false,
         timeoutMs: 1,
@@ -73,6 +75,7 @@ export function createConnectedServiceContinuationMessageDispatcher(
       resumePromptMode: SessionContinuationResumePromptModeV1;
       customResumePrompt?: string | null;
       recoveryKind?: ConnectedServiceRuntimeAuthFailureKind | null;
+      isCurrent?: Parameters<typeof sendSessionMessage>[0]['canAdmit'];
     }>): Promise<
       | Readonly<{ status: 'not_interrupted' | 'disabled' | 'suppressed_newer_user_input' }>
       | Readonly<{ status: 'enqueued'; localId: string }>
@@ -89,7 +92,7 @@ export function createConnectedServiceContinuationMessageDispatcher(
         recoveryKind: input.recoveryKind,
       });
       const localId = createContinuationLocalId(input.sessionId, input.attemptId, input.interruptedOriginId);
-      const sent = await this.sendContinuationPrompt({ sessionId: input.sessionId, prompt, localId });
+      const sent = await this.sendContinuationPrompt({ sessionId: input.sessionId, prompt, localId, isCurrent: input.isCurrent });
       if (sent.suppressed) {
         return { status: 'suppressed_newer_user_input' };
       }

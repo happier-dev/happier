@@ -78,6 +78,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
   const selectedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({
     issue: issueParsed.data,
     requiredConnectedServiceId: 'gemini',
+    connectedServices: params.metadata.connectedServices ?? null,
   });
   if (!selectedAuth) {
     return null;

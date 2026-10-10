@@ -149,6 +149,7 @@ export type RuntimeAuthRecoverySchedulerDeps = Readonly<{
     resumePromptMode: 'standard' | 'off' | 'custom';
     source: 'scheduler_retry';
   }>) => Promise<unknown>;
+  continueAfterUsageLimitReset?: (intent: RuntimeAuthRecoveryIntent) => Promise<unknown>;
   gate?: (input: Readonly<{ sessionId: string; intent: RuntimeAuthRecoveryIntent }>) => DurableRecoveryGateResult;
   recordDiagnostic?: (event: RuntimeAuthRecoveryDiagnostic) => void;
   durableStore?: DurableRecoveryStore<RuntimeAuthRecoveryIntent>;
@@ -183,6 +184,7 @@ const DEFAULT_RUNTIME_AUTH_RECOVERY_DEGRADED_BACKOFF_MS = 60_000;
 // over and settles the recovery terminal.
 const DEFAULT_RUNTIME_AUTH_RECOVERY_MAX_COALESCED_REPLAYS = 12;
 const RUNTIME_AUTH_RECOVERY_UNPROVEN_PROVIDER_OUTCOME_ERROR = 'recovery_unproven_awaiting_provider_outcome';
+const USAGE_LIMIT_CONTINUATION_PROOF_WAIT_ERROR = 'usage_limit_continuation_awaiting_provider_outcome';
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null;
@@ -1273,13 +1275,32 @@ export class RuntimeAuthRecoveryScheduler {
       }),
       recover: async (intent) => {
         try {
-          const result = await deps.recover({
-            sessionId: intent.sessionId,
-            switchesThisTurn: intent.switchesThisTurn,
-            classification: intent.classification,
-            resumePromptMode: readResumePromptMode(intent.resumePromptMode),
-            source: 'scheduler_retry',
-          });
+          const resetAtMs = intent.classification.resetsAtMs;
+          const dueProfileLimit = intent.groupId === null
+            && intent.classification.kind === 'usage_limit'
+            && typeof resetAtMs === 'number' && Number.isFinite(resetAtMs)
+            && resetAtMs <= deps.nowMs();
+          // An elapsed profile limit needs a provider retry, not another evaluation
+          // of the historic failure as an action-required credential problem.
+          const result = dueProfileLimit && deps.continueAfterUsageLimitReset
+            ? intent.lastError === USAGE_LIMIT_CONTINUATION_PROOF_WAIT_ERROR
+              // Pending already owns this turn. Refresh the bounded proof wait without
+              // replaying admission or attaching again while that turn is in flight.
+              ? { ok: true, status: 'continuation_enqueued' }
+              : await deps.continueAfterUsageLimitReset(intent)
+            : await deps.recover({
+              sessionId: intent.sessionId,
+              switchesThisTurn: intent.switchesThisTurn,
+              classification: intent.classification,
+              resumePromptMode: readResumePromptMode(intent.resumePromptMode),
+              source: 'scheduler_retry',
+            });
+          const continuationResult = readSwitchAttemptResult(result);
+          if (continuationResult?.status === 'continuation_cancelled') {
+            const reason = readString(continuationResult.reason) ?? 'usage_limit_continuation_cancelled';
+            return { status: 'terminal', lastError: reason,
+              intent: buildTerminalRuntimeAuthIntent({ intent, nowMs: deps.nowMs(), terminalReason: reason }) };
+          }
           if (isRuntimeAuthRecoverySuccess(result)) return { status: 'success' };
           const supersededReason = readRuntimeAuthRecoverySupersededReason(result);
           if (supersededReason) {
@@ -1337,11 +1358,13 @@ export class RuntimeAuthRecoveryScheduler {
             // additionally bounded by maxCoalescedReplays when the target profile
             // keeps changing under the same durable recovery.
             const coalescedReplayCount = intent.coalescedReplayCount ?? 0;
-            const rollbackAttempt = isUntargetedProviderOutcomeProofWaitRefresh({ intent, pendingTarget })
-              || (coalescedReplay && coalescedReplayCount < this.maxCoalescedReplays);
+            const rollbackAttempt = switchResultForHandoff?.status !== 'continuation_enqueued'
+              && (isUntargetedProviderOutcomeProofWaitRefresh({ intent, pendingTarget })
+                || (coalescedReplay && coalescedReplayCount < this.maxCoalescedReplays));
             return {
               status: 'wait',
-              lastError: RUNTIME_AUTH_RECOVERY_UNPROVEN_PROVIDER_OUTCOME_ERROR,
+              lastError: switchResultForHandoff?.status === 'continuation_enqueued'
+                ? USAGE_LIMIT_CONTINUATION_PROOF_WAIT_ERROR : RUNTIME_AUTH_RECOVERY_UNPROVEN_PROVIDER_OUTCOME_ERROR,
               intent: {
                 ...intent,
                 status: 'resumed_awaiting_proof',
@@ -1711,15 +1734,17 @@ export class RuntimeAuthRecoveryScheduler {
     this.scheduler.dispose();
   }
 
-  async wake(input: Readonly<{ sessionId: string; reason: 'timer' | 'manual' }>): Promise<Readonly<{ status: string }>> {
+  async wake(input: Readonly<{ sessionId: string; reason: 'timer' | 'manual'; attemptId?: string }>): Promise<Readonly<{ status: string }>> {
     const intents = this.readForSession(input.sessionId).filter((intent) => (
       isPendingRuntimeAuthRecoveryStatus(intent.status)
+      && (input.attemptId === undefined || intent.attemptId === input.attemptId)
     ));
     if (intents.length === 0) return { status: 'inactive' };
     if (intents.length === 1) {
       return await this.wakeByKey({
         recoveryKey: buildRecoveryKeyForIntent(intents[0]!),
         reason: input.reason,
+        ...(input.attemptId !== undefined ? { attemptId: input.attemptId } : {}),
       });
     }
     const results = [];
@@ -1727,6 +1752,7 @@ export class RuntimeAuthRecoveryScheduler {
       results.push(await this.wakeByKey({
         recoveryKey: buildRecoveryKeyForIntent(intent),
         reason: input.reason,
+        ...(input.attemptId !== undefined ? { attemptId: input.attemptId } : {}),
       }));
     }
     if (results.some((result) => result.status === 'succeeded')) return { status: 'succeeded' };
@@ -1737,10 +1763,11 @@ export class RuntimeAuthRecoveryScheduler {
     return { status: 'inactive' };
   }
 
-  async wakeByKey(input: Readonly<{ recoveryKey: string; reason: 'timer' | 'manual' }>): Promise<Readonly<{ status: string }>> {
+  async wakeByKey(input: Readonly<{ recoveryKey: string; reason: 'timer' | 'manual'; attemptId?: string }>): Promise<Readonly<{ status: string }>> {
     return await this.scheduler.wakeByKey({
       recoveryKey: input.recoveryKey,
       reason: input.reason,
+      ...(input.attemptId !== undefined ? { expectedCurrent: (intent: RuntimeAuthRecoveryIntent) => intent.attemptId === input.attemptId } : {}),
     });
   }
 

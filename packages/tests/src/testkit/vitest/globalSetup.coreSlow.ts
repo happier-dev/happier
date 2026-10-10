@@ -1,13 +1,19 @@
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
+import { ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt } from '../process/cliDist';
+import { shouldUseCliSourceEntrypoint } from '../process/cliLaunchSpec';
 import { repoRootDir } from '../paths';
 
 export default async function globalSetupCoreSlow(): Promise<void> {
   const rootDir = repoRootDir();
   const setupDir = resolve(rootDir, '.project', 'tmp', 'vitest-global-setup', 'core-slow');
   await mkdir(setupDir, { recursive: true });
+
+  if (shouldUseCliSourceEntrypoint(process.env)) {
+    await ensureCliSharedDepsBuilt({ testDir: setupDir, env: process.env }, { repoRoot: rootDir });
+    return;
+  }
 
   await ensureCliDistSnapshotEntrypoint(
     {

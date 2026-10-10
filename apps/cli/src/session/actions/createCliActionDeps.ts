@@ -61,7 +61,6 @@ import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { listSessions } from '@/session/services/listSessions';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
 import {
-  ensureSessionRuntimeForPendingInput,
   requestInactiveSessionResume,
 } from '@/session/services/requestInactiveSessionResume';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
@@ -617,6 +616,7 @@ export function createCliActionDeps(params: Readonly<{
   currentSessionPermissionAuthority?: 'trusted_runtime' | 'ambient_context';
   getCurrentSessionBackendTarget?: (() => BackendTargetRefV1 | null | undefined) | null;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
+  checkRuntimeAuthUsageLimitRecovery?: (input: Readonly<{ sessionId: string; attemptId: string }>) => Promise<unknown>;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
   cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
   cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
@@ -1023,21 +1023,10 @@ export function createCliActionDeps(params: Readonly<{
         metadata,
         rawSession: transport.rawSession,
       }),
+      checkRuntimeAuthUsageLimitRecovery: params.checkRuntimeAuthUsageLimitRecovery,
       ...(params.resumeInactiveSessionWhenUsageLimitReady
         ? { resumeInactiveSessionWhenReady: params.resumeInactiveSessionWhenUsageLimitReady }
         : {}),
-      ensureSessionRuntimeForPendingInput: async (input: Readonly<{
-        sessionId: string;
-        rawSession: RawSessionRecord;
-        metadata: Record<string, unknown>;
-        requestId: string;
-      }>) => (await ensureSessionRuntimeForPendingInput({
-        credentials,
-        sessionId: input.sessionId,
-        localId: input.requestId,
-        rawSession: input.rawSession,
-        metadata: input.metadata,
-      })).ok,
       ...(params.retryTemporaryThrottleNow
         ? { retryTemporaryThrottleNow: params.retryTemporaryThrottleNow }
         : {}),

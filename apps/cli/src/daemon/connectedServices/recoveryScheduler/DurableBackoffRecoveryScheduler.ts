@@ -57,6 +57,7 @@ type DurableConditionalUpsertResult<TIntent> =
 
 type DurableWakePreparation<TIntent> =
   | Readonly<{ status: 'inactive' }>
+  | Readonly<{ status: 'stale' }>
   | Readonly<{ status: 'cancelled' }>
   | Readonly<{ status: 'already_exhausted' }>
   | Readonly<{ status: 'checking' }>
@@ -508,7 +509,12 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     recoveryKey: string;
     reason: string;
     sessionId?: string;
+    expectedCurrent?: (intent: TIntent) => boolean;
   }>): Promise<Readonly<{ status: string }>> {
+    if (input.expectedCurrent) {
+      const current = this.readByKeyPassive(input.recoveryKey);
+      if (!current || !input.expectedCurrent(current)) return { status: 'inactive' };
+    }
     const existing = this.wakePromisesByRecoveryKey.get(input.recoveryKey);
     if (existing) return await existing;
     const wakePromise = this.performWake(input);
@@ -526,6 +532,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     recoveryKey: string;
     reason: string;
     sessionId?: string;
+    expectedCurrent?: (intent: TIntent) => boolean;
   }>): Promise<Readonly<{ status: string }>> {
     // Disposed (daemon shutting down): never run recovery work. Any optional store is
     // left untouched; caller wiring decides whether those records outlive the process.
@@ -555,6 +562,13 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
             intent: null,
             effectClaimToken: null,
             result: { status: 'inactive' as const },
+          };
+        }
+        if (input.expectedCurrent && !input.expectedCurrent(currentIntent)) {
+          return {
+            intent: currentIntent,
+            effectClaimToken: current.effectClaimToken,
+            result: { status: 'stale' as const },
           };
         }
         const currentStatus = this.deps.getStatus(currentIntent);
@@ -620,6 +634,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
       })
       : null;
     if (durablePreparation) {
+      if (durablePreparation.status === 'stale') return { status: 'inactive' };
       if (durablePreparation.status === 'inactive' || durablePreparation.status === 'cancelled') {
         this.clearTimer(input.recoveryKey);
         return { status: 'inactive' };

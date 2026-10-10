@@ -124,6 +124,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
   const selectedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({
     issue: issueParsed.data,
     defaultNativeServiceId: CODEX_CONNECTED_SERVICE_ID,
+    connectedServices: params.metadata.connectedServices ?? null,
   }) ?? { kind: 'native', serviceId: CODEX_CONNECTED_SERVICE_ID };
 
   const timing = deriveUsageLimitRecoveryTiming({
