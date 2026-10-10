@@ -851,6 +851,7 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.account_sessions,
   ...ACTION_ID_FAMILIES_V1.account_security,
   ...ACTION_ID_FAMILIES_V1.account_api_tokens,
+  ...ACTION_ID_FAMILIES_V1.account_home_continuation,
   ...ACTION_ID_FAMILIES_V1.agent_acp_catalog,
   ...ACTION_ID_FAMILIES_V1.identity_github_apps,
   ...ACTION_ID_FAMILIES_V1.identity_providers,
