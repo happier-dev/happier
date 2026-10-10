@@ -1,7 +1,7 @@
 import type { Server, Socket } from "socket.io";
 import { randomUUID } from "node:crypto";
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
-import type { ExternalActionExecutionAuthorizationV1 } from "@happier-dev/protocol/actions";
+import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from "@happier-dev/protocol/actions";
 
 import {
     isPlainMachineDataKeyMarker,
@@ -22,6 +22,8 @@ import {
     type WorkspaceSyncSourceRoutingV1,
     type WorkspaceSyncTargetRoutingV1,
     type WorkspaceSyncSourceWriterTargetRoutingV1,
+    type WorkspaceSyncSourceExecutionV1,
+    type WorkspaceSyncSeedRoutingV1,
     type SessionActionRpcOriginV1,
     type SocketRpcTransportAcknowledgementV1,
 } from "@happier-dev/protocol/socketRpc";
@@ -130,6 +132,10 @@ export async function forwardRpcCall(params: Readonly<{
     workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
     workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
     workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
+    /** Original verified D packet, captured before the relay replaces its request correlation. */
+    workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
+    workspaceSyncSeedRouting?: WorkspaceSyncSeedRoutingV1;
+    originalActionEnvelope?: ExternalActionRequestEnvelope;
     /** Trusted ingress producer, invoked only inside the selected target's currentness guard. */
     createCallerInputAuthorization?: (input: Readonly<{
         target: RpcAckResponseEmitter;
@@ -285,6 +291,9 @@ export async function forwardRpcCall(params: Readonly<{
             ...(params.workspaceSyncSourceRouting ? { workspaceSyncSourceRouting: params.workspaceSyncSourceRouting } : {}),
             ...(params.workspaceSyncTargetRouting ? { workspaceSyncTargetRouting: params.workspaceSyncTargetRouting } : {}),
             ...(params.workspaceSyncSourceWriterTargetRouting ? { workspaceSyncSourceWriterTargetRouting: params.workspaceSyncSourceWriterTargetRouting } : {}),
+            ...(params.workspaceSyncSourceExecution ? { workspaceSyncSourceExecution: params.workspaceSyncSourceExecution } : {}),
+            ...(params.workspaceSyncSeedRouting ? { workspaceSyncSeedRouting: params.workspaceSyncSeedRouting } : {}),
+            ...(params.originalActionEnvelope ? { originalActionEnvelope: params.originalActionEnvelope } : {}),
             timeoutMs,
             ...(targetRequestId ? { requestId: targetRequestId } : {}),
             ...(params.authorization ? { authorization: params.authorization } : {}),
