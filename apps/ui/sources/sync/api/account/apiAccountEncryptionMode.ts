@@ -268,7 +268,7 @@ export async function fetchAccountEncryptionMode(
                 throw new HappyError('Failed to load encryption setting', false, {
                     status: response.status,
                     kind: 'server',
-                    code: response.status === 400
+                    code: response.status === 401 ? 'unauthorized' : response.status === 403 ? 'forbidden' : response.status === 400
                         && typeof errorBody === 'object'
                         && errorBody !== null
                         && 'error' in errorBody

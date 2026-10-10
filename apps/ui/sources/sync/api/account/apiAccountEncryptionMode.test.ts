@@ -32,6 +32,13 @@ function mockServerConfig() {
 }
 
 describe('apiAccountEncryptionMode', () => {
+  it.each([401, 403])('preserves mode-endpoint authorization denial as a typed HTTP %s error', async (status) => {
+    const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
+    await expect(fetchAccountEncryptionMode(credentials, {
+      request: async () => Response.json({ error: 'denied' }, { status }),
+    })).rejects.toMatchObject({ status, code: status === 401 ? 'unauthorized' : 'forbidden' });
+  });
+
   it('reads strict migration currentness without fabricating missing fields', async () => {
     mockServerConfig();
     const serverFetch = vi.fn(async () => new Response(JSON.stringify({
