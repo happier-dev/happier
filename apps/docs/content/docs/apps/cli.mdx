@@ -378,6 +378,13 @@ Add `--json` to receive the standard versioned CLI envelope:
 
 Without `--json`, search and machine results are compact lists, Action details
 are formatted for inspection, and Action results are pretty-printed JSON.
+The development-only `projects execution output read` and `projects execution
+output copy` commands instead write the retained terminal's decoded bytes to
+stdout, without adding a newline or converting binary data to text. Redirect
+stdout to preserve those bytes. Output gaps are reported separately on stderr;
+a gap means the returned bytes are incomplete. `copy` returns retained output,
+not a claim that a remote clipboard was changed. With `--json`, both commands
+keep the canonical versioned envelope, byte frames and cursors unchanged.
 Expected input, authentication, settings, approval, placement, transport, and
 Action-domain failures exit with status 1. Unexpected internal or dependency
 faults exit with status 2. In JSON mode, failures use `ok: false` and include a

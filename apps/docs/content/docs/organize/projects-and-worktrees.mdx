@@ -202,6 +202,42 @@ If another editor changed it, keep your draft, read the current file and review 
 changes before saving again. This check is best effort: it does not lock out an
 external editor. Inspection and saving do not run setup or grant setup approval.
 
+## Running commands on workers
+
+<Callout type="info">
+Worker placement, the finite command queue and worker-copy retirement are in
+development on the 0.3 line. They still require integrated package and live
+validation; this is not a stable or preview availability claim. New-machine
+acquisition, cold wake and foreign-requester source preparation are separate
+integration work, not available fallbacks.
+</Callout>
+
+The development flow selects a destination for a finite Project command from
+existing eligible worker copies. The source declaration determines the requested
+command and resource demand. An accepted command enters that machine's first-in,
+first-out queue; acceptance does not mean it has started. When capacity is
+available, its reservation covers copying current source files, reviewing the
+destination's definitions and setup, and running the command. Setup approval and
+successful setup are separate facts. Passive inspection does not evaluate native
+setup; readiness stays unknown when the captured files and references cannot decide it.
+
+Inspect the same retained operation to distinguish queued, copying, setup and
+running, and to read or copy its output. Canceling a queued command can prevent
+launch. Once preparation or execution has begun, an uncertain Stop keeps custody
+and capacity occupied until cleanup is confirmed; inspect or explicitly Stop that
+occurrence rather than submitting another Run. Long-lived Services are separate
+from this finite command queue. A Service without a declared port may have an
+observed HTTP address, but no address is invented when listeners are ambiguous.
+
+Before retiring a worker copy, dispose of the actual work that depends on it;
+retirement reports queued commands, preparation, processes, Services or Sync
+dependencies rather than silently canceling them. Leaving the files and removing
+them are separate choices. If the relationship was retired but file removal is
+uncertain, inspect the current relationship and copy before trying again. An
+uncertain result is not proof that the files were removed or that retirement was
+rolled back. Service placement-save plus Move remains a separate integration
+boundary, not an automatic transfer of a running Service.
+
 ## Devcontainer child machines
 
 <Callout type="info">
