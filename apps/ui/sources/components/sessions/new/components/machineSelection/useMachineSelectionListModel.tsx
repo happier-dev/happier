@@ -62,6 +62,7 @@ import {
 type MachineSelectionListModel = Readonly<{
     rootStep: SelectionListStep;
     selectedOptionId: string | null;
+    managedWakeByServerId: Readonly<Record<string, Readonly<Record<string, 'asleep' | 'starting'>>>>;
 }>;
 
 export type ServerScopedMachinePoolGroup = Readonly<{
@@ -314,7 +315,7 @@ function resolveRowAvailability<TMachine extends MachineDisplayRenderable>(
     const presence = resolveMachinePickerPresence(machine);
     const decided = resolveMachineAvailability?.(machine, serverId);
     // An eligible worker row says its current load (or that it is unknown), never a guessed zero.
-    if (!decided) return { selectable: presence.selectable, reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose) };
+    if (!decided) return { selectable: presence.selectable || !!eligibility.managedWake, reason: describeMachineDestinationWorkerFacts(eligibility, workerSubject, purpose) };
     return {
         selectable: decided.selectable,
         reason: !decided.selectable || !presence.selectable ? decided.detail : undefined,
@@ -326,8 +327,10 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
 ): MachineSelectionListModel {
     const purpose = params.purpose ?? 'session';
     const managedHomes = React.useMemo(() => params.groups.map(group => group.serverId), [params.groups]);
-    const { machinesByEnrolledMachineIdByServerId } = useManagedMachineInventory(managedHomes);
-    const demandedWorkerFacts = useMachineDestinationWorkerStatus({ purpose, workerPlacement: params.workerPlacement, groups: params.groups });
+    const { machinesByEnrolledMachineIdByServerId, entries: managedEntries } = useManagedMachineInventory(managedHomes);
+    const managedEntry = params.workerPlacement ? managedEntries[params.workerPlacement.workspace.serverId] : undefined;
+    const demandedWorkerFacts = useMachineDestinationWorkerStatus({ purpose, workerPlacement: params.workerPlacement, groups: params.groups,
+        managedMachines: managedEntry?.status === 'ready' ? managedEntry.machines : undefined });
     const resolveMachinePlacementFacts = params.workerPlacement && (purpose === 'finite' || purpose === 'service-start')
         ? demandedWorkerFacts : params.resolveMachinePlacementFacts;
     const { theme } = useUnistyles();
@@ -453,7 +456,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     const hasSelectManagedMachine = typeof params.onSelectManagedMachine === 'function';
     const hasOpenManagedPresets = typeof params.onOpenManagedPresets === 'function';
 
-    return React.useMemo(() => {
+    const model = React.useMemo(() => {
         const inputPlaceholder = params.showSearch
             ? params.searchPlaceholder ?? t('newSession.machinePicker.searchPlaceholder')
             : undefined;
@@ -1067,4 +1070,11 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         pendingExpiry,
         theme.colors.text.secondary,
     ]);
+    const managedWakeByServerId = React.useMemo(() => Object.fromEntries(params.groups.map(group => [group.serverId,
+        Object.fromEntries(group.machines.flatMap(machine => {
+            const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, group.serverId), machine);
+            return eligibility.eligible && eligibility.managedWake ? [[machine.id, eligibility.managedWake]] : [];
+        })),
+    ])), [params.groups, purpose, resolveMachinePlacementFacts]);
+    return { ...model, managedWakeByServerId };
 }

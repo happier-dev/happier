@@ -168,6 +168,24 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
+    it.each(['asleep', 'starting'] as const)('allows an exact finite %s row without inventing a guest worker status', async managedWake => {
+        const machine = { ...createMachine('sleeping'), active: false, activeAt: 1 };
+        const handlers = makeHandlers();
+        const fixture: Fixture = { machines: [machine], groups: [{ serverId: 'server-a', serverName: 'Server A', loading: false,
+            signedOut: false, machines: [createScopedMachine(machine)] }], recent: [], favorites: [] };
+        const rendered = await renderHook(() => useMachineSelectionListModel({ ...buildParams(fixture, handlers), purpose: 'finite',
+            resolveMachinePlacementFacts: () => ({ ownership: 'owned', managedWake }) }));
+        try {
+            const section = rendered.getCurrent().rootStep.sections.find(section => section.kind === 'static'
+                && section.options.some(option => option.id === machine.id));
+            if (section?.kind !== 'static') throw new Error('expected exact Machine row');
+            const option = section.options.find(option => option.id === machine.id)!;
+            expect(option.disabled).not.toBe(true);
+            expect(rendered.getCurrent().managedWakeByServerId['server-a']?.[machine.id]).toBe(managedWake);
+            act(() => option.onSelect?.());
+            expect(handlers.selectSpy).toHaveBeenCalled();
+        } finally { await rendered.unmount(); }
+    });
     it.each(['session', 'finite'] as const)('keeps %s managed recipe selection separate from published artifacts and exact machines', async purpose => {
         const fixture = createFixture();
         const handlers = makeHandlers();

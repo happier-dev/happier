@@ -16,7 +16,7 @@ import {
 import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { t } from '@/text';
-import { isMachineRetainedWakeEligibleV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { resolveManagedMachineWakeStateV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 
 /**
  * The shared status presentation is owned by `@happier-dev/plugin-ui/presentation` (plugin authors
@@ -175,15 +175,12 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
                     }
                     if (observation?.storage === 'lost') return { bucket: 'needs_you', tone: 'attention', word: t('managedPower.volumeLost') };
                     if (!observation || observation.availability !== 'present') return { bucket: 'idle', tone: 'neutral', word: t('status.unknown') };
-                    if (observation.power !== 'running' && managed.submittedNativeEffect?.intent === 'start') {
+                    const wakeState = resolveManagedMachineWakeStateV1(managed, input.facts.machineId);
+                    if (wakeState === 'starting') {
                         return { bucket: 'working', tone: 'neutral', word: t('managedWake.starting', { machine: managed.launch.name }) };
                     }
                     if (observation.storage === 'retained' && (observation.power === 'stopped' || observation.power === 'suspended')) {
-                        const retainedWake = managed.wakeOnAcceptedMessage && managed.desired !== 'delete'
-                            && managed.submittedNativeEffect?.intent !== 'delete' && !managed.cleanup
-                            && isMachineRetainedWakeEligibleV1(managed.retention,
-                            managed.reviewedFacts?.retentionCapabilities);
-                        return { bucket: 'idle', tone: 'neutral', word: retainedWake ? t('managedPower.asleep')
+                        return { bucket: 'idle', tone: 'neutral', word: wakeState === 'asleep' ? t('managedPower.asleep')
                             : t(`managedMachines.detail.power.${observation.power}`) };
                     }
                 }

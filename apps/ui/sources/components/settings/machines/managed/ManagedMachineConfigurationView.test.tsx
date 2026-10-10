@@ -212,7 +212,7 @@ describe('mounted managed configurator', () => {
         expect(summary).not.toContain('0.0058');
         await screen.unmount();
     });
-    it('renders declared native sizing fields and re-queries complete launches with the exact edited selectors', async () => {
+    it.each(['entered', 'project-supplied'] as const)('uses %s selectors in the shared native field/configuration continuation without acquiring', async mode => {
         const capturedSelectors: unknown[] = [];
         // The wide receipt exposes both real actions; compact anatomy is covered separately.
         const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
@@ -262,10 +262,12 @@ describe('mounted managed configurator', () => {
         const onUse = vi.fn();
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)}
-            initialController={{ machineId: 'host', installationId: 'installation' }} onUse={onUse} />);
+            initialController={{ machineId: 'host', installationId: 'installation' }} onUse={onUse}
+            initialOptionsSelectors={mode === 'project-supplied' ? { runtimeId: launch.runtimeId, imageId: launch.imageId, size: launch.size } : undefined} />);
         await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.provisioners.options').length).toBeGreaterThan(0));
+        if (mode === 'project-supplied') expect(capturedSelectors).toContainEqual({ runtimeId: launch.runtimeId, imageId: launch.imageId, size: launch.size });
         expect(screen.findByTestId('managed-config.field:size.cpu')).not.toBeNull();
-        for (const [path, value] of [['runtimeId', 'qemu'], ['imageId', 'linux'], ['size.cpu', '4'], ['size.memoryBytes', '4294967296'], ['size.diskBytes', '85899345920']] as const) {
+        for (const [path, value] of mode === 'entered' ? [['runtimeId', 'qemu'], ['imageId', 'linux'], ['size.cpu', '4'], ['size.memoryBytes', '4294967296'], ['size.diskBytes', '85899345920']] as const : []) {
             await act(async () => screen.changeTextByTestId(`managed-config.field:${path}`, value));
         }
         await flushHookEffects();
@@ -273,7 +275,7 @@ describe('mounted managed configurator', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.choice:native-linux')).not.toBeNull());
         await act(async () => screen.pressByTestId('managed-config.choice:native-linux'));
         expect(screen.findByTestId('managed-config.save-preset')).not.toBeNull();
-        expect(screen.findByTestId('managed-config.save-preset')?.props.disabled).toBe(false);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.save-preset')?.props.disabled).toBe(false));
         await act(async () => screen.pressByTestId('managed-config.use'));
         expect(capturedSelectors).toContainEqual({ runtimeId: 'qemu', imageId: 'linux', size: launch.size });
         expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ selection: expect.objectContaining({ launch: expect.objectContaining({ choices: launch }) }) }));

@@ -98,7 +98,7 @@ export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDra
         || !!selection[key] || key === 'duration' && fixedFiniteDuration);
     return { ...draft, dimensionSelection: complete && choice ? undefined : selection, selected: complete && choice ? choice : null };
 }
-export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'name' | 'credentials' | 'environment' | 'categoryPreferences' | 'override' | 'preset'>): ManagedConfiguratorDraft {
+export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'name' | 'credentials' | 'environment' | 'optionsSelectors' | 'categoryPreferences' | 'override' | 'preset'>): ManagedConfiguratorDraft {
     return { ...input, choices: [], selected: null, optionStatus: 'loading',
         choicesSchema: createPluginJsonSchemaZodValueAdapter(input.provisioner.descriptor.launchSchema) };
 }

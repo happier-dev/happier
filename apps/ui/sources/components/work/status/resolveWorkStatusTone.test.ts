@@ -17,6 +17,7 @@ describe('resolveWorkStatusTone', () => {
             launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
             allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: { id: 'retained-native' } },
             retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true,
             observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' } };
         const facts = { online: false, needsYouCount: 0, runningSessionCount: 0, word: 'Offline', machineId: 'guest', managedMachine: managed };

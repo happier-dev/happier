@@ -21,6 +21,8 @@ import type { ManagedMachineDestinationProjection } from './managedMachineSelect
 /** Current admitted projection facts, supplied on demand; never inferred from CPU or Session count. */
 export type MachineDestinationPlacementFacts = Readonly<{
     ownership: 'owned' | 'shared';
+    /** Exact retained resource plus current installed Manage-capable controller; no guest load is implied. */
+    managedWake?: 'asleep' | 'starting';
     worker?: ProjectWorkerStatusResultV1;
     /** The demanded status read failed; still not eligibility, but no longer "checking". */
     workerStatusFailed?: boolean;
@@ -31,7 +33,7 @@ export function resolveMachineDestinationPurposeEligibility(
     purpose: MachineDestinationPurposeV1,
     facts?: MachineDestinationPlacementFacts,
     machine?: MachineDisplayRenderable,
-): Readonly<{ eligible: true; worker?: Extract<ProjectWorkerStatusResultV1, { eligible: true }> }>
+): Readonly<{ eligible: true; managedWake?: 'asleep' | 'starting'; worker?: Extract<ProjectWorkerStatusResultV1, { eligible: true }> }>
     | Readonly<{ eligible: false; reason: 'shared_unsupported' | 'access_unavailable' | 'content_unavailable' | 'machine_unavailable' | 'worker_status_unavailable' | 'worker_refused'; worker?: ProjectWorkerStatusResultV1; statusFailed?: true }> {
     const shared = machine?.isShared === true || facts?.ownership === 'shared';
     if (shared && (
@@ -45,6 +47,8 @@ export function resolveMachineDestinationPurposeEligibility(
         return { eligible: false, reason: 'access_unavailable' };
     }
     if (shared && machine?.metadata === null) return { eligible: false, reason: 'content_unavailable' };
+    if (purpose === 'finite' && facts?.managedWake && !machine?.revokedAt && !machine?.replacedByMachineId)
+        return { eligible: true, managedWake: facts.managedWake };
     if (shared && machine && !resolveMachinePickerPresence(machine).selectable) return { eligible: false, reason: 'machine_unavailable' };
     if (purpose === 'finite' || purpose === 'service-start') {
         if (!facts?.worker) return { eligible: false, reason: 'worker_status_unavailable', ...(facts?.workerStatusFailed ? { statusFailed: true as const } : {}) };
@@ -293,7 +297,7 @@ export function buildMachineDestinationModel(
     const temporaryComputerRowCount = purpose === 'session' && params.temporaryComputerProjection?.state === 'available'
         ? params.temporaryComputerProjection.rowCount
         : 0;
-    const managedMachineRowCount = purpose === 'session' && params.managedMachineProjection?.state === 'available'
+    const managedMachineRowCount = (purpose === 'session' || purpose === 'finite') && params.managedMachineProjection?.state === 'available'
         ? params.managedMachineProjection.rowCount
         : 0;
     const destinationRowCount = machineRowCount + poolRowCount + temporaryComputerRowCount + managedMachineRowCount;

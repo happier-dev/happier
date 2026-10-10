@@ -10,6 +10,9 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
 import { resolveMachinePickerPresence } from '@/components/sessions/new/components/resolveMachinePickerPresence';
 import type { MachineDestinationPlacementFacts } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveManagedMachineWakeStateV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { useMachineListForServer } from '@/sync/domains/state/storage';
 
 export type MachineDestinationWorkerPlacement = Readonly<Pick<ProjectWorkerStatusInputV1, 'workspace' | 'memoryDemand'>>;
 type WorkerStatusMachine = MachineDisplayRenderable & Partial<Pick<Machine, 'daemonStateVersion' | 'operationProtocolCapabilitiesRevision'>>;
@@ -18,6 +21,8 @@ type WorkerStatusMachine = MachineDisplayRenderable & Partial<Pick<Machine, 'dae
 export function useMachineDestinationWorkerStatus(params: Readonly<{
     purpose: MachineDestinationPurposeV1;
     workerPlacement?: MachineDestinationWorkerPlacement;
+    /** Only the current, successfully read Home inventory may authorize a wake offer. */
+    managedMachines?: readonly ManagedMachineV1[];
     groups: readonly Readonly<{
         serverId: string;
         machines: readonly WorkerStatusMachine[];
@@ -29,6 +34,22 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
     const purpose = params.purpose === 'finite' || params.purpose === 'service-start' ? params.purpose : null;
     const request = purpose ? params.workerPlacement : undefined;
     const { binding } = useServerCredentialAccountScopeBinding(request?.workspace.serverId);
+    const controllers = useMachineListForServer(request?.workspace.serverId ?? '');
+    const wakes = new Map<string, 'asleep' | 'starting'>();
+    if (purpose === 'finite' && binding?.isCurrent()) {
+        for (const managed of params.managedMachines ?? []) {
+            if (!managed.enrolledMachineId || !managed.wakeOnAcceptedMessage) continue;
+            const guest = params.groups.find(group => group.serverId === request?.workspace.serverId
+                && !group.loading && !group.signedOut && !group.error)?.machines.find(machine => machine.id === managed.enrolledMachineId);
+            if (!guest || resolveMachinePickerPresence(guest).selectable) continue;
+            const controller = controllers?.find(machine => machine.id === managed.controller.machineId
+                && machine.installationId === managed.controller.installationId && !machine.revokedAt && !machine.replacedByMachineId
+                && resolveMachinePickerPresence(machine).selectable
+                && (machine.isShared !== true || machine.access?.role === 'manage' && machine.access.accessState === 'ready'));
+            const state = controller && resolveManagedMachineWakeStateV1(managed, managed.enrolledMachineId);
+            if (state) wakes.set(managed.enrolledMachineId, state);
+        }
+    }
     const candidates = new Map(params.groups.flatMap(group => {
         if (!request || group.serverId !== request.workspace.serverId || group.loading || group.signedOut || group.error) return [];
         return group.machines.filter(machine => resolveMachinePickerPresence(machine).selectable).map(machine => [machine.id, machine] as const);
@@ -107,11 +128,17 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [demandKey, binding]);
 
+    const wakeKey = JSON.stringify([...wakes]);
     return React.useCallback((machine: MachineDisplayRenderable, serverId: string): MachineDestinationPlacementFacts => {
         const current = binding?.isCurrent() && request?.workspace.serverId === serverId && projection?.demandKey === demandKey
             ? projection : null;
+        const managedWake = binding?.isCurrent() && request?.workspace.serverId === serverId && !resolveMachinePickerPresence(machine).selectable
+            ? wakes.get(machine.id) : undefined;
         const worker = current?.statuses.get(machine.id);
         const failed = current?.failed?.has(machine.id) === true;
-        return { ownership: machine.isShared === true ? 'shared' : 'owned', ...(worker ? { worker } : failed ? { workerStatusFailed: true } : {}) };
-    }, [binding, demandKey, projection, request?.workspace.serverId]);
+        return { ownership: machine.isShared === true ? 'shared' : 'owned', ...(managedWake ? { managedWake } : {}),
+            ...(worker ? { worker } : failed ? { workerStatusFailed: true } : {}) };
+        // Exact semantic power/controller changes, not inventory array identities, refresh the callback.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [binding, demandKey, projection, request?.workspace.serverId, wakeKey]);
 }

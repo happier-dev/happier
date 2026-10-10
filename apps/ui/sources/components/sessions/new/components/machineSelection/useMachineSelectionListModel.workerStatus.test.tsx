@@ -35,6 +35,7 @@ installDisconnectedServerSocketBoundary();
 const { useMachineSelectionListModel } = await import('./useMachineSelectionListModel');
 const { useMachineDestinationWorkerStatus } = await import('@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus');
 const { getActionOperation } = await import('@/sync/ops/actionOperations');
+const { storage } = await import('@/sync/domains/state/storageStore');
 const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
 const { getServerProfileById, setServerProfileIdentityForUrl, resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 let serverId = '';
@@ -62,6 +63,39 @@ beforeEach(async () => {
 afterEach(async () => { actionOperationStore.reset(); await homes.reset(); });
 
 describe('worker destination list demand', () => {
+    it.each(['asleep', 'starting'] as const)('offers a retained finite %s target only through its current controller installation', async wake => {
+        const guest = createMachineFixture({ id: 'guest', active: false, activeAt: 0 });
+        const controller = createMachineFixture({ id: 'controller', installationId: 'installation', activeAt: Date.now() });
+        const managed = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_worker_home', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+            allocation: 'bound', creationState: 'active', desired: wake === 'starting' ? 'start' : 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true,
+            ...(wake === 'starting' ? { submittedNativeEffect: { intent: 'start', intentRevision: 1, requestId: 'start',
+                controller: { machineId: 'controller', installationId: 'installation' } } } : {}),
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' } });
+        homes.answer(homeProfileId, '/v1/machines/managed/actions/list', { body: { machines: [managed] } });
+        storage.setState({ machineListByServerId: { [serverId]: [controller, guest] } });
+        const hook = await renderHook(() => useMachineSelectionListModel({
+            purpose: 'finite', workerPlacement: { workspace: { serverId, refId: 'checkout' } },
+            groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
+                machines: [{ ...guest, serverId, serverName: 'Worker picker' }] }],
+            selectedMachine: null, selectedServerId: serverId, recentMachines: [], favoriteMachines: [],
+            onSelectMachine: () => {}, onSelectScopedMachine: () => {},
+            showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,
+        }));
+        try {
+            const option = () => hook.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+                .find(option => option.id.endsWith('guest'));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().managedWakeByServerId[serverId]?.guest).toBe(wake));
+            expect(option()?.disabled).toBe(false);
+            expect(rpc.machine).not.toHaveBeenCalled();
+            await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...controller, installationId: 'replacement' }, guest] } }));
+            expect(hook.getCurrent().managedWakeByServerId[serverId]?.guest).toBeUndefined();
+            expect(option()?.disabled).toBe(true);
+        } finally { await hook.unmount(); }
+    });
     it('labels the stopped retained destination Asleep while keeping actual offline admission unchanged', async () => {
         const machine = createMachineFixture({ id: 'guest', active: false, activeAt: 0 });
         const managed = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_worker_home', custodianAccountId: 'owner',

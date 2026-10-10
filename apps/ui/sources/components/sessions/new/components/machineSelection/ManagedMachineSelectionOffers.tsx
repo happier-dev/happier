@@ -17,13 +17,18 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { t } from '@/text';
 import { buildManagedMachineSelectionOffers, type ManagedMachineDestinationProjection, type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer } from './managedMachineSelection';
 
+/** A Project may hand off its exact controller/config selectors; ordinary pickers supply none. */
+export type ManagedMachineConfigurationContinuation = ManagedProvisionerSelection & Readonly<{
+    optionsSelectors?: Readonly<Record<string, unknown>>;
+}>;
 type OffersProps = Readonly<{
     serverId: string;
+    initialConfiguration?: ManagedMachineConfigurationContinuation;
     onOffers: (serverId: string, offers: readonly ManagedMachineSelectionOffer[], projection: ManagedMachineDestinationProjection) => void;
     onUse: (draft: ManagedMachineSelectionDraft) => void;
 }>;
 
-/** Mounted only by an open Session picker; Account opt-out precedes every preset read. */
+/** Mounted only by an open creation-capable picker; Account opt-out precedes every preset read. */
 export function ManagedMachineSelectionOffers(props: OffersProps) {
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
     const account = useManagedMachineAccountSettings(binding ?? undefined);
@@ -50,10 +55,10 @@ function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ bi
         if (!binding?.isCurrent()) return;
         if (modalId.current) Modal.hide(modalId.current);
         modalId.current = Modal.show({ component: ManagedMachineSelectionConfigurationModal,
-            props: { serverId: props.serverId, preset, onUse: draft => {
+            props: { serverId: props.serverId, preset, initialConfiguration: props.initialConfiguration, onUse: draft => {
                 if (binding.isCurrent()) props.onUse(draft);
             } } });
-    }, [binding, props.serverId, props.onUse]);
+    }, [binding, props.serverId, props.initialConfiguration, props.onUse]);
     React.useEffect(() => {
         const close = () => { if (modalId.current) Modal.hide(modalId.current); modalId.current = null; };
         const retirement = binding?.onRetire(close);
@@ -77,15 +82,17 @@ function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ bi
 }
 
 function ManagedMachineSelectionConfigurationModal(props: CustomModalInjectedProps & Readonly<{
-    serverId: string; preset: ManagedMachinePresetV1 | null; onUse: (draft: ManagedMachineSelectionDraft) => void;
+    serverId: string; preset: ManagedMachinePresetV1 | null; initialConfiguration?: ManagedMachineConfigurationContinuation;
+    onUse: (draft: ManagedMachineSelectionDraft) => void;
 }>) {
     const [selected, setSelected] = React.useState<ManagedProvisionerSelection | null>(() => props.preset ? {
         serverId: props.serverId, provisioner: buildQualifiedPluginContributionKey(props.preset.recipe.provider), controller: props.preset.controller,
-    } : null);
+    } : props.initialConfiguration?.serverId === props.serverId ? props.initialConfiguration : null);
     React.useEffect(() => { props.setChrome?.({ kind: 'card', title: t('managedMachines.picker.newMachine'),
         dimensions: { size: 'lg' }, phonePresentation: 'sheet', bodyScroll: 'auto', closeButtonTestID: 'managed-selection.back' }); }, [props.setChrome]);
     return selected ? <ManagedMachineConfigurationView serverId={selected.serverId} provisioner={selected.provisioner}
         initialController={selected.controller} presetId={props.preset?.id}
+        initialOptionsSelectors={!props.preset && selected === props.initialConfiguration ? props.initialConfiguration?.optionsSelectors : undefined}
         onUse={draft => { props.onClose(); props.onUse(draft); }} />
         : <MachineProvisionerPicker serverId={props.serverId} onSelectProvisioner={setSelected} />;
 }

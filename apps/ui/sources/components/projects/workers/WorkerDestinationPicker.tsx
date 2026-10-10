@@ -25,6 +25,8 @@ import {
 } from '@/components/ui/selectionList';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { ManagedMachineSelectionOffers, type ManagedMachineConfigurationContinuation } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
+import { managedMachineSelectionOptionId, type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 
 /** The checkout's own Machine row: what "This machine" means for this picker. */
 export type WorkerDestinationPrimaryRow = Readonly<{
@@ -57,6 +59,9 @@ export type WorkerDestinationPickerProps = Readonly<{
   servicePresentation?: boolean;
   selected: ProjectExecutionChoiceV1 | null;
   onChoose: (choice: ProjectExecutionChoiceV1) => void;
+  selectedManagedMachine?: ManagedMachineSelectionDraft | null;
+  onChooseManagedMachine?: (draft: ManagedMachineSelectionDraft) => void;
+  initialManagedConfiguration?: ManagedMachineConfigurationContinuation;
   /** Trailing rows owned by the consumer (Worker settings…); rendered after the destinations. */
   trailingSections?: ReadonlyArray<SelectionListSectionDescriptor>;
   footer?: React.ReactNode;
@@ -130,6 +135,11 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
     () => ({ all: t('projectWorkers.workersSection') }),
     [],
   );
+  const [managedOffers, setManagedOffers] = React.useState<readonly ManagedMachineSelectionOffer[]>([]);
+  const onOffers = React.useCallback((home: string, offers: readonly ManagedMachineSelectionOffer[]) => {
+    if (home === serverId) setManagedOffers(offers);
+  }, [serverId]);
+  const creationEnabled = props.purpose === 'finite' && !props.exactTargetOnly && !!props.onChooseManagedMachine;
 
   const list = useMachineSelectionListModel({
     purpose: props.purpose,
@@ -137,6 +147,9 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
     workerSubject,
     groups,
     poolGroups,
+    managedMachines: creationEnabled ? managedOffers : undefined,
+    selectedManagedMachine: props.selectedManagedMachine,
+    onSelectManagedMachine: props.onChooseManagedMachine,
     selectedMachine: null,
     selectedServerId: serverId,
     recentMachines: [],
@@ -297,7 +310,9 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
     theme.colors.text.secondary,
   ]);
 
-  return (
+  return (<>
+    {creationEnabled ? <ManagedMachineSelectionOffers serverId={serverId} onOffers={onOffers}
+      initialConfiguration={props.initialManagedConfiguration} onUse={props.onChooseManagedMachine!} /> : null}
     <Popover
       open
       anchorRef={props.anchorRef}
@@ -323,8 +338,13 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
           <SelectionList
             testID={props.testID}
             rootStep={rootStep}
-            selectedOptionId={selectedOptionId(props.selected, serverId)}
-            onSelect={() => props.onRequestClose()}
+            selectedOptionId={props.selectedManagedMachine ? managedMachineSelectionOptionId(props.selectedManagedMachine.selection)
+              : selectedOptionId(props.selected, serverId)}
+            onSelect={(id) => {
+              // Configuration opens a modal owned by the still-mounted offers.
+              // Back returns to this list; only choosing the reviewed recipe closes it.
+              if (!managedOffers.some(offer => offer.id === id && !offer.draft)) props.onRequestClose();
+            }}
             onRequestClose={props.onRequestClose}
             listAccessibilityLabel={props.title}
             maxHeight={maxHeight}
@@ -333,6 +353,6 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
           />
         </FloatingOverlay>
       )}
-    </Popover>
+    </Popover></>
   );
 }
