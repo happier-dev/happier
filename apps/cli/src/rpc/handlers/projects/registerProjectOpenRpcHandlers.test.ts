@@ -23,7 +23,7 @@ import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspace
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ScmHostingProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
+import { ScmHostingProviderContributionSchema } from '@happier-dev/protocol';
 import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { createProjectSetupTrustRowCipher } from '@/workspaces/projectSetup/projectSetupTrust';
 import { configuration, reloadConfiguration } from '@/configuration';

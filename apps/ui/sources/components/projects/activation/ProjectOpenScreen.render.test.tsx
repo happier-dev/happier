@@ -88,7 +88,7 @@ describe('Project Open rendered choices', () => {
         await act(async () => { subdir!.props.onCommit('packages/app'); });
         expect(seeded.read().selection.value).toMatchObject({ subdir: 'packages/app', source: { subdir: 'saved/default' },
             materialization: { workspaceAction } });
-        const mode = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'projects.open.sync-mode');
+        const mode = () => screen.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.itemProps?.testID === 'projects.open.sync-mode');
         expect(mode()).toBeDefined();
         await act(async () => { mode()!.props.onSelect('copy_once'); });
         expect(seeded.read().selection.value?.materialization).toMatchObject({ workspaceAction: { kind: 'copy_once', contentPolicy: workspaceAction.contentPolicy } });
