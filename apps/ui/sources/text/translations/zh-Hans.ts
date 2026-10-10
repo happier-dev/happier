@@ -14906,7 +14906,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `自动化可使用此视图的筛选条件检查最近 ${duration} 的使用情况并通知你。请选择运行时间和位置。`,
             digestConfigure: "安排摘要…",
             digestCreate: "创建自动化",
-            digestCreated: "摘要自动化已创建。可在“自动化”中修改或删除。",
+            digestCreated: "摘要自动化已创建。可在现有触发器编辑器中修改或删除。",
             detector_duplicated_instructions: "重复的指令",
             detector_model_misfit: "模型匹配",
             detector_idle_recaching: "空闲后重新缓存",

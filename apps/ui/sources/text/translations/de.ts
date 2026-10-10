@@ -15401,7 +15401,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `Eine Automation kann die letzten ${duration} mit den Filtern dieser Ansicht prüfen und dich benachrichtigen. Wähle, wann und wo sie läuft.`,
             digestConfigure: "Zusammenfassung planen…",
             digestCreate: "Automation erstellen",
-            digestCreated: "Automation erstellt. In Automationen kannst du sie ändern oder entfernen.",
+            digestCreated: "Automation erstellt. Im vorhandenen Auslöser-Editor kannst du sie ändern oder entfernen.",
             detector_duplicated_instructions: "Doppelte Anweisungen",
             detector_model_misfit: "Modellwahl",
             detector_idle_recaching: "Neu-Caching nach Pausen",

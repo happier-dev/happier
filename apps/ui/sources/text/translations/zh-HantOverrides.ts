@@ -12217,7 +12217,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `自動化可依此檢視的篩選條件查看最近 ${duration} 的用量並通知你。請選擇執行時間與位置。`,
             digestConfigure: "排程摘要…",
             digestCreate: "建立自動化",
-            digestCreated: "摘要自動化已建立。可在自動化中修改或移除。",
+            digestCreated: "摘要自動化已建立。可在現有觸發器編輯器中修改或移除。",
             summary_comparable_completed_request_cost_difference: "同一個已完成請求在不同模型上產生了不同費用",
             summary_unused_mcp_binding_observed: "已包含的 MCP 連線未被使用",
         } },

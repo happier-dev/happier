@@ -13673,7 +13673,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `Una automatització pot revisar les últimes ${duration} amb els filtres d’aquesta vista i avisar-te. Tria quan i on s’executa.`,
             digestConfigure: "Programa un resum…",
             digestCreate: "Crea l’automatització",
-            digestCreated: "Automatització creada. Modifica-la o elimina-la a Automatitzacions.",
+            digestCreated: "Automatització creada. L’editor de desencadenants existent permet modificar-la o eliminar-la.",
         } },
         // Usage panel strings
         today: 'Avui',

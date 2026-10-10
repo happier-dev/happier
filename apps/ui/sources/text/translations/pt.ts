@@ -15407,7 +15407,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `Uma automação pode analisar as últimas ${duration} com os filtros desta visualização e avisar você. Escolha quando e onde ela será executada.`,
             digestConfigure: "Agendar resumo…",
             digestCreate: "Criar automação",
-            digestCreated: "Automação criada. Altere ou remova em Automações.",
+            digestCreated: "Automação criada. Use o editor de gatilhos existente para alterar ou remover.",
             detector_duplicated_instructions: "Instruções duplicadas",
             detector_model_misfit: "Escolha do modelo",
             detector_idle_recaching: "Recache após inatividade",

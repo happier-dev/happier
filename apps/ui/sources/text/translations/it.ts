@@ -15643,7 +15643,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `Un’automazione può esaminare le ultime ${duration} con i filtri di questa vista e avvisarti. Scegli quando e dove eseguirla.`,
             digestConfigure: "Programma un riepilogo…",
             digestCreate: "Crea automazione",
-            digestCreated: "Automazione creata. Puoi modificarla o rimuoverla in Automazioni.",
+            digestCreated: "Automazione creata. Il suo editor dei trigger gestisce modifiche e rimozione.",
             detector_duplicated_instructions: "Istruzioni duplicate",
             detector_model_misfit: "Scelta del modello",
             detector_idle_recaching: "Ricaching dopo inattività",

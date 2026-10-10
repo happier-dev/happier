@@ -14690,7 +14690,7 @@ settingsSession: {
       digestDescription: ({ duration }: { duration: string }) => `Automatyzacja może przejrzeć ostatnie ${duration} z filtrami tego widoku i powiadomić Cię. Wybierz czas i miejsce uruchomienia.`,
       digestConfigure: "Zaplanuj podsumowanie…",
       digestCreate: "Utwórz automatyzację",
-      digestCreated: "Automatyzacja utworzona. Zmień ją lub usuń w Automatyzacjach.",
+      digestCreated: "Automatyzacja utworzona. Zmiany i usuwanie są dostępne w istniejącym edytorze wyzwalaczy.",
     }, plans: {
       calendarExport: 'Eksportuj widoczne odnowienia limitów i subskrypcji',
       calendarFailed: 'Nie udało się wyeksportować. Odśwież odczyty i spróbuj ponownie.',

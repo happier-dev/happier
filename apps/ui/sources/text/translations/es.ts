@@ -15282,7 +15282,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `Una automatización puede revisar las últimas ${duration} con los filtros de esta vista y avisarte. Elige cuándo y dónde se ejecuta.`,
             digestConfigure: "Programar un resumen…",
             digestCreate: "Crear automatización",
-            digestCreated: "Automatización creada. Puedes modificarla o eliminarla en Automatizaciones.",
+            digestCreated: "Automatización creada. Su editor de activadores permite modificarla o eliminarla.",
             detector_duplicated_instructions: "Instrucciones duplicadas",
             detector_model_misfit: "Ajuste del modelo",
             detector_idle_recaching: "Recaché tras inactividad",

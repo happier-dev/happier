@@ -18953,7 +18953,7 @@ const enUsage = {
       digestDescription: ({ duration }: { duration: string }) => `An Automation can review the latest ${duration} with this view’s filters and notify you. Choose when and where it runs.`,
       digestConfigure: "Schedule a digest…",
       digestCreate: "Create Automation",
-      digestCreated: "Digest Automation created. Change or remove it in Automations.",
+      digestCreated: "Digest Automation created. Its existing trigger editor handles changes and removal.",
       detector_duplicated_instructions: "Duplicated instructions",
       detector_model_misfit: "Model fit",
       detector_idle_recaching: "Idle re-caching",

@@ -15549,7 +15549,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `自動化でこの表示のフィルターを使い、直近${duration}の使用状況を確認して通知できます。実行日時と実行先を選んでください。`,
             digestConfigure: "ダイジェストを設定…",
             digestCreate: "自動化を作成",
-            digestCreated: "自動化を作成しました。「自動化」で変更または削除できます。",
+            digestCreated: "自動化を作成しました。既存のトリガーエディターで変更や削除ができます。",
             detector_duplicated_instructions: "重複した指示",
             detector_model_misfit: "モデルの適合",
             detector_idle_recaching: "アイドル後の再キャッシュ",

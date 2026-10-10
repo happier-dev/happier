@@ -15217,7 +15217,7 @@ settingsSession: {
             digestDescription: ({ duration }: { duration: string }) => `Автоматизация может проверить последние ${duration} с фильтрами этого представления и уведомить вас. Выберите время и место запуска.`,
             digestConfigure: "Запланировать сводку…",
             digestCreate: "Создать автоматизацию",
-            digestCreated: "Автоматизация создана. Измените или удалите её в разделе автоматизаций.",
+            digestCreated: "Автоматизация создана. Изменить или удалить её можно в существующем редакторе триггеров.",
             detector_duplicated_instructions: "Дублирующиеся инструкции",
             detector_model_misfit: "Выбор модели",
             detector_idle_recaching: "Повторное кэширование после простоя",
