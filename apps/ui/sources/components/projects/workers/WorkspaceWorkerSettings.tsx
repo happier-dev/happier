@@ -32,10 +32,8 @@ import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerAc
 import { t } from '@/text';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
-import {
-  useObservedWorkerSetting,
-  type ObservedWorkerSettingNotice,
-} from './useObservedWorkerSetting';
+import { useObservedWorkerSetting } from './useObservedWorkerSetting';
+import { describeObservedWorkerSettingNotice } from './observedWorkerSettingNotice';
 import { useWorkerDestinationLabel } from './useWorkerDestinationLabel';
 import { WorkerDestinationPicker } from './WorkerDestinationPicker';
 import { WorkspaceAdHocCommandsItem } from './WorkspaceAdHocCommandsItem';
@@ -123,25 +121,6 @@ export function useWorkspaceWorkerPreference(workspace: WorkspaceAddressV1, opti
     [address, mutate],
   );
   return { ...setting, address, save, reset };
-}
-
-function noticeText(notice: ObservedWorkerSettingNotice): string | null {
-  switch (notice) {
-    case 'saving':
-      return t('projectWorkers.saving');
-    case 'approval':
-      return t('projectWorkers.approvalPending');
-    case 'unknown':
-      return t('projectWorkers.writeUnknown');
-    case 'changed':
-      return t('projectWorkers.changed');
-    case 'failed':
-      return t('projectWorkers.saveFailed');
-    case 'locked':
-      return t('projectWorkers.settingsLocked');
-    default:
-      return null;
-  }
 }
 
 function withDestination(
@@ -252,7 +231,7 @@ export function WorkspaceWorkerSettings(
     props.workspace.machineId,
   );
   const disabled = state.kind !== 'ready' || preference.busy;
-  const notice = noticeText(preference.notice);
+  const notice = describeObservedWorkerSettingNotice(preference.notice);
   const destinationName =
     label.name ??
     (label.missing ? t('projectWorkers.destinationMissing') : null);
