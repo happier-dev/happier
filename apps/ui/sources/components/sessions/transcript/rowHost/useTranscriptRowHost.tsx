@@ -741,13 +741,14 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         }
         const firstMessageId = 'toolMessageId' in item
             ? item.toolMessageId
-            : 'toolMessageIds' in item ? item.toolMessageIds[0] : null;
+            : 'toolMessageIds' in item ? item.toolMessageIds[0] : 'messageId' in item ? item.messageId : null;
         const originSessionId = ('originSessionId' in item ? item.originSessionId : undefined)
             ?? (firstMessageId ? forkMessageMetadataById?.[firstMessageId]?.originSessionId : undefined);
         return (
             <TranscriptOriginSourceProvider
                 originSessionId={originSessionId}
                 readOnly={'isReadOnlyContext' in item && item.isReadOnlyContext === true}
+                visualContext={firstMessageId ? forkMessageMetadataById?.[firstMessageId]?.visualContext : undefined}
             >
                 {renderItemContent(info)}
             </TranscriptOriginSourceProvider>
@@ -764,6 +765,8 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
 }
 
 export type TranscriptItemsEdgeSlotsDeps = Readonly<{
+    serverId?: string | null;
+    showToolCalls?: boolean;
     bottomNotice: ChatListInternalProps['bottomNotice'];
     composerInsetHeight: number;
     controlSwitchTo: ChatListInternalProps['controlSwitchTo'];
@@ -787,6 +790,8 @@ export type TranscriptItemsEdgeSlotsDeps = Readonly<{
 
 export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) {
     const {
+        serverId,
+        showToolCalls,
         bottomNotice,
         composerInsetHeight,
         controlSwitchTo,
@@ -812,6 +817,8 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
     ), []);
     const listFooterNode = React.useMemo(() => (
         <ChatListFooterWithKeyboardInset
+            serverId={serverId}
+            showToolCalls={showToolCalls}
             sessionId={sessionId}
             bottomNotice={bottomNotice}
             controlledByUserOverride={controlledByUserOverride}
@@ -821,6 +828,8 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
             onComposerInsetHeightChange={handleComposerInsetHeightChange}
         />
     ), [
+        serverId,
+        showToolCalls,
         bottomNotice,
         controlSwitchTo,
         controlledByUserOverride,

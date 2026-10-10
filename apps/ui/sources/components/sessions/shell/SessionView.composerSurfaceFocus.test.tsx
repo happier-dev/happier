@@ -391,6 +391,7 @@ const { SessionView } = await import('./SessionView');
 const {
   createComposerPresentationHostHandlers,
   readComposerPresentationSnapshot,
+  readSessionComposerPresentationTargetAtAddress,
 } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
 
 const sessionRef = { kind: 'session', sessionId: 's1' } as const;
@@ -447,6 +448,21 @@ const { AppPaneProvider } = await import('@/components/appShell/panes/AppPanePro
 
 describe('SessionView composer surface focus', () => {
   beforeEach(activateSessionShellStorageBoundary);
+  it('keeps a full same-address composer targeted while a later transcript-only view is mounted', async () => {
+    const full = await renderSessionSurface({ surfaceFocused: true });
+    const address = { serverId: 'server-1', sessionId: 's1' };
+    const target = readSessionComposerPresentationTargetAtAddress(address);
+    expect(target).not.toBeNull();
+    const transcript = await renderScreen(<AppPaneProvider>
+      <SessionView id="s1" routeServerId="server-1" surfaceFocusedOverride surfaceVisibleOverride
+        presentation={{ kind: 'embedded', composer: 'none' }} />
+    </AppPaneProvider>);
+    expect(readSessionComposerPresentationTargetAtAddress(address)).toBe(target);
+    await transcript.unmount();
+    expect(readSessionComposerPresentationTargetAtAddress(address)).toBe(target);
+    await full.unmount();
+    expect(readSessionComposerPresentationTargetAtAddress(address)).toBeNull();
+  });
   it('stops being the active composer once its mounted surface is no longer focused', async () => {
     const screen = await renderSessionSurface({ surfaceFocused: true });
     await renderer.act(async () => {

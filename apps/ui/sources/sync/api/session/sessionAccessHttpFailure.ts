@@ -5,6 +5,7 @@ import {
 
 export type SessionAccessHttpFailureCode =
     | SessionAccessErrorCodeV1
+    | 'public_share_isolation_unavailable'
     | 'session_access_request_failed';
 
 /**
@@ -26,6 +27,7 @@ export function readSessionAccessHttpFailureCode(
         ? payload as Readonly<Record<string, unknown>>
         : {};
     if (status === 404 && record.error === 'not_found') return 'session_access_sharing_unavailable';
+    if (record.error === 'public_share_isolation_unavailable') return 'public_share_isolation_unavailable';
     const code = SessionAccessErrorCodeV1Schema.safeParse(record.error);
     return code.success ? code.data : 'session_access_request_failed';
 }

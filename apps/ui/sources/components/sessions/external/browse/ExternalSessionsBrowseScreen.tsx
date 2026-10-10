@@ -37,10 +37,10 @@ import {
     machineExternalSessionCandidateDelete,
 } from '@/sync/ops/machineExternalSessions';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { useActiveServerAccountScope, useProfile, useSettingsVersion } from '@/sync/store/hooks';
-import { sync } from '@/sync/sync';
+import { useProfile, useSettingsVersion, useActiveServerAccountScope } from '@/sync/store/hooks';
 import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
 
@@ -68,6 +68,14 @@ import {
 } from './externalSessionBrowseErrorPresentation';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useConversationSearch } from '@/sync/domains/search/useConversationSearch';
+import { hasConversationSearchScanFallback } from '@/sync/domains/search/searchConversations';
+import { useMemorySearchProvider } from '@/sync/domains/memory/useMemorySearchProvider';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { parseExternalSessionsSourceForDeclaration, resolveExternalSessionsSourceKeyForDeclaration } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { describeConversationSearchCoverage } from '@/components/appShell/search/conversationSearchCoverage';
+import { projectConversationSearchCandidates } from './projectConversationSearchCandidates';
 
 type ExternalSessionBrowseProviderId = ExternalSessionsAgentId;
 type AppTheme = Theme;
@@ -125,13 +133,11 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const settingsVersion = useSettingsVersion();
     const expectedSettingsScope = useAccountSettingsScope();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
-    const connectedServicesProfileLabelByKey = useSetting('connectedServicesProfileLabelByKey');
-    const settings = React.useMemo(() => ({
+    const labelsByKey = useConnectedMetadataCatalog(props.accountLifetime
+        ? props.accountLifetime.isCurrent() ? props.accountLifetime.scope : null : undefined, selectConnectedMetadataLabels);
+    const agentSettings = React.useMemo(() => ({
         backendEnabledByTargetKey,
-        acpCatalogSettingsV1,
-        connectedServicesProfileLabelByKey,
-    }), [acpCatalogSettingsV1, backendEnabledByTargetKey, connectedServicesProfileLabelByKey]);
+    }), [backendEnabledByTargetKey]);
     const activeServerId = useActiveServerSnapshot().serverId;
     const externalSessionsSettings = readExternalSessionsSettingsV1(
         useSetting('externalSessionsSettingsV1'),
@@ -216,8 +222,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         () => browseProviderIds.map((providerId) => {
             const projection = resolveAgentCatalogProjection(providerId, {
                 enabledAgentIds: browseProviderIds,
-                backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-                acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+                backendEnabledByTargetKey,
                 mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
                 mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
             });
@@ -231,8 +236,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             browseProviderIds,
             daemonMergedProjectionInputs?.mergedBackendProjectionById,
             daemonMergedProjectionInputs?.mergedProviderProjectionById,
-            settings.acpCatalogSettingsV1,
-            settings.backendEnabledByTargetKey,
+            backendEnabledByTargetKey,
         ],
     );
     const providerIds = React.useMemo<readonly ExternalSessionBrowseProviderId[]>(() => providers.map((provider) => provider.id), [providers]);
@@ -246,7 +250,8 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 providerId: lockScope.providerId,
                 machineId: effectiveSelectedMachineId,
                 profile: lockedProfileScopeMatches ? profile : null,
-                settings: lockedSettingsScopeMatches ? settings : { connectedServicesProfileLabelByKey: {} },
+                labelsByKey,
+                agentSettings,
                 projection: daemonMergedProjectionInputs?.pluginProjectionV2,
                 source: lockScope.source,
                 activeServerId: effectiveSelectedServerId ?? activeServerId,
@@ -264,12 +269,13 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             providerId: selectedProviderId,
             machineId: effectiveSelectedMachineId,
             profile,
-            settings,
+            labelsByKey,
+            agentSettings,
             projection: daemonMergedProjectionInputs?.pluginProjectionV2,
             activeServerId: effectiveSelectedServerId ?? activeServerId,
             interaction,
         });
-    }, [activeServerId, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveSelectedMachineId, effectiveSelectedServerId, interaction, lockScope, lockedProfileScopeMatches, lockedSettingsScopeMatches, profile, props.accountLifetime, selectedProviderId, settings]);
+    }, [activeServerId, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveSelectedMachineId, effectiveSelectedServerId, interaction, lockScope, lockedProfileScopeMatches, lockedSettingsScopeMatches, profile, props.accountLifetime, selectedProviderId, agentSettings, labelsByKey]);
     const [selectedSourceKey, setSelectedSourceKey] = React.useState<string | null>(() => (
         lockScope ? 'locked' : sourceOptions[0]?.key ?? null
     ));
@@ -288,8 +294,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         selectedProviderId
             ? resolveAgentCatalogProjection(selectedProviderId, {
                 enabledAgentIds: browseProviderIds,
-                backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-                acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+                backendEnabledByTargetKey,
                 mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
                 mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
             })
@@ -299,8 +304,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,
         selectedProviderId,
-        settings.acpCatalogSettingsV1,
-        settings.backendEnabledByTargetKey,
+        backendEnabledByTargetKey,
     ]);
     const identityServerId = effectiveSelectedServerId ?? activeServerId;
     const selectedAgentIdentity = React.useMemo(() => selectedAgentProjection ? ({
@@ -415,11 +419,52 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         projection: daemonMergedProjectionInputs?.pluginProjectionV2,
     });
     const contentSearchSupported = contentSearchCapability === true;
-    const contentSearchSubmitted = searchTarget === 'content'
+    const explicitContentSearchSubmitted = searchTarget === 'content'
         && candidateSearchTerm.length > 0
         && candidateSearchTerm === searchQuery
         && submittedContentScopeKey === candidateActionAuthorityKey;
 
+    const metadataResults = useExternalSessionBrowseCandidates({
+        machineId: effectiveSelectedMachineId,
+        serverId: effectiveSelectedServerId,
+        providerId: selectedProviderId,
+        source: selectedSource,
+        searchTerm: candidateSearchTerm,
+        accountLifetime: props.accountLifetime,
+        includeThreads,
+        enabled: daemonMergedProjectionReady && effectiveSelectedMachineId !== null && searchTarget === 'metadata',
+    });
+    const credentialServerId = resolveServerProfileScopeIdForIdentifier(effectiveSelectedServerId ?? activeServerId);
+    const credentialScopes = useServerCredentialAccountScopeBindings(props.accountLifetime || searchTarget !== 'content' ? [] : [credentialServerId]);
+    const contentLifetime = props.accountLifetime ?? credentialScopes.get(credentialServerId) ?? null;
+    const memoryProvider = useMemorySearchProvider(credentialServerId && effectiveSelectedMachineId
+        ? { kind: 'exact', serverId: credentialServerId, machineId: effectiveSelectedMachineId } : { kind: 'none' },
+    { conversationSearch: true, corpora: ['external_transcripts'] });
+    const sourceDeclaration = selectedProviderId ? daemonMergedProjectionInputs?.pluginProjectionV2
+        ?.agentsById[selectedProviderId]?.externalSessions?.sources.find(declaration => declaration.sourceKind === selectedSource?.kind) : null;
+    const parsedContentSource = searchTarget === 'content' && selectedSource && sourceDeclaration
+        ? parseExternalSessionsSourceForDeclaration(sourceDeclaration, selectedSource) : null;
+    const contentSource = selectedProviderId && parsedContentSource && sourceDeclaration ? {
+        agentId: selectedProviderId, source: parsedContentSource,
+        sourceKey: resolveExternalSessionsSourceKeyForDeclaration(sourceDeclaration, parsedContentSource),
+        contentSearch: contentSearchSupported,
+    } : undefined;
+    const contentResults = useConversationSearch({
+        accountLifetime: contentLifetime, machineIds: effectiveSelectedMachineId ? [effectiveSelectedMachineId] : [],
+        source: contentSource, includeThreads,
+        query: { v: 1, query: searchQuery, scope: { type: 'global' }, mode: 'auto', corpora: ['external_transcripts'],
+            ...(contentSource ? { externalSource: { agentId: contentSource.agentId, sourceKey: contentSource.sourceKey } } : {}) },
+        mode: explicitContentSearchSubmitted ? 'auto' : 'indexed',
+        providers: memoryProvider.conversation ?? { homeSessions: false, daemonEnabled: false },
+        enabled: searchTarget === 'content' && daemonMergedProjectionReady && contentSource !== undefined,
+    });
+    const contentCandidates = contentSource && effectiveSelectedMachineId
+        ? projectConversationSearchCandidates(contentResults.result?.hits ?? [], { ...contentSource, machineId: effectiveSelectedMachineId }) : [];
+    const contentContinuation = contentResults.result?.continuations?.[0];
+    const contentIndexReady = contentResults.result?.sources?.[0]?.indexReady === true;
+    const contentScanAvailable = contentSearchSupported && hasConversationSearchScanFallback(contentResults.result);
+    const contentSearchSubmitted = searchTarget === 'content' && searchQuery.trim().length > 0
+        && (explicitContentSearchSubmitted || contentIndexReady || contentCandidates.length > 0);
     const {
         candidates,
         candidatesAuthoritative,
@@ -434,7 +479,6 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         preparation,
         preparationStopped,
         cancelled,
-        contentCoverage,
         autoLinkPolicyScope,
         error,
         candidateDeleteSupported,
@@ -442,19 +486,19 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         cancelPreparation,
         reload,
         removeCandidate,
-    } = useExternalSessionBrowseCandidates({
-        machineId: effectiveSelectedMachineId,
-        serverId: effectiveSelectedServerId,
-        providerId: selectedProviderId,
-        source: selectedSource,
-        searchTerm: candidateSearchTerm,
-        searchTarget,
-        contentSearchSupported,
-        accountLifetime: props.accountLifetime,
-        includeThreads,
-        enabled: daemonMergedProjectionReady && effectiveSelectedMachineId !== null
-            && (searchTarget !== 'content' || contentSearchSubmitted),
-    });
+    } = searchTarget === 'metadata' ? metadataResults : {
+        candidates: contentCandidates, candidatesAuthoritative: contentResults.result !== null && contentLifetime?.isCurrent() === true,
+        publishedSearchTerm: contentResults.result ? searchQuery : null,
+        nextCursor: contentContinuation?.cursor ?? null,
+        paginationRequestKey: contentContinuation ? JSON.stringify([candidateActionAuthorityKey, searchQuery, contentContinuation]) : null,
+        loading: contentResults.loading && contentCandidates.length === 0, loadingMore: contentResults.loading && contentCandidates.length > 0,
+        searchAugmenting: false, searchIncomplete: false, annotationsIncomplete: false, preparation: null, preparationStopped: false,
+        cancelled: contentResults.cancelled === true, autoLinkPolicyScope: null, candidateDeleteSupported: false,
+        error: contentResults.error ? t('externalSessions.browseFailedToLoad') : null,
+        loadMore: () => contentContinuation ? contentResults.loadMore(contentContinuation) : Promise.resolve(),
+        cancelPreparation: contentResults.cancel, reload: contentResults.reload, removeCandidate: metadataResults.removeCandidate,
+    };
+    const contentCoverage = contentResults.result?.machines[0]?.status === 'ok' ? 'complete' as const : 'partial' as const;
     /**
      * Whether a candidate on screen may be acted on. This is a capability fact about
      * the listing's authority, not a liveness fact about how much of it has arrived:
@@ -486,11 +530,11 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         && publishedSearchTerm === (searchTarget === 'content' ? searchQuery : searchQuery.trim());
     const handleContentSearchSubmit = React.useCallback((query: string) => {
         const term = query;
-        if (searchTarget !== 'content' || !contentSearchSupported || !term.trim() || loading || loadingMore) return;
+        if (searchTarget !== 'content' || !contentScanAvailable || !term.trim() || loading || loadingMore) return;
         setSubmittedContentScopeKey(candidateActionAuthorityKey);
-        if (candidateSearchTerm === term && contentSearchSubmitted) void reload();
+        if (candidateSearchTerm === term && explicitContentSearchSubmitted) void reload();
         else setCandidateSearchTerm(term);
-    }, [candidateActionAuthorityKey, candidateSearchTerm, contentSearchSubmitted, contentSearchSupported, loading, loadingMore, reload, searchTarget]);
+    }, [candidateActionAuthorityKey, candidateSearchTerm, explicitContentSearchSubmitted, contentScanAvailable, loading, loadingMore, reload, searchTarget]);
     const candidateActionAuthorityRef = React.useRef({
         key: candidateActionAuthorityKey,
         generation: 0,
@@ -532,6 +576,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         try {
             if (settingsVersion === null) throw new Error('Account settings version is unavailable');
             const enabledAtMs = Date.now();
+            const { sync } = await import('@/sync/sync');
             requireOneShotAccountSettingsMutationApplied(
                 await sync.mutateAccountSettingsOnce({
                     expectedSettingsScope,
@@ -591,6 +636,9 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         // A machine with no name is "this machine" in the copy, never its id.
         return candidate ? readMachineAdministrationCandidateName(candidate) : null;
     }, [administrationTargetSelection, effectiveSelectedMachineId, lockScope, machines]);
+    const contentCoverageLabel = contentResults.result ? describeConversationSearchCoverage({
+        machines: contentResults.result.machines, machineName: () => selectedMachineLabel ?? effectiveSelectedMachineId ?? '',
+    }) : '';
     const selectedMachineHomeDir = React.useMemo(() => {
         const machine = lockScope
             ? machines?.find((candidate) => candidate.id === effectiveSelectedMachineId)
@@ -630,7 +678,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             onLinkingChange: setLinkingSessionId,
             onPickRemoteSessionId: props.onPickRemoteSessionId,
             ...(searchTarget === 'content' && candidate.match ? {
-                find: { query: candidateSearchTerm, sourceItemId: candidate.match.sourceItemId },
+                find: { query: searchQuery, sourceItemId: candidate.match.sourceItemId },
             } : {}),
             openSession: (sessionId, target, find) => {
                 const authority = props.accountLifetime ?? (target.serverId
@@ -642,7 +690,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 });
             },
         });
-    }, [candidateActionsAllowed, candidateSearchTerm, effectiveSelectedMachineId, interaction, paneContext, props, resolveCurrentOperationTarget, router, searchTarget, selectedMachineIsOffline, selectedProviderId, selectedSource]);
+    }, [candidateActionsAllowed, searchQuery, effectiveSelectedMachineId, interaction, paneContext, props, resolveCurrentOperationTarget, router, searchTarget, selectedMachineIsOffline, selectedProviderId, selectedSource]);
 
     /**
      * Delete one Agent-owned session behind the canonical destructive
@@ -762,8 +810,8 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             case 'missing':
                 if (targetState.inventoryKnown === false) {
                     return {
-                        kind: 'unreachable',
-                        homeName: resolveHomeDisplayNameForServerIdentity(targetState.target.serverIdentityId),
+                        kind: 'inventory',
+                        status: targetState.inventoryStatus ?? 'loading',
                         onChooseMachine: openMachinePicker,
                     };
                 }
@@ -988,9 +1036,11 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                     alternativeAgent={alternativeAgent}
                     searchQuery={searchQuery}
                     searchTarget={searchTarget}
-                    contentSearchSupported={contentSearchSupported}
-                    contentSearchExplicitlyUnsupported={contentSearchCapability === false}
+                    contentSearchSupported={contentSearchSupported || contentIndexReady || contentCandidates.length > 0}
+                    contentSearchExplicitlyUnsupported={contentSearchCapability === false && !contentIndexReady}
                     contentSearchSubmitted={contentSearchSubmitted}
+                    contentScanAvailable={contentScanAvailable}
+                    contentCoverageLabel={contentCoverageLabel}
                     contentCoverage={contentCoverage}
                     onSearchSubmit={handleContentSearchSubmit}
                     onSearchQueryChange={setSearchQuery}

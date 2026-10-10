@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Platform, View } from 'react-native';
+import { HappierPressable, happierFocusRingStyle } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { PathFavoriteToggleButton } from '@/components/ui/pathPicker/PathFavoriteToggleButton';
+import { FavoriteToggleButton } from '@/components/ui/buttons/FavoriteToggleButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
@@ -24,6 +25,7 @@ type SaveProps = Readonly<{
 
 /** Mounted only on demand; both presentations use this exact form. */
 export function SaveMessagePromptForm(props: SaveProps) {
+    const { theme } = useUnistyles();
     const { title, setTitle, favorite, setFavorite, shortcutExpanded, setShortcutExpanded, shortcut, setShortcut,
         error, setError, isSaving, canSave, save } = useSaveMessageAsPrompt({ text: props.text, serverId: props.serverId,
         onSaved: (saved) => props.onSaved(saved.artifactId) });
@@ -31,17 +33,18 @@ export function SaveMessagePromptForm(props: SaveProps) {
         <Text style={styles.heading} accessibilityRole="header">{t('committedMessageActions.savePrompt')}</Text>
         <FieldTextInput testID="save-message-prompt-name" accessibilityLabel={t('committedMessageActions.name')}
             value={title} onChangeText={setTitle} autoFocus selectTextOnFocus returnKeyType="done" onSubmitEditing={canSave ? save : undefined}
-            trailing={<PathFavoriteToggleButton path={props.messageId} isFavorite={favorite} testID="save-message-prompt-favorite"
+            trailing={<FavoriteToggleButton id={props.messageId} isFavorite={favorite} testID="save-message-prompt-favorite"
                 addLabel={t('agentInput.promptPicker.addFavorite')} removeLabel={t('agentInput.promptPicker.removeFavorite')}
                 onToggle={() => setFavorite((value) => !value)} />} />
         <Text style={styles.hint}>{t(favorite ? 'committedMessageActions.savedHintFavorite' : 'committedMessageActions.savedHint')}</Text>
         {shortcutExpanded ? <FieldTextInput testID="save-message-prompt-shortcut" accessibilityLabel={t('committedMessageActions.shortcut')}
             value={shortcut} onChangeText={(value) => { setError(null); setShortcut(value); }} autoCapitalize="none" monospace autoFocus
             placeholder={t('committedMessageActions.shortcutPlaceholder')} returnKeyType="done" onSubmitEditing={canSave ? save : undefined} />
-            : <Pressable testID="save-message-prompt-shortcut-toggle" accessibilityRole="button" onPress={() => setShortcutExpanded(true)}
-                style={({ pressed }) => [styles.shortcutToggle, pressed ? styles.pressed : null]} hitSlop={8}>
+            : <HappierPressable testID="save-message-prompt-shortcut-toggle" accessibilityRole="button" onPress={() => setShortcutExpanded(true)}
+                style={({ pressed, focused }) => [styles.shortcutToggle, pressed ? styles.pressed : null,
+                    happierFocusRingStyle({ visible: focused, color: theme.colors.border.focus })]} hitSlop={8}>
                 <Text style={styles.link}>{t('committedMessageActions.addShortcut')}</Text>
-            </Pressable>}
+            </HappierPressable>}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         <View style={styles.buttons}>
             <RoundButton testID="save-message-prompt-cancel" size="small" display="inverted" title={t('common.cancel')} onPress={props.onClose} />
@@ -79,7 +82,7 @@ export function SaveMessageAsPrompt(props: SaveProps & Readonly<{ anchorRef: Rea
 const styles = StyleSheet.create((theme) => ({
     form: { padding: 16, gap: 10 },
     popoverBody: { width: POPOVER_WIDTH, maxWidth: '100%' },
-    heading: { ...Typography.default('semiBold'), fontSize: 15, lineHeight: 20, color: theme.colors.text.primary, marginBottom: 2 },
+    heading: { ...Typography.rowTitle(), color: theme.colors.text.primary, marginBottom: 2 },
     hint: { ...Typography.rowMeta(), color: theme.colors.text.secondary, marginTop: -4 },
     shortcutToggle: { alignSelf: 'flex-start', borderRadius: 6 },
     pressed: { opacity: 0.6 },

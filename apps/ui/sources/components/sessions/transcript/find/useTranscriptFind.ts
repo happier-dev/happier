@@ -231,7 +231,7 @@ export function createTranscriptFindModel(input: TranscriptFindModelInput) {
             if ((direction === -1 && history.hasOlder) || (direction === 1 && history.hasNewer)) { search(direction === -1 ? 'older' : 'newer', current); return; }
             if (coverage(history) === 'complete' && matches.length) select(direction === 1 ? matches[0] : matches.at(-1) ?? null);
         },
-        stop() { invalidateOperation(); searching = false; stopped = true; recompute(false); },
+        stop() { invalidateOperation(); searching = false; stopped = true; seedTarget = null; recompute(false); },
         close() { invalidateOperation(); searching = false; stopped = false; seedTarget = null; snapshot = { ...snapshot, open: false }; matches = []; current = null; projections.clear(); clearRows(); emit({ kind: 'idle' }); },
     };
     return {
@@ -239,7 +239,6 @@ export function createTranscriptFindModel(input: TranscriptFindModelInput) {
         setQuery: controller.setQuery, setOptions: controller.setOptions, step: controller.step, stop: controller.stop, close: controller.close,
         open() { snapshot = { ...snapshot, open: true }; recompute(true); },
         refresh() {
-            if (stopped) return;
             const pendingSeed = seedTarget !== null;
             recompute(true);
             if (pendingSeed && current && !searching) revealSelected();

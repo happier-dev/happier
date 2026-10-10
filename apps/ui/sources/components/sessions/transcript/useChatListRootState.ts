@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { resolveTranscriptToolVisibility } from './resolveTranscriptToolVisibility';
 import {
     useSessionActionDrafts,
     useSessionPendingMessages,
@@ -40,7 +42,6 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { usePluginTranscriptActivities } from '@/components/sessions/transcript/items/usePluginTranscriptActivities';
@@ -105,6 +106,7 @@ export function useChatListRootState(props: ChatListProps) {
     const actionDrafts = useSessionActionDrafts({ serverId: sessionServerId, sessionId: props.session.id });
     const transcriptGroupingMode = useSetting('transcriptGroupingMode');
     const transcriptGroupToolCalls = useSetting('transcriptGroupToolCalls');
+    const transcriptShowToolCalls = useSetting('transcriptShowToolCalls');
     const transcriptTurnToolCallsGroupStrategy = useSetting('transcriptTurnToolCallsGroupStrategy');
     const transcriptSessionCommon = useTranscriptSessionCommon();
     const toolViewTimelineChromeMode = transcriptSessionCommon.toolChrome.toolViewTimelineChromeMode;
@@ -177,7 +179,7 @@ export function useChatListRootState(props: ChatListProps) {
         serverId: sessionServerId,
         enabled: isExactOwner,
     });
-    const pluginActivityLifetime = captureActiveServerAccountScopeLifetime();
+    const pluginActivityLifetime = pluginActivityProjection.accountLifetime;
     const {
         activities: pluginTranscriptActivities,
         dismissedActivityIds: dismissedPluginTranscriptActivityIds,
@@ -237,9 +239,19 @@ export function useChatListRootState(props: ChatListProps) {
     });
 
     const groupingMode = transcriptGroupingMode === 'turns' ? 'turns' : 'linear';
-    const groupToolCalls =
-        transcriptGroupToolCalls === true &&
-        toolViewTimelineChromeMode === 'activity_feed';
+    const toolVisibility = resolveTranscriptToolVisibility({
+        sessionOverride: stableSessionMetadata?.work?.viewPreferences?.showToolCalls,
+        isBot: readSessionBotV1(props.session.metadata?.bot) !== null,
+        accountShowToolCalls: transcriptShowToolCalls,
+        groupToolCalls: transcriptGroupToolCalls === true && toolViewTimelineChromeMode === 'activity_feed',
+        collapsedPreviewCount: transcriptSessionCommon.toolChrome.transcriptToolCallsCollapsedPreviewCount,
+    });
+    const groupToolCalls = toolVisibility.groupToolCalls;
+    const toolChromeCommon = React.useMemo(() => ({
+        ...transcriptSessionCommon.toolChrome,
+        showToolCalls: toolVisibility.showToolCalls,
+        transcriptToolCallsCollapsedPreviewCount: toolVisibility.collapsedPreviewCount,
+    }), [transcriptSessionCommon.toolChrome, toolVisibility.collapsedPreviewCount, toolVisibility.showToolCalls]);
     const toolCallsGroupStrategy =
         transcriptTurnToolCallsGroupStrategy === 'all_tools_in_turn' ? 'all_tools_in_turn' : 'consecutive_tools';
 
@@ -433,7 +445,7 @@ export function useChatListRootState(props: ChatListProps) {
         internalProps: {
             metadata: stableSessionMetadata,
             sessionId: props.session.id,
-            sessionServerId: props.session.serverId,
+            sessionServerId,
             sessionSurfaceKey,
             sessionActive: props.session.active === true,
             sessionThinking: props.session.thinking === true,
@@ -478,7 +490,7 @@ export function useChatListRootState(props: ChatListProps) {
             routeHydrationPending: props.routeHydrationPending === true,
             forkCommon: transcriptSessionCommon.fork,
             messageDisplayCommon: transcriptSessionCommon.messageDisplay,
-            toolChromeCommon: transcriptSessionCommon.toolChrome,
+            toolChromeCommon,
             toolRouteCommon: transcriptSessionCommon.toolRoute,
         } satisfies ChatListInternalProps,
     };

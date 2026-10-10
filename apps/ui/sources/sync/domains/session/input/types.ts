@@ -8,7 +8,7 @@ import type {
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
-import type { ResumeSessionOptions, ResumeSessionResult } from '@/sync/ops/sessions';
+import type { ResumeSessionOptions, PendingInputRuntimeEnsureResult } from '@/sync/ops/sessions';
 import type {
     PendingRequestedActionV1,
     ParticipantRecipientV1,
@@ -37,6 +37,7 @@ export type SubmitPersistence =
 
 export type SubmitWakeState =
     | 'not_needed'
+    | 'pending'
     | 'started'
     | 'already_active'
     | 'failed';
@@ -201,7 +202,7 @@ export interface SessionSubmitPort {
             allowedPermissionModes?: readonly SessionPermissionMode[] | null;
         }>,
     ): Promise<DirectMessageSubmitResult>;
-    ensureSessionRuntimeForPendingInput(options: ResumeSessionOptions): Promise<ResumeSessionResult>;
+    ensureSessionRuntimeForPendingInput(options: ResumeSessionOptions): Promise<PendingInputRuntimeEnsureResult>;
     shouldDelegatePendingActivationToDaemon?(
         session: Session,
         serverId?: string | null,

@@ -283,10 +283,12 @@ export function createSessionListQueryHomeController(params: Readonly<{
         if (disposed || next === state) return;
         const previous = state;
         state = next;
-        if (next.appliedQueryKey && (next.appliedQueryKey !== previous.appliedQueryKey || next.addresses !== previous.addresses)) {
-            params.commitMembership?.(next.appliedQueryKey, next.addresses.map((address) => address.sessionId));
-        } else if (!next.appliedQueryKey && previous.appliedQueryKey) {
-            params.commitMembership?.(previous.appliedQueryKey, null);
+        if (input?.queryMembership !== 'rowOnly') {
+            if (next.appliedQueryKey && (next.appliedQueryKey !== previous.appliedQueryKey || next.addresses !== previous.addresses)) {
+                params.commitMembership?.(next.appliedQueryKey, next.addresses.map((address) => address.sessionId));
+            } else if (!next.appliedQueryKey && previous.appliedQueryKey) {
+                params.commitMembership?.(previous.appliedQueryKey, null);
+            }
         }
         for (const listener of listeners) listener();
     };

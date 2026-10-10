@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Metadata } from '@happier-dev/session-core/state';
 
 import {
     areSessionListRenderableExternalSessionIdentitiesEqual,
@@ -16,6 +17,25 @@ const canonicalExternalSessionLink = {
 };
 
 describe('sessionListRenderableMetadataComparison', () => {
+    it('does not erase a malformed legacy Bot marker into an ordinary lean Session', () => {
+        // Negative stored-metadata boundary vectors can predate today's typed schema.
+        for (const bot of [{ kind: 'ordinary' }, null]) {
+            expect(readSessionListRenderableMetadataComparison({ path: '/repo', bot } as unknown as Metadata)).toBeNull();
+        }
+    });
+    it('updates lean list identity on Bot promotion/demotion while reusing unchanged marker projections', () => {
+        const snapshot = { name: undefined, summaryText: null, path: '/repo', homeDir: null, host: null,
+            machineId: null, flavor: null, externalSessionV1: null, readStateV1: null, hiddenSystemSession: false };
+        const ordinary = normalizeSessionListRenderableMetadataComparison(snapshot);
+        const promoted = normalizeSessionListRenderableMetadataComparison({ ...snapshot, bot: { kind: 'bot' } }, ordinary);
+        expect(promoted.bot).toEqual({ kind: 'bot' });
+        expect(promoted).not.toBe(ordinary);
+        expect(normalizeSessionListRenderableMetadataComparison({ ...snapshot, bot: { kind: 'bot' } }, promoted))
+            .toBe(promoted);
+        const demoted = normalizeSessionListRenderableMetadataComparison(snapshot, promoted);
+        expect(demoted.bot).toBeUndefined();
+        expect(demoted).not.toBe(promoted);
+    });
     it('compares normalized external-session source identity independent of object key order', () => {
         expect(areSessionListRenderableExternalSessionIdentitiesEqual(
             {

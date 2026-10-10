@@ -7,8 +7,10 @@ import { useSessionMachineTarget } from '@/components/sessions/model/useSessionM
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
-import { SessionViewerControllerProvider } from './SessionViewerController';
+import { SessionViewerControllerProvider } from './SessionViewerControllerProvider';
 import type { SessionViewerSource } from './sessionViewerPresentation';
 
 /**
@@ -25,10 +27,11 @@ export function SessionViewerScope(
   >,
 ): React.ReactElement {
   const phone = useDeviceType() === 'phone';
+  const serverId = usePreferredServerIdForSession({ sessionId: props.sessionId, serverId: props.serverId });
   const machineId =
-    useSessionMachineTarget(props.sessionId, props.serverId)?.machineId ?? null;
+    useSessionMachineTarget(props.sessionId, serverId)?.machineId ?? null;
   const scopeId = useDestinationPaneScopeId(
-    createSessionPaneScopeId(props.sessionId, props.serverId ?? undefined),
+    createSessionPaneScopeId(props.sessionId, serverId ?? undefined),
   );
   const pane = useAppPaneScope(scopeId);
   const paneRef = React.useRef(pane);
@@ -57,7 +60,9 @@ export function SessionViewerScope(
   );
   return (
     <SessionViewerControllerProvider
-      serverId={props.serverId}
+      key={serverId ? sessionAddressKey({ sessionId: props.sessionId, serverId }) : props.sessionId}
+      sessionId={props.sessionId}
+      serverId={serverId}
       phone={phone}
       canPresentSource={canPresentSource}
       openDocked={openDocked}

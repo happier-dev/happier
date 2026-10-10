@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
 
 /**
  * `SessionView` is the one Session renderer; every transcript and composer subscription lives under
@@ -26,8 +27,19 @@ vi.mock('@/components/sessions/shell/SessionView', () => ({
 }));
 
 describe('SessionInPane', () => {
+    let previousState = storage.getState();
+    beforeEach(() => {
+        previousState = storage.getState();
+        // These lifetime tests use already-authoritative Sessions; cold detail reads belong to
+        // the real route hydration owner, not the Session renderer probe above.
+        storage.setState({ sessions: { ...previousState.sessions,
+            'worker-1': createSessionFixture({ id: 'worker-1' }),
+            'worker-2': createSessionFixture({ id: 'worker-2' }),
+        } });
+    });
     afterEach(() => {
         standardCleanup();
+        storage.setState(previousState, true);
         mounted.count = 0;
         mounted.mounts = 0;
         mounted.lastProps = null;

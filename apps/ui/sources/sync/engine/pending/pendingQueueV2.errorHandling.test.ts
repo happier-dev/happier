@@ -241,8 +241,8 @@ describe('pendingQueueV2 error handling', () => {
         const readStarted = createDeferred<void>();
         const oldRead = createDeferred<Response>();
         const bodyStarted = createDeferred<void>();
-        const body = createDeferred<{ didUpdate: boolean }>();
-        const successfulPatch = Response.json({ didUpdate: true });
+        const body = createDeferred<{ didUpdate: boolean; requestedAction: { v: 1; kind: 'send_now' } }>();
+        const successfulPatch = Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } });
         successfulPatch.json = async () => {
             bodyStarted.resolve();
             return body.promise;
@@ -275,7 +275,7 @@ describe('pendingQueueV2 error handling', () => {
                 expect.objectContaining({ localId, pendingRequestedAction: { v: 1, kind: 'send_now' } }),
             ]);
         } finally {
-            body.resolve({ didUpdate: true });
+            body.resolve({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } });
             await mutation;
         }
     });

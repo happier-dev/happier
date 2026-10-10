@@ -7,9 +7,29 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema,
-    PluginProjectionV2Schema, SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol';
-import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit/render/renderScreen';
+    deriveBoxPublicKeyFromSeed, MACHINE_PLAIN_DATA_KEY_MARKER,
+    PluginProjectionV2Schema, DaemonContributionRegistryProjectionDescribeResponseSchema, SessionCurrentProjectionRecordV1Schema,
+    SessionAgentTransitionRequestV1Schema, SessionAgentTransitionResultV1Schema,
+    SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema,
+    SessionMetadataVersionConflictV1Schema, readSessionPendingQueueHoldV1FromMetadata,
+    tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { RawRecordSchema } from '@happier-dev/session-core/raw';
+import type { MessageAckResponse } from '@happier-dev/protocol/updates';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
+    SessionPendingMessageComposerAdmissionPrepareResponseV1Schema,
+    SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema } from '@happier-dev/protocol/sessions/userMessageRpc';
+import { DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { SessionAttachmentUploadInitRequestV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { Socket } from 'socket.io-client';
+import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, renderScreen as renderTestkitScreen } from '@/dev/testkit/render/renderScreen';
 import { activateSessionShellStorageBoundary,
     installSessionShellCommonModuleMocks,
     resetSessionShellDraftStateForTest,
@@ -22,14 +42,36 @@ import {
     readSessionDraftValue,
     writeSessionDraftValue,
 } from '@/dev/testkit/sessionDraftRepositoryTestkit';
-import type { PendingMessage } from '@/sync/domains/state/storageTypes';
-import type { SessionPending } from '@/sync/store/domains/pending';
+import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
-installDisconnectedServerSocketBoundary();
+installDisconnectedServerSocketBoundary(configureAttachmentSocket);
 
-type StorageModule = typeof import('@/sync/domains/state/storage');
-let originalStorageModule: StorageModule | undefined;
-let originalStorageModulePromise: Promise<StorageModule> | undefined;
+// Static draft/transfer imports can bind Socket.IO before the harness loads.
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
+// Native Iroh and the daemon's loopback HTTP listener are external boundaries.
+// Route selection, grant parsing, lease custody and the transfer pipeline stay real.
+vi.mock('@happier-dev/iroh-native', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/iroh-native')>();
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected native Home operation'); };
+    const native = {
+        getAvailability: () => ({ available: true }),
+        createEndpoint: async () => ({ endpointHandle: 'client-endpoint', endpointId: 'b'.repeat(64), relayPolicy: 'automatic',
+            relayMode: 'disabled', capProfile: 'machineBulk', relayUrls: [] }),
+        startMachineTunnel: async (input) => ({ machineTunnelId: 'attachment-tunnel', localPort: 48123,
+            endpointHandle: input.endpointHandle, remoteEndpointId: input.endpointId, connectionActive: true,
+            observedPath: 'direct', startedAtMs: Date.now(), lastErrorCode: null }),
+        startMachineHttpTunnel: async (input) => ({ machineTunnelId: 'attachment-tunnel', localPort: 48123, localCapability: 'c'.repeat(64),
+            endpointHandle: input.endpointHandle, remoteEndpointId: input.endpointId, connectionActive: true,
+            observedPath: 'direct', startedAtMs: Date.now(), lastErrorCode: null }),
+        stopMachineTunnel: async () => {},
+        ensureHomeTunnel: unexpected, releaseHomeTunnel: unexpected, shutdownEndpoint: unexpected, getTunnelStatus: unexpected,
+    } satisfies import('@happier-dev/iroh-native').NativeIrohModule;
+    return { ...actual, getOptionalHappierIrohNativeModule: () => native };
+});
+
 let seedSessionStorage: (() => void) | undefined;
 
 vi.mock('@/components/ui/code/editor/CodeEditor', () => ({ CodeEditor: () => null }));
@@ -55,8 +97,10 @@ const sessionState = vi.hoisted(() => ({
         seq: 0,
         presence: 'offline',
         active: false,
-        accessLevel: 'edit',
-        access: { level: 'edit', capabilities: { readTranscript: true, submitAgentInput: true } },
+        currentStorageState: 'hosted',
+        transcriptShareable: true,
+        accessLevel: 'owner',
+        access: { level: 'owner', capabilities: { readTranscript: true, submitAgentInput: true } },
         metadata: {
             machineId: 'm1',
             flavor: 'codex',
@@ -88,7 +132,7 @@ const useFeatureDecisionSpy = vi.hoisted(() => vi.fn());
 const recordArmedContinuationSubmissionSpy = vi.hoisted(() => vi.fn((_submission: unknown) => true));
 const runSessionAgentTransitionSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => ({
     type: 'accepted' as const,
-    localId: 'agent-transition:armed-local-id',
+    localId: 'armed-local-id',
 })));
 const daemonMergedProjectionState = vi.hoisted(() => ({
     value: { phase: 'idle', inputs: null } as any,
@@ -101,29 +145,16 @@ const chooseSubmitModeState = vi.hoisted(() => ({
 const reviewCommentDraftsState = vi.hoisted(() => ({
     current: [] as any[],
 }));
-// The canonical pending slice the transition's custody reader walks. Held as one
-// stable object so a test can seed `s1` and the store mock still sees it.
-const canonicalSessionPendingState = vi.hoisted(() => ({} as Record<string, SessionPending>));
 const sessionPendingMessagesState = vi.hoisted(() => ({
     current: [] as any[],
-    // Lets a case model the real ordering: the transition RPC answers first, and
-    // the canonical pending row syncs afterwards, publishing a re-render.
-    listeners: new Set<() => void>(),
 }));
-const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
 // The transcript rows the canonical subagent/participant-target owner reads. Seeding
 // them lets a case address a real Session-owned Execution Run through the composer's
 // recipient without mocking the derivation itself.
 const sessionSubagentSourceMessagesState = vi.hoisted(() => ({
     current: [] as any[],
 }));
-const companionPreferenceSlot = vi.hoisted(() => ({ storageKey: null, stored: undefined }));
-const machineDisplayNamesById = vi.hoisted(() => ({}));
-const mutateCompanionPreference = vi.hoisted(() => vi.fn());
-const settingWriter = vi.hoisted(() => vi.fn());
-const localSettingWriter = vi.hoisted(() => vi.fn());
 const settingsSnapshot = vi.hoisted(() => ({ experiments: true, featureToggles: {} }));
-const realtimeStatus = vi.hoisted(() => ({ status: 'connected' }));
 
 const pendingFireAndForget: Promise<unknown>[] = [];
 const TEST_SERVER_ACCOUNT_SCOPE = { serverId: 'server-1', accountId: 'account-1' } as const;
@@ -282,46 +313,12 @@ vi.mock(
     },
 );
 
-vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => daemonMergedProjectionState.value,
-}));
-vi.mock('@/sync/ops/pendingMessageComposerAdmission', () => ({
-    preparePendingMessageComposerAdmission: (...args: unknown[]) => (
-        preparePendingMessageComposerAdmissionMock(...args)
-    ),
-    acceptPendingMessageComposerAdmission: (...args: unknown[]) => (
-        acceptPendingMessageComposerAdmissionMock(...args)
-    ),
-}));
 vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
     voiceSessionManager: {},
 }));
 
-const sendMessageSpy = vi.fn(async (..._args: any[]) => {});
-const enqueuePendingMessageSpy = vi.fn(async (..._args: any[]) => ({ localId: 'pending-local-id' }));
-type PendingUpdateOptions = Parameters<(typeof import('@/sync/sync'))['sync']['updatePendingMessage']>[4];
-function acceptedPendingComposerFact(
-    sessionId: string,
-    pendingId: string,
-    structuredInput: unknown,
-    options?: PendingUpdateOptions,
-) {
-    return {
-        sessionId,
-        localId: options?.replacementLocalId ?? pendingId,
-        structuredInput,
-        stagedMediaHandles: options?.preparedComposerAdmission?.stagedMediaHandles ?? [],
-    };
-}
-const updatePendingMessageSpy = vi.fn(async (
-    sessionId: string,
-    pendingId: string,
-    _text: string,
-    structuredInput: unknown,
-    options?: Parameters<typeof acceptedPendingComposerFact>[3],
-) => acceptedPendingComposerFact(sessionId, pendingId, structuredInput, options));
-function pendingMessageAuthorityExpectation() {
+function pendingMessageAuthorityExpectation(expectedSession: Session) {
     const options = updatePendingMessageSpy.mock.calls.at(-1)?.[4];
     if (!options?.accountLifetime) throw new Error('Pending update did not capture its Account lifetime');
     expect(options).toMatchObject({
@@ -333,26 +330,13 @@ function pendingMessageAuthorityExpectation() {
         },
     });
     expect(options.accountLifetime.isCurrent()).toBe(true);
-    expect(options.session).toBe(sessionState.session);
+    expect(options.session).toBe(expectedSession);
     return {
         serverId: TEST_SERVER_ACCOUNT_SCOPE.serverId,
         accountLifetime: options.accountLifetime,
         session: options.session,
     };
 }
-function deferPendingComposerUpdate(gate: Promise<void>) {
-    return async (
-        sessionId: string,
-        pendingId: string,
-        _text: string,
-        structuredInput: unknown,
-        options?: Parameters<typeof acceptedPendingComposerFact>[3],
-    ) => {
-        await gate;
-        return acceptedPendingComposerFact(sessionId, pendingId, structuredInput, options);
-    };
-}
-const patchSessionMetadataWithRetrySpy = vi.fn(async (..._args: any[]) => {});
 
 function setCurrentComposerAttachmentProjection(input: Readonly<{
     generation?: number;
@@ -402,62 +386,111 @@ function setCurrentComposerAttachmentProjection(input: Readonly<{
     };
 }
 
-const ensureSessionVisibleSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => ({ kind: 'available' })));
-const refreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
-let realSyncRuntime: (typeof import('@/sync/sync'))['sync'] | undefined;
-vi.mock('@/sync/sync', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/sync')>(),
-    sync: {
-        materializeExistingSessionDraft: (...args: Parameters<(typeof import('@/sync/sync'))['sync']['materializeExistingSessionDraft']>) => {
-            if (!realSyncRuntime) throw new Error('Real Sync draft owner was not initialized');
-            return realSyncRuntime.materializeExistingSessionDraft(...args);
-        },
-        getSessionAttachmentTransferContext: () => undefined,
-        markSessionViewed: async () => {},
-        markSessionLiveTailIntent: () => {},
-        fetchPendingMessages: async () => {},
-        publishSessionPermissionModeToMetadata: async () => {},
-        publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-        publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-        publishSessionModelOverrideToMetadata: async () => {},
-        refreshSessions: async () => {},
-        // The canonical readers an indeterminate transition outcome reconciles
-        // against. Both are real sync methods; the spies let a test observe that
-        // reconciliation asks the canonical owners rather than inventing a status
-        // operation of its own.
-        ensureSessionVisibleForMessageRoute: (...args: any[]) => ensureSessionVisibleSpy(...args),
-        refreshSessionMessages: (...args: any[]) => refreshSessionMessagesSpy(...args),
-        onSessionVisible: () => {},
-        getAcceptedExternalSessionTailCursor: () => null,
-        subscribeAcceptedExternalSessionTailCursor: () => () => {},
-        sendMessage: (...args: any[]) => sendMessageSpy(...args),
-        enqueuePendingMessage: (...args: any[]) => enqueuePendingMessageSpy(...args),
-        updatePendingMessage: (...args: Parameters<typeof updatePendingMessageSpy>) => updatePendingMessageSpy(...args),
-        patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetrySpy(...args),
-        submitMessage: async () => {},
-        encryption: {
-            getMachineEncryption: () => null,
-        },
-    },
-}));
 
-const resumeSessionSpy = vi.fn(async (..._args: any[]) => ({ type: 'success' }));
+const resumeSessionSpy = vi.fn(async (..._args: any[]) => ({ type: 'success', sessionId: 's1' }));
 const uploadSpy = vi.fn(async (..._args: any[]) => ({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' }));
+function acceptedMessageAck(payload: Readonly<{ sid: string; localId: string }>) {
+    return { ok: true as const, id: `message-${payload.localId}`, seq: 1, localId: payload.localId, didWrite: true };
+}
+const messageAckSpy = vi.fn(async (payload: Parameters<typeof acceptedMessageAck>[0]): Promise<MessageAckResponse> => acceptedMessageAck(payload));
+const preparedUploads = new Map<string, ReturnType<typeof SessionAttachmentUploadInitRequestV1Schema.parse>>();
+const serverPendingRows = new Map<string, Record<string, unknown>>();
+let serverPendingVersion = 0;
+let pendingPatchRespondAfter: Promise<void> | undefined;
+let canonicalRefreshRespondAfter: Promise<void> | undefined;
 
-vi.mock('@/sync/ops', async (importOriginal) => {
-    const actual = await importOriginal<any>();
+function pendingWireRow(message: PendingMessage) {
+    const raw = RawRecordSchema.safeParse(message.rawRecord);
     return {
-        ...actual,
-        sessionAbort: vi.fn(),
-        resumeSession: (...args: any[]) => resumeSessionSpy(...args),
-        sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
-        machineCapabilitiesInvoke: vi.fn(async () => ({ type: 'success' })),
+        localId: message.localId ?? message.id,
+        content: { t: 'plain', v: raw.success ? raw.data : {
+            role: 'user', content: { type: 'text', text: message.text },
+            ...(message.displayText ? { meta: { displayText: message.displayText } } : {}),
+        } },
+        messageRole: 'user', status: 'queued', requestedAction: message.pendingRequestedAction ?? { v: 1, kind: 'enqueue' },
+        createdAt: message.createdAt, updatedAt: message.updatedAt, position: 1,
+        ...(message.recipient ? { recipient: message.recipient } : {}),
     };
-});
+}
 
-vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
-    sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
-}));
+function configureAttachmentSocket(socket: Socket, serverUrl?: string) {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
+    });
+    vi.spyOn(socket, 'emit').mockImplementation(() => socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
+        if (event === 'message') {
+            if (!payload || typeof payload !== 'object' || !('sid' in payload) || typeof payload.sid !== 'string'
+                || !('localId' in payload) || typeof payload.localId !== 'string') throw new Error('Invalid message request');
+            return messageAckSpy({ sid: payload.sid, localId: payload.localId });
+        }
+        if (event === 'rpc-call') {
+            if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string'
+                || !('params' in payload)) throw new Error('Invalid Socket RPC request');
+            const separator = payload.method.indexOf(':');
+            const targetId = payload.method.slice(0, separator);
+            const method = payload.method.slice(separator + 1);
+            if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                return { ok: true, result: DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+                    protocolVersion: 1,
+                    projection: daemonMergedProjectionState.value.inputs?.pluginProjectionV2
+                        ?? PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {} }),
+                }) };
+            }
+            if (method === SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1) {
+                const request = SessionPendingMessageComposerAdmissionPrepareRequestV1Schema.parse(payload.params);
+                return { ok: true, result: SessionPendingMessageComposerAdmissionPrepareResponseV1Schema.parse(
+                    await preparePendingMessageComposerAdmissionMock(targetId, request),
+                ) };
+            }
+            if (method === SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1) {
+                await acceptPendingMessageComposerAdmissionMock(targetId,
+                    SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.parse(payload.params),
+                    { serverId: new URL(serverUrl ?? 'https://server-1').hostname });
+                return { ok: true, result: { ok: true } };
+            }
+            if (method === SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ABANDONED_V1) return { ok: true, result: { ok: true } };
+            if (method === RPC_METHODS.SESSION_AGENT_TRANSITION) {
+                const request = SessionAgentTransitionRequestV1Schema.parse(payload.params);
+                return { ok: true, result: SessionAgentTransitionResultV1Schema.parse(await runSessionAgentTransitionSpy({
+                    machineId: targetId, serverId: new URL(serverUrl ?? 'https://server-1').hostname, request,
+                })) };
+            }
+            if (method === RPC_METHODS.SPAWN_HAPPY_SESSION || method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
+                return { ok: true, result: await resumeSessionSpy(payload.params) };
+            }
+            if (method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE) {
+                if (!payload.params || typeof payload.params !== 'object' || !('workingDirectory' in payload.params)
+                    || typeof payload.params.workingDirectory !== 'string') throw new Error('Missing direct-import working directory');
+                // The daemon's direct-import envelope carries transport context
+                // beside the strict Session attachment request.
+                const { workingDirectory: _workingDirectory, ...attachment } = payload.params;
+                const request = SessionAttachmentUploadInitRequestV1Schema.parse(attachment);
+                const uploadId = `attachment-upload-${preparedUploads.size + 1}`;
+                preparedUploads.set(uploadId, request);
+                return { ok: true, result: {
+                    success: true, uploadId, destDisplayPath: 'p1', expectedSizeBytes: request.sizeBytes,
+                    chunkSizeBytes: 1024,
+                    recipientPublicKeyBase64: Buffer.from(deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(7))).toString('base64'),
+                    expiresAt: Date.now() + 60_000,
+                    endpointCandidates: [{ kind: 'http', url: `http://127.0.0.1:48123/machine-transfers/direct/imports/${uploadId}`, expiresAt: Date.now() + 60_000 }],
+                } };
+            }
+            if (method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT) return { ok: true, result: { success: true } };
+            if (method === SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND) {
+                if (!payload.params || typeof payload.params !== 'object' || !('localId' in payload.params)
+                    || typeof payload.params.localId !== 'string') throw new Error('Invalid runtime message request');
+                const ack = await messageAckSpy({ sid: targetId, localId: payload.params.localId });
+                return { ok: true, result: ack };
+            }
+            return { ok: false, error: 'RPC method unavailable', errorCode: 'METHOD_NOT_AVAILABLE' };
+        }
+        return { v: 1, ok: true, admittedSessionIds: [] };
+    });
+}
+
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: () => ({ execute: vi.fn() }),
@@ -480,9 +513,6 @@ vi.mock('@/components/sessions/agentPicker/useInSessionAgentPickerControls', () 
         },
         onAgentPickerVisibilityChange: () => {},
     }),
-}));
-vi.mock('@/sync/ops/sessionAgentTransition', () => ({
-    runSessionAgentTransitionOnMachine: (...args: any[]) => runSessionAgentTransitionSpy(...args),
 }));
 
 vi.mock('@/components/sessions/agentInput', () => ({
@@ -580,126 +610,72 @@ installSessionShellCommonModuleMocks({
             },
         }).module;
     },
-    storage: async (importOriginal) => {
-        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-        const { createSessionAccessFixture, createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
-        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
-        sessionState.session = createSessionFixture({
-            ...sessionState.session,
-            access: createSessionAccessFixture('edit'),
-        });
-        const fixture = createStorageModuleStub({
-            storage: createStorageStoreMock({
-                    sessions: { s1: sessionState.session },
-                    sessionPending: canonicalSessionPendingState,
-                    machines: {
-                        m1: {
-                            id: 'm1',
-                            seq: 0,
-                            createdAt: 0,
-                            updatedAt: 0,
-                            active: true,
-                            activeAt: 0,
-                            metadata: {
-                                host: 'happy-host',
-                                platform: 'darwin',
-                                happyCliVersion: '0.0.0',
-                                happyHomeDir: '/tmp',
-                                homeDir: '/tmp',
-                            },
-                            metadataVersion: 0,
-                            daemonState: null,
-                            daemonStateVersion: 0,
-                        },
-                    },
-                    sessionListIndexByServerId: {},
-                    settings: settingsDefaults,
-                    profile: profileDefaults,
-                    deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
-            }),
-            useSession: () => sessionState.session,
-            // Keep the hook aligned with the same canonical session fixture used by useSession.
-            useSessionMachineId: () => sessionState.session.metadata.machineId ?? null,
-            useIsDataReady: () => true,
-            useRealtimeStatus: () => realtimeStatus,
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionPendingMessages: () => {
-                const [, forceRender] = React.useState(0);
-                React.useEffect(() => {
-                    const listener = () => forceRender((value) => value + 1);
-                    sessionPendingMessagesState.listeners.add(listener);
-                    return () => {
-                        sessionPendingMessagesState.listeners.delete(listener);
-                    };
-                }, []);
-                return { messages: sessionPendingMessagesState.current, discarded: [] };
-            },
-            useSessionSubagentSourceMessages: () => sessionSubagentSourceMessagesState.current,
-            useSessionReviewCommentsDrafts: () => [],
-            useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
-            useSessionCompanionPreferenceSlot: () => companionPreferenceSlot,
-            useMutateSessionCompanionPreference: () => mutateCompanionPreference,
-            useSessionUsage: () => null,
-            useSetting: (key: keyof typeof settingsDefaults) => settingsDefaults[key],
-            useMachineDisplayNamesById: () => machineDisplayNamesById,
-            useSettings: () => settingsSnapshot,
-            useAutomations: () => [],
-            useMachine: () => null,
-            useLocalSetting: (key: string) => {
-                if (key === 'acknowledgedCliVersions') return {};
-                if (key === 'uiMultiPanePanelsEnabled') return false;
-                if (key === 'detailsPaneTabsBehavior') return 'preview';
-                if (key === 'rightPaneWidthPx') return 360;
-                if (key === 'rightPaneWidthBasisPx') return 1200;
-                if (key === 'detailsPaneWidthPx') return 520;
-                if (key === 'detailsPaneWidthBasisPx') return 1200;
-                return null;
-            },
-            useLocalSettingMutable: () => [null, localSettingWriter],
-            useSettingMutable: () => [null, settingWriter],
-        });
-        // Original storage hooks reach syncSettings, which imports this mocked
-        // module. Publish the fixture first rather than await that cycle here.
-        originalStorageModulePromise = importOriginal<StorageModule>().then((actual) => {
-            originalStorageModule = actual;
-            const initial = fixture.storage.getState();
-            seedSessionStorage = () => actual.storage.setState({
-                sessions: { s1: sessionState.session },
-                sessionPending: canonicalSessionPendingState,
-                machines: initial.machines,
-                sessionListIndexByServerId: initial.sessionListIndexByServerId,
-                settings: initial.settings,
-                profile: initial.profile,
-                deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
-            });
-            seedSessionStorage();
-            return actual;
-        });
-        return {
-            ...fixture,
-            // Import-cycle adapter only: once loaded, every store operation is
-            // owned by the production store, including Account restoration.
-            storage: new Proxy(fixture.storage, {
-                get(target, property) {
-                    return Reflect.get(originalStorageModule?.storage ?? target, property);
-                },
-                apply(target, thisArgument, argumentsList) {
-                    return Reflect.apply(originalStorageModule?.storage ?? target, thisArgument, argumentsList);
-                },
-            }),
-            clearSessionMessageDerivedCachesForServerScopeReset: (...args: Parameters<StorageModule['clearSessionMessageDerivedCachesForServerScopeReset']>) => {
-                if (!originalStorageModule) throw new Error('Original store was not initialized');
-                return originalStorageModule.clearSessionMessageDerivedCachesForServerScopeReset(...args);
-            },
-            readSessionMessagesSnapshot: (...args: Parameters<StorageModule['readSessionMessagesSnapshot']>) => {
-                if (!originalStorageModule) throw new Error('Original transcript snapshot reader was not initialized');
-                return originalStorageModule.readSessionMessagesSnapshot(...args);
-            },
-        };
-    },
 });
+
+// Hook reads and imperative custody reads must share the production store.
+vi.doUnmock('@/sync/domains/state/storage');
+const originalStorageModule = await import('@/sync/domains/state/storage');
+const { resolveWorkspaceTargetForSessionFromState } = await import('@/sync/domains/session/resolveWorkspaceTargetForSessionFromState');
+seedSessionStorage = () => {
+    const { storage } = originalStorageModule!;
+    sessionState.session = createSessionFixture({ ...sessionState.session });
+    storage.setState({
+        isDataReady: true,
+        settings: { ...settingsDefaults, ...settingsSnapshot },
+        localSettings: { ...localSettingsDefaults, acknowledgedCliVersions: {}, uiMultiPanePanelsEnabled: false },
+        sessions: {},
+        machines: {},
+        machineListByServerId: {},
+        sessionMessages: { s1: createSessionMessagesFixture({
+            isLoaded: true,
+            messagesById: Object.fromEntries(sessionSubagentSourceMessagesState.current.map((message) => [message.id, message])),
+            messageIdsOldestFirst: sessionSubagentSourceMessagesState.current.map((message) => message.id),
+        }) },
+        sessionPending: {},
+        reviewCommentsDraftsBySessionId: {},
+    });
+    storage.getState().applySessions([sessionState.session]);
+    storage.getState().applyMachines([createMachineFixture({
+        id: sessionState.session.metadata.machineId ?? 'm1',
+        storageMode: 'plain',
+        active: true,
+        operationProtocolCapabilitiesRevision: 1,
+        operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1], endpointId: 'a'.repeat(64) } },
+        daemonState: { transfer: {
+            supported: { import: true, export: true },
+            listenerClasses: {
+                loopback_http: { enabled: false, configured: false, active: false },
+                tailscale_serve_https: { enabled: false, configured: false, active: false },
+            },
+            lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
+        } },
+        metadata: { ...createMachineFixture().metadata!, host: 'happy-host', homeDir: '/tmp' },
+    })], true, { sourceServerId: sessionState.session.serverId });
+    storage.getState().applyPendingMessages('s1', sessionPendingMessagesState.current.map((message) => ({
+        ...message, pendingOutboxScope: TEST_SERVER_ACCOUNT_SCOPE,
+    })));
+    serverPendingRows.clear();
+    for (const message of sessionPendingMessagesState.current) {
+        serverPendingRows.set(message.localId ?? message.id, pendingWireRow(message));
+    }
+    serverPendingVersion = serverPendingRows.size > 0 ? 1 : 0;
+    const scope = resolveWorkspaceTargetForSessionFromState(storage.getState(), {
+        serverId: sessionState.session.serverId,
+        sessionId: 's1',
+    });
+    storage.setState({ reviewCommentsDraftsByWorkspaceCacheKey: scope
+        ? { [scope.workspaceCacheKey]: reviewCommentDraftsState.current } : {} });
+    sessionState.session = storage.getState().sessions.s1;
+};
+
+async function renderScreen(element: Parameters<typeof renderTestkitScreen>[0]) {
+    seedSessionStorage?.();
+    const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    clearDaemonMergedProjectionCacheForTests();
+    await loadDaemonMergedProjectionCacheEntry({ machineId: sessionState.session.metadata.machineId,
+        serverId: sessionState.session.serverId });
+    return renderTestkitScreen(element);
+}
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: false }),
@@ -813,11 +789,16 @@ function readSessionShellDraftTextForTest(sessionId: string) {
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { getInactiveSessionUiState } = await import('@/components/sessions/model/inactiveSessionUi');
 const { SessionView } = await import('./SessionView');
-if (!originalStorageModulePromise) throw new Error('Storage fixture was not initialized');
-await originalStorageModulePromise;
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
 await prepareSessionDraftPersistenceStorage();
-realSyncRuntime = (await import('@/sync/syncEngine')).sync;
+const realSyncRuntime = (await import('@/sync/syncEngine')).sync;
+// Observe the real owners; response control belongs to HTTP and Socket below.
+const sendMessageSpy = vi.spyOn(realSyncRuntime, 'sendMessage');
+const enqueuePendingMessageSpy = vi.spyOn(realSyncRuntime, 'enqueuePendingMessage');
+const updatePendingMessageSpy = vi.spyOn(realSyncRuntime, 'updatePendingMessage');
+const patchSessionMetadataWithRetrySpy = vi.spyOn(realSyncRuntime, 'patchSessionMetadataWithRetry');
+const ensureSessionVisibleSpy = vi.spyOn(realSyncRuntime, 'ensureSessionVisibleForMessageRoute');
+const refreshSessionMessagesSpy = vi.spyOn(realSyncRuntime, 'refreshSessionMessages');
 let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 describe('SessionView (attachments.uploads resumable send)', () => {
@@ -826,27 +807,29 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         clearSessionAttachmentDrafts(mainAttachmentDraftScope('server-1'));
         clearSessionAttachmentDrafts(mainAttachmentDraftScope('server-2'));
         sendMessageSpy.mockClear();
-        ensureSessionVisibleSpy.mockReset().mockResolvedValue({ kind: 'available' });
-        refreshSessionMessagesSpy.mockReset().mockResolvedValue(undefined);
+        ensureSessionVisibleSpy.mockClear();
+        refreshSessionMessagesSpy.mockClear();
         enqueuePendingMessageSpy.mockClear();
         updatePendingMessageSpy.mockClear();
         patchSessionMetadataWithRetrySpy.mockClear();
         preparePendingMessageComposerAdmissionMock.mockReset().mockImplementation(async (
             _sessionId: string,
             request: { text: string; structuredInput: unknown },
-        ) => ({ ok: true, text: request.text, structuredInput: request.structuredInput }));
+        ) => ({ ok: true, text: request.text, structuredInput: request.structuredInput, stagedMediaHandles: [] }));
         acceptPendingMessageComposerAdmissionMock.mockReset().mockResolvedValue(undefined);
         daemonMergedProjectionState.value = { phase: 'idle', inputs: null };
-        resumeSessionSpy.mockClear();
-        uploadSpy.mockClear();
+        resumeSessionSpy.mockReset().mockResolvedValue({ type: 'success', sessionId: 's1' });
+        uploadSpy.mockReset().mockResolvedValue({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+        messageAckSpy.mockReset().mockImplementation(async (payload) => acceptedMessageAck(payload));
+        preparedUploads.clear();
+        pendingPatchRespondAfter = undefined;
+        canonicalRefreshRespondAfter = undefined;
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         chatListPropsSpy.mockClear();
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         reviewCommentDraftsState.current = [];
         sessionPendingMessagesState.current = [];
-        sessionPendingMessagesState.listeners.clear();
-        for (const key of Object.keys(canonicalSessionPendingState)) delete canonicalSessionPendingState[key];
+        originalStorageModule?.clearSessionMessageDerivedCachesForServerScopeReset();
         armedContinuationState.intent = null;
         armedContinuationState.localId = null;
         armedContinuationState.submission = null;
@@ -854,7 +837,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         clearArmedContinuationSpy.mockClear();
         clearPersistedArmedContinuationSubmissionSpy.mockClear();
         recordArmedContinuationSubmissionSpy.mockClear();
-        runSessionAgentTransitionSpy.mockClear();
+        runSessionAgentTransitionSpy.mockReset().mockResolvedValue({ type: 'accepted', localId: 'armed-local-id' });
         useFeatureEnabledSpy.mockClear();
         useFeatureDecisionSpy.mockClear();
         sessionState.session.seq = 0;
@@ -877,27 +860,133 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             access: createSessionAccessFixture(sessionState.session.accessLevel),
         });
         const accountHttp = createHomeHubArtifactHttpBoundary(TEST_SERVER_ACCOUNT_SCOPE.accountId);
+        let wireSession: ReturnType<typeof SessionCurrentProjectionRecordV1Schema.parse> | undefined;
+        function readWireSession() {
+            if (!wireSession) {
+                const { ownerMetadataView: _ownerMetadataView, composerOptionsInput: _composerOptionsInput, ...session } = sessionState.session;
+                wireSession = SessionCurrentProjectionRecordV1Schema.parse({
+                    ...session,
+                    metadataLayoutVersion: 0, metadata: JSON.stringify(session.metadata),
+                    agentState: JSON.stringify(session.agentState), dataEncryptionKey: null,
+                    effectiveAccess: { v: 1, level: session.access.level,
+                        sources: [{ kind: 'owner' }], capabilities: session.access.capabilities },
+                    responsibleAccountId: null, responsibleAccount: null, share: null,
+                    archivedAt: null, pendingCount: 0, pendingVersion: 0,
+                });
+            }
+            return wireSession;
+        }
+        const requestHttp = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const url = new URL(String(input));
+            if (url.origin === 'http://127.0.0.1:48123') {
+                if (url.pathname.includes('/chunks/')) return Response.json({ success: true });
+                if (url.pathname.endsWith('/finalize')) {
+                    const uploadId = url.pathname.split('/').at(-2)!;
+                    const request = preparedUploads.get(uploadId);
+                    if (!request) throw new Error('Unknown prepared attachment upload');
+                    const result = await uploadSpy(request);
+                    return Response.json({ success: true,
+                        finalized: { success: true, path: result.path, sizeBytes: result.sizeBytes }, sha256: result.sha256 });
+                }
+                throw new Error(`Unexpected attachment carrier path: ${url.pathname}`);
+            }
+            const path = url.pathname;
+            if (path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/features') {
+                const response = createRootLayoutFeaturesResponse();
+                response.capabilities.session.pendingInput = { protocolVersion: 3 };
+                for (const id of ['machines.transfer', 'machines.transfer.directPeer', 'machines.peerMediation'] as const) {
+                    if (!tryWriteServerEnabledBitInPlace(response, id, true)) throw new Error(`Unknown transfer feature: ${id}`);
+                }
+                return Response.json(response);
+            }
+            if (path === '/v1/machines/m1') return Response.json({ machine: { id: 'm1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+            if (path === '/v1/machines/peer/mediation/route-grants') {
+                const request = DirectRouteGrantRequestV2Schema.parse(JSON.parse(String(init?.body)));
+                const now = Date.now();
+                return Response.json({ ok: true, grant: SignedDirectRouteGrantV2Schema.parse({
+                    payload: { v: 2, grantId: 'attachment-grant', accountId: TEST_SERVER_ACCOUNT_SCOPE.accountId,
+                        machineId: request.machineId, flowKind: request.flowKind, routeKind: request.routeKind,
+                        scope: request.scope, iat: now, exp: now + request.ttlMs,
+                        aud: 'happier-daemon-route-grant', endpointFingerprint: request.endpointFingerprint,
+                        iroh: request.iroh, proofKind: 'ephemeral_ed25519', ephemeralPublicKeyBase64Url: request.ephemeralPublicKeyBase64Url },
+                    signature: { keyId: 'test-home', alg: 'Ed25519', valueBase64Url: Buffer.from(new Uint8Array(64)).toString('base64url') },
+                }) });
+            }
+            if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
+            if (path === '/v2/sessions/s1' && init?.method === 'PATCH') {
+                const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+                const current = readWireSession();
+                const matches = patch.mode === 'owner_migration'
+                    ? current.metadataLayoutVersion === 0
+                        && patch.source.metadata.version === current.metadataVersion
+                        && patch.source.metadata.ciphertext === current.metadata
+                        && patch.source.agentState.version === current.agentStateVersion
+                        && patch.source.agentState.ciphertext === current.agentState
+                    : current.metadataLayoutVersion === 1 && patch.sharedMetadata.expectedVersion === current.metadataVersion
+                        && (patch.mode === 'shared_editor' || (patch.agentState.expectedVersion === current.agentStateVersion
+                            && JSON.stringify(patch.expectedOwnerMetadata) === JSON.stringify(current.ownerMetadata)));
+                if (!matches) return Response.json(SessionMetadataVersionConflictV1Schema.parse({
+                    code: 'session_metadata_version_conflict', metadataLayoutVersion: 1,
+                    sharedMetadata: { version: current.metadataVersion }, agentState: { version: current.agentStateVersion },
+                }), { status: 409 });
+                if (patch.mode === 'shared_editor') {
+                    wireSession = SessionCurrentProjectionRecordV1Schema.parse({ ...current,
+                        metadata: patch.sharedMetadata.ciphertext, metadataVersion: current.metadataVersion + 1 });
+                } else {
+                    const target = patch.mode === 'owner_migration' ? patch.target : patch;
+                    wireSession = SessionCurrentProjectionRecordV1Schema.parse({ ...current,
+                        metadataLayoutVersion: 1, metadata: target.sharedMetadata.ciphertext,
+                        ownerMetadata: target.ownerMetadata, agentState: target.agentState.ciphertext,
+                        metadataVersion: current.metadataVersion + 1, agentStateVersion: (current.agentStateVersion ?? 0) + 1 });
+                }
+                return Response.json(SessionMetadataTuplePatchSuccessV1Schema.parse({ success: true, metadataLayoutVersion: 1,
+                    sharedMetadata: { version: wireSession.metadataVersion }, agentState: { version: wireSession.agentStateVersion } }));
+            }
+            if (path === '/v2/sessions/s1') {
+                await canonicalRefreshRespondAfter;
+                return Response.json({ session: { ...readWireSession(), active: sessionState.session.active,
+                    pendingCount: serverPendingRows.size, pendingVersion: serverPendingVersion } });
+            }
+            if (path === '/v1/sessions/s1/messages') {
+                await canonicalRefreshRespondAfter;
+                return Response.json({ messages: [], hasMore: false, nextBeforeSeq: null });
+            }
+            if (path.startsWith('/v2/sessions/s1/') && path.includes('/pending')) {
+                const runId = path.match(/\/execution-runs\/([^/]+)\/pending/u)?.[1];
+                const recipient = runId ? { kind: 'execution_run', runId: decodeURIComponent(runId) } : undefined;
+                if (init?.method === 'POST' || init?.method === 'PATCH') {
+                    const body: unknown = JSON.parse(String(init.body));
+                    if (!body || typeof body !== 'object' || !('content' in body)) throw new Error('Invalid Pending write');
+                    const content = SessionStoredMessageContentSchema.parse(body.content);
+                    const localId = init.method === 'PATCH'
+                        ? ('replacementLocalId' in body && typeof body.replacementLocalId === 'string' ? body.replacementLocalId : decodeURIComponent(path.split('/').at(-1)!))
+                        : ('localId' in body && typeof body.localId === 'string' ? body.localId : null);
+                    if (!localId) throw new Error('Pending write omitted its localId');
+                    const requestedAction = PendingRequestedActionV1Schema.parse('requestedAction' in body ? body.requestedAction : { v: 1, kind: 'enqueue' });
+                    await pendingPatchRespondAfter;
+                    const row = { localId, content, messageRole: 'user', status: 'queued', createdAt: Date.now(), updatedAt: Date.now(), position: 1,
+                        requestedAction, ...(recipient ? { recipient } : {}) };
+                    if (init.method === 'PATCH') serverPendingRows.delete(decodeURIComponent(path.split('/').at(-1)!));
+                    serverPendingRows.set(localId, row);
+                    serverPendingVersion += 1;
+                    return Response.json({ localId, requestedAction, pending: row, ...(recipient ? { recipient } : {}) });
+                }
+                return Response.json({ pending: [...serverPendingRows.values()].filter((row) => JSON.stringify(row.recipient) === JSON.stringify(recipient)) });
+            }
+            return accountHttp.request(input, init);
+        };
         accountConnection = await restoreServerAccountForTest({
             serverUrl: 'https://server-1',
             accountId: TEST_SERVER_ACCOUNT_SCOPE.accountId,
-            request: async (input, init) => {
-                const path = new URL(String(input)).pathname;
-                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
-                if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
-                if (path === '/v2/sessions/s1') return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({
-                    ...sessionState.session,
-                    metadataLayoutVersion: 0, metadata: JSON.stringify(sessionState.session.metadata),
-                    agentState: JSON.stringify(sessionState.session.agentState), dataEncryptionKey: null,
-                    effectiveAccess: { v: 1, level: sessionState.session.access.level,
-                        sources: [{ kind: 'owner' }], capabilities: sessionState.session.access.capabilities },
-                    responsibleAccountId: null, responsibleAccount: null, share: null,
-                    archivedAt: null, pendingCount: 0, pendingVersion: 0,
-                }) });
-                return accountHttp.request(input, init);
-            },
+            request: requestHttp,
         });
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(requestHttp);
         seedSessionStorage?.();
-        await activateSessionShellStorageBoundary();
+        // The earlier storage activation already registered this real store.
+        // Reissuing its synthetic credentials here would retire the restored
+        // Account's prepared HTTP configuration before transcript reconciliation.
     });
 
     afterEach(async () => {
@@ -913,7 +1002,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         let firstTree: renderer.ReactTestRenderer | undefined;
@@ -1117,7 +1205,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -1711,6 +1798,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             sessionPendingMessagesState.current = [];
             await act(async () => {
+                originalStorageModule!.storage.getState().applyPendingMessages('s1', []);
                 refreshPendingMessages();
                 await Promise.resolve();
             });
@@ -1789,6 +1877,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             sessionPendingMessagesState.current = [];
             await act(async () => {
+                originalStorageModule!.storage.getState().applyPendingMessages('s1', []);
                 refreshPendingMessages();
                 await Promise.resolve();
             });
@@ -1870,6 +1959,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             );
             sessionPendingMessagesState.current = [];
             await act(async () => {
+                originalStorageModule!.storage.getState().applyPendingMessages('s1', []);
                 renderedTree.update(<AppPaneProvider>
                     <SessionView id="s1" />
                 </AppPaneProvider>);
@@ -2034,6 +2124,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            const pendingEditSourceSession = originalStorageModule.storage.getState().sessions.s1;
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
@@ -2050,7 +2141,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     mentions: [],
                     composerAttachments: [],
                 }, {
-                    ...pendingMessageAuthorityExpectation(),
+                    ...pendingMessageAuthorityExpectation(pendingEditSourceSession),
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -2082,7 +2173,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionPendingMessagesState.current = [queuedMessage];
         let releaseUpdate!: () => void;
         const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
-        updatePendingMessageSpy.mockImplementationOnce(deferPendingComposerUpdate(updateGate));
+        pendingPatchRespondAfter = updateGate;
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -2107,6 +2198,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 });
             });
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            const pendingEditSourceSession = originalStorageModule.storage.getState().sessions.s1;
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
@@ -2119,7 +2211,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     mentions: [],
                     composerAttachments: [],
                 }, {
-                    ...pendingMessageAuthorityExpectation(),
+                    ...pendingMessageAuthorityExpectation(pendingEditSourceSession),
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -2158,7 +2250,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionPendingMessagesState.current = [queuedMessage];
         let releaseUpdate!: () => void;
         const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
-        updatePendingMessageSpy.mockImplementationOnce(deferPendingComposerUpdate(updateGate));
+        pendingPatchRespondAfter = updateGate;
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -2183,6 +2275,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 });
             });
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            const pendingEditSourceSession = originalStorageModule.storage.getState().sessions.s1;
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
@@ -2193,7 +2286,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     mentions: [],
                     composerAttachments: [],
                 }, {
-                    ...pendingMessageAuthorityExpectation(),
+                    ...pendingMessageAuthorityExpectation(pendingEditSourceSession),
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -2245,7 +2338,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionPendingMessagesState.current = [queuedMessage];
         let releaseUpdate!: () => void;
         const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
-        updatePendingMessageSpy.mockImplementationOnce(deferPendingComposerUpdate(updateGate));
+        pendingPatchRespondAfter = updateGate;
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -2270,6 +2363,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 });
             });
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            const pendingEditSourceSession = originalStorageModule.storage.getState().sessions.s1;
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
@@ -2280,7 +2374,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     mentions: [],
                     composerAttachments: [],
                 }, {
-                    ...pendingMessageAuthorityExpectation(),
+                    ...pendingMessageAuthorityExpectation(pendingEditSourceSession),
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -2299,6 +2393,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 await pendingFireAndForget[0];
             });
 
+            expect(modalAlertSpy).not.toHaveBeenCalled();
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Existing draft');
             expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
@@ -2337,7 +2432,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionPendingMessagesState.current = [queuedMessage];
         let releaseUpdate!: () => void;
         const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
-        updatePendingMessageSpy.mockImplementationOnce(deferPendingComposerUpdate(updateGate));
+        pendingPatchRespondAfter = updateGate;
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -2362,6 +2457,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 });
             });
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            const pendingEditSourceSession = originalStorageModule.storage.getState().sessions.s1;
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited @new.ts text', 'AgentInput');
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
@@ -2372,7 +2468,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     mentions: [],
                     composerAttachments: [],
                 }, {
-                    ...pendingMessageAuthorityExpectation(),
+                    ...pendingMessageAuthorityExpectation(pendingEditSourceSession),
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -2513,6 +2609,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 'structuredInput.composerAttachments',
             )).toBeUndefined();
 
+            const pendingEditSourceSession = originalStorageModule.storage.getState().sessions.s1;
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
@@ -2536,7 +2633,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     composerAttachments: [attachment],
                 },
                 {
-                    ...pendingMessageAuthorityExpectation(),
+                    ...pendingMessageAuthorityExpectation(pendingEditSourceSession),
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -2649,24 +2746,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     }],
                 },
                 stagedMediaHandles: [],
-                localId: request.localId,
             }));
-            updatePendingMessageSpy.mockImplementationOnce(async (
-                sessionId: string,
-                pendingId: string,
-                _text: string,
-                _structuredInput: unknown,
-                options?: Parameters<typeof acceptedPendingComposerFact>[3],
-            ) => acceptedPendingComposerFact(sessionId, pendingId, {
-                v: 1,
-                composerAttachments: [{
-                    ...changedAttachment,
-                    value: { issueId: 431 },
-                    presentation: { label: 'Persisted issue #431', typeLabel: 'Issue' },
-                }],
-            }, options));
 
             const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            const pendingEditSourceSession = originalStorageModule.storage.getState().sessions.s1;
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
@@ -2701,7 +2784,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             }, expect.objectContaining({
                 replacementLocalId,
                 preparedComposerAdmission: { stagedMediaHandles: [] },
-                ...pendingMessageAuthorityExpectation(),
+                ...pendingMessageAuthorityExpectation(pendingEditSourceSession),
             }));
             expect(acceptPendingMessageComposerAdmissionMock).toHaveBeenCalledWith('s1', {
                 sessionId: 's1',
@@ -2710,8 +2793,8 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     v: 1,
                     composerAttachments: [{
                         ...changedAttachment,
-                        value: { issueId: 431 },
-                        presentation: { label: 'Persisted issue #431', typeLabel: 'Issue' },
+                        value: { issueId: 430 },
+                        presentation: { label: 'Prepared issue #430', typeLabel: 'Issue' },
                     }],
                 },
                 stagedMediaHandles: [],
@@ -2964,14 +3047,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 });
             });
 
-            expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledTimes(1);
-            expect(patchSessionMetadataWithRetrySpy.mock.calls[0]?.[0]).toBe('s1');
-            const writeUpdater = patchSessionMetadataWithRetrySpy.mock.calls[0]?.[1] as (metadata: Record<string, unknown>) => Record<string, unknown>;
-            const metadataWithHold = writeUpdater({});
-            const holdsById = (metadataWithHold.sessionPendingQueueHoldV1 as any)?.holdsById;
+            const metadataWithHold = readSessionOwnerMetadataView(originalStorageModule!.storage.getState().sessions.s1);
+            const holdsById = readSessionPendingQueueHoldV1FromMetadata(metadataWithHold)?.holdsById;
             const holdId = Object.keys(holdsById ?? {})[0];
             expect(holdId).toBeTruthy();
-            expect(holdsById[holdId]).toMatchObject({
+            expect(holdsById?.[holdId]).toMatchObject({
                 kind: 'pending_message_edit',
                 localId: 'p-edit',
             });
@@ -2989,9 +3069,8 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 await pendingFireAndForget[0];
             });
 
-            expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledTimes(2);
-            const clearUpdater = patchSessionMetadataWithRetrySpy.mock.calls[1]?.[1] as (metadata: Record<string, unknown>) => Record<string, unknown>;
-            expect(clearUpdater(metadataWithHold)).not.toHaveProperty('sessionPendingQueueHoldV1');
+            expect(readSessionOwnerMetadataView(originalStorageModule!.storage.getState().sessions.s1))
+                .not.toHaveProperty('sessionPendingQueueHoldV1');
         } finally {
             act(() => {
                 tree?.unmount();
@@ -3000,7 +3079,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
-    it('keeps composer text visible until attachment send creates a local pending projection', async () => {
+    it('keeps composer text visible through the local pending projection until a current accepted ACK', async () => {
         featureEnabledState.reviewComments = false;
         sendMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
@@ -3008,7 +3087,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         let resolveUpload: (() => void) | null = null;
@@ -3021,16 +3099,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
         });
         let resolveSend: (() => void) | null = null;
-        let localPendingProjectionCreated: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
-                const options = args[4] as
-                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
-                    | undefined;
-                localPendingProjectionCreated = () => options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+            messageAckSpy.mockImplementationOnce(async (payload) => {
                 resolveStarted();
-                return await new Promise<void>((resolve) => {
-                    resolveSend = resolve;
+                return await new Promise<ReturnType<typeof acceptedMessageAck>>((resolve, reject) => {
+                    resolveSend = () => resolve(acceptedMessageAck(payload));
                 });
             });
         });
@@ -3067,6 +3140,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             expect(pendingFireAndForget.length).toBe(1);
+            await vi.waitFor(() => expect(uploadSpy, JSON.stringify(modalAlertSpy.mock.calls)).toHaveBeenCalled());
             await act(async () => {
                 await uploadStarted;
             });
@@ -3085,19 +3159,17 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect(sendMessageSpy).toHaveBeenCalledTimes(1);
             expect(agentInput.props.value).toBe('Describe this image');
 
-            await act(async () => {
-                if (!localPendingProjectionCreated) throw new Error('local pending projection callback was not registered');
-                localPendingProjectionCreated();
-            });
-
-            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.value).toBe('');
+            expect(originalStorageModule.storage.getState().sessionPending.s1.messages)
+                .toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('hello') })]));
+            expect(agentInput.props.value).toBe('Describe this image');
 
             await act(async () => {
                 if (!resolveSend) throw new Error('send did not start');
                 resolveSend();
                 await pendingFireAndForget[0];
             });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('');
         } finally {
             act(() => {
                 tree?.unmount();
@@ -3114,17 +3186,16 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         uploadSpy.mockResolvedValueOnce({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
 
         let resolveSend: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async () => {
+            messageAckSpy.mockImplementationOnce(async (payload) => {
                 resolveStarted();
-                return await new Promise<void>((resolve) => {
-                    resolveSend = resolve;
+                return await new Promise<ReturnType<typeof acceptedMessageAck>>((resolve, reject) => {
+                    resolveSend = () => resolve(acceptedMessageAck(payload));
                 });
             });
         });
@@ -3197,7 +3268,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         let resolveUpload: (() => void) | null = null;
@@ -3212,10 +3282,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
         let resolveSend: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async () => {
+            messageAckSpy.mockImplementationOnce(async (payload) => {
                 resolveStarted();
-                return await new Promise<void>((resolve) => {
-                    resolveSend = resolve;
+                return await new Promise<ReturnType<typeof acceptedMessageAck>>((resolve, reject) => {
+                    resolveSend = () => resolve(acceptedMessageAck(payload));
                 });
             });
         });
@@ -3296,7 +3366,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         let resolveUpload: (() => void) | null = null;
@@ -3309,14 +3378,13 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
         });
 
-        let localPendingProjectionCreated: (() => void) | null = null;
+        let acceptSendAck: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
-                const options = args[4] as
-                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
-                    | undefined;
-                localPendingProjectionCreated = () => options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+            messageAckSpy.mockImplementationOnce(async (payload) => {
                 resolveStarted();
+                return await new Promise<ReturnType<typeof acceptedMessageAck>>((resolve, reject) => {
+                    acceptSendAck = () => resolve(acceptedMessageAck(payload));
+                });
             });
         });
 
@@ -3365,8 +3433,8 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             await act(async () => {
-                if (!localPendingProjectionCreated) throw new Error('local pending projection callback was not registered');
-                localPendingProjectionCreated();
+                if (!acceptSendAck) throw new Error('send ACK was not registered');
+                acceptSendAck();
                 await pendingFireAndForget[0];
             });
 
@@ -3391,7 +3459,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         let resolveUpload: (() => void) | null = null;
@@ -3405,12 +3472,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         });
         let acceptHandoff: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
-                const options = args[4] as
-                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
-                    | undefined;
-                acceptHandoff = () => options?.onLocalPendingProjectionCreated?.({ localId: 'reference-local-id' });
+            messageAckSpy.mockImplementationOnce(async (payload) => {
                 resolveStarted();
+                return await new Promise<ReturnType<typeof acceptedMessageAck>>((resolve, reject) => {
+                    acceptHandoff = () => resolve(acceptedMessageAck(payload));
+                });
             });
         });
 
@@ -3520,7 +3586,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
-    it('restores text and attachment drafts when outbound handoff after upload fails', async () => {
+    it('retains text and attachment drafts when the uploaded send is not accepted', async () => {
         featureEnabledState.reviewComments = false;
         sendMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
@@ -3528,21 +3594,16 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         uploadSpy.mockResolvedValueOnce({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
 
         let rejectSend: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
-                const options = args[4] as
-                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
-                    | undefined;
-                options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+            messageAckSpy.mockImplementationOnce(async (payload) => {
                 resolveStarted();
-                return await new Promise<void>((_resolve, reject) => {
-                    rejectSend = () => reject(new Error('attachment handoff rejected'));
+                return await new Promise<MessageAckResponse>((resolve) => {
+                    rejectSend = () => resolve({ ok: false, error: 'attachment handoff rejected' });
                 });
             });
         });
@@ -3579,8 +3640,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.value).toBe('');
-            expect(agentInput.props.attachmentRowItems).toEqual([]);
+            expect(agentInput.props.value).toBe('Describe this image');
+            expect(agentInput.props.attachmentRowItems).toEqual([
+                expect.objectContaining({ label: 'a.txt', status: 'uploaded' }),
+            ]);
 
             await act(async () => {
                 if (!rejectSend) throw new Error('send did not start');
@@ -3610,21 +3673,16 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         uploadSpy.mockResolvedValueOnce({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
 
         let rejectSend: (() => void) | null = null;
         const sendStarted = new Promise<void>((resolveStarted) => {
-            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
-                const options = args[4] as
-                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
-                    | undefined;
-                options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+            messageAckSpy.mockImplementationOnce(async (payload) => {
                 resolveStarted();
-                return await new Promise<void>((_resolve, reject) => {
-                    rejectSend = () => reject(new Error('attachment handoff rejected'));
+                return await new Promise<MessageAckResponse>((resolve) => {
+                    rejectSend = () => resolve({ ok: false, error: 'attachment handoff rejected' });
                 });
             });
         });
@@ -3661,8 +3719,15 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            expect(agentInput.props.value).toBe('');
-            expect(agentInput.props.attachmentRowItems).toEqual([]);
+            expect(agentInput.props.value).toBe('Describe this image');
+            expect(agentInput.props.attachmentRowItems).toEqual([
+                expect.objectContaining({ label: 'a.txt', status: 'uploaded' }),
+            ]);
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', '', 'AgentInput');
+                agentInput.props.attachmentRowItems[0].onRemove();
+            });
 
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
@@ -3728,7 +3793,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         uploadSpy.mockClear();
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -3792,7 +3856,8 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     },
                 },
             });
-            expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('server-1:m1:/tmp', 'draft-1');
+            expect(Object.values(originalStorageModule!.storage.getState().reviewCommentsDraftsByWorkspaceCacheKey).flat())
+                .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'draft-1' })]));
         } finally {
             sessionState.session.serverId = previousServerId;
             featureEnabledState.reviewComments = false;
@@ -3907,7 +3972,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
             expect(pendingFireAndForget.length).toBe(1);
-            await pendingFireAndForget[0];
+            await act(async () => { await pendingFireAndForget[0]; });
         }
 
         // The switch runs on THIS Session's server, and neither the daemon nor
@@ -4093,8 +4158,8 @@ describe('SessionView (attachments.uploads resumable send)', () => {
          * The real ordering, and the one the case below this seeds away: the
          * daemon answers, and the canonical pending row for that exact localId
          * reaches this client a beat later. Notifying the pending-message
-         * listeners is that sync arriving — the same re-render the store
-         * publishes in production.
+         * store is that sync arriving — the same re-render the store publishes
+         * in production.
          */
         function syncPendingRowForLocalId(localId: string) {
             const row = {
@@ -4106,17 +4171,15 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 messageRole: 'user' as const,
                 pendingDeliveryStatus: 'server_queued' as const,
                 pendingRequestedAction: { v: 1 as const, kind: 'enqueue' as const },
+                pendingOutboxScope: TEST_SERVER_ACCOUNT_SCOPE,
                 text: 'queued message',
                 rawRecord: { role: 'user', content: { type: 'text', text: 'queued message' } },
             };
-            canonicalSessionPendingState.s1 = {
-                messages: [row],
-                discarded: [],
-                isLoaded: true,
-            } as SessionPending;
             sessionPendingMessagesState.current = [row];
+            serverPendingRows.set(localId, pendingWireRow(row));
+            serverPendingVersion += 1;
             act(() => {
-                for (const listener of sessionPendingMessagesState.listeners) listener();
+                originalStorageModule!.storage.getState().applyPendingMessages('s1', [row]);
             });
         }
 
@@ -4306,12 +4369,14 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
-            for (const pending of [...pendingFireAndForget]) await pending;
+            await act(async () => {
+                for (const pending of [...pendingFireAndForget]) await pending;
+            });
             const [transitionDispatch] = runSessionAgentTransitionSpy.mock.calls[0] ?? [];
             expect((transitionDispatch as any)?.request?.input).toEqual({
                 text,
                 localId: 'armed-local-id',
-                meta: { [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: { kind: 'session', sessionId: 's1' } },
+                meta: { [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: { kind: 'session', sessionId: 's1' }, permissionMode: 'default' },
             });
             return screen;
         }
@@ -4344,13 +4409,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             const canonicalRefresh = new Promise<void>((resolve) => {
                 settleCanonicalRefresh = resolve;
             });
-            ensureSessionVisibleSpy.mockImplementation(async () => {
-                await canonicalRefresh;
-                return { kind: 'available' };
-            });
-            refreshSessionMessagesSpy.mockImplementation(async () => {
-                await canonicalRefresh;
-            });
+            canonicalRefreshRespondAfter = canonicalRefresh;
 
             const screen = await renderScreen(<AppPaneProvider>
                         <SessionView id="s1" />
@@ -4381,9 +4440,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     await Promise.resolve();
                 });
 
-                expect(clearPersistedArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
+                await vi.waitFor(() => expect(clearPersistedArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
                     expect.objectContaining({ localId: 'retained-submission-id' }),
-                );
+                ));
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;
@@ -4412,13 +4471,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             const canonicalRefresh = new Promise<void>((resolve) => {
                 settleCanonicalRefresh = resolve;
             });
-            ensureSessionVisibleSpy.mockImplementation(async () => {
-                await canonicalRefresh;
-                return { kind: 'available' };
-            });
-            refreshSessionMessagesSpy.mockImplementation(async () => {
-                await canonicalRefresh;
-            });
+            canonicalRefreshRespondAfter = canonicalRefresh;
             const second = await renderScreen(<AppPaneProvider>
                         <SessionView id="s1" />
                     </AppPaneProvider>);
@@ -4451,7 +4504,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
                 // Once custody has arrived, the canonical disposition spends
                 // the arm rather than offering the same transition again.
-                expect(clearArmedContinuationSpy).toHaveBeenCalled();
+                await vi.waitFor(() => expect(clearPersistedArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({ localId: 'armed-local-id' }),
+                ));
+                expect(clearArmedContinuationSpy).not.toHaveBeenCalled();
             } finally {
                 act(() => { second.tree?.unmount(); });
                 pendingFireAndForget.length = 0;
@@ -4473,11 +4529,14 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
                 syncPendingRowForLocalId('armed-local-id');
 
-                expect(screen.getTextContent()).not.toContain('session.agentContinuation.transition.unknown');
+                await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('session.agentContinuation.transition.unknown'));
                 expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
                 expect(readSessionShellDraftTextForTest('s1')).toBe('');
                 // The arm goes with the draft: this depth spends the switch.
-                expect(clearArmedContinuationSpy).toHaveBeenCalled();
+                expect(clearPersistedArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({ localId: 'armed-local-id' }),
+                );
+                expect(clearArmedContinuationSpy).not.toHaveBeenCalled();
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;
@@ -4502,7 +4561,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 expect(readSessionShellDraftTextForTest('s1')).toBe('a different message');
                 // The rewritten text is a new message, so canonical custody
                 // must spend the original arm/localId without clearing it.
-                expect(clearArmedContinuationSpy).toHaveBeenCalled();
+                await vi.waitFor(() => expect(clearPersistedArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
+                    expect.objectContaining({ localId: 'armed-local-id' }),
+                ));
+                expect(clearArmedContinuationSpy).not.toHaveBeenCalled();
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;

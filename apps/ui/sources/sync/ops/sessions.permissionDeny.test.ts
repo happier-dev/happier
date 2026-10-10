@@ -8,6 +8,12 @@ const { mockSessionRpcWithPreferredSessionScope } = vi.hoisted(() => ({
     mockSessionRpcWithPreferredSessionScope: vi.fn(),
 }));
 
+// Native SDK boundary: the global Node stub is not evidence of a web client.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope', () => ({
     sessionRpcWithPreferredSessionScope: (...args: unknown[]) => mockSessionRpcWithPreferredSessionScope(...args),
 }));
@@ -86,6 +92,13 @@ describe('sessionDeny', () => {
 });
 
 describe('session permission/user-action RPC methods', () => {
+    it('stamps the answering UI category at the authenticated response transport', async () => {
+        await sessionRespondToPermission('session-platform', { id: 'request', approved: true });
+        expect(mockSessionRpcWithPreferredSessionScope).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({ answeringClientCategory: 'web' }),
+        }));
+    });
+
     beforeEach(() => {
         storage.setState(initialStorageState, true);
         mockSessionRpcWithPreferredSessionScope.mockReset();
@@ -115,6 +128,7 @@ describe('session permission/user-action RPC methods', () => {
             method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
             payload: {
                 id: 'perm_approve',
+                answeringClientCategory: 'web',
                 approved: true,
                 mode: 'acceptEdits',
                 allowedTools: ['Edit'],
@@ -156,6 +170,7 @@ describe('session permission/user-action RPC methods', () => {
             method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
             payload: {
                 id: 'perm_update',
+                answeringClientCategory: 'web',
                 approved: true,
                 mode: 'plan',
                 allowedTools: ['Bash'],
@@ -178,6 +193,7 @@ describe('session permission/user-action RPC methods', () => {
             method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
             payload: {
                 id: 'question_1',
+                answeringClientCategory: 'web',
                 approved: true,
                 answers: {
                     'Pick one': ['A'],

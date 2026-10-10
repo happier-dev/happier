@@ -5,6 +5,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LegendList } from '@legendapp/list/react-native';
+import {
+    createTranscriptRendererContentDemand,
+    TranscriptContentDemandProvider,
+    TranscriptRendererContentDemandProvider,
+    TranscriptRendererRowContentDemandProvider,
+    useTranscriptRowContentDemand,
+} from '../../visibility/TranscriptRowContentDemand';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 
@@ -295,6 +302,75 @@ describe('Legend web row visibility contract', () => {
         expect(settled.loaded).toBe(true);
         expect(settled.rows).toBeGreaterThan(0);
         expect(settled.opacity).toBe(1);
+    });
+
+    it('demands only viewable content while retaining offscreen rows and releases demand when hidden', async () => {
+        const demanded = new Set<string>();
+        const contentDemand = createTranscriptRendererContentDemand();
+        const rendersByRow = new Map<string, number>();
+        function DemandRow({ item }: Readonly<{ item: Row }>) {
+            rendersByRow.set(item.id, (rendersByRow.get(item.id) ?? 0) + 1);
+            const enabled = useTranscriptRowContentDemand();
+            React.useEffect(() => {
+                if (enabled) demanded.add(item.id);
+                return () => { demanded.delete(item.id); };
+            }, [enabled, item.id]);
+            return renderRow({ item });
+        }
+        const renderDemandRow = ({ item }: Readonly<{ item: Row }>) => (
+            <TranscriptRendererRowContentDemandProvider itemKey={item.id}>
+                <DemandRow item={item} />
+            </TranscriptRendererRowContentDemandProvider>
+        );
+        const render = (enabled: boolean) => (
+            <TranscriptContentDemandProvider enabled={enabled}>
+            <TranscriptRendererContentDemandProvider demand={contentDemand}>
+                <div id={HOST_ID} style={{ height: VIEWPORT_HEIGHT }}>
+                    <LegendList data={DATA} estimatedItemSize={ROW_HEIGHT}
+                        keyExtractor={keyExtractor} recycleItems={false}
+                        viewabilityConfig={{ itemVisiblePercentThreshold: 1 }}
+                        onViewableItemsChanged={(info) => contentDemand.publish(info.viewableItems.map((token) => token.key))}
+                        renderItem={renderDemandRow} />
+                </div>
+            </TranscriptRendererContentDemandProvider>
+            </TranscriptContentDemandProvider>
+        );
+        await act(async () => { root.render(render(true)); });
+        for (let pass = 0; pass < 12; pass += 1) {
+            await act(async () => {
+                flushResizeObservers();
+                await vi.runOnlyPendingTimersAsync();
+            });
+        }
+        expect(demanded.size).toBeGreaterThan(0);
+        // Legend retains its draw-distance rows; mounting is insufficient to request content.
+        expect(countMountedRows()).toBeGreaterThan(demanded.size);
+        expect([...demanded]).toEqual(DATA.slice(0, VIEWPORT_HEIGHT / ROW_HEIGHT).map((row) => row.id));
+        const firstDemanded = [...demanded];
+        const scroller = [...container.querySelectorAll<HTMLElement>('div')].find((element) => (
+            element.style.overflowY === 'auto' || element.style.overflow === 'auto'
+        ));
+        expect(scroller).toBeDefined();
+        const unchangedRowRenderCount = rendersByRow.get('row-0');
+        await act(async () => {
+            scroller!.scrollTo({ top: 1 });
+            await vi.runOnlyPendingTimersAsync();
+        });
+        expect(rendersByRow.get('row-0')).toBe(unchangedRowRenderCount);
+        expect(demanded.has('row-5')).toBe(true);
+        await act(async () => {
+            scroller!.scrollTo({ top: ROW_HEIGHT * 15 });
+            await vi.runOnlyPendingTimersAsync();
+        });
+        expect(demanded.size).toBeGreaterThan(0);
+        expect(firstDemanded.every((id) => !demanded.has(id))).toBe(true);
+        expect(demanded.has('row-15')).toBe(true);
+        await act(async () => { root.render(render(false)); });
+        expect(demanded.size).toBe(0);
+        await act(async () => { root.render(render(true)); });
+        expect(demanded.has('row-15')).toBe(true);
+        await act(async () => { root.render(<DemandRow item={{ id: 'standalone' }} />); });
+        expect([...demanded]).toEqual(['standalone']);
     });
 
     it('keeps painted rows visible when a one-pixel footer measurement arrives after onLoad', async () => {

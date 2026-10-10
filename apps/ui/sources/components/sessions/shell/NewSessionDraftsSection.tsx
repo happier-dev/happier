@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, useWindowDimensions, View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -173,6 +173,7 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
 }>) {
     const { theme } = useUnistyles();
     const isTablet = useIsTablet();
+    const { width: windowWidth } = useWindowDimensions();
     const isWeb = Platform.OS === 'web';
     const [rowHovered, setRowHovered] = React.useState(false);
     const [deleteHovered, setDeleteHovered] = React.useState(false);
@@ -222,7 +223,7 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
             : 'compact';
     const densityViewState = resolveSessionListDensityViewState(
         props.density === 'minimal' ? 'narrow' : props.density === 'compact' ? 'cozy' : 'comfortable',
-        { isTablet, platform: Platform.OS },
+        { isTablet, platform: Platform.OS, windowWidth },
     );
     const readableNativePhoneMinimal = props.density === 'minimal'
         && densityViewState.rowHeight !== resolveSessionListDensityViewState('narrow').rowHeight;

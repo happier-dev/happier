@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View, type GestureResponderEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -48,6 +49,7 @@ export type SessionListSelectionCheckboxProps = Readonly<{
 export function SessionListSelectionCheckbox(props: SessionListSelectionCheckboxProps): React.ReactElement {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const reducedMotion = useReducedMotionPreference();
     const rowSelection = useOptionalSessionListSelectionRow(props.selectionKey);
     const selected = props.selected ?? rowSelection.isSelected;
@@ -95,7 +97,7 @@ export function SessionListSelectionCheckbox(props: SessionListSelectionCheckbox
                     transitionStyle,
                     {
                         borderColor: selected ? 'transparent' : theme.colors.border.default,
-                        backgroundColor: theme.colors.background.canvas,
+                        backgroundColor: materialColor(theme.colors.background.canvas),
                         opacity: selected ? 1 : 0.86,
                     },
                 ]}

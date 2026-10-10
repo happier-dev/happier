@@ -68,7 +68,8 @@ function getProviderInFlightSteerSupported(session: Session | null): boolean {
         session ? readSessionOwnerMetadataView(session) : null,
     );
     if (!agentId || !isBundledAgentId(agentId)) return false;
-    return getAgentCore(agentId).runtimeInput?.inFlightSteerSupported === true;
+    const core = getAgentCore(agentId);
+    return core !== null && core.runtimeInput?.inFlightSteerSupported === true;
 }
 
 function deriveSubmitRuntimeState(session: Session | null, nowMs: number): SessionSubmitRuntimeState {

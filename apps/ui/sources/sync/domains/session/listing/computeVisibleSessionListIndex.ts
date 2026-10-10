@@ -1,5 +1,5 @@
 import { nestSessionListReports, resolveWorkflowRunParentSessionId } from './nestSessionListReports';
-import { normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { matchSessionBotFilterV1, normalizeSessionListFilterV1, type SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { workflowRunMatchesSessionListFilter } from './sessionListWorkFilter';
 import { buildSessionListDateGroups } from './sessionListDateGroups';
@@ -1388,7 +1388,7 @@ function projectWorkflowRunRows(
     const filter = params.workFilter ?? normalizeSessionListFilterV1({
         homeServerIds: [...new Set(params.workflowRuns?.map((run) => run.serverId) ?? [])],
     });
-    const runs = params.corpusStorage === 'archived' ? [] : (params.workflowRuns ?? [])
+    const runs = params.corpusStorage === 'archived' || filter.bot !== undefined ? [] : (params.workflowRuns ?? [])
         .filter((run) => workflowRunMatchesSessionListFilter(run.summary, run.serverId, filter))
         .filter((run) => {
             if (!params.folderFocus) return true;
@@ -1406,6 +1406,7 @@ function projectWorkflowRunRows(
     }
     const output = visible.filter((item) => {
         if (item.type !== 'session') return item.type === 'header';
+        if (matchSessionBotFilterV1(params.resolveSessionRow(item.serverId, item.sessionId)?.metadata, filter.bot) !== 'match') return false;
         const step = params.resolveSessionRow(item.serverId, item.sessionId)?.origin?.kind === 'run_step';
         return step ? filter.show !== 'sessions' : filter.show !== 'runs';
     });

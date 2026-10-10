@@ -11,6 +11,11 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { getActiveServerSnapshot, upsertAndActivateServer, upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { loadHomeViewState, saveHomeViewState, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerAccountScope, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    getAppliedActiveServerSnapshot,
+    isAppliedActiveServerRuntimeAvailable,
+    publishAppliedActiveServerSnapshot,
+} from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useWorkflowRunWindow, resetWorkflowLibraryReadsForTests } from '@/components/workflows/library/workflowLibraryReads';
 import { useBoardMembership } from '@/components/boards/model/useBoardContent';
 import { useVisibleSessionListPaneState } from './useVisibleSessionListPaneState';
@@ -33,13 +38,6 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         getCredentialsForServerUrl: async () => ({ token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ==.signature' }),
     } };
 });
-// The applied transport identity is the network connection boundary; the scope owner still
-// proves this identity agrees with the real store's Account binding.
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => getActiveServerSnapshot(),
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
 // Markdown is a third-party rendering boundary; these hooks never render Markdown.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
 
@@ -50,9 +48,13 @@ vi.mock('expo-router', async () => {
 
 let serverId: string;
 let previousStorageState = storage.getState();
+let previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+let previousAppliedAvailability = isAppliedActiveServerRuntimeAvailable();
 
 beforeEach(async () => {
     previousStorageState = storage.getState();
+    previousAppliedSnapshot = getAppliedActiveServerSnapshot();
+    previousAppliedAvailability = isAppliedActiveServerRuntimeAvailable();
     const profile = await upsertAndActivateServer({ serverUrl: 'http://unified-list.test', name: 'List Home' });
     serverId = profile.id;
     storage.setState({
@@ -64,6 +66,7 @@ beforeEach(async () => {
         workflowRunListWindows: {},
         workflowRunsById: {},
     });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     execute.mockReset();
     expect(getActiveServerAccountScope()).toEqual({ serverId, accountId: 'account-a' });
 });
@@ -73,6 +76,7 @@ afterEach(() => {
     resetWorkflowLibraryReadsForTests();
     retireActiveServerAccountScopeLifetime();
     storage.setState(previousStorageState);
+    publishAppliedActiveServerSnapshot(previousAppliedSnapshot, previousAppliedAvailability);
 });
 
 function filter(show: 'runs' | 'both' | 'sessions' = 'runs') {
@@ -174,6 +178,7 @@ describe('the mounted unified list feed', () => {
             profileScope: { serverId: portableId, accountId: 'account-a' },
             sessionListIndexByServerId: { [profile.id]: null },
         });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         expect(getActiveServerAccountScope()).toEqual({ serverId: portableId, accountId: 'account-a' });
         execute.mockResolvedValue({ ok: true, result: { runs: [createWorkflowRunSummaryFixture({ startedBy: 'user' })], metadataByRunId: {} } });
         const workFilter = normalizeSessionListFilterV1({ homeServerIds: [profile.id], show: 'runs' });

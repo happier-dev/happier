@@ -157,6 +157,7 @@ import {
     type TranscriptNavigationRuntimeAnchor,
 } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationRuntimeAnchors';
 import { clearTranscriptNavigationVisibilityStore } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationVisibilityStore';
+import { TranscriptContentDemandProvider } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { useTranscriptPrependHost } from '@/components/sessions/transcript/viewport/prepend/host/useTranscriptPrependHost';
 import {
@@ -534,7 +535,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const { motionConfig, reducedMotionPreferred } = useTranscriptMotionConfig();
     const transcriptScrollPinEnabled = useSetting('transcriptScrollPinEnabled');
     const transcriptScrollPinOffsetThresholdPx = useSetting('transcriptScrollPinOffsetThresholdPx');
-    const transcriptToolCallsCollapsedPreviewCountSetting = useSetting('transcriptToolCallsCollapsedPreviewCount');
+    const transcriptToolCallsCollapsedPreviewCountSetting = props.toolChromeCommon.transcriptToolCallsCollapsedPreviewCount;
     // F-4 (2026-08-11): the height-bearing half of the action-draft option resolution, so an
     // `action-draft` row's size key moves when a synced settings push or a capabilities snapshot adds
     // or removes one of its option rows while the row is offscreen. This hook is deliberately the
@@ -685,6 +686,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         setThinkingExpanded,
         setToolCallsGroupExpanded,
     } = useTranscriptExpansionState({
+        showToolCalls: props.toolChromeCommon.showToolCalls,
         recordLocalTranscriptInteractionIntent,
         prepareLocalHeightChange,
     });
@@ -996,6 +998,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     } = telemetryHost;
     const tuning = sync.getSyncTuning();
     const itemsPipeline = useTranscriptItemsPipeline({
+        showToolCalls: props.toolChromeCommon.showToolCalls,
         activeTargetWindowTargetRef,
         activeThinkingMessageId: props.activeThinkingMessageId,
         canonicalWindowedItemsRef,
@@ -1923,6 +1926,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         return thresholdPx / listLayoutHeight;
     }, [listLayoutHeight, resolveBackwardPrefetchThresholdPx]);
     useTranscriptToolAutoExpandEffect({
+        showToolCalls: props.toolChromeCommon.showToolCalls,
         applyToolCallsGroupExpanded,
         expandedToolCallsAnchorMessageIds,
         hasAutoExpandedToolCallsGroups: (sessionId) => sessionOpenLatch.hasAutoExpandedToolCallsGroups(sessionId),
@@ -1948,6 +1952,8 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         listRef.current?.notifyViewportGeometryChanged?.();
     }, [observeMountSettleMetrics]);
     const transcriptItemsEdgeSlots = useTranscriptItemsEdgeSlots({
+        serverId: props.sessionServerId,
+        showToolCalls: props.toolChromeCommon.showToolCalls,
         bottomNotice: props.bottomNotice,
         composerInsetHeight,
         controlSwitchTo: props.controlSwitchTo,
@@ -2112,6 +2118,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                     serverId={props.sessionServerId ?? transcriptSource.serverId} focused={sessionScreenFocused}
                     viewportRef={transcriptViewportFocusRef} loadedMessages={findLoadedMessages} publishCorpus={publishFindCorpus}
                     measureMessage={measureFindMessage} contentHeight={listContentHeight}>
+                <TranscriptContentDemandProvider enabled={sessionScreenFocused}>
                 <TranscriptListShell<ChatTranscriptListItem>
                     ref={commitListRef}
                     frame={mainTranscriptListShellFrame}
@@ -2181,6 +2188,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                         />
                     </ComposerKeyboardFloatingInset>
                 ) : null}
+                </TranscriptContentDemandProvider>
                 </TranscriptFindSurface>
               </View>
             </InitialPresentationReadinessProvider>

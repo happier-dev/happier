@@ -1,3 +1,4 @@
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import {
     NO_SESSION_AGENT_ACTIVITY_ATTENTION,
     SESSION_AGENT_ACTIVITY_ATTENTION_KINDS,
@@ -159,7 +160,7 @@ type PendingPromptScanParams = Readonly<{
 function scanPendingPrompts(params: PendingPromptScanParams): PendingPromptMap {
     const found: PendingPromptMap = new Map();
 
-    const sidechainId = params.subagent.transcript.sidechainId?.trim();
+    const sidechainId = readNonBlankOpaqueIdentifier(params.subagent.transcript.sidechainId);
     const sidechainMessages = sidechainId ? params.reducerState?.sidechains?.get(sidechainId) : null;
 
     if (Array.isArray(sidechainMessages) && sidechainMessages.length > 0) {

@@ -6,6 +6,8 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionItemRowViewModel } from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { StyleSheet } from 'react-native';
+import Color from 'color';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,6 +74,30 @@ describe('SessionItem existing-session draft presentation', () => {
     afterEach(() => {
         standardCleanup();
         confirmDeleteDraft.mockClear();
+    });
+
+    it('keeps the session sheet transparent within the sidebar material', async () => {
+        const { AppShellMaterialFrame } = await import('@/components/navigation/shell/AppShellMaterialFrame');
+        const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
+        const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const session = createSessionFixture({ id: 'session-glass-row', active: false });
+        const rowViewModel = createSessionItemRowViewModel({ session });
+        const screen = await renderScreen(
+            <GlassRuntimeEnvironmentProvider value={{ desktopWindow: true, nativeWindowMaterialLive: true }}>
+            <GlassMaterialSettingsProvider value={{ glassBlurEnabled: true, glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+            <AppShellMaterialFrame showChrome={false} dragEnabled={false} leftOffsetPx={0} sidebarWidth={320}
+                titleStrip={null} rail={null} peek={null}
+                column={<SessionItem session={session} rowViewModel={rowViewModel} />}>
+                {null}
+            </AppShellMaterialFrame>
+            </GlassMaterialSettingsProvider>
+            </GlassRuntimeEnvironmentProvider>,
+        );
+        const container = screen.root.findAll(node => typeof node.props.onPointerEnter === 'function')[0]!;
+        const paint = StyleSheet.flatten(container.props.style);
+        expect(Color(paint.backgroundColor).alpha()).toBe(0);
+        expect(paint.opacity).toBeUndefined();
     });
 
     it('presents and deletes the repository draft without deleting the session row', async () => {

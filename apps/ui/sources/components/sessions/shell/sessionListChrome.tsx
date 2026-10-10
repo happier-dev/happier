@@ -2,7 +2,7 @@ import React from 'react';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { describeWorkStatusBucket } from '@/components/work/status/workStatusBuckets';
 import { View, Pressable, Platform, I18nManager, Image as ReactNativeImage, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
@@ -455,6 +455,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
 }>) {
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const { item, hasMultipleMachines, displayTitle, hasCustomLabel, canOpenProject, workspaceFaviconsEnabled = false, workspaceMachineSubtitlesEnabled = true, onOpenProject, onCreateSession, onAddFolder, onRename, onReset, collapsed, onToggleCollapse } = props;
     const [isRowHovered, setIsRowHovered] = React.useState(false);
     const [isActionsHovered, setIsActionsHovered] = React.useState(false);
@@ -523,7 +524,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                 >
                     <View style={styles.groupHeaderTitleRow}>
                         {favicon ? (
-                            <View testID="session-list-workspace-favicon" style={styles.groupHeaderFaviconFrame}>
+                            <View testID="session-list-workspace-favicon" style={[styles.groupHeaderFaviconFrame, { backgroundColor: materialColor(theme.colors.background.canvas, 'transparent') }]}>
                                 <ReactNativeImage
                                     source={{ uri: favicon.uri }}
                                     style={styles.groupHeaderFavicon}

@@ -96,6 +96,7 @@ export type VisibleSessionListViewStateOptions = Readonly<{
     emptyQuerySelectionComplete?: boolean;
     corpusStorage?: 'active' | 'archived';
     workFilter?: SessionListFilterV1;
+    botsRoster?: true;
 }>;
 
 function buildFolderAwareSessionListIndex(params: Readonly<{
@@ -500,18 +501,23 @@ export function useVisibleSessionListViewState(
     const focusedSessionId = useFocusedSessionId();
     const focusedSessionAddress = useFocusedSessionAddress();
     const previousVisibleSessionListIndexRef = React.useRef<ReadonlyArray<SessionListIndexItem> | null>(null);
+    const queryHomes = React.useMemo(() => options.botsRoster === true
+        ? options.queryHomes?.map(home => ({ ...home, query: { ...home.query, bot: 'bot' as const, includeInactive: true }, queryMembership: 'rowOnly' as const }))
+        : options.queryHomes, [options.botsRoster, options.queryHomes]);
     const { selection, source, query } = useVisibleSessionListSourceState({
-        queryHomes: options.queryHomes,
+        queryHomes,
         emptyQuerySelectionComplete: options.emptyQuerySelectionComplete,
     });
     const surfaceDataActive = options.sessionListSurfaceDataActive !== false;
     const activeAccountScope = useActiveServerAccountScope();
     const workflowsAvailability = useWorkflowsAvailability();
-    const workFilter = React.useMemo(() => normalizeSessionListFilterV1(options.workFilter ?? {
+    const workFilter = React.useMemo(() => normalizeSessionListFilterV1({
         homeServerIds: selection.allowedServerIds.length > 0
             ? selection.allowedServerIds
             : selection.activeServerId ? [selection.activeServerId] : [],
-    }), [options.workFilter, selection.activeServerId, selection.allowedServerIds]);
+        ...options.workFilter,
+        ...(options.botsRoster === true ? { show: 'sessions', bot: 'bot' } : {}),
+    }), [options.botsRoster, options.workFilter, selection.activeServerId, selection.allowedServerIds]);
     const runServerId = activeAccountScope
         ? resolveServerProfileScopeIdForIdentifier(activeAccountScope.serverId)
         : null;
@@ -540,7 +546,8 @@ export function useVisibleSessionListViewState(
         return workflowWindow.rows.flatMap((row) => row.summary ? [{ serverId: runServerId, summary: row.summary }] : []);
     }, [runServerId, workflowRunsEnabled, workflowWindow.rows]);
     const sessionRowStateByServerId = useSessionListRowsByServerId();
-    const hideInactiveSessions = useSetting('hideInactiveSessions') as boolean | null;
+    const accountHideInactiveSessions = useSetting('hideInactiveSessions');
+    const hideInactiveSessions = options.botsRoster === true ? false : accountHideInactiveSessions === true;
     // Every Home whose membership was applied by the strict query already answered
     // `includeInactive` server-side, so an inactive row it returned is one the
     // server's attention predicate deliberately admitted. Homes still served by the
@@ -551,11 +558,11 @@ export function useVisibleSessionListViewState(
         const serverIds = new Set<string>();
         for (const [serverId, state] of Object.entries(queryStatesByServerId)) {
             if (state?.appliedSourceKind === 'query'
-                && options.queryHomes?.some((home) => areServerProfileIdentifiersEquivalent(home.serverId, serverId)
+                && queryHomes?.some((home) => areServerProfileIdentifiersEquivalent(home.serverId, serverId)
                     && home.query.includeInactive === false)) serverIds.add(serverId);
         }
         return serverIds.size > 0 ? serverIds : null;
-    }, [options.queryHomes, query.active, queryStatesByServerId]);
+    }, [queryHomes, query.active, queryStatesByServerId]);
     const sessionListOrderingModeV1 = useSetting('sessionListOrderingModeV1') as
         | 'custom'
         | 'created'

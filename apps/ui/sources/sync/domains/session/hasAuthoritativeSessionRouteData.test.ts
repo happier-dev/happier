@@ -25,7 +25,7 @@ describe('hasAuthoritativeSessionRouteData', () => {
         })).toBe(false);
     });
 
-    it('settles only producer-authorized session-only owner projections with strict readable shared data', () => {
+    it('settles only producer-authorized session-only owner projections with readable stored shared data', () => {
         const capabilities = projectLegacySessionAccessCapabilitiesV1({ level: 'owner', canApprovePermissions: true });
         const scopedOwner = {
             metadataLayoutVersion: 1,
@@ -39,7 +39,7 @@ describe('hasAuthoritativeSessionRouteData', () => {
             expect(hasAuthoritativeSessionRouteData(projection)).toBe(true);
         }
         expect(hasAuthoritativeSessionRouteData({ ...scopedOwner, metadataProjection: undefined })).toBe(false);
-        expect(hasAuthoritativeSessionRouteData({ ...scopedOwner, metadata: { v: 1, path: '/private' } })).toBe(false);
+        expect(hasAuthoritativeSessionRouteData({ ...scopedOwner, metadata: { v: 1, path: '/private' } })).toBe(true);
         expect(hasAuthoritativeSessionRouteData({ ...scopedOwner,
             access: { ...scopedOwner.access, capabilities: { ...capabilities, readTranscript: false } } })).toBe(false);
         expect(hasAuthoritativeSessionRouteData({ ...scopedOwner, access: null })).toBe(false);
@@ -66,7 +66,7 @@ describe('hasAuthoritativeSessionRouteData', () => {
         })).toBe(true);
     });
 
-    it('rejects malformed layout-1 participant metadata instead of treating any object as authoritative', () => {
+    it('drops additive layout-1 participant metadata while rejecting invalid known identity', () => {
         expect(hasAuthoritativeSessionRouteData({
             metadataLayoutVersion: 1,
             accessLevel: 'view',
@@ -75,7 +75,11 @@ describe('hasAuthoritativeSessionRouteData', () => {
                 path: '/injected/private/path',
             },
             ownerMetadataView: null,
-        })).toBe(false);
+        })).toBe(true);
+        expect(hasAuthoritativeSessionRouteData({ metadataLayoutVersion: 1, accessLevel: 'view',
+            metadata: { v: 1, bot: { kind: 'ordinary' }, future: true } })).toBe(false);
+        expect(hasAuthoritativeSessionRouteData({ metadataLayoutVersion: 1, accessLevel: 'view',
+            metadata: { v: 1, bot: { kind: 'bot', future: true }, future: true } })).toBe(true);
     });
 
     it('fails closed when the current access projection is explicitly unavailable', () => {

@@ -1,4 +1,4 @@
-import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { readSessionOwnerMetadataView } from './readSessionOwnerMetadataView';
 import { isSessionAccessOwner, isSessionAccessRecipient, type NormalizedSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
@@ -25,7 +25,7 @@ type SessionRouteDataCandidate = Readonly<{
  * by route consumers. Layout-1 owner list rows intentionally omit the owner
  * view and require exact-session hydration. An exact scoped producer may establish a
  * session-only projection without claiming the full owner view. Shared participants, identified by
- * their access level, are authoritative from the strict shared projection and
+ * their access level, are authoritative from the normalized stored shared projection and
  * must never be made to request owner data.
  */
 export function hasAuthoritativeSessionRouteData(
@@ -46,10 +46,10 @@ export function hasAuthoritativeSessionRouteData(
     }
     if (session.metadataProjection === 'sessionOnly') {
         return session.access?.capabilities.readTranscript === true
-            && SessionSharedMetadataV1Schema.safeParse(session.metadata).success;
+            && StoredSessionSharedMetadataV1Schema.safeParse(session.metadata).success;
     }
     if (isSessionAccessRecipient(session.access, session.accessLevel)) {
-        return SessionSharedMetadataV1Schema.safeParse(session.metadata).success;
+        return StoredSessionSharedMetadataV1Schema.safeParse(session.metadata).success;
     }
     if (!isSessionAccessOwner(session.access, session.accessLevel)) {
         return false;

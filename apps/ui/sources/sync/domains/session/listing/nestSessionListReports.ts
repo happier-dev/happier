@@ -89,10 +89,20 @@ export function nestSessionListReports(
         if (visited.has(item) || orphanSteps.has(item)) return;
         visited.add(item);
         const movedGroup = depth > 0 && groups.get(item) !== groups.get(groupOwner);
-        const { reportsDepth: _oldDepth, ...rest } = item;
-        output.push(!movedGroup && (item.reportsDepth ?? 0) === depth ? item : {
+        const parent = item.type === 'session' && (children.get(item)?.length ?? 0) > 0;
+        const defaultCollapsed = parent && item.type === 'session'
+            && resolveSessionRow(item.serverId ?? null, item.sessionId)?.metadata?.bot?.kind === 'bot';
+        const { reportsDepth: _oldDepth, ...withDefault } = item;
+        const rest = withDefault.type === 'session'
+            ? (({ reportsDefaultCollapsed: _oldDefault, reportsParent: _oldParent, reportsCollapsed: _oldCollapsed, ...fields }) => fields)(withDefault)
+            : withDefault;
+        output.push(!movedGroup && (item.reportsDepth ?? 0) === depth
+            && (item.type !== 'session' || ((item.reportsDefaultCollapsed === true) === defaultCollapsed
+                && (item.reportsParent === true) === parent && item.reportsCollapsed === undefined)) ? item : {
             ...rest,
             ...(depth > 0 ? { reportsDepth: depth } : {}),
+            ...(parent ? { reportsParent: true as const } : {}),
+            ...(defaultCollapsed ? { reportsDefaultCollapsed: true as const } : {}),
             ...(movedGroup ? {
                 groupKey: groupOwner.groupKey, groupKind: groupOwner.groupKind,
                 workspace: groupOwner.workspace, section: groupOwner.section,

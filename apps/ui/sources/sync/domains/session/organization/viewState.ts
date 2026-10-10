@@ -508,6 +508,7 @@ export function buildSessionOrganizationListViewState(params: Readonly<{
         return itemKey;
     };
 
+    projection.orderedPinSessionIds.forEach(mintSessionItemKey);
     const pinnedSessionKeysV1 = projection.pinnedSessionIds.map((sessionId) => mintSessionItemKey(sessionId));
     const tagLabelsById = buildSessionOrganizationTagLabelById(projection.tagsById);
     const lockedUnreadable = {

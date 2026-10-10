@@ -15,5 +15,8 @@ export function useSessionCompanionBoardAdd(
 ): Omit<SessionCompanionAddBinding, 'refs' | 'snapshot' | 'addItem'> {
     const pluginRuntime = mountedBoard?.pluginRuntime ?? null;
     const pluginProjection = pluginRuntime?.pluginUiProjection ?? null;
-    return React.useMemo(() => ({ pluginProjection, pluginRuntime }), [pluginProjection, pluginRuntime]);
+    const acquireBoardContent = mountedBoard?.acquireContent;
+    return React.useMemo(() => ({ pluginProjection, pluginRuntime,
+        ...(acquireBoardContent ? { acquireBoardContent } : {}),
+    }), [acquireBoardContent, pluginProjection, pluginRuntime]);
 }

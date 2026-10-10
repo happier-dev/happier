@@ -6,16 +6,29 @@ export type SessionListOrganizationAction = (request: Readonly<{ input: unknown;
 
 /** The mounted list supplies current state and the existing organization writers at execution time. */
 export function createSessionListOrganizationActionAdapter(
-    getContext: (mutationScope: SessionOrganizationMutationScope) => CommitSessionListDragIntentContext | null,
+    getContext: (mutationScope: SessionOrganizationMutationScope, projection?: 'rail') => CommitSessionListDragIntentContext | null,
 ): SessionListOrganizationAction {
     return async ({ input, mutationScope, signal }) => {
         const parsed = SessionOrganizationMoveInputSchema.safeParse(input);
         if (!parsed.success) return { status: 'refused', reason: 'invalid_parameters' };
         if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };
         let context: CommitSessionListDragIntentContext | null;
-        try { mutationScope.assertCurrent?.(); context = getContext(mutationScope); }
+        try { mutationScope.assertCurrent?.(); context = getContext(mutationScope, parsed.data.projection); }
         catch { return { status: 'unavailable' }; }
         if (!context) return { status: 'unavailable' };
+        if (parsed.data.projection === 'rail') {
+            const pinned = context.pinnedOrganization;
+            if (!pinned) return { status: 'unavailable' };
+            if (parsed.data.sourceKind !== 'leaf'
+                || !['reorder-before', 'reorder-after'].includes(parsed.data.instructionKind)) {
+                return { status: 'refused', reason: 'unsupported_operation' };
+            }
+            if (!pinned.railSessionRowIds.includes(parsed.data.sourceRowId)
+                || !parsed.data.targetRowId || !pinned.railSessionRowIds.includes(parsed.data.targetRowId)) {
+                return { status: 'refused', reason: 'rail_pin_not_available' };
+            }
+            context = { ...context, latestItems: pinned.items, latestTree: undefined };
+        }
         const intent = { ...parsed.data, sourceSnapshotSignature: '' };
         const admission = resolveSessionListDragIntent({ intent, context });
         if (!admission.ok) return { status: 'refused', reason: admission.relationReason ?? admission.reason };
@@ -32,14 +45,22 @@ export function createSessionListOrganizationActionAdapter(
     };
 }
 
-let mounted: SessionListOrganizationAction | null = null;
+let mountedList: SessionListOrganizationAction | null = null;
+let mountedRail: SessionListOrganizationAction | null = null;
 
-/** One answering list owner. Cleanup cannot retire a newer mounted owner. */
-export function registerMountedSessionListOrganizationAction(execute: SessionListOrganizationAction): () => void {
-    mounted = execute;
-    return () => { if (mounted === execute) mounted = null; };
+/** Fixed mounted list/rail projections share the same adapter; neither substitutes for an absent view. */
+export function registerMountedSessionListOrganizationAction(execute: SessionListOrganizationAction, projection: 'list' | 'rail' = 'list'): () => void {
+    if (projection === 'rail') {
+        mountedRail = execute;
+        return () => { if (mountedRail === execute) mountedRail = null; };
+    }
+    mountedList = execute;
+    return () => { if (mountedList === execute) mountedList = null; };
 }
 
 export async function invokeSessionListOrganizationAction(request: Parameters<SessionListOrganizationAction>[0]): Promise<SessionOrganizationMoveOutput> {
+    const input = SessionOrganizationMoveInputSchema.safeParse(request.input);
+    if (!input.success) return { status: 'refused', reason: 'invalid_parameters' };
+    const mounted = input.data.projection === 'rail' ? mountedRail : mountedList;
     return mounted ? await mounted(request) : { status: 'unavailable' };
 }

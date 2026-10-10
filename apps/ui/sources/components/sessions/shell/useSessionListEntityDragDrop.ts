@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/treeDragDrop';
 import { describeReportsToRefusal } from '@/components/sessions/work/putSessionUnderLead';
 import { resolvePutUnderEligibility } from '@/components/sessions/work/putUnderCandidates';
+import { selectSessionRelationRecords } from '@/components/sessions/work/reportSubtree';
 import { getStorage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -31,15 +32,20 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import type { SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization';
 import { t } from '@/text';
 import { parseToken } from '@/utils/auth/parseToken';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { getSessionCarriedLine, getSessionName } from '@/utils/sessions/sessionUtils';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 
 import { resolveSessionListDragTree, type CommitSessionListDragIntentContext, type SessionListDragAdmission } from './drag/commitSessionListDragIntent';
 import type { SessionListDragIntent, SessionListDragSnapshot } from './drag/_types';
-import { listSessionListEntityDropDestinations, resolveSessionListEntityDrop } from './drag/resolveSessionListEntityDrop';
+import { listSessionListEntityDropDestinations, readSessionListFolderAssignmentDestination, resolveSessionListFolderAssignmentDrop, resolveSessionListEntityDrop } from './drag/resolveSessionListEntityDrop';
 import {
     createSessionListOrganizationActionAdapter,
     registerMountedSessionListOrganizationAction,
 } from './drag/sessionListOrganizationAction';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListDragSnapshot } from './drag/sessionListDragSnapshot';
+import { treeRowId } from './drop-resolution/treeRowId';
 import { buildSessionListDragIntent } from './drag/sessionListDragIntent';
 import type { SessionListTreeRowMetadata } from './drop-resolution/sessionListTreeTypes';
 import {
@@ -83,14 +89,15 @@ const NO_GEOMETRY: TreeDropVisualGeometry = Object.freeze({ kind: 'none' });
 const ACCEPTED_KINDS = Object.freeze(['session', 'session-folder', 'session-workspace'] as const);
 const RELATION_REFUSAL_CODES = new Set(['reports_to_cycle', 'reports_to_cas_conflict', 'reports_to_forbidden']);
 
-function sessionsRecord(): Readonly<Record<string, Session>> {
-    return getStorage().getState().sessions as Readonly<Record<string, Session>>;
+function sessionsRecord(serverId: string | null): Readonly<Record<string, Session>> {
+    const state = getStorage().getState();
+    return selectSessionRelationRecords(state.sessions, serverId, state.sessionListRowsByServerId);
 }
 
 function rowName(metadata: SessionListTreeRowMetadata | undefined): string {
     if (!metadata) return '';
     if (metadata.kind === 'session' && metadata.sessionId) {
-        const session = sessionsRecord()[metadata.sessionId];
+        const session = sessionsRecord(metadata.serverId)[metadata.sessionId];
         return session ? getSessionName(session, metadata.serverId) : metadata.sessionId;
     }
     const item = metadata.item;
@@ -136,6 +143,11 @@ export function readSessionListDestinationIntent(destination: PluginUiJsonValueV
     };
 }
 
+function previewForFolderAssignment(folderName: string | null) {
+    return folderName === null ? describeSessionListDropPreview({ kind: 'top-level' })
+        : describeSessionListDropPreview({ kind: 'folder', folderName });
+}
+
 function previewForDestination(intent: Pick<SessionListDragIntent, 'instructionKind'>, target: SessionListTreeRowMetadata | null) {
     if (intent.instructionKind === 'nest-into') {
         return target?.kind === 'session'
@@ -160,7 +172,7 @@ function previewForAdmission(admission: Extract<SessionListDragAdmission, { ok: 
 }
 
 /** Acknowledged applied/refused or unknown, in the owner's words; never a rewritten cancellation. */
-function projectActionOutcome(actionId: string, result: Awaited<ReturnType<ReturnType<typeof createDefaultActionExecutor>['execute']>>): EntityDropOutcomeV1 {
+export function projectActionOutcome(actionId: string, result: Awaited<ReturnType<ReturnType<typeof createDefaultActionExecutor>['execute']>>): EntityDropOutcomeV1 {
     if (!result.ok) {
         if (RELATION_REFUSAL_CODES.has(result.errorCode)) {
             return { status: 'refused', reason: { code: result.errorCode, message: describeReportsToRefusal(result.errorCode) } };
@@ -185,7 +197,7 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
     scope: EntityDragScopeV1 | null;
     targetId: string | null;
     beginCarry: (snapshot: SessionListDragSnapshot, mode: 'pointer' | 'keyboard') => SessionListCarry | null;
-    prepareSource: (snapshot: SessionListDragSnapshot) => Readonly<{ sourceId: string; dispose: () => void }> | null;
+    prepareSource: (request: SessionListDragSnapshot | Readonly<{ sourceRowId: string }>) => Readonly<{ sourceId: string; dispose: () => void }> | null;
 }> {
     const runtime = useEntityDragDropRuntime();
     const activeScope = useActiveServerAccountScope();
@@ -211,7 +223,7 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
             ...inputRef.current.getCommitContext(mutationScope),
             scope: current,
             resolvePutSessionUnder: ({ serverId, sessionId, leadSessionId }) => {
-                const verdict = resolvePutUnderEligibility(sessionsRecord(), sessionId, leadSessionId, factsRef.current, {
+                const verdict = resolvePutUnderEligibility(sessionsRecord(current.serverId), sessionId, leadSessionId, factsRef.current, {
                     serverId,
                     accountId: current.accountId,
                 });
@@ -262,6 +274,9 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
                 scope: current,
             });
         } else {
+            const assignment = readSessionListFolderAssignmentDestination(context.destination);
+            if (assignment) return resolveSessionListFolderAssignmentDrop({ item: context.item, folderId: assignment.folderId,
+                context: commitContext, preview: previewForFolderAssignment, reason: describeSessionListDropReason });
             intent = readSessionListDestinationIntent(context.destination, current);
         }
         if (!intent || intent.instructionKind === 'idle') return refuse(SESSION_LIST_NO_TARGET_CODE);
@@ -300,23 +315,36 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
             getBounds: () => inputRef.current.getListBounds(),
             listDestinations: (item) => {
                 const context = buildContext();
-                return context ? listSessionListEntityDropDestinations({ item, context, preview: previewForDestination }) : [];
+                return context ? listSessionListEntityDropDestinations({ item, context, preview: previewForDestination, folderPreview: previewForFolderAssignment }) : [];
             },
             resolve,
             execute,
         });
     }, [buildContext, execute, resolve, runtime, scope, targetId]);
 
-    const prepareSource = React.useCallback((snapshot: SessionListDragSnapshot) => {
+    const prepareSource = React.useCallback((request: SessionListDragSnapshot | Readonly<{ sourceRowId: string }>) => {
         sourceRef.current?.dispose();
         const current = scopeRef.current;
         if (!current) return null;
-        const item = itemForSnapshot(snapshot, current);
+        const context = buildContext();
+        if (!context) return null;
+        const sourceRowId = 'source' in request ? request.source.sourceRowId : request.sourceRowId;
+        const semanticRow = 'source' in request ? null : context.latestItems.find(
+            (candidate): candidate is Extract<SessionListIndexItem, { type: 'session' }> => candidate.type === 'session'
+                && candidate.serverId === current.serverId && treeRowId.session(current.serverId, candidate.sessionId) === sourceRowId,
+        );
+        const snapshot = 'source' in request ? request : semanticRow ? null : buildSessionListDragSnapshot({
+            items: context.latestItems, viewItems: context.latestItems, sessionDragKey: sourceRowId,
+            foldersFeatureEnabled: context.isFolderOrganizationEnabled?.(current.serverId) === true,
+        });
+        const item: EntityDragItemV1 | null = semanticRow
+            ? { kind: 'session', scope: current, address: { serverId: current.serverId, sessionId: semanticRow.sessionId } }
+            : snapshot ? itemForSnapshot(snapshot, current) : null;
         if (!item) return null;
-        const sourceId = `session-list-source:${current.serverId}:${current.accountId}:${snapshot.source.sourceRowId}`;
+        const sourceId = `session-list-source:${current.serverId}:${current.accountId}:${sourceRowId}`;
         let live = true;
         carriedSnapshotRef.current = snapshot;
-        const sourceMetadata = snapshot.source.treeSource.metadata as SessionListTreeRowMetadata;
+        const sourceMetadata = snapshot?.source.treeSource.metadata as SessionListTreeRowMetadata | undefined;
         const retireSource = runtime.registerSource({
             id: sourceId,
             scope: current,
@@ -325,20 +353,30 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
                 if (!live || scopeRef.current?.serverId !== current.serverId || scopeRef.current?.accountId !== current.accountId) return false;
                 const context = buildContext();
                 if (!context) return false;
+                if (!sourceMetadata && item.kind === 'session') return context.latestItems.some(candidate => candidate.type === 'session'
+                    && candidate.serverId === item.address.serverId && candidate.sessionId === item.address.sessionId);
+                if (!sourceMetadata) return false;
                 const row = resolveSessionListDragTree(context).rowMetadataById.get(sourceMetadata.rowId);
                 return row?.kind === sourceMetadata.kind && row.serverId === sourceMetadata.serverId;
             },
             describe: () => {
-                const title = rowName(sourceMetadata);
-                return title ? { title } : null;
+                const session = item.kind === 'session' ? sessionsRecord(item.address.serverId)[item.address.sessionId] : undefined;
+                const title = sourceMetadata ? rowName(sourceMetadata)
+                    : session ? getSessionName(session, current.serverId) : semanticRow?.sessionId ?? '';
+                if (!title) return null;
+                // A Session carries its mark and its state line, as the lab's carried card does.
+                const subtitle = session ? getSessionCarriedLine(session, current.serverId) : null;
+                const agentId = session ? readSessionPresentationAgentId(session) : null;
+                return { title, ...(subtitle ? { subtitle } : {}),
+                    ...(agentId ? { renderMark: (size: number) => React.createElement(AgentIcon, { agentId, size }) } : {}) };
             },
-            getBounds: () => inputRef.current.getSourceBounds?.(snapshot.source.sourceRowId) ?? null,
+            getBounds: () => inputRef.current.getSourceBounds?.(sourceRowId) ?? null,
         });
         const abort = new AbortController();
         factsRef.current?.dispose();
         factsRef.current = null;
         if (item.kind === 'session') {
-            const candidateSessionIds = Object.values(sessionsRecord())
+            const candidateSessionIds = Object.values(sessionsRecord(item.address.serverId))
                 .filter((session) => (session.serverId ?? null) === item.address.serverId && session.id !== item.address.sessionId)
                 .map((session) => session.id);
             void loadSessionReportsToEligibility({ serverId: item.address.serverId, sessionId: item.address.sessionId,

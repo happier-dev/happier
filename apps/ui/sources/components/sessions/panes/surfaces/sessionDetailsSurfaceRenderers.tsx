@@ -79,6 +79,7 @@ type SessionDetailsSurfaceRendererOptions = Readonly<{
     machineId?: string | null;
     serverId?: string | null;
     pluginUiProjection?: PluginUiProjectionModel | null;
+    pluginAccountLifetime?: BrowserDetailsSurfaceRendererOptions['pluginAccountLifetime'];
     pluginUiProjectionPhase?: PluginUiProjectionPhase;
     pluginUiInteractionEnabled?: boolean;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
@@ -309,6 +310,7 @@ export function createSessionDetailsSurfaceRenderers(
                         pluginRuntime={{
                             pluginUiProjection: options.pluginUiProjection ?? null,
                             pluginBrowserProjection: options.pluginBrowserProjection ?? null,
+                            accountLifetime: options.pluginAccountLifetime ?? null,
                             phase: options.pluginUiProjectionPhase ?? 'unavailable',
                             interactionEnabled: options.pluginUiInteractionEnabled === true,
                             machineId: options.machineId ?? null,
@@ -358,6 +360,7 @@ export function createSessionDetailsSurfaceRenderers(
             machineId: options.machineId,
             serverId: options.serverId,
             pluginUiProjection: options.pluginUiProjection,
+            pluginAccountLifetime: options.pluginAccountLifetime,
             pluginUiInteractionEnabled: options.pluginUiInteractionEnabled,
             pluginBrowserProjection: options.pluginBrowserProjection,
             pluginBrowserActionSessionId: options.sessionId,

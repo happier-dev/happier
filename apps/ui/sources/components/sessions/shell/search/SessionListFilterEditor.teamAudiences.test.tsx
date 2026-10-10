@@ -98,6 +98,7 @@ function team(): TeamSummaryV1 {
         viewerRole: 'member',
         capabilities: NO_TEAM_CAPABILITIES_V1,
         admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+        counts: null,
     };
 }
 

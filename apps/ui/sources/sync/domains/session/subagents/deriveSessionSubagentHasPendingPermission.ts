@@ -1,3 +1,4 @@
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { Message } from "@happier-dev/session-core/messages";
 
 import type { SessionSubagent } from './types';
@@ -90,7 +91,7 @@ export function deriveSessionSubagentHasPendingPermission(params: Readonly<{
     reducerState: SidechainStateLike;
     messages?: readonly Message[];
 }>): boolean {
-    const sidechainId = params.subagent.transcript.sidechainId?.trim();
+    const sidechainId = readNonBlankOpaqueIdentifier(params.subagent.transcript.sidechainId);
     const sidechainMessages = sidechainId ? params.reducerState?.sidechains?.get(sidechainId) : null;
 
     if (Array.isArray(sidechainMessages) && sidechainMessages.length > 0) {

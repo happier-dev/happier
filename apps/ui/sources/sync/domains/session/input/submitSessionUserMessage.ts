@@ -561,7 +561,9 @@ async function enqueuePending(
             localId,
         };
     }
-    if (!opts.accountLifetime) reportHandoffIfCurrent();
+    // Pending already owns this input. Runtime wake is a later lifecycle phase,
+    // not a prerequisite for handing off the still-current Composer snapshot.
+    if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
     if (enqueueResult && typeof enqueueResult === 'object' && enqueueResult.accepted === false) {
         if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
         return {
@@ -622,8 +624,23 @@ async function enqueuePending(
     };
 
     try {
-        const wakeResult = await port.ensureSessionRuntimeForPendingInput(resumeOptions);
+        // The enqueue ACK does not carry native enrollment authority. Read the
+        // current Session after acceptance, in the same captured Account/Home.
+        const currentSession = port.refreshSessionForSubmit ? await port.refreshSessionForSubmit(opts.sessionId, {
+            ...(opts.serverId ? { serverId: opts.serverId } : {}),
+            ...(opts.accountLifetime ? { accountLifetime: opts.accountLifetime } : {}),
+        }) : undefined;
         if (!isSubmitAccountLifetimeCurrent(opts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
+        const wakeResult = await port.ensureSessionRuntimeForPendingInput({
+            ...resumeOptions,
+            ...(currentSession ? { pendingActivationAuthorization: currentSession.pendingActivationAuthorization } : {}),
+        });
+        if (!isSubmitAccountLifetimeCurrent(opts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
+        if (wakeResult.type === 'pending') {
+            await switchRemoteAfterPendingEnqueueIfNeeded(port, opts);
+            if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
+            return { type: 'wake_pending', persistence: 'pending', wake: { attempted: false, state: 'pending' }, localId };
+        }
         if (wakeResult.type === 'error') {
             await switchRemoteAfterPendingEnqueueIfNeeded(port, opts);
             if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
@@ -804,6 +821,9 @@ export async function submitSessionUserMessage(
                     ...(effectiveOpts.accountLifetime ? { accountLifetime: effectiveOpts.accountLifetime } : {}),
                 });
                 if (!isSubmitAccountLifetimeCurrent(effectiveOpts)) return accountScopeRetiredResult('send_failed', 'pending', localId);
+                if (wakeResult.type === 'pending') return {
+                    type: 'wake_pending', persistence: 'pending', wake: { attempted: false, state: 'pending' }, localId,
+                };
                 if (wakeResult.type === 'error') {
                     return {
                         type: 'wake_pending',

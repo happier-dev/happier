@@ -2,7 +2,7 @@ import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorks
 import * as React from 'react';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 
-import { UsagePanel } from '@/components/settings/usage/UsagePanel';
+import { UsageWidgetPage } from '@/components/settings/usage/UsageWidgetPage';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
@@ -28,7 +28,7 @@ export function SessionUsageScreenRoute() {
         return <ActivitySpinner size="small" />;
     }
 
-    return <UsagePanel sessionId={sessionId} />;
+    return <UsageWidgetPage sessionId={sessionId} />;
 }
 
 export { SessionUsageScreenRoute as WorkspaceRouteBody };

@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable, useWindowDimensions, View, type ViewStyle } from 'react-native';
+import { Platform, useWindowDimensions, View, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierBanner, isHappierBannerUrgent } from '@happier-dev/plugin-ui/presentation';
+import { HappierBanner, HappierPressable, isHappierBannerUrgent } from '@happier-dev/plugin-ui/presentation';
+
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
@@ -143,22 +145,23 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
             }}
         >
             {secondaryActions.map((action) => (
-                <Pressable
+                // The shared pressable owns press, keyboard focus ring and the busy lifecycle of an
+                // async action; the banner owns only its compact chrome.
+                <HappierPressable
                     key={action.key}
                     testID={action.testID}
-                    accessibilityRole="button"
                     accessibilityLabel={action.accessibilityLabel}
                     disabled={action.disabled}
                     hitSlop={ACTION_HIT_SLOP}
-                    onPress={action.disabled ? undefined : action.onPress}
-                    style={({ pressed }) => ({
+                    onPress={action.onPress}
+                    style={({ pressed, focused }) => [{
                         ...actionBaseStyle,
                         // Concentric with the banner surface: inner radius = outer radius - the inset between them.
                         borderRadius: theme.parts.composer.radius - BANNER_PADDING_VERTICAL,
                         paddingHorizontal: 10,
                         backgroundColor: theme.colors.button.secondary.background,
                         opacity: action.disabled ? 0.45 : pressed ? motionTokens.press.opacity : 1,
-                    })}
+                    }, focusRingStyle({ focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={{
                         fontSize: 12,
@@ -169,29 +172,28 @@ export function WarningActionBanner(props: WarningActionBannerProps): React.Reac
                     }}>
                         {action.label}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             ))}
             {hasPrimaryAction ? (
-                <Pressable
+                <HappierPressable
                     testID={props.actionTestID}
-                    accessibilityRole="button"
                     accessibilityLabel={props.actionAccessibilityLabel ?? props.actionLabel}
-                    accessibilityState={{ busy: props.actionBusy, disabled: props.disabled }}
+                    busy={props.actionBusy}
                     disabled={props.disabled}
                     hitSlop={ACTION_HIT_SLOP}
-                    onPress={props.disabled ? undefined : props.onActionPress}
-                    style={({ pressed }) => ({
+                    onPress={props.onActionPress!}
+                    style={({ pressed, focused }) => [{
                         ...actionBaseStyle,
                         // Concentric with the banner surface: inner radius = outer radius - the inset between them.
                         borderRadius: theme.parts.composer.radius - BANNER_PADDING_VERTICAL,
                         backgroundColor: theme.colors.button.primary.background,
                         opacity: props.disabled ? 0.45 : pressed ? motionTokens.press.opacitySubtle : 1,
-                    })}
+                    }, focusRingStyle({ focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={{ fontSize: 12, color: theme.colors.button.primary.tint, fontWeight: '600' }}>
                         {props.actionLabel}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
         </View>
     ) : null;

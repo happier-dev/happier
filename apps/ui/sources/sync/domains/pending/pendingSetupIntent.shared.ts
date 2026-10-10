@@ -12,7 +12,12 @@ export type PendingSetupIntent =
         relayUrl: string | null;
         machineId: string | null;
         remoteSetupIntent: 'remoteMachine' | 'remoteRelayHost';
-    }>;
+    }>
+    | (AskHappierAuthoringContext & Readonly<{
+        branch: 'askHappier';
+        phase: 'awaiting_auth' | 'post_auth' | 'dismissed';
+        relayUrl: string | null;
+    }>);
 
 type PendingSetupIntentRecord =
     | Readonly<{
@@ -28,7 +33,13 @@ type PendingSetupIntentRecord =
         machineId: string | null;
         remoteSetupIntent: 'remoteMachine' | 'remoteRelayHost';
         createdAtMs: number;
-    }>;
+    }>
+    | (AskHappierAuthoringContext & Readonly<{
+        branch: 'askHappier';
+        phase: 'awaiting_auth' | 'post_auth' | 'dismissed';
+        relayUrl: string | null;
+        createdAtMs: number;
+    }>);
 
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -79,7 +90,29 @@ function normalizeMachineId(raw: string | null | undefined): string | null {
     return value ? value : null;
 }
 
+function readAskHappierAuthoringContext(value: Readonly<{ context?: unknown; currentUiContext?: unknown }>): AskHappierAuthoringContext | null {
+    let context: AskHappierContext | undefined;
+    if (value.context !== undefined) {
+        if (!value.context || typeof value.context !== 'object') return null;
+        const candidate = value.context as Record<string, unknown>;
+        if (candidate.kind !== 'release' || !candidate.release || typeof candidate.release !== 'object') return null;
+        const release = candidate.release as Record<string, unknown>;
+        if (typeof release.id !== 'string' || typeof release.versionLabel !== 'string'
+            || typeof release.date !== 'string' || typeof release.markdown !== 'string') return null;
+        context = { kind: 'release', release: { id: release.id, versionLabel: release.versionLabel, date: release.date, markdown: release.markdown } };
+    }
+    const currentUiContext = value.currentUiContext === undefined ? undefined : CurrentUiContextSnapshotV1Schema.safeParse(value.currentUiContext);
+    if (currentUiContext && !currentUiContext.success) return null;
+    return { ...(context ? { context } : {}), ...(currentUiContext?.success ? { currentUiContext: currentUiContext.data } : {}) };
+}
+
 export function toRecord(value: PendingSetupIntent): PendingSetupIntentRecord | null {
+    if (value?.branch === 'askHappier') {
+        if (value.phase !== 'awaiting_auth' && value.phase !== 'post_auth' && value.phase !== 'dismissed') return null;
+        const authored = readAskHappierAuthoringContext(value);
+        if (!authored) return null;
+        return { branch: 'askHappier', phase: value.phase, relayUrl: normalizeRelayUrl(value.relayUrl), createdAtMs: Date.now(), ...authored };
+    }
     if (value?.branch === 'thisComputer') {
         if (value.phase !== 'pre_auth' && value.phase !== 'awaiting_auth' && value.phase !== 'post_auth' && value.phase !== 'dismissed') {
             return null;
@@ -113,6 +146,12 @@ export function fromRecord(value: unknown): PendingSetupIntent | null {
     const createdAtMs = Number(record.createdAtMs ?? 0);
     if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) return null;
     if (Date.now() - createdAtMs > ttlMs) return null;
+    if (record.branch === 'askHappier') {
+        if (record.phase !== 'awaiting_auth' && record.phase !== 'post_auth' && record.phase !== 'dismissed') return null;
+        const authored = readAskHappierAuthoringContext({ context: record.context, currentUiContext: record.currentUiContext });
+        if (!authored) return null;
+        return { branch: 'askHappier', phase: record.phase, relayUrl: normalizeRelayUrl(record.relayUrl as string | null | undefined), ...authored };
+    }
     if (record.branch === 'thisComputer') {
         if (record.phase !== 'pre_auth' && record.phase !== 'awaiting_auth' && record.phase !== 'post_auth' && record.phase !== 'dismissed') {
             return null;
@@ -167,3 +206,12 @@ export function fromSerializedRecord(raw: string): PendingSetupIntent | null {
         return null;
     }
 }
+import { CurrentUiContextSnapshotV1Schema, type CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
+import type { ChangelogEntry } from '@/changelog';
+
+export type AskHappierContext = Readonly<{ kind: 'release'; release: Readonly<ChangelogEntry> }>;
+
+type AskHappierAuthoringContext = Readonly<{
+    context?: AskHappierContext;
+    currentUiContext?: CurrentUiContextSnapshotV1;
+}>;

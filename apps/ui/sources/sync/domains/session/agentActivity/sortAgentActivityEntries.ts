@@ -21,8 +21,8 @@ export function sortAgentActivityEntries(
 ): readonly AgentActivityEntry[] {
     if (entries.length < 2) return entries;
     return [...entries].sort((left, right) => {
-        const leftLive = isInProgressAgentActivityStatus(left.status) ? 0 : 1;
-        const rightLive = isInProgressAgentActivityStatus(right.status) ? 0 : 1;
+        const leftLive = left.isActive !== false && isInProgressAgentActivityStatus(left.status) ? 0 : 1;
+        const rightLive = right.isActive !== false && isInProgressAgentActivityStatus(right.status) ? 0 : 1;
         if (leftLive !== rightLive) return leftLive - rightLive;
 
         const leftEvidence = resolveAgentActivityEvidenceAtMs({ entryId: left.id, evidenceAtMsById }) ?? 0;

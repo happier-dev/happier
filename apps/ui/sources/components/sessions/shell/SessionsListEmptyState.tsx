@@ -16,8 +16,9 @@ import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineA
 
 import type { SessionGettingStartedDecisionKind } from '@/components/sessions/guidance/gettingStartedModel';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 type SessionsListEmptyStateKind = Extract<
     SessionGettingStartedDecisionKind,
@@ -39,15 +40,16 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
 
     const handleStartSession = React.useCallback((machineId: string) => {
         const serverId = String(activeServer.serverId ?? '').trim();
-        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
-        router.push({
-            pathname: '/new',
-            params: buildNewSessionLaunchRouteParams({
-                draftId,
-                machineId,
-                targetServerId: serverId,
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!serverId || !lifetime) return;
+        seedAndOpenNewSession({
+            seed: { placement: { kind: 'exactTarget', serverId, machineId } },
+            scope: lifetime.scope,
+            isCurrent: lifetime.isCurrent,
+            navigateToNewSession: ({ draftId }) => router.push({
+                pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }),
             }),
-        } as never);
+        });
     }, [activeServer.serverId, router]);
 
     const handleOpenSetup = React.useCallback(() => {

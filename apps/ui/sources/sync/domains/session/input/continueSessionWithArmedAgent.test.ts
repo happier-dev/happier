@@ -16,7 +16,7 @@ const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+    return createTextModuleMock({ translate: (key, params) => `${key}${params?.agent ? ` ${params.agent}` : ''}` });
 });
 
 // The socket transport is the only genuine boundary in this path. Everything
@@ -383,6 +383,15 @@ describe('reconcileArmedAgentContinuationDisposition', () => {
             facts,
         });
     }
+
+    it('reconciles only the exact configured target after an uncertain switch', () => {
+        const reconcileConfigured = (currentAgentId: string) => reconcileArmedAgentContinuationDisposition({
+            result: UNKNOWN, labels: LABELS, targetAgentId: 'acp:review-b',
+            facts: { currentAgentId, sessionActive: false, input: 'absent' },
+        });
+        expect(reconcileConfigured('acp:review-a')).toMatchObject({ arm: 'keep', notice: { recovery: 'none' } });
+        expect(reconcileConfigured('acp:review-b')).toMatchObject({ arm: 'clear', notice: { recovery: 'resumeSession' } });
+    });
 
     it('resolves an unknown outcome to success once the exact input is canonically admitted', () => {
         // The reader's message is in the transcript. Anything else the banner

@@ -12,18 +12,11 @@ import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import {
-    storage,
-    useProfile,
-    useLocalSetting,
-    useSetting,
-    useSettings,
-    useSessionOrganizationProjection,
-    useMachineListByServerId,
-} from '@/sync/domains/state/storage';
+import { useWorkspaceRefs, storage, useProfile, useLocalSetting, useSetting, useSettings, useSessionOrganizationProjection, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { useMachinePoolOriginName } from '@/sync/engine/machines/useMachinePoolOriginName';
 import type { MachinePoolProjectionMachine } from '@/sync/engine/machines/useMachinePoolProjections';
 import { getSessionName, resolveLockedSessionTitle, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
@@ -79,6 +72,7 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import {
@@ -121,10 +115,10 @@ import {
 import {
     requireSessionOrganizationMutationScope,
     writeSessionOrganizationFolderAssignment,
-    writeSessionOrganizationPin,
     writeSessionOrganizationTagLabels,
     type SessionOrganizationMutationScope,
 } from '@/sync/ops/sessionOrganization';
+import { sessionOrganizationActions } from '@/sync/ops/sessionOrganization/sessionOrganizationActions';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
 import { buildSessionOrganizationTagLabelById } from '@/sync/domains/session/organization/tagLabels';
 import { buildSessionTagsMenuContent } from '@/components/sessions/organization/SessionTagsMenuContent';
@@ -268,14 +262,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(session.id, sessionServerId);
     const serverSnapshot = useServerFeaturesSnapshotForServerId(sessionServerId, { enabled: Boolean(sessionServerId) });
     const useProfiles = useSetting('useProfiles') === true;
-    const profilesSetting = useSetting('profiles');
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(sessionServerId);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const profiles = useAiLaunchProfilesForLegacyUi(profilesSetting);
+    const profiles = useAiLaunchProfilesForLegacyUi();
     const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
     const settings = useSettings();
-    const workspaceRefsV1 = useSetting('workspaceRefsV1');
+    const workspaceRefsV1 = useWorkspaceRefs();
     const machineListByServerId = useMachineListByServerId();
     const workspaceDisplay = React.useMemo(() => resolveSessionWorkspaceDisplayPresentation({
         serverId: sessionServerId,
@@ -353,17 +346,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const sessionActionDefaultBackendEntry = React.useMemo(() => {
         const target = resolveSessionActionDefaultTarget(sessionActionDefaultBackend);
         if (!target) return null;
+        if (acpCatalog?.catalog.status !== 'ready' || acpCatalog.stale) return null;
         const selectedTargetKey = resolveBackendTargetKeyV2(target);
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSettingsV1: (acpCatalogSettingsV1 as any) ?? { v: 2, backends: [] },
+            acpCatalogSnapshot: acpCatalog.catalog,
             backendEnabledByTargetKey: (backendEnabledByTargetKey as any) ?? null,
             mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
             mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
             discoveredBackendIds: daemonMergedProjectionInputs?.discoveredBackendIds ?? undefined,
         }).find((entry) => entry.backendTargetKey === selectedTargetKey) ?? null;
     }, [
-        acpCatalogSettingsV1,
+        acpCatalog,
         backendEnabledByTargetKey,
         daemonMergedProjectionInputs?.discoveredBackendIds,
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
@@ -598,6 +592,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         currentUserId,
         isConnected: sessionStatus.isConnected,
         isPinned: isPinnedSession,
+        isRailPinned: organizationProjection?.pinsBySessionId[session.id]?.railPinned === true,
         attentionStandingEnabled,
         followEnabled: followEditor.enabled,
         attentionStanding: isAttentionStandingSession,
@@ -607,6 +602,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         currentUserId,
         isAttentionStandingSession,
         isPinnedSession,
+        organizationProjection,
         scopedMutationServerId,
         session,
         sessionStatus.isConnected,
@@ -712,17 +708,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
             context: {
                 operations: {
                     setPinned: async (_sessionId, pinned, opts) => {
-                        const scope = await getSessionOrganizationMutationScopeOrThrow(opts?.serverId ?? scopedMutationServerId);
-                        await writeSessionOrganizationPin({
-                            scope,
-                            sessionId: session.id,
-                            pinned,
-                        });
+                        const result = await sessionOrganizationActions.setPin(session.id, pinned,
+                            { serverId: opts?.serverId ?? scopedMutationServerId });
+                        if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
                     },
                 },
             },
         });
-    }, [getSessionOrganizationMutationScopeOrThrow, isPinnedSession, scopedMutationServerId, session.id, sessionActionTarget, sessionSettingsKey]);
+    }, [isPinnedSession, scopedMutationServerId, session.id, sessionActionTarget, sessionSettingsKey]);
     const [pinningSession, performTogglePinned] = useHappyAction(handleTogglePinned);
 
     const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
@@ -960,7 +953,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         fallbackTitle: providerDisplayName,
     });
     const headerMachineLabel = currentExecutionMachineLabel ?? metadata?.host ?? null;
-    const headerPath = metadata?.path ? formatPathRelativeToHome(metadata.path, metadata.homeDir) : null;
+    const headerPath = metadata?.path ? formatSessionPath(metadata.path, metadata.homeDir) : null;
     const headerMeta = [
         aiProviderTitle ? { key: 'agent', text: aiProviderTitle } : null,
         headerMachineLabel ? { key: 'machine', text: headerMachineLabel } : null,
@@ -1267,7 +1260,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                         ) : (
                             <Item
                                 title={t('sessionInfo.path')}
-                                subtitle={formatPathRelativeToHome(metadata.path, metadata.homeDir)}
+                                subtitle={formatSessionPath(metadata.path, metadata.homeDir)}
                                 showChevron={false}
                             />
                         )}

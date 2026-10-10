@@ -394,7 +394,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
             localId: ACCEPTED_LOCAL_ID,
             requestedAction: { v: 1, kind: 'steer_now' },
             outboxScope: scope,
-            request: async () => Response.json({ didUpdate: true }),
+            request: async () => Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'steer_now' } }),
         });
 
         const second = fetchAndApplyPendingMessagesV2({
@@ -459,7 +459,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
             localId: LOCAL_ID,
             requestedAction: { v: 1, kind: 'steer_now' },
             outboxScope: scope,
-            request: async () => Response.json({ didUpdate: true }),
+            request: async () => Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'steer_now' } }),
         });
 
         // The settlement lands while that read is still outstanding.

@@ -323,6 +323,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             machineId: pluginRuntime.machineId,
             serverId: pluginRuntime.serverId,
             pluginUiProjection: pluginRuntime.pluginUiProjection,
+            pluginAccountLifetime: pluginRuntime.accountLifetime,
             pluginUiProjectionPhase: pluginRuntime.phase,
             pluginUiInteractionEnabled: pluginRuntime.phase === 'current'
                 && pluginRuntime.interactionEnabled === true,
@@ -367,6 +368,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         pluginRuntime.platform,
         pluginRuntimeFormFactor,
         pluginRuntime.pluginUiProjection,
+        pluginRuntime.accountLifetime,
         pluginRuntime.pluginBrowserProjection,
         callerHostedHtmlRuntime,
         pluginRuntime.serverId,
@@ -496,7 +498,9 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         showHeaderActions && closeButtonAtStart ? closeButton : null
     ), [closeButton, closeButtonAtStart, showHeaderActions]);
 
-    const renderHeaderActions = React.useCallback(() => {
+    // Launchers and workspace chrome ride on the strip; a single tab's own header (a peek) keeps
+    // only the pane's controls (lab `session-D`: ⤢ and ×).
+    const renderStripActions = React.useCallback(() => {
         const boardOpenButton = (
             <IconButton
                 variant="plain"
@@ -515,14 +519,44 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             />
         );
 
-        if (!showHeaderActions) {
-            return <>{showDedicatedBoardAction ? boardOpenButton : null}{browserOpenButton}</>;
-        }
-
         return (
             <>
                 {showDedicatedBoardAction ? boardOpenButton : null}
                 {browserOpenButton}
+                {showHeaderActions && showRightPaneToggle ? (
+                    <IconButton
+                        variant="plain"
+                        size={DETAILS_TAB_STRIP_METRICS.actionSizePx}
+                        onPress={toggleRightPane}
+                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-right-pane-toggle')}
+                        accessibilityLabel={
+                            rightPaneOpen
+                                ? t('session.detailsPanel.closeRightSidebarA11y')
+                                : t('session.detailsPanel.openRightSidebarA11y')
+                        }
+                        icon={rightPaneOpen
+                            ? <SidebarCollapseIcon edge="right" size={18} color={theme.colors.text.secondary} />
+                            : <SidebarExpandIcon edge="right" size={18} color={theme.colors.text.secondary} />}
+                    />
+                ) : null}
+            </>
+        );
+    }, [
+        openBoardTab,
+        showDedicatedBoardAction,
+        openBrowserLaunchpadTab,
+        rightPaneOpen,
+        sessionScreenTestIdsEnabled,
+        showHeaderActions,
+        showRightPaneToggle,
+        theme.colors.text.secondary,
+        toggleRightPane,
+    ]);
+
+    const renderHeaderActions = React.useCallback(() => {
+        if (!showHeaderActions) return null;
+        return (
+            <>
                 {Platform.OS === 'web' ? (
                     <IconButton
                         variant="plain"
@@ -544,41 +578,18 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                         />}
                     />
                 ) : null}
-                {showRightPaneToggle ? (
-                    <IconButton
-                        variant="plain"
-                        size={DETAILS_TAB_STRIP_METRICS.actionSizePx}
-                        onPress={toggleRightPane}
-                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-right-pane-toggle')}
-                        accessibilityLabel={
-                            rightPaneOpen
-                                ? t('session.detailsPanel.closeRightSidebarA11y')
-                                : t('session.detailsPanel.openRightSidebarA11y')
-                        }
-                        icon={rightPaneOpen
-                            ? <SidebarCollapseIcon edge="right" size={18} color={theme.colors.text.secondary} />
-                            : <SidebarExpandIcon edge="right" size={18} color={theme.colors.text.secondary} />}
-                    />
-                ) : null}
                 {closeButtonAtStart ? null : closeButton}
             </>
         );
     }, [
         closeButton,
         closeButtonAtStart,
-        iconButtonStyle,
-        openBoardTab,
-        showDedicatedBoardAction,
-        openBrowserLaunchpadTab,
         paneFocusMode.active,
         paneFocusMode.canEnter,
         paneFocusMode.toggle,
-        rightPaneOpen,
         sessionScreenTestIdsEnabled,
         showHeaderActions,
-        showRightPaneToggle,
         theme.colors.text.secondary,
-        toggleRightPane,
     ]);
 
     const workspace = controlledDestination
@@ -601,6 +612,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             renderTabContent={renderTabContent}
             renderOverlay={renderOverlay}
             renderHeaderLeadingActions={renderHeaderLeadingActions}
+            renderStripActions={renderStripActions}
             renderHeaderActions={renderHeaderActions}
             renderEmptyState={renderEmptyState}
         />

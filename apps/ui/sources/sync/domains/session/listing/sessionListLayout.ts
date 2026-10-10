@@ -1,5 +1,4 @@
 import { t } from '@/text';
-import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 
@@ -16,10 +15,9 @@ import {
 } from './sessionListOrderingRules';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 
-export const SESSION_LIST_LAYOUT_CHOICES = ['projects', 'recent_activity', 'active_inactive'] as const;
-export type SessionListLayoutChoice = typeof SESSION_LIST_LAYOUT_CHOICES[number];
-export type SessionListGroupingMode = 'project' | 'date';
-export type SessionListSectionMode = 'activity' | 'single';
+import { SESSION_LIST_LAYOUT_CHOICES, type SessionListLayoutChoice, type SessionListGroupingMode, type SessionListSectionMode, type SessionListLayoutSettings, normalizeSessionListSectionModeV1, normalizeSessionListGroupingModeV1, resolveSessionListLayoutChoice, resolveSessionListLayoutSettingsDelta } from '@happier-dev/protocol/actions/settings/accountSettingChoiceReducers';
+export { SESSION_LIST_LAYOUT_CHOICES, normalizeSessionListSectionModeV1, normalizeSessionListGroupingModeV1, resolveSessionListLayoutChoice, resolveSessionListLayoutSettingsDelta };
+export type { SessionListLayoutChoice, SessionListGroupingMode, SessionListSectionMode, SessionListLayoutSettings };
 
 export type SessionListSessionRowDragPolicy = Readonly<{
     canReorderSiblings: boolean;
@@ -28,63 +26,6 @@ export type SessionListSessionRowDragPolicy = Readonly<{
     canPutUnder: boolean;
     canDrag: boolean;
 }>;
-
-export type SessionListLayoutSettings = Readonly<{
-    sessionListSectionModeV1?: unknown;
-    sessionListActiveGroupingV1?: unknown;
-    sessionListInactiveGroupingV1?: unknown;
-    sessionListOrderingModeV1?: unknown;
-}>;
-
-export function normalizeSessionListSectionModeV1(value: unknown): SessionListSectionMode {
-    return value === 'activity' ? 'activity' : 'single';
-}
-
-export function normalizeSessionListGroupingModeV1(value: unknown): SessionListGroupingMode {
-    return value === 'date' ? 'date' : 'project';
-}
-
-/**
- * Derives the arranged layout from the incumbent Account settings.
- *
- * `transientIntent` is a presentation-only override owned by a route or host for the
- * lifetime of that visit. It never writes, shadows or migrates the stored preference,
- * so a compatibility deep link can present Recent activity while the Account keeps
- * whatever the person last chose in View options.
- */
-export function resolveSessionListLayoutChoice(
-    settings: SessionListLayoutSettings,
-    transientIntent?: SessionListLayoutChoice | null,
-): SessionListLayoutChoice {
-    if (transientIntent) {
-        return transientIntent;
-    }
-    if (normalizeSessionListSectionModeV1(settings.sessionListSectionModeV1) === 'activity') {
-        return 'active_inactive';
-    }
-    return normalizeSessionListGroupingModeV1(settings.sessionListActiveGroupingV1) === 'date'
-        ? 'recent_activity'
-        : 'projects';
-}
-
-export function resolveSessionListLayoutSettingsDelta(
-    choice: SessionListLayoutChoice,
-    _currentSettings: SessionListLayoutSettings,
-): SettingsWriteDelta {
-    if (choice === 'projects') {
-        return {
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'project',
-        };
-    }
-    if (choice === 'recent_activity') {
-        return {
-            sessionListSectionModeV1: 'single',
-            sessionListActiveGroupingV1: 'date',
-        };
-    }
-    return { sessionListSectionModeV1: 'activity' };
-}
 
 export function resolveSessionListLayoutApplicability(params: Readonly<{
     choice: SessionListLayoutChoice;
@@ -177,6 +118,8 @@ function projectRecentActivitySessionItem(params: Readonly<{
         ...(item.serverId ? { serverId: item.serverId } : {}),
         ...(item.serverName ? { serverName: item.serverName } : {}),
         ...(item.storageKind ? { storageKind: item.storageKind } : {}),
+        ...(item.workspace ? { workspace: item.workspace } : {}),
+        ...(item.folderId !== undefined ? { folderId: item.folderId } : {}),
         ...(item.archivedAt != null ? { archivedAt: item.archivedAt } : {}),
         ...(item.keepVisibleWhenInactive ? { keepVisibleWhenInactive: true } : {}),
         ...(item.contextualSearchReasons ? { contextualSearchReasons: item.contextualSearchReasons } : {}),

@@ -37,6 +37,8 @@ const LOCKED_REASON_KEYS = {
     decryption_failed: 'machine.lockedReason.unopenable',
     // A plaintext Machine whose content could not be parsed.
     content_unreadable: 'machine.lockedReason.unreadable',
+    recipient_key_pending: 'machines.destinations.pendingKey',
+    recipient_access_refused: 'common.unavailable',
 } as const;
 
 /**

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { TranscriptVisualContextProvider } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 
 import type { ToolCallMessage } from "@happier-dev/session-core/messages";
 import type { PersistedSessionMessagePinV1 } from "@happier-dev/session-core/pins";
@@ -40,8 +41,11 @@ export function renderGroupedToolCallRowContent(params: Readonly<{
     toolChromeCommon: TranscriptToolChromeCommon;
     toolRouteCommon: TranscriptToolRouteCommon;
 }>): React.ReactNode {
+    const visualOriginV1 = params.message.meta?.forkVisualOriginV1;
+    const withVisualOrigin = (content: React.ReactNode) => visualOriginV1 === undefined ? content
+        : <TranscriptVisualContextProvider visualOriginV1={visualOriginV1}>{content}</TranscriptVisualContextProvider>;
     if (shouldRenderGroupedToolCallWithMessageView(params.message, params.chromeMode, params.groupExpanded)) {
-        return (
+        return withVisualOrigin(
             <MessageViewWithSessionCommon
                 message={params.message}
                 metadata={params.metadata}
@@ -62,7 +66,7 @@ export function renderGroupedToolCallRowContent(params: Readonly<{
     }
 
     if (params.chromeMode === 'activity_feed') {
-        return (
+        return withVisualOrigin(
             <ToolTimelineRow
                 tool={params.message.tool}
                 metadata={params.metadata}
@@ -80,7 +84,7 @@ export function renderGroupedToolCallRowContent(params: Readonly<{
         );
     }
 
-    return (
+    return withVisualOrigin(
         <ToolView
             tool={params.message.tool}
             metadata={params.metadata}

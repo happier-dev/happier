@@ -150,6 +150,8 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
         sessionExpectation?:
             SessionMetadataInactiveModelIntentExpectationV1;
         mutationIntent?: 'rename_session';
+        expectedMetadataRevision?: number;
+        onMetadataCommitted?: (revision: number) => void;
         maxAttempts?: number;
     },
 ): Promise<void> {
@@ -188,7 +190,10 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
     const tupleCrypto = params.tupleCrypto;
     const applyTupleSnapshot = params.applyTupleSnapshot;
     const exactInitial = await acquireTupleSnapshot();
-    if (isDemoModeActive()) return;
+    if (isDemoModeActive()) {
+        params.onMetadataCommitted?.(exactInitial.metadataVersion);
+        return;
+    }
     let legacyAttempt = 0;
     const mutateLegacy = async (
         request: SessionMetadataLegacyOwnerMutationRequestV1<M, A>,
@@ -337,7 +342,8 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
             initialSnapshot: exactInitial,
             mutation: updater === 'ownerMigration'
                 ? { kind: 'ownerMigration' }
-                : { kind: 'metadata', update: updater },
+                : { kind: 'metadata', update: updater, ...(params.expectedMetadataRevision !== undefined
+                    ? { expectedMetadataRevision: params.expectedMetadataRevision } : {}) },
             crypto: tupleCrypto,
             commit: async (patch) => {
                 if (params.sessionExpectation && patch.mode !== 'owner') {
@@ -411,6 +417,7 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
             mutateLegacy,
             maxAttempts,
         });
+        params.onMetadataCommitted?.(updated.metadataVersion);
         if (updated.metadataLayoutVersion === 0) {
             return;
         }

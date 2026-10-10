@@ -1,3 +1,5 @@
+import { readSessionRuntimeLostSinceMs, readSessionRuntimePresentationFreshnessExpirations, type SessionRuntimePresentationInput } from '@/sync/domains/session/attention/runtimePresentation';
+import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from './sessionListRuntimeClock';
 import * as React from 'react';
 
 import {
@@ -188,6 +190,7 @@ export function useSessionAgentActivity(params: SessionAgentActivityParams): Ses
 
     return useMergedSessionAgentActivity({
         session,
+        runtimeSource: session ?? scopedRenderable,
         headline: session ? undefined : scopedRenderable?.agentActivityHeadline ?? null,
         roster,
         enrichment: NO_SESSION_AGENT_ACTIVITY_ENRICHMENT,
@@ -226,6 +229,7 @@ export function useSessionAgentActivityRoster(
 
     return useMergedSessionAgentActivity({
         session,
+        runtimeSource: session ?? scopedRenderable,
         headline: session ? undefined : scopedRenderable?.agentActivityHeadline ?? null,
         roster,
         enrichment,
@@ -259,6 +263,7 @@ function useSessionAgentActivityTranscriptEnrichment(params: Readonly<{
 
 function useMergedSessionAgentActivity(params: Readonly<{
     session: Session | null;
+    runtimeSource?: SessionRuntimePresentationInput | null;
     /** A Home-qualified concurrent-list headline when the raw live cache is another Home. */
     headline?: SessionAgentActivityHeadlineV1 | null;
     roster: ReturnType<typeof useSessionSubagents>;
@@ -266,6 +271,12 @@ function useMergedSessionAgentActivity(params: Readonly<{
 }>): SessionAgentActivityState {
     const { enrichment, session } = params;
     const { participantTargets, subagents } = params.roster;
+    const runtimeNowMs = useSessionListRuntimeNowMs(session === null && params.runtimeSource != null);
+    const fallbackNowMs = Math.max(runtimeNowMs, Date.now());
+    const runtimeLostSinceMs = session !== null ? params.roster.runtimeLostSinceMs
+        : params.runtimeSource ? readSessionRuntimeLostSinceMs(params.runtimeSource, fallbackNowMs) : null;
+    const expirations = session === null && params.runtimeSource ? readSessionRuntimePresentationFreshnessExpirations(params.runtimeSource, fallbackNowMs) : [];
+    useSessionListRuntimeWake(expirations.length > 0 ? Math.min(...expirations) : null);
 
     const headline = React.useMemo<SessionAgentActivityHeadlineV1 | null>(() => {
         if (params.headline !== undefined) return params.headline;
@@ -279,8 +290,8 @@ function useMergedSessionAgentActivity(params: Readonly<{
             subagent,
             attentionKinds: attentionKindsBySubagentId?.get(subagent.id) ?? NO_SESSION_AGENT_ACTIVITY_ATTENTION,
         }));
-        return deriveAgentActivityEntries({ headline, local });
-    }, [attentionKindsBySubagentId, headline, subagents]);
+        return deriveAgentActivityEntries({ headline, local, runtimeLostSinceMs });
+    }, [attentionKindsBySubagentId, headline, subagents, runtimeLostSinceMs]);
 
     const derivedEntries = React.useMemo(
         () => sortAgentActivityEntries(merged.entries, merged.evidenceAtMsById),

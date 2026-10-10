@@ -258,6 +258,27 @@ describe('transcript Find model', () => {
         expect(unreadable.status).toMatchObject({ kind: 'results', total: 0, coverage: 'partialErrors' });
     });
 
+    it('refreshes live appends and edits after Stop while preserving the current match', () => {
+        let messages = [message('current', 'needle'), message('tail', 'tail', 2)];
+        const model = createTranscriptFindModel({
+            readCorpus: () => ({ messages, history: { isLoaded: true, hasOlder: true, isLoadingOlder: false } }),
+            loadPage: () => new Promise(() => {}), jumpToTarget: noJump, reveal: async () => {},
+        });
+        model.setQuery('needle');
+        model.searchOlder();
+        model.stop();
+        messages = [...messages, message('live', 'needle', 3)];
+        model.refresh();
+        expect(model.status).toMatchObject({ kind: 'results', total: 2, current: 1 });
+        expect(model.getOverview().currentMessageId).toBe('current');
+        messages = messages.map(row => row.id === 'tail' ? message('tail', 'needle needle', 2) : row);
+        model.refresh();
+        expect(model.status).toMatchObject({ kind: 'results', total: 4, current: 1 });
+        expect(model.rowStore.getSnapshot('tail')?.blocks[0]?.sourceRanges).toHaveLength(2);
+        expect(model.getOverview().currentMessageId).toBe('current');
+        model.dispose();
+    });
+
     it('does not wrap an incomplete target window and does not certify a missing newer frontier complete', async () => {
         const directions: string[] = [];
         const model = createTranscriptFindModel({

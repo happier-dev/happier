@@ -54,11 +54,13 @@ const SessionListCompositeHeader = React.memo(function SessionListCompositeHeade
     onSelectFolderBreadcrumb: (folderId: string) => void;
     rowDensity: SessionListRowDensity;
     showDrafts?: boolean;
+    scheduledSection?: React.ReactNode;
     viewContext?: SessionListViewContext;
 }>) {
     return (
         <>
             <SessionsListHeader />
+            {props.scheduledSection}
             {props.showDrafts !== false ? (
                 <NewSessionDraftsSection
                     density={props.rowDensity}
@@ -207,6 +209,8 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     folderFocus: SessionFolderFocusScope | null;
     folderFocusRootTitle?: string | null;
     showDrafts?: boolean;
+    /** The global, live Work sidebar alone demands Account upcoming work. */
+    scheduledSection?: React.ReactNode;
     onClearFolderFocus: () => void;
     onSelectFolderBreadcrumb: (folderId: string) => void;
 }>) {
@@ -251,9 +255,10 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             onSelectFolderBreadcrumb={props.onSelectFolderBreadcrumb}
             rowDensity={rowDensity}
             showDrafts={props.showDrafts}
+            scheduledSection={props.scheduledSection}
             viewContext={props.viewContext}
         />
-    ), [props.folderFocus, props.folderFocusRootTitle, props.onClearFolderFocus, props.onSelectFolderBreadcrumb, props.showDrafts, props.viewContext, rowDensity]);
+    ), [props.folderFocus, props.folderFocusRootTitle, props.onClearFolderFocus, props.onSelectFolderBreadcrumb, props.showDrafts, props.scheduledSection, props.viewContext, rowDensity]);
     const getNodeType = React.useCallback(
         (node: SessionListVirtualizedNode) => getSessionListNodeType(node, rowDensity),
         [rowDensity],

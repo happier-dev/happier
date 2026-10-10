@@ -83,7 +83,10 @@ export type SessionOrganizationSnapshotApplyOptions = Partial<Pick<
 export type SessionOrganizationProjection = Readonly<{
     schemaVersion: number | null;
     version: number | null;
+    /** One personal order shared by list and rail membership, including retained demoted choices. */
+    orderedPinSessionIds: readonly string[];
     pinnedSessionIds: readonly string[];
+    railPinnedSessionIds: readonly string[];
     pinsBySessionId: Readonly<Record<string, SessionOrganizationPin>>;
     foldersById: Readonly<Record<string, UiSessionOrganizationFolder>>;
     folderAssignmentsBySessionId: Readonly<Record<string, SessionOrganizationFolderAssignmentValue>>;

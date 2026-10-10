@@ -1,4 +1,5 @@
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { readSessionBotV1, type SessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { Metadata } from '@happier-dev/session-core/state';
 import {
     readExternalAgentObservationSessionState,
@@ -26,6 +27,7 @@ export type SessionListRenderableExternalSessionIdentity = Readonly<{
 }>;
 
 export type SessionListRenderableMetadataComparison = Readonly<{
+    bot?: SessionBotV1;
     name: string | undefined;
     summaryText: string | null;
     path: string;
@@ -47,6 +49,7 @@ export type SessionListRenderableMetadataComparison = Readonly<{
 }>;
 
 type SessionListRenderableMetadataComparisonSnapshot = Readonly<{
+    bot?: unknown;
     name?: string;
     summaryText: string | null;
     path: string;
@@ -62,7 +65,8 @@ type SessionListRenderableMetadataComparisonSnapshot = Readonly<{
     terminalControlServiceabilityV1?: unknown;
 }>;
 
-const MANAGED_SESSION_DIRECTORY_MARKER = Object.freeze({ v: 1 as const, kind: 'managed' as const });
+/** One shared value, so equal rows keep their identity wherever the marker is restated. */
+export const MANAGED_SESSION_DIRECTORY_MARKER = Object.freeze({ v: 1 as const, kind: 'managed' as const });
 
 function readExternalSessionRenderableMetadata(
     candidate: SessionListRenderableExternalSessionIdentity | null,
@@ -192,6 +196,7 @@ function isSessionListRenderableMetadataComparisonSnapshotEqual(
     nextReadStateV1: SessionListRenderableMetadataComparison['readStateV1'],
 ): boolean {
     return previous.name === snapshot.name
+        && (readSessionBotV1(previous.bot)?.kind ?? null) === (readSessionBotV1(snapshot.bot)?.kind ?? null)
         && (previous.summaryText ?? null) === snapshot.summaryText
         && previous.path === snapshot.path
         && (previous.homeDir ?? null) === snapshot.homeDir
@@ -238,6 +243,7 @@ export function normalizeSessionListRenderableMetadataComparison(
         normalizedSnapshot.terminalControlServiceabilityV1,
         previous?.terminalControlServiceabilityV1 ?? null,
     );
+    const nextBot = readSessionBotV1(normalizedSnapshot.bot);
 
     if (previous && isSessionListRenderableMetadataComparisonSnapshotEqual(
         normalizedSnapshot,
@@ -250,6 +256,7 @@ export function normalizeSessionListRenderableMetadataComparison(
     }
 
     const next: SessionListRenderableMetadataComparison = {
+        ...(nextBot ? { bot: previous?.bot ?? nextBot } : {}),
         name: normalizedSnapshot.name,
         summaryText: normalizedSnapshot.summaryText,
         path: normalizedSnapshot.path,
@@ -275,8 +282,10 @@ export function readSessionListRenderableMetadataComparison(
     previous?: SessionListRenderableMetadata | null,
 ): SessionListRenderableMetadataComparison | null {
     if (!metadata) return null;
+    if (metadata.bot !== undefined && readSessionBotV1(metadata.bot) === null) return null;
 
     return normalizeSessionListRenderableMetadataComparison({
+        bot: metadata.bot,
         name: typeof metadata.name === 'string' ? metadata.name : undefined,
         summaryText: readRenderableSummaryText(metadata),
         path: typeof metadata.path === 'string' ? metadata.path : '',
@@ -300,6 +309,7 @@ export function readSessionListRenderableMetadataComparisonFromRenderable(
     if (!metadata) return null;
 
     return normalizeSessionListRenderableMetadataComparison({
+        bot: metadata.bot,
         name: metadata.name,
         summaryText: metadata.summaryText ?? null,
         path: metadata.path,
@@ -335,6 +345,7 @@ export function areSessionListRenderableMetadataComparisonsEqual(
     if (!previous || !next) return previous === next;
 
     return previous.name === next.name
+        && (previous.bot?.kind ?? null) === (next.bot?.kind ?? null)
         && (previous.summaryText ?? null) === (next.summaryText ?? null)
         && previous.path === next.path
         && (previous.homeDir ?? null) === (next.homeDir ?? null)

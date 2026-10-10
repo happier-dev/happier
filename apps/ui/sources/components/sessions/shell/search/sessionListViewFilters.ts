@@ -311,6 +311,7 @@ export function buildSessionListFilterQueryHomes(
                 includeInactive: options.includeInactive,
                 scope: normalized.scope,
                 attention: normalized.attention,
+                ...(normalized.bot === undefined ? {} : { bot: normalized.bot }),
                 audiences: normalized.audiences
                     .filter((audience) => audience.serverId === serverId)
                     .map(toHomeAudience),
@@ -349,6 +350,7 @@ export function resolveSessionListFilterOrdinaryPageAdapter(
     if (
         (
             filters.source !== 'all'
+            || filters.bot !== undefined
             || filters.searchQuery.trim().length > 0
             // A tag selection the request does not carry is a local projection over
             // this corpus, exactly like Source and text search.
@@ -378,6 +380,7 @@ export function shouldUseSessionListFilterQuerySource(
         || selectedMountedHomeServerIds.length !== mountedHomeServerIds.length
         || normalized.audiences.length > 0
         || normalized.tagIds.length > 0
+        || normalized.bot !== undefined
         || normalized.attention !== 'any'
         || normalized.scope !== 'my_work';
 }
@@ -431,6 +434,7 @@ export function buildSessionListSelectionScopeSignature(
         startedBy: [...filters.startedBy].sort(),
         scope: filters.scope,
         attention: filters.attention,
+        ...(filters.bot === undefined ? {} : { bot: filters.bot }),
         source: filters.source,
         searchQuery: normalizeSearchQueryIdentity(filters.searchQuery),
         homeServerIds: [...selectedHomes].sort(),

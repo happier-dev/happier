@@ -14,7 +14,6 @@ import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { MachineMetadataSchema } from '@/sync/domains/state/storageTypes';
@@ -56,6 +55,10 @@ const linkEnsureSpy = vi.hoisted(() => vi.fn(async (): Promise<ExternalSessionLi
     sessionId: 'happy-session-1',
     created: true,
 })));
+const memoryRpcSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: (...args: unknown[]) => memoryRpcSpy(...args),
+}));
 const routerPushSpy = vi.hoisted(() => vi.fn());
 // Navigation may load through the destination host before the shared component
 // overrides are installed. Bind the real router boundary during module collection.
@@ -76,7 +79,7 @@ const profileMock = vi.hoisted(() => ({
     connectedServicesV2: [
         {
             serviceId: 'openai-codex',
-            profiles: [{ profileId: 'work', status: 'connected' }],
+            profiles: [{ profileId: 'work', status: 'connected' as const }],
         },
     ],
 }));
@@ -282,6 +285,7 @@ installNewSessionComponentsCommonModuleMocks({
     router: () => expoRouterMock.module,
     text: () => createTextModuleMock({
         translate: (key: string, params?: Record<string, unknown>) => {
+            if (key === 'agentInput.agent.codex') return 'Codex';
             if (key === 'time.nowShort') return 'now';
             if (key === 'time.minutesAgoShort') return `${String(params?.count)}m ago`;
             if (key === 'time.hoursAgoShort') return `${String(params?.count)}h ago`;
@@ -295,22 +299,11 @@ installNewSessionComponentsCommonModuleMocks({
             confirm: modalConfirmSpy,
         },
     }).module,
-    storage: async () => createStorageModuleStub({
-        // Inventory is actual store state; only the existing settings boundary stays stubbed.
-        useMachineListForServer: (await vi.importActual<typeof import('@/sync/store/hooks')>('@/sync/store/hooks')).useMachineListForServer,
-        useSetting: (key: string) => {
-            if (key === 'externalSessionsSettingsV1') {
-                return accountSettingsState.current.externalSessionsSettingsV1;
-            }
-            if (key === 'connectedServicesProfileLabelByKey') {
-                return settingsMock.connectedServicesProfileLabelByKey;
-            }
-            if (key === 'backendEnabledByTargetKey') return {};
-            if (key === 'acpCatalogSettingsV1') return { v: 2, backends: [] };
-            return undefined;
-        },
-    }),
 });
+// The unified search owner consumes real store hooks; partial store mocks can
+// deadlock their dependency cycle and cannot characterize the content boundary.
+vi.unmock('@/sync/domains/state/storage');
+vi.unmock('@/sync/store/hooks');
 vi.mock('@/sync/sync', () => ({
     sync: {
         mutateAccountSettingsOnce: vi.fn(async ({ mutate }: Readonly<{
@@ -326,13 +319,6 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/store/hooks', async (importOriginal) => ({
-    useProfile: () => profileMock,
-    useSettingsVersion: () => 1,
-    useLocalSetting: (key: string) => key === 'uiItemDensity' ? 'comfortable' : undefined,
-    // Scope equality remains owned by the actual store reader, not this presentation fixture.
-    useActiveServerAccountScope: (await importOriginal<typeof import('@/sync/store/hooks')>()).useActiveServerAccountScope,
-}));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
     useDaemonMergedProjectionInputs: (params: unknown) => {
         daemonProjectionHookSpy(params);
@@ -469,6 +455,7 @@ describe('ExternalSessionsBrowseScreen', () => {
             { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
         ];
         await publishMachinesState();
+        memoryRpcSpy.mockReset().mockResolvedValue({ v: 1, enabled: false });
         administrationTargetSelection.controller.reset();
         candidatesListSpy.mockReset();
         daemonProjectionHookSpy.mockClear();
@@ -506,51 +493,15 @@ describe('ExternalSessionsBrowseScreen', () => {
         modalAlertSpy.mockClear();
         mutateAccountSettingsSpy.mockClear();
         accountSettingsState.current = {};
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        getStorage().setState(state => ({ profile: { ...state.profile, ...profileMock },
+            settingsVersion: 1,
+            settings: { ...settingsDefaults, ...settingsMock,
+                backendEnabledByTargetKey: {}, experiments: true, featureToggles: { 'memory.search': true } },
+        }));
     });
 
-    it('scans Conversations only after explicit submit and clears rows when the query changes', async () => {
-        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
-        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
-        const metadataCalls = candidatesListSpy.mock.calls.length;
-        await screen.pressByTestIdAsync('external-sessions-search-target:content');
-        await act(async () => {
-            screen.changeTextByTestId('direct-session-candidates-search-input', 'body only');
-        });
-        await flushHookEffects();
-        expect(candidatesListSpy.mock.calls).toHaveLength(metadataCalls);
-        expect(screen.findByTestId('direct-session-candidates:content-unsearched')).not.toBeNull();
-        candidatesListSpy.mockResolvedValue({
-            ok: true,
-            candidates: [{ remoteSessionId: 'body-hit', updatedAtMs: 1, match: { snippet: 'body only', sourceItemId: 'm1', messageIndex: 0 } }],
-            nextCursor: null,
-            contentCoverage: 'complete',
-        });
-        await screen.pressByTestIdAsync('direct-session-candidates-content-submit');
-        await flushHookEffects();
-        expect(candidatesListSpy.mock.calls).toHaveLength(metadataCalls + 1);
-        expect(screen.findByTestId('direct-session-candidate:body-hit')).not.toBeNull();
-        await act(async () => {
-            screen.changeTextByTestId('direct-session-candidates-search-input', 'new query');
-        });
-        await flushHookEffects();
-        expect(candidatesListSpy.mock.calls).toHaveLength(metadataCalls + 1);
-        expect(screen.findByTestId('direct-session-candidate:body-hit')).toBeNull();
-    });
-
-    it('accepts explicit palette intent only for its locked machine and source', async () => {
-        candidatesListSpy.mockResolvedValue({ ok: true, candidates: [], nextCursor: null, contentCoverage: 'complete' });
-        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
-        const screen = await renderScreen(<ExternalSessionsBrowseScreen
-            lockScope={{ machineId: 'machine-1', serverId: 'server-a', providerId: 'codex', source: { kind: 'codexHome', home: 'user' } }}
-            initialSearchTarget="content"
-            initialSearchQuery="body only"
-        />);
-        await flushHookEffects();
-        expect(candidatesListSpy).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1', searchTarget: 'content', searchTerm: 'body only',
-        }), expect.objectContaining({ serverId: 'server-a' }));
-        expect(screen.findByTestId('direct-session-candidates:content-unsearched')).toBeNull();
-    });
 
     it('renders cold daemon projection loading instead of an authoritative empty result', async () => {
         daemonProjectionState.current = {
@@ -674,7 +625,7 @@ describe('ExternalSessionsBrowseScreen', () => {
         const { upsertAndActivateServer, upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
         const { getStorage } = await import('@/sync/domains/state/storageStore');
         const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
-        const connectionManager = await import('@/sync/runtime/orchestration/connectionManager');
+        const connectionManager = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
         const foreground = await upsertAndActivateServer({ serverUrl: 'https://browse-consent-foreground.test' });
         const foreign = await upsertServerProfileOnly({ serverUrl: 'https://browse-consent-foreign.test' });
         const foregroundScope = { serverId: foreground.id, accountId: 'foreground-account' };

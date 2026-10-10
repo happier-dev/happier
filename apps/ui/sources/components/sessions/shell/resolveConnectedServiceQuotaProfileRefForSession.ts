@@ -64,7 +64,9 @@ function resolveSupportedQualifiedServiceKeys(params: Readonly<{
     }
     if (!isBundledAgentId(params.agentId)) return [];
     const out: string[] = [];
-    for (const serviceId of getAgentCore(params.agentId).connectedServices?.supportedServiceIds ?? []) {
+    const core = getAgentCore(params.agentId);
+    if (!core) return out;
+    for (const serviceId of core.connectedServices?.supportedServiceIds ?? []) {
         const qualified = resolveQualifiedConnectedAccountServiceKey(serviceId);
         if (qualified && !out.includes(qualified)) out.push(qualified);
     }

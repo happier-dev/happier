@@ -17,6 +17,8 @@ import {
 import { buildSessionWorkspaceOrderScopeKey } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 import { sessionAddressKey } from '../sessionAddress';
 import type { SessionOrganizationProjection } from './types';
+import { buildSessionOrganizationProjection } from './projection';
+import { buildSessionOrganizationSessionKey } from './keys';
 import type { SessionOrganizationOrderItemAddress } from './viewState';
 import type { SessionFolderV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
 
@@ -24,15 +26,34 @@ function folderKey(serverId: string, folderId: string): string {
     return buildSessionListFolderOrderItemKey({ serverId, folderId })!;
 }
 
+function projectOrganizationPins(
+    serverId: string,
+    pins: SessionOrganizationProjection['pinsBySessionId'] = {},
+): SessionOrganizationProjection {
+    return buildSessionOrganizationProjection({
+        schemaVersionByServerId: { [serverId]: 1 },
+        snapshotVersionByServerId: { [serverId]: 1 },
+        pinsBySessionKey: Object.fromEntries(Object.values(pins).map((pin) => [
+            buildSessionOrganizationSessionKey(serverId, pin.sessionId), pin,
+        ])),
+        foldersByFolderKey: {},
+        folderAssignmentsBySessionKey: {},
+        tagsByTagKey: {},
+        tagAssignmentsBySessionKey: {},
+        attentionStandingsBySessionKey: {},
+        orderEntriesByScopeKey: {},
+        labelsByLabelKey: {},
+    }, serverId);
+}
+
 describe('buildSessionOrganizationListViewState', () => {
     it('composes exact per-Home organization state without allowing the active Home to overwrite another Home', () => {
         const makeProjection = (serverId: string, label: string, pinned: boolean): SessionOrganizationProjection => ({
+            ...projectOrganizationPins(serverId, pinned
+                ? { 'same-session': { sessionId: 'same-session', sortKey: '0001', pinnedAt: 1, listPinned: true, railPinned: false } }
+                : {}),
             schemaVersion: 1,
             version: 1,
-            pinnedSessionIds: pinned ? ['same-session'] : [],
-            pinsBySessionId: pinned
-                ? { 'same-session': { sessionId: 'same-session', sortKey: '0001', pinnedAt: 1 } }
-                : {},
             foldersById: {
                 [`folder-${serverId}`]: {
                     folderId: `folder-${serverId}`,
@@ -138,10 +159,9 @@ describe('buildSessionOrganizationListViewState', () => {
         const state = buildSessionOrganizationListViewState({
             serverId: 'server-a',
             projection: {
+                ...projectOrganizationPins('server-a'),
                 schemaVersion: 1,
                 version: 1,
-                pinnedSessionIds: [],
-                pinsBySessionId: {},
                 foldersById: {},
                 folderAssignmentsBySessionId: {},
                 tagsById: {},
@@ -168,10 +188,9 @@ describe('buildSessionOrganizationListViewState', () => {
         const state = buildSessionOrganizationListViewState({
             serverId: 'server-a',
             projection: {
+                ...projectOrganizationPins('server-a'),
                 schemaVersion: 1,
                 version: 4,
-                pinnedSessionIds: [],
-                pinsBySessionId: {},
                 foldersById: {},
                 folderAssignmentsBySessionId: {},
                 tagsById: {
@@ -254,10 +273,11 @@ describe('buildSessionOrganizationListViewState', () => {
         const state = buildSessionOrganizationListViewState({
             serverId: 'server-a',
             projection: {
+                ...projectOrganizationPins('server-a', {
+                    'session-1': { sessionId: 'session-1', sortKey: null, pinnedAt: 1, listPinned: true, railPinned: false },
+                }),
                 schemaVersion: 1,
                 version: 9,
-                pinnedSessionIds: ['session-1'],
-                pinsBySessionId: {},
                 foldersById: {
                     'folder-private-id': {
                         folderId: 'folder-private-id',
@@ -402,12 +422,11 @@ describe('multi-Home organization order writes', () => {
 
     function makeOrderProjection(serverId: string): SessionOrganizationProjection {
         return {
+            ...projectOrganizationPins(serverId, {
+                'same-session': { sessionId: 'same-session', sortKey: '0001', pinnedAt: 1, listPinned: true, railPinned: false },
+            }),
             schemaVersion: 1,
             version: 1,
-            pinnedSessionIds: ['same-session'],
-            pinsBySessionId: {
-                'same-session': { sessionId: 'same-session', sortKey: '0001', pinnedAt: 1 },
-            },
             foldersById: {
                 [`folder-${serverId}`]: {
                     folderId: `folder-${serverId}`,

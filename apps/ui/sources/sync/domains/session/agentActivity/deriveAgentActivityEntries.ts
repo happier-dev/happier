@@ -1,3 +1,4 @@
+import { isSessionOwnedActivityUnobserved } from '../attention/runtimePresentation';
 import { isTerminalAgentActivityStatus, type AgentActivityStatusV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1';
 import type { SessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 
@@ -18,11 +19,8 @@ import {
  *
  * Four invariants, each of which has a way of failing quietly:
  *
- * - **INV-1 the headline owns EXISTENCE and STATUS.** A local source may add detail — the title as
- *   it is being edited, the sidechain, the terminal instant — and may not overrule what state the
- *   work is in. Disagreement is COUNTED, never reconciled: silently preferring one authority per
- *   field is how a roster ends up telling two stories on two surfaces. One bounded exception, at
- *   `resolveMergedStatus`.
+ * - **INV-1** the headline owns existence and published status. Newer explicit local completion
+ *   reconciles older nonterminal claims, and runtime loss changes observation to unknown.
  * - **INV-2 neither side is dropped.** Local-without-headline is kept (the headline lags, or the
  *   backend publishes none at all) and marked `provenance: 'local'`; headline-without-local is kept
  *   with `detailState: 'unloaded'` — the transcript page holding it has not arrived, which is the
@@ -83,25 +81,13 @@ function isDevBuild(): boolean {
     return typeof __DEV__ !== 'undefined' && __DEV__;
 }
 
-/**
- * The status a joined entry ends up with.
- *
- * INV-1 with ONE narrow exception, and the exception is not a softening of the rule — it is the
- * rule applied to a fact the headline structurally cannot hold. `waiting` is not a lifecycle state
- * the publisher competes for; it is the local observation that a permission prompt is on screen and
- * a PERSON is the blocker. The publisher never sees that prompt, so it publishes `running`, and
- * deferring to it would leave the one status that escalates unable to escalate.
- *
- * It is bounded on both sides: only `waiting` may win, and only over a NON-TERMINAL headline
- * status. A finished agent is not waiting on anybody, and painting it as attention would send a
- * person to a row they cannot act on.
- */
-function resolveMergedStatus(
-    headlineStatus: AgentActivityStatusV1,
-    localStatus: AgentActivityStatusV1,
-): AgentActivityStatusV1 {
-    if (localStatus === 'waiting' && !isTerminalAgentActivityStatus(headlineStatus)) return 'waiting';
-    return headlineStatus;
+function resolveMergedStatus(headline: AgentActivityHeadlineEntry, local: AgentActivityLocalEntry): AgentActivityStatusV1 {
+    if (!isTerminalAgentActivityStatus(headline.status)) {
+        if (isTerminalAgentActivityStatus(local.status) && local.endedAtMs !== null
+            && local.endedAtMs >= (headline.updatedAtMs ?? 0)) return local.status;
+        if (local.status === 'waiting') return 'waiting';
+    }
+    return headline.status;
 }
 
 function toHeadlineOnlyEntry(entry: AgentActivityHeadlineEntry): AgentActivityEntry {
@@ -133,6 +119,7 @@ function toLocalOnlyEntry(entry: AgentActivityLocalEntry): AgentActivityEntry {
         id: entry.id,
         kind: entry.kind,
         status: entry.status,
+        ...(entry.isActive !== undefined ? { isActive: entry.isActive } : {}),
         title: entry.title,
         metaDetail: entry.metaDetail,
         startedAtMs: entry.startedAtMs,
@@ -154,14 +141,14 @@ function toMergedEntry(
     headline: AgentActivityHeadlineEntry,
     local: AgentActivityLocalEntry,
 ): AgentActivityEntry {
-    const status = resolveMergedStatus(headline.status, local.status);
+    const status = resolveMergedStatus(headline, local);
     return {
         // The headline's id wins so one agent is keyed identically on every surface, whichever
         // source that surface happened to see first.
         id: headline.id,
         kind: headline.kind,
         status,
-        // The local title is the live one — it tracks the tool call as it is edited and is not
+        ...(local.isActive !== undefined ? { isActive: local.isActive } : {}),        // The local title is the live one — it tracks the tool call as it is edited and is not
         // clamped by the headline's transport bound — so it wins when it says something.
         title: local.title.trim().length > 0 ? local.title : headline.title,
         metaDetail: local.metaDetail,
@@ -183,6 +170,7 @@ function toMergedEntry(
 export function deriveAgentActivityEntries(params: Readonly<{
     headline: SessionAgentActivityHeadlineV1 | null | undefined;
     local: readonly AgentActivityLocalEntry[];
+    runtimeLostSinceMs?: number | null;
 }>): AgentActivityMergeResult {
     const headlineEntries = deriveHeadlineAgentActivityEntries(params.headline);
 
@@ -222,7 +210,7 @@ export function deriveAgentActivityEntries(params: Readonly<{
         // signal this diagnostic exists to surface.
         if (
             match.status !== local.status
-            && resolveMergedStatus(match.status, local.status) === match.status
+            && resolveMergedStatus(match, local) === match.status
         ) {
             statusDivergenceCount += 1;
             if (collectDivergences) {
@@ -245,9 +233,14 @@ export function deriveAgentActivityEntries(params: Readonly<{
         observations.push({ id: headlineEntry.id, updatedAtMs: headlineEntry.updatedAtMs });
     }
 
+    const evidenceAtMsById = buildAgentActivityEvidenceIndex(observations);
     return {
-        entries,
-        evidenceAtMsById: buildAgentActivityEvidenceIndex(observations),
+        entries: entries.map((entry) => entry.kind !== 'execution_run'
+            && !isTerminalAgentActivityStatus(entry.status) && entry.status !== 'unknown'
+            && isSessionOwnedActivityUnobserved(params.runtimeLostSinceMs, evidenceAtMsById.get(entry.id))
+            ? { ...entry, status: 'unknown', attentionKinds: NO_SESSION_AGENT_ACTIVITY_ATTENTION }
+            : entry),
+        evidenceAtMsById,
         diagnostics: {
             statusDivergenceCount,
             statusDivergences: divergences.length > 0 ? divergences : NO_DIVERGENCES,

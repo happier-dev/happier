@@ -1,6 +1,6 @@
 import { isSessionAccessOwner, normalizeSessionAccessProjection } from './normalizeSessionAccessProjection';
 import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
-import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SessionTurnsProjectionV1Schema, type SessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { isSessionEncryptionModeAllowedByClientRequirement, type ClientEncryptionRequirement } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
@@ -729,7 +729,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
     });
   }
   const strictSharedMetadata = metadataLayoutVersion === 1
-    ? SessionSharedMetadataV1Schema.safeParse(decryptedMetadata)
+    ? StoredSessionSharedMetadataV1Schema.safeParse(decryptedMetadata)
     : null;
   const layout1SharedMetadata = strictSharedMetadata?.success
     ? strictSharedMetadata.data

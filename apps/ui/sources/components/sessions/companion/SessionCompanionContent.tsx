@@ -25,6 +25,7 @@ import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/us
 import type { CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { SessionBoardBinding } from '@/components/sessions/board/observeSessionBoard';
+import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { t } from '@/text';
 import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import { resolveSessionBoardExecutableCurrentness } from '@/sync/domains/session/board';
@@ -272,6 +273,13 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     }, []);
     const full = props.presentation === 'full';
     const { controller } = props;
+    const contentAddress = React.useMemo(() => normalizeSessionAddress(props.serverId ?? null, props.session.id), [props.serverId, props.session.id]);
+    const acquireBoardContent = useMountedSessionBoardController(contentAddress)?.acquireContent;
+    const needsBoardItems = !props.measurementOnly && controller.preference.items.some(item => item.kind === 'widget');
+    React.useEffect(() => {
+        if (!needsBoardItems) return;
+        return acquireBoardContent?.();
+    }, [acquireBoardContent, needsBoardItems]);
     const inventory = resolveSessionCompanionBoardInventory(props.boardBinding);
     const board = props.boardBinding?.status === 'ready' ? props.boardBinding.snapshot : null;
     const boardItemsById = board?.itemsById;
@@ -379,11 +387,11 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     const moveCompanionItemTo = (entry: SessionCompanionContentItem, toIndex: number) => {
         if (entry.ref.kind === 'instance') {
             if (!dragScope?.isCurrent()) {
-                publishPresentationNotice({ key: 'widgets.instance.move', severity: 'error', message: t('entityDragDrop.surface.widgetMoveUnavailable') });
+                publishPresentationNotice({ key: 'widgets.item.move', severity: 'error', message: t('entityDragDrop.surface.widgetMoveUnavailable') });
                 return;
             }
             const surface = { ...dragScope.scope, owner: { kind: 'companion' as const, sessionId: props.session.id } };
-            void executeWidgetEntityMovement({ actionId: 'widgets.instance.move', input: { ref: { surface, instanceId: entry.ref.instance.id }, to: { surface, index: toIndex } },
+            void executeWidgetEntityMovement({ actionId: 'widgets.item.move', input: { ref: { surface, instanceId: entry.ref.instance.id }, to: { surface, index: toIndex } },
                 preview: { verb: t('entityDragDrop.organize.title'), target: t('sessionBoard.companion.title') } }, dragScope.scope);
             return;
         }
@@ -437,7 +445,7 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     const companionSurface = useSessionWidgetSurface({ owner: 'companion', serverId: glanceServerId, sessionId, session: props.session });
     const addContext = companionSurface.context;
     // A direct personal copy's Edit inputs… and Rename change that copy alone, through the
-    // Companion's own owner (the same intents `widgets.instance.inputs.set`/`.rename` reach).
+    // Companion's own owner (the same intents `widgets.item.inputs.set`/`.rename` reach).
     const setInstanceInputs = React.useCallback(async (instanceId: string, bindings: WidgetInputBindingsV1): Promise<WidgetSetupSubmitResult> => {
         if (controller.availability !== 'ready' || !noticeKeyPrefix) return { ok: false, message: t('widgetAdd.saveFailed') };
         const existing = controller.preference.items.find(item => item.kind === 'instance' && item.instance.id === instanceId);

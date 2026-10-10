@@ -58,7 +58,7 @@ describe('resolveExternalSessionBrowseLockedSource', () => {
             providerId: 'fx',
             agentOptionState: null,
             profile: null,
-            settings: { connectedServicesProfileLabelByKey: {} },
+            labelsByKey: {},
             projection,
         } as const;
 
@@ -144,7 +144,7 @@ describe('resolveExternalSessionBrowseLockedSource', () => {
                 },
             },
             profile: null,
-            settings: { connectedServicesProfileLabelByKey: {} },
+            labelsByKey: {},
             projection,
         })).toEqual({
             kind: 'codexHome',

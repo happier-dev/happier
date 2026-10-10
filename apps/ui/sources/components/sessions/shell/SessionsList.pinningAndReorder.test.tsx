@@ -118,12 +118,12 @@ installSessionShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
+                useWorkspaceRefs: () => workspaceRefsV1,
                 useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'compactSessionView') return false;
                     if (key === 'compactSessionViewMinimal') return false;
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'hideInactiveSessions') return hideInactiveSessions;
-                    if (key === 'workspaceRefsV1') return workspaceRefsV1;
                     if (key === 'workspacePathDisplayModeV1') return 'path';
                     return null;
                 } }),
@@ -148,7 +148,6 @@ installSessionShellCommonModuleMocks({
                     mockMachinesState.current.map((machine) => [machine.id, machine]),
                 ),
                 useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-                    if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
                     return [null, vi.fn()];
                 }),
             },

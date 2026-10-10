@@ -29,7 +29,7 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
 });
 
 // Applied runtime identity is a connection boundary; Account fencing remains real.
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
+vi.mock('@/sync/runtime/orchestration/appliedActiveServerRuntime', () => ({
     getAppliedActiveServerSnapshot: () => appliedRuntime,
     isAppliedActiveServerRuntimeAvailable: () => true,
 }));

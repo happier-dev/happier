@@ -194,7 +194,6 @@ import { useTeamCredentialSelectionCoordinator } from '@/components/sessions/tea
 import { resourceHasAvailableTeamCredentialProviderModel } from '@/components/sessions/teamCredentials/teamCredentialProviderModelCurrentness';
 import { useScmSessionAutoRefresh } from '@/scm/refresh/useScmSessionAutoRefresh';
 import {
-    sessionAbort,
 } from '@/sync/ops';
 import { useWorkspaceRefs, storage, useEnabledAutomationsCountForSession, useEndpointConnectivity, useIsDataReady, useIsMachineListSettled, useLocalSetting, useOpenApprovalArtifactsForSession, useProfile, useMachine, useServerScopedMachine, useSessionPendingMessages, useSessionTranscriptIds, useSessionVisibleReadSeq, useSetting, useSocketStatus, useSettingMutable, useSettings, useSyncError, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import {
@@ -376,6 +375,7 @@ import { Keyboard, Platform, Pressable, View, useWindowDimensions } from 'react-
 import { layout } from '@/components/ui/layout/layout';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { sessionSwitch } from '@/sync/ops';
 import { shouldRenderChatTimelineForSession, shouldOfferLocalControlRelease, shouldRequestRemoteControlAfterPendingEnqueue } from '@/sync/domains/session/control/localControlSwitch';
 import { readControlSwitchUiTimeoutMsFromEnv } from '@/sync/domains/session/control/controlSwitchUiTimeout';
@@ -549,6 +549,7 @@ import { presentSessionProviderBinding } from '@/providers/session/presentation'
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useConfirmExperimentalProviderModel } from '@/providers/hooks/useConfirmExperimentalProviderModel';
 import { SessionModelPicker } from '@/components/sessions/modelPicker/SessionModelPicker';
+import { SessionModelNativeSourceLabelContext } from '@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff';
 import {
     hiddenModelVisibilityKeys,
     type SessionModelProjectionGroup,
@@ -734,6 +735,7 @@ const PENDING_MESSAGE_EDIT_DRAIN_HOLD_TTL_MS = 2 * 60 * 1000;
 const PENDING_MESSAGE_EDIT_DRAIN_HOLD_REFRESH_MS = 30 * 1000;
 const EMPTY_SESSION_MODEL_PROJECTION_GROUPS: readonly SessionModelProjectionGroup[] = [];
 const EMPTY_TEAM_CREDENTIAL_RESOURCES: readonly never[] = [];
+const EMPTY_SESSION_ROUTE_HIDDEN_SOURCES: readonly never[] = [];
 
 /**
  * Where one submitted localId has got to, canonically — the single reader for
@@ -1852,6 +1854,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const embedded = readEmbeddedSessionPresentation(props.presentation);
     const isDataReady = useIsDataReady();
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
     const executionRunServerId = expectedRouteServerId ?? session?.serverId ?? null;
@@ -2662,7 +2665,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                     left: 0,
                     right: 0,
                     height: safeAreaTopInset,
-                    backgroundColor: theme.colors.surface.base,
+                    backgroundColor: materialColor(theme.colors.surface.base, 'transparent'),
                     zIndex: 1000,
                     ...shadowLevelStyle(theme.colors.shadowLevels[3]),
                 }} />
@@ -6290,13 +6293,12 @@ function SessionViewLoadedContent({
     const updatePermissionMode = React.useCallback((mode: PermissionMode) => {
         fireAndForget(applyPermissionModeSelection({
             sessionId,
+            serverId: sessionRouteServerId,
             mode,
             applyTiming: settings.sessionPermissionModeApplyTiming === 'next_prompt' ? 'next_prompt' : 'immediate',
-            updateSessionPermissionMode: (sid, nextMode) => storage.getState().updateSessionPermissionMode(sid, nextMode),
-            getSessionPermissionModeUpdatedAt: (sid) => storage.getState().sessions[sid]?.permissionModeUpdatedAt ?? null,
-            publishSessionPermissionModeToMetadata: (payload) => sync.publishSessionPermissionModeToMetadata(payload),
+            executeAction: actionExecutor.execute,
         }), { tag: 'SessionView.updatePermissionMode' });
-    }, [sessionId, settings.sessionPermissionModeApplyTiming]);
+    }, [actionExecutor, sessionId, sessionRouteServerId, settings.sessionPermissionModeApplyTiming]);
 
     const updateAcpSessionModeOverride = React.useCallback((modeId: string) => {
         const normalized = typeof modeId === 'string' ? modeId.trim() : '';
@@ -6913,6 +6915,11 @@ function SessionViewLoadedContent({
     // An embedded arm that cannot send but may change the model keeps the composer's controls only:
     // no text field or send that could never succeed.
     const embeddedComposerControlsOnly = embedded !== null && isReadOnly && canSelectModel;
+    const shouldShowInput = inactiveUi.shouldShowInput
+        && !sessionMachineAccessRemoved
+        && !isEncryptedSessionLocked
+        // Register only the input presentation that the render branch actually mounts.
+        && (embedded === null || (embedded.composer !== 'none' && (!isReadOnly || embeddedComposerControlsOnly)));
     /**
      * The one Composer mutability rule for this Session screen. Both public
      * snapshots and the host attachment row's mutation affordances read it, so
@@ -6983,9 +6990,9 @@ function SessionViewLoadedContent({
         createAttachmentInstanceId: randomUUID,
         setComposerDecorations: composerInputEffects.setComposerDecorations,
         acquireComposerInputLock: composerInputEffects.acquireComposerInputLock,
-        isCurrent: isActiveComposerPresentationCurrent,
+        isCurrent: () => shouldShowInput && isActiveComposerPresentationCurrent(),
         // A retained hidden surface stays registered but yields command targeting to a presented one.
-        isPresented: () => surfacePresented,
+        isPresented: () => shouldShowInput && surfacePresented,
         focusComposer: () => {
             if (
                 !surfaceFocused
@@ -7054,10 +7061,11 @@ function SessionViewLoadedContent({
         acquireComposerInputLock: composerInputEffects.acquireComposerInputLock,
         isCurrent: () => (
             composerPresentationMountedRef.current
+            && shouldShowInput
             && composerPresentationAccountLifetime !== null
             && composerPresentationAccountLifetime.isCurrent()
         ),
-        isPresented: () => surfacePresented,
+        isPresented: () => shouldShowInput && surfacePresented,
         focusComposer: () => {
             if (!surfaceFocused || activeComposerRefRef.current.kind !== 'session') return false;
             const focus = composerFocusRequestRef.current;
@@ -7075,17 +7083,18 @@ function SessionViewLoadedContent({
         },
         hasActionChip: (chipKey) => composerActionChipKeysRef.current.has(chipKey),
     });
-    React.useEffect(() => activeComposerRef.kind === 'session'
+    React.useEffect(() => !shouldShowInput ? undefined : activeComposerRef.kind === 'session'
         ? registerSessionComposerPresentationTarget(sessionComposerAddress, activeComposerPresentationTarget)
         : registerComposerPresentationTarget(activeComposerRef, activeComposerPresentationTarget), [
         activeComposerPresentationTarget,
         activeComposerRef,
         sessionComposerAddress,
+        shouldShowInput,
     ]);
     React.useEffect(() => {
-        if (activeComposerRef.kind === 'session') return;
+        if (!shouldShowInput || activeComposerRef.kind === 'session') return;
         return registerSessionComposerPresentationTarget(sessionComposerAddress, sessionComposerPresentationTarget);
-    }, [activeComposerRef.kind, sessionComposerAddress, sessionComposerPresentationTarget]);
+    }, [activeComposerRef.kind, sessionComposerAddress, sessionComposerPresentationTarget, shouldShowInput]);
     // Catalog replacement and surface-focus transitions change the derived
     // view without changing the persisted document revision. Notify
     // presentation readers so an external composer transaction cannot observe
@@ -7096,9 +7105,9 @@ function SessionViewLoadedContent({
         if (activeComposerRef.kind === 'pendingMessage') {
             notifyComposerPresentationTargetChanged(sessionComposerRef);
         }
-        if (surfaceFocused) flushPendingRegisteredSessionComposerFocus(sessionComposerAddress);
-        if (surfaceFocused && surfacePresented) flushPendingRegisteredSessionComposerActionChip(sessionComposerAddress);
-    }, [activeComposerRef, composerAttachmentAvailabilityEntriesById, sessionComposerAddress, sessionComposerRef, surfaceFocused, surfacePresented]);
+        if (shouldShowInput && surfaceFocused) flushPendingRegisteredSessionComposerFocus(sessionComposerAddress);
+        if (shouldShowInput && surfaceFocused && surfacePresented) flushPendingRegisteredSessionComposerActionChip(sessionComposerAddress);
+    }, [activeComposerRef, composerAttachmentAvailabilityEntriesById, sessionComposerAddress, sessionComposerRef, shouldShowInput, surfaceFocused, surfacePresented]);
     const transcriptInteraction = transcriptSource.useInteraction();
 
     const isLocallyAttached = !isHiddenSystemSessionSession && isSessionLocallyAttached(session);
@@ -7460,11 +7469,6 @@ function SessionViewLoadedContent({
     // Determine the status text to show for inactive sessions
     const inactiveStatusText = inactiveUi.inactiveStatusTextKey ? t(inactiveUi.inactiveStatusTextKey) : null;
 
-      const shouldShowInput = inactiveUi.shouldShowInput
-          && !sessionMachineAccessRemoved
-          && !isEncryptedSessionLocked
-          // An embedded composer exists only where the arm and the Session's own access both allow input.
-          && (embedded === null || (embedded.composer !== 'none' && (!isReadOnly || embeddedComposerControlsOnly)));
         const pendingComposerDocument = pendingMessageEdit?.document ?? null;
         const readVisibleComposerText = React.useCallback(() => (
             pendingMessageEditRef.current?.document.text ?? composerTextStore.getPrompt()
@@ -7648,7 +7652,26 @@ function SessionViewLoadedContent({
             intentionalRestartSourceEvents,
             sessionRuntimeStatusSource.lastRuntimeIssue,
         ]);
+        // The "Runs through" popover names this Agent's Gateways and Providers from the picker's own
+        // projection; a model-restricted embed names no other source.
+        const sessionRouteSources = React.useMemo(() => providersFeatureEnabled && !embedded?.allowedModels && providerAgentTargetKey ? {
+            ...existingSessionSourceBrowse,
+            agentTargetKey: providerAgentTargetKey,
+            shownSources: providerModelProjection.data?.groups ?? EMPTY_SESSION_MODEL_PROJECTION_GROUPS,
+            hiddenSources: providerModelProjection.data?.hiddenSources ?? EMPTY_SESSION_ROUTE_HIDDEN_SOURCES,
+        } : undefined, [embedded?.allowedModels, existingSessionSourceBrowse, providerAgentTargetKey, providerModelProjection.data, providersFeatureEnabled]);
+        // The popover's Restart is the provider-binding banner's own action, bound below once it exists.
+        const pendingRouteRestartRef = React.useRef<(() => void | Promise<void>) | null>(null);
+        const pendingRouteRestartAvailable = Boolean(effectiveModelTransitionActionRequired?.requestedSelection);
+        const pendingRouteRestartDisabled = !hasWriteAccess || isRuntimeFreshActiveTurn;
+        const pendingRouteRestart = React.useMemo(() => modelSelectionDisposition.selectionTransitionPending ? {
+            agentName: sessionGoalAgentLabel,
+            ...(pendingRouteRestartAvailable ? { restart: () => pendingRouteRestartRef.current?.() } : {}),
+            disabled: pendingRouteRestartDisabled,
+        } : null, [modelSelectionDisposition.selectionTransitionPending, pendingRouteRestartAvailable, pendingRouteRestartDisabled, sessionGoalAgentLabel]);
         const sessionConnectedServicesAuthSwitch = useSessionConnectedServicesAuthSwitch({
+            routeSources: sessionRouteSources,
+            pendingRouteRestart,
             route: {
                 phase: session.active === true || (!modelSelectionDisposition.proposedSelectionV2 && !modelSelectionDisposition.contextSelection)
                     ? 'running' : 'draft',
@@ -7910,6 +7933,14 @@ function SessionViewLoadedContent({
             sessionId,
             staleSessionRunnerMachineId,
         ]);
+        pendingRouteRestartRef.current = providerBindingBanner?.action === 'restart' ? handleProviderBindingAction : null;
+        // The picker is built before this hook resolves the Agent's own account, so its heading reads it here.
+        const sessionNativeSourceLabel = sessionConnectedServicesAuthSwitch.nativeSourceLabel;
+        const existingSessionModelPickerWithNativeSource = React.useMemo(() => existingSessionModelPicker ? (
+            <SessionModelNativeSourceLabelContext.Provider value={sessionNativeSourceLabel}>
+                {existingSessionModelPicker}
+            </SessionModelNativeSourceLabelContext.Provider>
+        ) : undefined, [existingSessionModelPicker, sessionNativeSourceLabel]);
         const agentInputStatusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => [
             ...sessionStatusBadges,
             ...sessionConnectedServicesAuthSwitch.statusBadges,
@@ -8196,7 +8227,12 @@ function SessionViewLoadedContent({
         (options?: AgentInputSendOptions) => { agentInputSendRef.current(options); },
         [],
     );
-    const handleAgentInputAbort = useEventCallback(() => sessionAbort(sessionId));
+    const handleAgentInputAbort = useEventCallback(async () => {
+        const result = await actionExecutor.execute('session.turn.cancel', { sessionId }, {
+            surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
+        });
+        if (!result.ok) Modal.alert(t('common.error'), result.error);
+    });
 
     const input = shouldShowInput ? (
         <PluginContextualResourceStoreProvider>
@@ -8556,7 +8592,7 @@ function SessionViewLoadedContent({
                 agentTargetKey={providerAgentTargetKey}
                 currentRunnerProcessIdentity={currentRunnerProcessIdentity}
                 onModelModeChange={updateModelMode}
-                modelContentOverride={existingSessionModelPicker}
+                modelContentOverride={existingSessionModelPickerWithNativeSource}
                 openModelPickerRequestKey={sessionModelPickerRequestKey}
                 openActionChipRequest={composerActionChipOpenRequest}
                 metadata={ownerMetadata}

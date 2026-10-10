@@ -146,7 +146,7 @@ export function toAwarenessRuntimeInput(input: SessionRuntimePresentationInput) 
  * Instant this session's runtime was last observed, once it is gone rather than merely quiet —
  * and `null` while it is live *or* while the gap is still short enough to be a reconnect blip.
  *
- * This is deliberately a death fact and never an inactivity verdict: work the runtime was
+ * This is a loss of observation and never proof of a terminal outcome: work the runtime was
  * performing keeps its last reported state for as long as the runtime might still report again,
  * however long that is. Only crossing the same staleness bound the rest of the runtime story uses
  * turns "we have not heard from it" into "it is gone", which is what lets a consumer close work
@@ -164,6 +164,16 @@ export function readSessionRuntimeLostSinceMs(
         ...toAwarenessRuntimeInput(input),
         nowMs,
     }).lostSinceMs;
+}
+
+/** Newer child evidence can outlive the owning session's last attachment observation. */
+export function isSessionOwnedActivityUnobserved(
+    runtimeLostSinceMs: number | null | undefined,
+    latestObservedAtMs: number | null | undefined,
+): boolean {
+    return runtimeLostSinceMs != null
+        && !(typeof latestObservedAtMs === 'number' && Number.isFinite(latestObservedAtMs)
+            && latestObservedAtMs > runtimeLostSinceMs);
 }
 
 export function projectUiSessionRuntimeAwareness(
@@ -213,6 +223,9 @@ export function readSessionRuntimePresentationFreshnessSignals(
         });
     };
 
+    if (!runtimePresentation.live) {
+        addFreshnessSignal(input.activeAt, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS);
+    }
     if (runtimePresentation.freshThinking) {
         addFreshnessSignal(input.thinkingAt, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS);
     }

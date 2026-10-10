@@ -1,6 +1,7 @@
 import { cpus, platform, arch } from 'node:os';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import {
+    createPlainSessionOwnerMetadataEnvelopeV1,
     projectLegacySessionAccessCapabilitiesV1,
     SessionListQueryResponseV1Schema,
     type SessionListQueryResponseV1,
@@ -13,6 +14,7 @@ import { createSessionListQueryHomeController } from '@/sync/domains/session/lis
 import { buildSessionListQueryKey } from '@/sync/domains/session/listing/sessionListQueryKey';
 import { storage } from '@/sync/domains/state/storage';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 import { fetchAndApplySessions } from './sessionSnapshot';
 
@@ -23,10 +25,103 @@ const QUERY: SessionListQueryV1 = {
 const initialState = storage.getState();
 
 afterEach(() => {
+    vi.useRealTimers();
     storage.setState(initialState, true);
     syncPerformanceTelemetry.configure({ enabled: false });
     syncPerformanceTelemetry.reset();
 });
+
+function createOwnerChoicesPage() {
+    const rows = Array.from({ length: 6 }, (_, index) => ({
+        id: `choice-${index}`, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+        archivedAt: null, encryptionMode: 'plain', metadataLayoutVersion: 1,
+        metadata: JSON.stringify({ v: 1, summary: { text: `Session ${index}`, updatedAt: 1 } }),
+        metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: { path: `/private/${index}`, host: 'home' } }),
+        share: null,
+        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner' }) },
+        viewer: { readState: { state: 'not_started' }, relevance: { relevant: true, reasons: ['owned_by_me'] },
+            attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
+            follow: { follows: false, notificationLevel: 'none' }, notification: { level: 'none', source: 'preference' } },
+        responsibleAccountId: null, responsibleAccount: null,
+    }));
+    return SessionListQueryResponseV1Schema.parse({ sessions: rows, nextCursor: null, hasNext: false,
+        attentionNextCursor: null, attentionHasNext: false });
+}
+
+it.each([
+    { queryMs: 245, currentnessMs: 9216 },
+    // Resume 7 resource totals: 5946.4 ms and 3964.8 ms (rounded up to a timer millisecond).
+    { queryMs: 5946.4, currentnessMs: 3965 },
+])('publishes owner query choices without serializing independent reads ($queryMs / $currentnessMs ms)', async ({ queryMs, currentnessMs }) => {
+    // Recorded HTTP latency is the only substitution. Parsing, Account-mode
+    // validation, owner projection, snapshot publication and the store are real.
+    vi.useFakeTimers();
+    const startedAt = Date.now();
+    let publishedAt: number | undefined;
+    const requests: Array<{ path: string; at: number }> = [];
+    const body = createOwnerChoicesPage();
+    const pending = fetchAndApplySessions({
+        serverId: 'latency-home', credentials: { token: 'latency' }, encryption: null, sessionDataKeys: new Map(),
+        source: { kind: 'query', allowV1Fallback: false, body: { ...QUERY, scope: 'all_accessible', includeAttention: false } },
+        request: async (path) => {
+            requests.push({ path, at: Date.now() - startedAt });
+            await new Promise(resolve => setTimeout(resolve, path === '/v2/sessions/query' ? queryMs : currentnessMs));
+            return Response.json(path === '/v2/sessions/query' ? body : createPlainAccountEncryptionCurrentnessFixture());
+        },
+        getExistingSession: () => null,
+        applySessionListRenderables: (renderables) => {
+            publishedAt = Date.now() - startedAt;
+            storage.getState().applyServerScopedSessionListRows('latency-home', renderables, { source: 'rowOnly', mode: 'replace' });
+        },
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches('latency-home', patches),
+        applySessions() {}, log: { log() {} },
+    });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    expect(result.current).toBe(true);
+    const stored = storage.getState().sessionListRowsByServerId['latency-home'];
+    expect(Object.keys(stored ?? {})).toHaveLength(6);
+    expect(stored?.['choice-0']?.metadata?.path).toBe('/private/0');
+    console.info('SESSION_CHOICES_LATENCY_MEASUREMENT', JSON.stringify({ queryMs, currentnessMs, publishedAt, requests }));
+    expect(publishedAt).toBeLessThanOrEqual(Math.max(queryMs, currentnessMs));
+});
+
+it.each(['unavailable-authority', 'retired-read', 'empty-query'] as const)(
+    'keeps the query publication boundary safe for %s', async scenario => {
+        vi.useFakeTimers();
+        const controller = new AbortController();
+        const body = createOwnerChoicesPage();
+        const pending = fetchAndApplySessions({
+            serverId: 'guard-home', credentials: { token: 'guard' }, encryption: null, sessionDataKeys: new Map(),
+            source: { kind: 'query', allowV1Fallback: false, body: { ...QUERY, scope: 'all_accessible', includeAttention: false } },
+            signal: controller.signal,
+            request: async (path, init) => {
+                expect(init.signal).toBe(controller.signal);
+                await new Promise(resolve => setTimeout(resolve, path === '/v2/sessions/query' ? 10 : 100));
+                if (path === '/v2/sessions/query') return Response.json(scenario === 'empty-query' ? { ...body, sessions: [] } : body);
+                return scenario === 'retired-read' ? Response.json(createPlainAccountEncryptionCurrentnessFixture())
+                    : Response.json({}, { status: 503 });
+            },
+            getExistingSession: () => null,
+            applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows('guard-home', rows, { source: 'rowOnly', mode: 'replace' }),
+            applySessions() {}, log: { log() {} },
+        }).then(result => ({ result }), (error: unknown) => ({ error }));
+        if (scenario === 'retired-read') {
+            await vi.advanceTimersByTimeAsync(20);
+            controller.abort();
+        }
+        await vi.runAllTimersAsync();
+        const outcome = await pending;
+        if (scenario === 'unavailable-authority') {
+            expect(outcome).toMatchObject({ error: { code: 'account-encryption-currentness-unavailable' } });
+        } else {
+            expect(outcome).toMatchObject({ result: { current: scenario === 'empty-query', sessionIds: scenario === 'empty-query' ? [] : body.sessions.map(row => row.id) } });
+        }
+        expect(Object.keys(storage.getState().sessionListRowsByServerId['guard-home'] ?? {})).toHaveLength(0);
+    },
+);
 
 function measurements() {
     return syncPerformanceTelemetry.snapshot().events

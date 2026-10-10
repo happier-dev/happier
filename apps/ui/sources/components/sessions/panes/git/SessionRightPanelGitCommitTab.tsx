@@ -121,6 +121,8 @@ export type SessionRightPanelGitCommitTabProps = Readonly<{
         | { ok: true; message: string }
         | { ok: false; error: string }
     >;
+    onCancelCommitMessageSuggestion?: () => Promise<unknown>;
+    suggestionContextKey?: string;
     onClearSelection?: () => void;
     commitSelectionAvailable?: boolean;
     selectionModeActive?: boolean;
@@ -337,6 +339,9 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
                         onCommitFromMessage={onCommitFromMessage}
                         commitMessageGeneratorEnabled={props.commitMessageGeneratorEnabled}
                         onGenerateCommitMessageSuggestion={props.onGenerateCommitMessageSuggestion}
+                        onCancelCommitMessageSuggestion={props.onCancelCommitMessageSuggestion}
+                        suggestionContextKey={JSON.stringify([props.suggestionContextKey, props.serverId, props.sessionId, props.sessionPath,
+                            props.scmSnapshot?.branch.headOid, props.selectedRepositoryChangedFiles?.map((file) => file.fullPath)])}
                         selectionCount={props.repositorySelectedCount}
                         onClearSelection={props.onClearSelection}
                         onSelectAllSelection={props.onSelectAll}
@@ -415,6 +420,8 @@ const CommitComposerFooter = React.memo((props: Readonly<{
         | { ok: true; message: string }
         | { ok: false; error: string }
     >;
+    onCancelCommitMessageSuggestion?: () => Promise<unknown>;
+    suggestionContextKey?: string;
     selectionSummary: ScmCommitComposerCardProps['selectionSummary'];
     selectionCount: number;
     onClearSelection?: () => void;
@@ -470,6 +477,8 @@ const CommitComposerFooter = React.memo((props: Readonly<{
             onCommitFromMessage={onCommitFromMessage}
             commitMessageGeneratorEnabled={props.commitMessageGeneratorEnabled}
             onGenerateCommitMessageSuggestion={props.onGenerateCommitMessageSuggestion}
+            onCancelCommitMessageSuggestion={props.onCancelCommitMessageSuggestion}
+            suggestionContextKey={props.suggestionContextKey}
             selectionSummary={props.selectionSummary}
             selectionCount={props.selectionCount}
             onClearSelection={props.onClearSelection}

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import type { SessionViewEmbeddedPresentation } from '@/components/sessions/shell/embedded/embeddedSessionPresentation';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 
 /**
  * One Session, embedded in another surface's pane (ORC §3.8 "Peek", O12; lab `session-D`).
@@ -40,17 +41,29 @@ export const SessionInPane = React.memo((props: SessionInPaneProps) => {
     if (!props.active) {
         return <View testID={`session-in-pane-inactive:${props.sessionId}`} style={{ flex: 1 }} />;
     }
+    return <ActiveSessionInPane sessionId={props.sessionId} serverId={props.serverId} presentation={presentation} />;
+});
+
+/** Only an opened pane demands exact detail/transcript hydration, through the route's existing owner. */
+function ActiveSessionInPane(props: Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+    presentation: SessionViewEmbeddedPresentation;
+}>) {
+    const hydrationOptions = React.useMemo(() => props.serverId ? { serverId: props.serverId } : undefined, [props.serverId]);
+    const routeHydrationState = useHydrateSessionForRoute(props.sessionId, 'SessionInPane.hydrate', hydrationOptions);
     return (
         <View testID={`session-in-pane:${props.sessionId}`} style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             <SessionView
                 id={props.sessionId}
                 {...(props.serverId ? { routeServerId: props.serverId } : {})}
+                routeHydrationState={routeHydrationState}
                 surfaceFocusedOverride
                 surfaceVisibleOverride
                 routeAnchorOverride={false}
                 chatBottomSpacing="none"
-                presentation={presentation}
+                presentation={props.presentation}
             />
         </View>
     );
-});
+}

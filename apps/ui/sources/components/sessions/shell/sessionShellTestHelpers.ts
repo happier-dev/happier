@@ -203,8 +203,7 @@ export async function activateSessionShellStorageBoundary(): Promise<void> {
     // repository participates in composer admission and restoration.
     const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
     await prepareSessionDraftPersistenceStorage();
-    const storage = sessionShellModuleState.storage;
-    if (!storage) throw new Error('Session shell storage boundary has not been initialized');
+    const storage = sessionShellModuleState.storage ?? (await import('@/sync/domains/state/storage')).storage;
     registerStorageStateReader(storage.getState);
     registerStorageStateSubscribe(storage.subscribe);
     const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');

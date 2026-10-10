@@ -53,6 +53,15 @@ afterEach(() => {
 });
 
 describe('getPendingQueueWakeResumeOptions', () => {
+    it('carries the protected pending authorization to the host runtime ensure without inventing native state', () => {
+        const authorization = { status: 'waiting' as const, requestId: 'pending-a', requestedAt: 10 };
+        const session = createSessionFixture({
+            pendingActivationAuthorization: authorization,
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl', host: 'test' },
+        });
+        expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} }))
+            .toMatchObject({ pendingActivationAuthorization: authorization });
+    });
     it('returns resume options for a resumable idle session', () => {
         const session: any = {
             thinking: false,

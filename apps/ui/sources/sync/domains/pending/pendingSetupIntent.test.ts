@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { buildDismissedThisComputerSetupIntent } from './pendingSetupIntent.shared';
+import { buildDismissedThisComputerSetupIntent, fromRecord } from './pendingSetupIntent.shared';
 
 async function importFresh() {
     vi.resetModules();
@@ -201,6 +201,50 @@ describe('pendingSetupIntent', () => {
         });
         expect(adopted).toBe(beforeAuth);
         expect(getPendingSetupIntent()).toBe(adopted);
+    });
+
+    it('adopts an explicit Ask Happier authoring intent into the same authenticated Home without turning it into machine setup', async () => {
+        const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
+        const authored = {
+            branch: 'askHappier',
+            phase: 'awaiting_auth',
+            relayUrl: 'https://ask-happier.example.test',
+            context: { kind: 'release', release: { id: 'selected', versionLabel: 'v1', date: '2026-10-09', markdown: 'Selected update' } },
+            currentUiContext: { navigation: { area: 'settings', screen: 'machines' }, commands: [] },
+        } as const;
+        // The persisted-input reader is the public compatibility boundary for this new branch.
+        const intent = fromRecord({ ...authored, createdAtMs: Date.now() });
+        expect(intent).toEqual(authored);
+        if (!intent) throw new Error('Expected accepted authoring intent');
+        await activateServerWithoutAccount(authored.relayUrl);
+        clearPendingSetupIntent();
+        setPendingSetupIntent(intent);
+        const beforeAuth = getPendingSetupIntent();
+        expect(beforeAuth).toEqual(authored);
+        await activateServerAccount(authored.relayUrl, 'account-a');
+        expect(getPendingSetupIntent()).toBe(beforeAuth);
+        expect(getPendingSetupIntent()).toEqual(authored);
+        clearPendingSetupIntent();
+        expect(getPendingSetupIntent()).toBeNull();
+    });
+
+    it('preserves an Ask Happier Start through implicit machine-wizard relatching and dismissal, but permits an explicit setup choice', async () => {
+        const { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } = await importFresh();
+        const { setOnboardingWizardPreAuthResumeIntent, setOnboardingWizardAwaitingAuthResumeIntent } = await import('@/components/onboarding/state/wizardResume');
+        const { dismissPendingSetupIntent } = await import('./dismissPendingSetupIntent');
+        await activateServerWithoutAccount('https://ask-happier.example.test');
+        clearPendingSetupIntent();
+        setPendingSetupIntent({ branch: 'askHappier', phase: 'awaiting_auth', relayUrl: 'https://ask-happier.example.test' });
+        const started = getPendingSetupIntent();
+        expect(started?.branch).toBe('askHappier');
+        setOnboardingWizardPreAuthResumeIntent('https://ask-happier.example.test');
+        expect(getPendingSetupIntent()).toBe(started);
+        setOnboardingWizardAwaitingAuthResumeIntent('https://ask-happier.example.test');
+        expect(getPendingSetupIntent()).toBe(started);
+        dismissPendingSetupIntent();
+        expect(getPendingSetupIntent()).toBe(started);
+        setPendingSetupIntent({ branch: 'thisComputer', phase: 'awaiting_auth', relayUrl: 'https://ask-happier.example.test' });
+        expect(getPendingSetupIntent()?.branch).toBe('thisComputer');
     });
 
     it('debug-logs and drops an unauthenticated pending setup intent when auth lands on a different relay URL', async () => {

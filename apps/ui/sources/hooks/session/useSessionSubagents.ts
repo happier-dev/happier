@@ -1,3 +1,6 @@
+import { readToolCallObservedAtMs } from '@/sync/domains/session/subagents/toolCallActivityTimestamps';
+import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from './sessionListRuntimeClock';
+import { readSessionRuntimePresentationFreshnessExpirations } from '@/sync/domains/session/attention/runtimePresentation';
 import * as React from 'react';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
@@ -37,6 +40,7 @@ function buildSessionSubagentToolMessageSignature(message: Message): string {
         toolCreatedAt: tool?.createdAt ?? null,
         toolStartedAt: tool?.startedAt ?? null,
         toolCompletedAt: tool?.completedAt ?? null,
+        childObservedAt: message.kind === 'tool-call' ? readToolCallObservedAtMs(message) : null,
         input: tool?.input ?? null,
         result: tool?.result ?? null,
     }) ?? 'null';
@@ -95,6 +99,7 @@ export function useSessionSubagents(params: Readonly<{
     externalSessionRuntime?: UseExternalSessionRuntimeResult;
 }>): Readonly<{
     subagents: readonly SessionSubagent[];
+    runtimeLostSinceMs: number | null;
     participantTargets: ReturnType<typeof deriveSessionSubagentRecipients>;
     sidechainIds: readonly string[];
 }> {
@@ -153,9 +158,12 @@ export function useSessionSubagents(params: Readonly<{
     // the memo on it keeps the roster off the heartbeat: `activeAt` advances continuously while the
     // session is attached and this stays `null` the whole time, then changes exactly once when the
     // runtime is judged gone.
+    const runtimeNowMs = useSessionListRuntimeNowMs();
     const sessionRuntimeLostSinceMs = params.session
-        ? readSessionRuntimeLostSinceMs(params.session, Date.now())
+        ? readSessionRuntimeLostSinceMs(params.session, Math.max(runtimeNowMs, Date.now()))
         : null;
+    const expirations = params.session ? readSessionRuntimePresentationFreshnessExpirations(params.session, Math.max(runtimeNowMs, Date.now())) : [];
+    useSessionListRuntimeWake(expirations.length > 0 ? Math.min(...expirations) : null);
 
     const derivedSubagents = React.useMemo(() => {
         if (!params.session) return [] as const;
@@ -170,6 +178,7 @@ export function useSessionSubagents(params: Readonly<{
                 presence: params.session.presence,
             },
             messages: subagentMessages,
+            runtimeLostSinceMs: sessionRuntimeLostSinceMs,
             activeExecutionRuns: runningExecutionRuns,
         });
         return applyExecutionRunControlCapabilities(derivedSubagents, {
@@ -208,5 +217,5 @@ export function useSessionSubagents(params: Readonly<{
     const sidechainIdsSignature = derivedSidechainIds.join('\0');
     const sidechainIds = useStableValueBySignature(derivedSidechainIds, sidechainIdsSignature);
 
-    return { subagents, participantTargets, sidechainIds };
+    return { subagents, runtimeLostSinceMs: sessionRuntimeLostSinceMs, participantTargets, sidechainIds };
 }

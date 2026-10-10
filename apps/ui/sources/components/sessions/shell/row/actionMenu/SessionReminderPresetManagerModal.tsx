@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -32,6 +33,7 @@ export function SessionReminderPresetManagerModal(props: Readonly<{
     onResolve: (value: SessionReminderPresetV1[] | null) => void;
 }> & CustomModalInjectedProps) {
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const [drafts, setDrafts] = React.useState<SessionReminderPresetV1[]>(() => [...props.presets]);
     const [saving, setSaving] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
@@ -86,7 +88,7 @@ export function SessionReminderPresetManagerModal(props: Readonly<{
                         borderRadius: 14,
                         borderWidth: 1,
                         borderColor: theme.colors.border.default,
-                        backgroundColor: theme.colors.surface.base,
+                        backgroundColor: materialColor(theme.colors.surface.base),
                     }}
                 >
                     <View style={{ flex: 1, gap: 4 }}>

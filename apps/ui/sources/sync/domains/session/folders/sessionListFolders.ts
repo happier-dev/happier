@@ -395,19 +395,24 @@ export function resolveFolderAwareSessionListSourceForLayout(params: Readonly<{
         serverId?: string | null;
     }> | null;
 }>): FolderAwareSessionListIndexResult {
-    if (!params.foldersFeatureEnabled || params.folderViewModeV1 !== 'tree') {
-        return { items: params.source, folderFocus: null };
-    }
+    if (!params.foldersFeatureEnabled) return { items: params.source, folderFocus: null };
+    const annotated = params.source.map(item => {
+        if (item.type !== 'session') return item;
+        const folderId = params.assignmentsBySessionKey[buildSessionFolderAssignmentKey(item.serverId, item.sessionId)] ?? null;
+        return item.folderId === folderId ? item : { ...item, folderId };
+    });
+    const source = annotated.every((item, index) => item === params.source[index]) ? params.source : annotated;
+    if (params.folderViewModeV1 !== 'tree') return { items: source, folderFocus: null };
     if (params.layoutChoice === 'recent_activity') {
         return narrowSessionListIndexToFocusedFolder({
-            source: params.source,
+            source,
             folders: params.folders,
             assignmentsBySessionKey: params.assignmentsBySessionKey,
             focusedFolder: params.focusedFolder,
         });
     }
     return applySessionFolderTreeToSessionListIndex({
-        source: params.source,
+        source,
         folders: params.folders,
         assignmentsBySessionKey: params.assignmentsBySessionKey,
         collapsedGroupKeys: params.collapsedGroupKeys,

@@ -1,4 +1,4 @@
-import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import { isSessionListPrimaryHeaderKind } from './sessionListPrimaryHeader';
 
@@ -11,12 +11,10 @@ export function filterCollapsedSessionListItems(
     }
 
     const keys = collapsedGroupKeysV1 ?? {};
-    if (Object.keys(keys).length === 0) {
-        return items as SessionListIndexItem[];
-    }
 
     let result: SessionListIndexItem[] | undefined;
     let skipUntilNextSection = false;
+    let collapsedReportsDepth: number | null = null;
 
     const ensureResult = (index: number): SessionListIndexItem[] => {
         if (result !== undefined) return result;
@@ -27,6 +25,7 @@ export function filterCollapsedSessionListItems(
     for (let index = 0; index < items.length; index += 1) {
         const item = items[index];
         if (item.type === 'header') {
+            collapsedReportsDepth = null;
             const kind = item.headerKind;
             // A collapsed section owns everything down to the next primary section
             // header. That set is the canonical one — Needs attention, Working,
@@ -63,6 +62,27 @@ export function filterCollapsedSessionListItems(
         const groupKey = item.groupKey ?? '';
         if (groupKey && keys[groupKey]) {
             ensureResult(index);
+            continue;
+        }
+        const depth = item.reportsDepth ?? 0;
+        if (collapsedReportsDepth !== null) {
+            if (depth > collapsedReportsDepth) {
+                ensureResult(index);
+                continue;
+            }
+            collapsedReportsDepth = null;
+        }
+        // The same local map owns group and per-parent choices. A Bot's reports
+        // start folded (projection default) behind the row's Sessions disclosure;
+        // an explicit local choice either way wins.
+        const localChoice = keys[buildSessionListIndexNodeId(item)];
+        const collapsed = item.type === 'session' && localChoice === undefined
+            ? item.reportsDefaultCollapsed === true
+            : localChoice === true;
+        if (collapsed) collapsedReportsDepth = depth;
+        if (item.type === 'session' && item.reportsParent === true && collapsed !== (item.reportsCollapsed === true)) {
+            const { reportsCollapsed: _previous, ...rest } = item;
+            ensureResult(index).push(collapsed ? { ...rest, reportsCollapsed: true } : rest);
             continue;
         }
         if (result !== undefined) result.push(item);

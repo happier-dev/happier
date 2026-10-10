@@ -7,7 +7,7 @@ export const EXTERNAL_SESSIONS_SETTINGS = defineSettingsPage({
         followPolicy: {
             titleKey: 'externalSessions.settingsFollowGroupTitle',
             settings: {
-                keepFollowingAfterRestart: { titleKey: 'externalSessions.settingsRestoreTitle' },
+                keepFollowingAfterRestart: {},
             },
         },
     },

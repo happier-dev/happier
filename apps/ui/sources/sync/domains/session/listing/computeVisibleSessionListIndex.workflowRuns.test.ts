@@ -37,6 +37,28 @@ function compute(show: 'sessions' | 'runs' | 'both' = 'both', startedBy: ('you' 
 }
 
 describe('computeVisibleSessionListIndex workflow Runs', () => {
+    it('projects Bots from authorized metadata independently of pin, title, Run and locked neighbors', () => {
+        const rows: Record<string, SessionListRenderableSession> = {
+            lead: { ...resolveSessionRow('home', 'lead'), metadata: { path: '/repo', bot: { kind: 'bot' } } },
+            step: { ...resolveSessionRow('home', 'step'), origin: undefined,
+                metadata: { path: '/repo', summaryText: 'Bot' } },
+            locked: { ...resolveSessionRow('home', 'locked'), metadata: null },
+        };
+        const params = {
+            source: [...source, { ...source[1], sessionId: 'locked' } as SessionListIndexItem],
+            resolveSessionRow: (_home: string | null | undefined, id: string) => rows[id] ?? null,
+            hideInactiveSessions: false, pinnedSessionKeysV1: ['home:step'], sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped' as const },
+            workflowRuns: [{ serverId: 'home', summary: summary('manual', 'user') }],
+        };
+        for (const [bot, expected] of [['bot', ['lead']], ['ordinary', ['step']]] as const) {
+            const visible = computeVisibleSessionListIndex({ ...params,
+                workFilter: normalizeSessionListFilterV1({ homeServerIds: ['home'], bot }),
+            })!;
+            expect(visible.filter((item) => item.type !== 'header').map((item) =>
+                item.type === 'session' ? item.sessionId : item.runId)).toEqual(expected);
+        }
+    });
     it.each(['projects', 'active_inactive', 'recent_activity'] as const)('preserves incumbent attention placement in the mixed %s projection', (sessionListLayoutChoice) => {
         const params = {
             source: source.slice(0, 2),

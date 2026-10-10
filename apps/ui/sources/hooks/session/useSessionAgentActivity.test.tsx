@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
+import { useSessionAgentActivity, useSessionAgentActivityRoster } from './useSessionAgentActivity';
 import type { Message } from "@happier-dev/session-core/messages";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -155,7 +156,6 @@ describe('useSessionAgentActivity — the narrow width', () => {
             },
         };
 
-        const { useSessionAgentActivityRoster } = await import('./useSessionAgentActivity');
         const hook = await renderHook(() => ({
             homeA: useSessionAgentActivityRoster({ sessionId: 's1', serverId: 'home-a' }),
             homeB: useSessionAgentActivityRoster({ sessionId: 's1', serverId: 'home-b' }),
@@ -201,7 +201,6 @@ describe('useSessionAgentActivity — the narrow width', () => {
             children: [],
         } as unknown as Message];
 
-        const { useSessionAgentActivity } = await import('./useSessionAgentActivity');
         const hook = await renderHook(() => useSessionAgentActivity({ sessionId: 's1' }));
 
         expect(hook.getCurrent().readExecutionRunEntry('run_exact1111')).toMatchObject({
@@ -215,8 +214,6 @@ describe('useSessionAgentActivity — the narrow width', () => {
     it('does not subscribe to the transcript, while the roster width does', async () => {
         sessionState.current = sessionWithHeadline(4_000);
 
-        const { useSessionAgentActivity, useSessionAgentActivityRoster } =
-            await import('./useSessionAgentActivity');
 
         await renderHook(() => useSessionAgentActivity({ sessionId: 's1' }));
         // The whole reason two widths exist: a host that only needs a number must not re-render on
@@ -233,7 +230,6 @@ describe('useSessionAgentActivity — the narrow width', () => {
         sessionState.current = sessionWithHeadline(4_000);
         sourceMessagesState.current = [];
 
-        const { useSessionAgentActivity } = await import('./useSessionAgentActivity');
         const hook = await renderHook(() => useSessionAgentActivity({ sessionId: 's1' }));
 
         const state = hook.getCurrent();
@@ -256,7 +252,6 @@ describe('useSessionAgentActivity — the narrow width', () => {
             createdAt: 1_000,
         })];
 
-        const { useSessionAgentActivity } = await import('./useSessionAgentActivity');
         const hook = await renderHook(() => useSessionAgentActivity({ sessionId: 's1' }));
 
         const state = hook.getCurrent();
@@ -278,7 +273,6 @@ describe('useSessionAgentActivity — the narrow width', () => {
             createdAt: 1_000,
         })];
 
-        const { useSessionAgentActivity } = await import('./useSessionAgentActivity');
         const hook = await renderHook(() => useSessionAgentActivity({ sessionId: 's1' }));
         const before = hook.getCurrent();
         expect(before.evidenceAtMsById.get('workflow_agent:wf_1:toolu_1')).toBe(4_000);
@@ -308,7 +302,6 @@ describe('useSessionAgentActivity — the narrow width', () => {
             createdAt: 1_000,
         })];
 
-        const { useSessionAgentActivity } = await import('./useSessionAgentActivity');
         const hook = await renderHook(() => useSessionAgentActivity({ sessionId: 's1' }));
 
         const state = hook.getCurrent();

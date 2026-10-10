@@ -8,7 +8,7 @@ import { resolveHappierFocusRingVisible } from '@happier-dev/plugin-ui/presentat
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useListPresentation } from '@/components/ui/lists/listPresentation';
+import { useListPresentation, usePageNoticeActive } from '@/components/ui/lists/listPresentation';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { PluginDiagnosticsSection } from '@/components/settings/plugins/diagnostics/PluginDiagnosticsSection';
 import { Modal } from '@/modal';
@@ -208,6 +208,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
 ) {
     const { theme } = useUnistyles();
     const listPresentation = useListPresentation();
+    const pageNoticeActive = usePageNoticeActive();
     const integrations = React.useMemo(
         () => props.integrations == null
             ? null
@@ -453,6 +454,9 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
     }, [autoLinkSources, integrations, operations, pendingKeys]);
 
     const inventoryStatus = props.inventoryState?.status;
+    const showInventoryStatus = props.inventoryState !== undefined
+        && inventoryStatus !== 'idle' && inventoryStatus !== 'ready'
+        && !(pageNoticeActive && inventoryStatus === 'error');
     const inventoryComplete = props.inventoryState === undefined
         || props.inventoryState.status === 'ready';
     const inventoryTitle = inventoryStatus === 'loading'
@@ -469,7 +473,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
             : inventoryStatus === 'error'
                 ? t('externalSessions.settingsIntegrationInventoryErrorSubtitle')
                 : null;
-    const inventoryAnnouncement = inventoryTitle && inventorySubtitle
+    const inventoryAnnouncement = showInventoryStatus && inventoryTitle && inventorySubtitle
         ? `${inventoryTitle}. ${inventorySubtitle}`
         : null;
     const lastIosInventoryAnnouncementRef = React.useRef<string | null>(null);
@@ -754,9 +758,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
     ]);
 
     if (props.virtualized) {
-        const inventoryAnnouncementElement = props.inventoryState
-            && props.inventoryState.status !== 'idle'
-            && props.inventoryState.status !== 'ready' ? (
+        const inventoryAnnouncementElement = showInventoryStatus && props.inventoryState ? (
                 <View
                     testID="settings-external-sessions-inventory-announcement"
                     accessibilityRole={props.inventoryState.status === 'loading' ? 'text' : 'alert'}
@@ -845,9 +847,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                 onBlur: () => setSectionFallbackFocused(false),
             } : {})}
         >
-            {props.inventoryState
-                && props.inventoryState.status !== 'idle'
-                && props.inventoryState.status !== 'ready' ? (
+            {showInventoryStatus && props.inventoryState ? (
                     <View
                         testID="settings-external-sessions-inventory-announcement"
                         accessibilityRole={props.inventoryState.status === 'loading' ? 'text' : 'alert'}

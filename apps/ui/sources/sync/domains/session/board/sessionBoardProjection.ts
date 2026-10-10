@@ -257,7 +257,12 @@ export function projectSessionBoard(
     const views = projectedViews.length > 0 ? Object.freeze(projectedViews) : Object.freeze([SYNTHETIC_OVERVIEW]);
 
     const unplacedItemIds = Object.freeze(
-        [...input.items.keys()].filter((itemId) => !placedItemIds.has(itemId)),
+        [...input.items.keys()].filter((itemId) => {
+            if (placedItemIds.has(itemId)) return false;
+            const record = input.items.get(itemId);
+            return record?.outcome.status === 'ready'
+                && (record.outcome.value.destination ?? 'board') === 'board';
+        }),
     );
 
     return Object.freeze({

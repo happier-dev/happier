@@ -99,6 +99,11 @@ export type CommitSessionListDragIntentContext = Readonly<{
         Readonly<{ allowed: true; expectedLeadSessionId: string | null }> | Readonly<{ allowed: false; reason: string }>;
     /** Latest session-list index — the latest tree metadata is built from it. */
     latestItems: ReadonlyArray<SessionListIndexItem>;
+    /** Same mounted owner's full personal pin tree and its current eligible rail projection. */
+    pinnedOrganization?: Readonly<{
+        items: readonly SessionListIndexItem[];
+        railSessionRowIds: readonly string[];
+    }>;
     /** Mounted list's existing indexed projection; reused only for the exact current item array. */
     latestTree?: SessionListTreeModel;
     sessionFoldersV1: SessionFoldersV1;

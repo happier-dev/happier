@@ -166,7 +166,7 @@ const PENDING_EXPORT_CONTRACT: Readonly<Record<string, PendingExportContract>> =
                 localId: context.localId,
                 requestedAction: { v: 1, kind: 'steer_now' },
                 outboxScope: context.scope,
-                request: async () => Response.json({ didUpdate: true }),
+                request: async () => Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'steer_now' } }),
             });
         },
     },

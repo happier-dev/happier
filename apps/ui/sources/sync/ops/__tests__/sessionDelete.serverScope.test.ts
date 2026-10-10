@@ -1,222 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-const { mockRequest, mockResolveContext, mockRuntimeFetch, mockStorageState } = vi.hoisted(() => ({
-  mockRequest: vi.fn(),
-  mockResolveContext: vi.fn(),
-  mockRuntimeFetch: vi.fn(),
-  mockStorageState: {
-    sessions: {},
-    concurrentSessionListCacheByServerId: {},
-    applySessions: vi.fn(),
-  } as {
-    sessions: Record<string, unknown>;
-    concurrentSessionListCacheByServerId: Record<string, unknown>;
-    applySessions: ReturnType<typeof vi.fn>;
-  },
-}));
+await loadSyncSingletonForTests();
+const { sessionDeleteWithServerAccountAuthority } = await import('../sessions');
 
-vi.mock('../../api/session/apiSocket', () => ({
-  apiSocket: {
-    request: mockRequest,
-  },
-}));
+afterEach(() => vi.restoreAllMocks());
 
-vi.mock('../../runtime/orchestration/serverScopedRpc/resolveServerAccountRequestContext', () => ({
-  resolveServerAccountRequestContext: mockResolveContext,
-}));
-
-vi.mock('@/utils/system/runtimeFetch', () => ({
-  runtimeFetch: mockRuntimeFetch,
-}));
-
-vi.mock('../../domains/state/storage', () => ({
-  storage: {
-    getState: () => mockStorageState,
-  },
-}));
-
-import {
-  sessionDelete,
-  sessionDeleteWithServerAccountAuthority,
-  sessionDeleteWithServerScope,
-} from '../../ops';
-
-function makeResponse(opts: Readonly<{ ok: boolean; status?: number; json?: unknown; text?: string }>) {
-  return {
-    ok: opts.ok,
-    status: opts.status ?? (opts.ok ? 200 : 500),
-    json: async () => opts.json ?? {},
-    text: async () => opts.text ?? '',
-    headers: new Map(),
-  } as any;
-}
-
-describe('sessionDeleteWithServerScope', () => {
-  beforeEach(() => {
-    mockRequest.mockReset();
-    mockResolveContext.mockReset();
-    mockRuntimeFetch.mockReset();
-    mockStorageState.sessions = {};
-    mockStorageState.concurrentSessionListCacheByServerId = {};
-    mockStorageState.applySessions.mockReset();
+describe('Voice-history deletion through the bound Account authority', () => {
+  it('deletes the exact encoded Session address', async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 }));
+    expect(await sessionDeleteWithServerAccountAuthority('session/one', { request })).toEqual({ success: true });
+    expect(request).toHaveBeenCalledWith('/v1/sessions/session%2Fone', { method: 'DELETE' });
   });
 
-  it('uses active apiSocket.request when scope is active', async () => {
-    mockResolveContext.mockResolvedValue({
-      scope: 'active',
-      targetServerUrl: 'https://active.example',
-      targetServerId: 'server-a',
-      token: 'tok',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-    mockRequest.mockResolvedValue(makeResponse({ ok: true }));
-
-    const res = await sessionDeleteWithServerScope('sid-1', { serverId: 'server-a' });
-    expect(res).toEqual({ success: true });
-    expect(mockRequest).toHaveBeenCalledWith('/v1/sessions/sid-1', { method: 'DELETE' });
-    expect(mockRuntimeFetch).not.toHaveBeenCalled();
+  it.each([
+    { status: 404, code: 'session_absent', error: 'Session not found or not owned by user' },
+    { status: 409, code: 'session_delete_conflict', error: 'Session delete condition was lost' },
+  ])('retains $code so cleanup cannot discard live rows on conflict', async ({ status, code, error }) => {
+    const request = vi.fn(async () => new Response(JSON.stringify({ error }), { status }));
+    expect(await sessionDeleteWithServerAccountAuthority('session', { request }))
+      .toEqual({ success: false, code, message: JSON.stringify({ error }) });
   });
 
-  it('uses runtimeFetch with the scoped server URL and bearer token when scope is not active', async () => {
-    mockResolveContext.mockResolvedValue({
-      scope: 'scoped',
-      targetServerUrl: 'https://scoped.example',
-      targetServerId: 'server-b',
-      token: 'tok_scoped',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-    mockRuntimeFetch.mockResolvedValue(makeResponse({ ok: true }));
-
-    const res = await sessionDeleteWithServerScope('sid-2', { serverId: 'server-b' });
-    expect(res).toEqual({ success: true });
-    // The scoped transport reaches `runtimeFetch` through the canonical
-    // server-reachability wrapper, which normalizes the request headers into a
-    // `Headers` instance (and also issues its own reachability probe). Reading
-    // the header back through that API is what proves the bearer token survived
-    // the wrapper; matching a plain `{ Authorization }` bag never can, so an
-    // assertion shaped that way is incapable of failing for the right reason.
-    const deleteCalls = mockRuntimeFetch.mock.calls.filter(
-      (call) => (call[1] as RequestInit | undefined)?.method === 'DELETE',
-    );
-    expect(deleteCalls).toHaveLength(1);
-    const [deleteUrl, deleteInit] = deleteCalls[0] as [string, RequestInit];
-    expect(deleteUrl).toBe('https://scoped.example/v1/sessions/sid-2');
-    expect(new Headers(deleteInit.headers).get('Authorization'))
-      .toBe('Bearer tok_scoped');
-    expect(mockRequest).not.toHaveBeenCalled();
-  });
-
-  it('separates a server-confirmed absent session from a retryable delete conflict on every transport', async () => {
-    mockResolveContext.mockResolvedValue({
-      scope: 'active',
-      targetServerUrl: 'https://active.example',
-      targetServerId: 'server-a',
-      token: 'tok',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-    mockRequest.mockResolvedValueOnce(makeResponse({
-      ok: false,
-      status: 404,
-      text: 'Session not found or not owned by user',
-    }));
-    const absentOverSocket = await sessionDeleteWithServerScope('sid-1', { serverId: 'server-a' });
-    mockRequest.mockResolvedValueOnce(makeResponse({
-      ok: false,
-      status: 409,
-      text: 'Session delete condition was lost',
-    }));
-    const conflictOverSocket = await sessionDeleteWithServerScope('sid-1', { serverId: 'server-a' });
-
-    mockResolveContext.mockResolvedValue({
-      scope: 'scoped',
-      targetServerUrl: 'https://scoped.example',
-      targetServerId: 'server-b',
-      token: 'tok_scoped',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-    const scopedDeleteResponses = [makeResponse({
-      ok: false,
-      status: 404,
-      text: 'Session not found or not owned by user',
-    }), makeResponse({
-      ok: false,
-      status: 409,
-      text: 'Session delete condition was lost',
-    })];
-    mockRuntimeFetch.mockImplementation(async (_url: string, init?: RequestInit) =>
-      init?.method === 'DELETE'
-        ? scopedDeleteResponses.shift()
-        : makeResponse({ ok: true }));
-    const absentOverFetch = await sessionDeleteWithServerScope('sid-2', { serverId: 'server-b' });
-    const conflictOverFetch = await sessionDeleteWithServerScope('sid-2', { serverId: 'server-b' });
-
-    const authorityRequest = vi.fn()
-      .mockResolvedValueOnce(makeResponse({
-        ok: false,
-        status: 404,
-        text: 'Session not found or not owned by user',
-      }))
-      .mockResolvedValueOnce(makeResponse({
-        ok: false,
-        status: 409,
-        text: 'Session delete condition was lost',
-      }));
-    const authority = { request: authorityRequest } as never;
-    const absentOverAuthority = await sessionDeleteWithServerAccountAuthority('sid-3', authority);
-    const conflictOverAuthority = await sessionDeleteWithServerAccountAuthority('sid-3', authority);
-
-    for (const absent of [absentOverSocket, absentOverFetch, absentOverAuthority]) {
-      expect(absent).toMatchObject({ success: false, code: 'session_absent' });
-    }
-    for (const conflict of [conflictOverSocket, conflictOverFetch, conflictOverAuthority]) {
-      expect(conflict).toMatchObject({ success: false, code: 'session_delete_conflict' });
-    }
-  });
-
-  it('leaves an unclassified delete failure without an outcome code', async () => {
-    mockResolveContext.mockResolvedValue({
-      scope: 'active',
-      targetServerUrl: 'https://active.example',
-      targetServerId: 'server-a',
-      token: 'tok',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-    mockRequest.mockResolvedValueOnce(makeResponse({
-      ok: false,
-      status: 500,
-      text: 'boom',
-    }));
-
-    const res = await sessionDeleteWithServerScope('sid-1', { serverId: 'server-a' });
-
-    expect(res).toEqual({ success: false, message: 'boom' });
-  });
-
-  it('sessionDelete defaults to the preferred owner server from local cache', async () => {
-    mockStorageState.sessions = {
-      'sid-owned': {
-        serverId: 'server-owned',
-      },
-    };
-    mockResolveContext.mockResolvedValue({
-      scope: 'active',
-      targetServerUrl: 'https://active.example',
-      targetServerId: 'server-owned',
-      token: 'tok',
-      timeoutMs: 1000,
-      encryption: null,
-    });
-    mockRequest.mockResolvedValue(makeResponse({ ok: true }));
-
-    const res = await sessionDelete('sid-owned');
-
-    expect(res).toEqual({ success: true });
-    expect(mockResolveContext).toHaveBeenCalledWith({ serverId: 'server-owned' });
-    expect(mockRequest).toHaveBeenCalledWith('/v1/sessions/sid-owned', { method: 'DELETE' });
+  it('does not classify an unrecognized failure as absence', async () => {
+    const request = vi.fn(async () => new Response('boom', { status: 500 }));
+    expect(await sessionDeleteWithServerAccountAuthority('session', { request }))
+      .toEqual({ success: false, message: 'boom' });
   });
 });

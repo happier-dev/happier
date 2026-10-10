@@ -121,5 +121,6 @@ describe('session resume terminal settings', () => {
         expect(machineRPC.mock.calls[0]?.[1].params.terminal).toEqual({
             mode: 'tmux', tmux: { sessionName: 'scoped-account', isolated: true, tmpDir: null },
         });
+        expect(storage.getState().sessions['session-1']?.resumingAt ?? null).toBeNull();
     });
 });

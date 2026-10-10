@@ -96,6 +96,7 @@ describe('updateSessionMetadataWithRetry', () => {
             `tuple:${JSON.stringify(value)}`);
         const encodeOwnerMetadata = vi.fn(() => ownerCurrentEnvelope);
         const applyTupleSnapshot = vi.fn();
+        let acknowledgedRevision: number | undefined;
 
         await updateSessionMetadataWithRetry<Metadata>({
             sessionId: 's_ordinary',
@@ -119,6 +120,7 @@ describe('updateSessionMetadataWithRetry', () => {
             }),
             emitUpdateMetadata,
             applyTupleSnapshot,
+            onMetadataCommitted: (revision) => { acknowledgedRevision = revision; },
             updater: (base) => ({
                 ...base,
                 summary: { text: 'After', updatedAt: 20 },
@@ -150,6 +152,7 @@ describe('updateSessionMetadataWithRetry', () => {
             }),
         });
         expect(encryptMetadata).not.toHaveBeenCalled();
+        expect(acknowledgedRevision).toBe(4);
         expect(decryptMetadata).not.toHaveBeenCalled();
         expect(applySessionMetadata).not.toHaveBeenCalled();
         expect(encryptPayload).toHaveBeenCalled();

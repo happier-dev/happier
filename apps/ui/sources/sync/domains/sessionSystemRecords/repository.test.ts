@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { SessionSystemRecordListQuerySchema } from '@happier-dev/protocol';
+import { SessionSystemRecordListQuerySchema, SessionSystemRecordStoredSchema } from '@happier-dev/protocol';
 import { createSessionSystemRecordRepository } from './repository';
 import { selectWorkflowSystemRecordQuery } from './compatibility/legacyHostTransport';
 import { invalidateSessionSystemRecordsFromChanges } from './changeWatch';
 import { openSessionStoredContent, type OpenSessionStoredContentResult, type SessionStoredContentContext } from '@happier-dev/sync-client';
-import { makeSessionWorkflowRunSnapshot } from '@/dev/testkit';
+import { makeSessionWorkflowRunSnapshot } from '@/dev/testkit/fixtures/sessionWorkflowActivityFixtures';
 
 const scope = { serverId: 'home-a', accountId: 'alice' };
 const session = { serverId: 'home-a', sessionId: 'session-one' };
@@ -20,6 +20,27 @@ const record = {
 const page = () => new Response(JSON.stringify({ records: [record], nextCursor: null, hasNext: false }));
 
 describe('Account-scoped Session System Record repository', () => {
+    it('shares an addressed item opening across subscribers and reopens only when crypto context changes', async () => {
+        const value = { v: 1, destination: 'transcript', title: 'Visual', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Visible' } } } };
+        const surfaceRecord = SessionSystemRecordStoredSchema.parse({ ...record,
+            address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' },
+            content: { t: 'encrypted', c: 'cipher' },
+        });
+        const repository = createSessionSystemRecordRepository({ scope, request: async () => page() });
+        let decryptions = 0;
+        const context: SessionStoredContentContext = { mode: 'e2ee', encryption: {
+            encryptRaw: async () => 'cipher', decryptRaw: async () => { decryptions++; return value; },
+        } };
+        const first = repository.openSurfaceItem(surfaceRecord, context);
+        const concurrent = repository.openSurfaceItem(surfaceRecord, { ...context });
+        expect(await first).toMatchObject({ status: 'ready', value: { title: 'Visual' } });
+        expect(await concurrent).toMatchObject({ status: 'ready' });
+        expect(decryptions).toBe(1);
+        expect(await repository.openSurfaceItem(surfaceRecord, { mode: 'plain' })).toEqual({ status: 'mode_mismatch' });
+        expect(await repository.openSurfaceItem(surfaceRecord, { mode: 'e2ee', encryption: null })).toEqual({ status: 'locked' });
+        expect(decryptions).toBe(1);
+    });
     it('does not retain an unobserved snapshot and truthfully refetches after the final observer leaves', async () => {
         let requests = 0;
         const repository = createSessionSystemRecordRepository({ scope, request: async () => {

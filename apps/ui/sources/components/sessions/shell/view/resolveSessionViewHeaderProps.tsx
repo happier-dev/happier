@@ -530,7 +530,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         avatarId,
         agentId,
         rightElement: (
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <PendingNavigationPill address={normalizeSessionAddress(session.serverId, input.sessionId)} presentation="header" />
                 <ActionOperationActivityButton
                     preferredSessionAddress={normalizeSessionAddress(session.serverId, input.sessionId)}

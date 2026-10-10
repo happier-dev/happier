@@ -492,6 +492,22 @@ describe('buildSessionListViewData', () => {
         expect(subtitles).not.toContain('m-unnamed');
     });
 
+    it('names unlisted machines through the shared owner while retaining real hash-shaped folder names', () => {
+        const session = (id: string, machineId: string, path: string) => makeSession({
+            id, createdAt: 1, updatedAt: 1,
+            metadata: { machineId, path, homeDir: '/home/u', host: '', version: '0.0.0', flavor: 'claude' },
+        });
+        const data = buildSessionListViewData({
+            a: session('a', '74c1b616-a290-4a7c-a0c6-20851faf093f', '/home/u/d839a6dbb07f'),
+            b: session('b', '74c2b616-a290-4a7c-a0c6-20851faf093f', '/home/u/repoB'),
+        }, {}, { serverScope: { serverId: 'server-1' } });
+        const headers = data.filter(isProjectHeader);
+        expect(headers).toEqual(expect.arrayContaining([
+            expect.objectContaining({ title: '~/d839a6dbb07f', subtitle: `${t('machine.unlistedMachine')} · 74c1` }),
+            expect.objectContaining({ title: '~/repoB', subtitle: `${t('machine.unlistedMachine')} · 74c2` }),
+        ]));
+    });
+
     it('groups sessions by the canonical reachable machine target when metadata machine ids are stale', () => {
         const machineTarget = makeMachine({
             id: 'm-target',

@@ -7,12 +7,19 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
-import { t } from '@/text';
 
-import { useOptionalSessionViewerController } from './SessionViewerController';
+import {
+  useOptionalSessionViewerController,
+  useSessionViewerHasPresence,
+} from './SessionViewerController';
 import { SessionViewerControls } from './SessionViewerControls';
 import { SessionViewerBody } from './SessionViewerHost';
+import { SessionViewerPresenceFooter } from './SessionViewerPresenceFooter';
 import { SESSION_VIEWER_DEFAULT_ASPECT } from './sessionViewerGeometry';
+import {
+  resolveSessionViewerWatchingLabel,
+  useSessionViewerMachine,
+} from './useSessionViewerMachine';
 
 const NO_RECT: FrameRect = Object.freeze({ x: 0, y: 0, width: 0, height: 0 });
 
@@ -26,17 +33,23 @@ export function SessionViewerStickySlot(
 ): React.ReactElement | null {
   const controller = useOptionalSessionViewerController();
   const source = controller?.state.source ?? null;
-  const apply = controller?.apply;
+  const requestSemantic = controller?.requestSemantic;
   const onModeChange = React.useCallback(
     (mode: FloatingFrameMode) => {
-      if (mode === 'expanded') apply?.({ kind: 'viewer.expand' });
-      else if (mode === 'closed') apply?.({ kind: 'viewer.close' });
+      if (mode === 'expanded') void requestSemantic?.({ kind: 'viewer.expand' });
+      else if (mode === 'closed') void requestSemantic?.({ kind: 'viewer.close' });
     },
-    [apply],
+    [requestSemantic],
+  );
+  const footer = useSessionViewerHasPresence(source ?? 'computer');
+  const serverId = controller?.serverId ?? props.serverId;
+  const machine = useSessionViewerMachine(
+    props.sessionId,
+    serverId,
+    source ?? 'computer',
   );
   if (!controller?.phone || controller.state.mode !== 'docked' || !source)
     return null;
-  const serverId = controller.serverId ?? props.serverId;
   return (
     <View
       style={{
@@ -51,25 +64,30 @@ export function SessionViewerStickySlot(
         mode="docked"
         rect={NO_RECT}
         availableRect={NO_RECT}
-        aspectRatio={SESSION_VIEWER_DEFAULT_ASPECT}
+        aspectRatio={
+          controller.facts[source]?.aspectRatio ?? SESSION_VIEWER_DEFAULT_ASPECT
+        }
         moveInput="chrome"
         onRectChange={() => {}}
         onModeChange={onModeChange}
         controlsAlwaysVisible
-        accessibilityLabel={t('computerUse.viewer.watchingA11y', {
-          source: t(
-            source === 'computer'
-              ? 'computerUse.viewer.sourceComputer'
-              : 'computerUse.viewer.sourceBrowser',
-          ),
-          machine: controller.facts[source]?.machineName ?? '',
-        })}
+        accessibilityLabel={resolveSessionViewerWatchingLabel(source, machine.name)}
         controls={
           <SessionViewerControls
             sessionId={props.sessionId}
             serverId={serverId}
             source={source}
           />
+        }
+        footer={
+          footer ? (
+            <SessionViewerPresenceFooter
+              sessionId={props.sessionId}
+              serverId={serverId}
+              source={source}
+              compact
+            />
+          ) : undefined
         }
       >
         <SessionViewerBody

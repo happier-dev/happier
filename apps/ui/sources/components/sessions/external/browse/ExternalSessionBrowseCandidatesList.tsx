@@ -18,7 +18,8 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
-import { MeterBar } from '@/components/ui/lists/MeterBar';
+import { ExternalSessionSearchProgress } from './ExternalSessionSearchProgress';
+import { ConversationHitSummary } from './ConversationHitSummary';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import {
@@ -36,13 +37,11 @@ import {
     resolveStatusPillVariantForState,
     StatusPill,
 } from '@/components/ui/status/StatusPill';
-import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { findExternalSessionContentMatchRange } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 import type { Theme } from '@/theme';
 import { t } from '@/text';
-import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 import {
@@ -87,31 +86,9 @@ const styles = StyleSheet.create((theme: AppTheme) => ({
     indexing: {
         width: '100%',
     },
-    indexingStatus: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        paddingHorizontal: 16,
-        paddingVertical: 6,
-    },
-    indexingRegion: {
-        flex: 1,
-        minWidth: 0,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    indexingLabel: {
-        ...Typography.default(),
-        fontSize: 12.5,
-        lineHeight: 18,
-        color: theme.colors.text.secondary,
-        flexShrink: 1,
-    },
     noMatchesClear: {
+        ...Typography.rowMeta(),
         ...Typography.default('medium'),
-        fontSize: 13,
-        lineHeight: 18,
         color: theme.colors.text.link,
         textDecorationLine: 'underline',
     },
@@ -175,43 +152,6 @@ function resolveBrowseCandidateMatchingLabel(candidate: ExternalSessionBrowseCan
         title: candidate.title,
         path: null,
     }).title;
-}
-
-/**
- * Shared by the browser and Search: render decoded visible text, never source JSON. The searched words
- * carry the Find tint every surface uses (Find lab H1/H2), located by the same owner that cut the snippet.
- */
-export function ExternalSessionCandidateMatch(props: Readonly<{
-    candidate: ExternalSessionBrowseCandidate;
-    /** The query the snippet answers; its first literal occurrence is marked. */
-    query?: string;
-    /**
-     * `row` (default): a clamped secondary line under the hit. `preview`: the whole snippet as the
-     * message being previewed, its match drawn as the current one (Find lab H1r).
-     */
-    presentation?: 'row' | 'preview';
-    testID?: string;
-}>): React.ReactElement {
-    const { theme } = useUnistyles() as { theme: AppTheme };
-    const density = useResolvedItemDensity(undefined);
-    const snippet = props.candidate.match?.snippet;
-    const query = props.query?.trim() ?? '';
-    const range = snippet && query ? findExternalSessionContentMatchRange(snippet, query) : null;
-    const preview = props.presentation === 'preview';
-    return (
-        <Text
-            testID={props.testID ?? `external-session-candidate-match:${props.candidate.remoteSessionId}`}
-            style={preview
-                ? [Typography.default(), { fontSize: 14, lineHeight: 20, color: theme.colors.text.primary }]
-                : [Typography.default(), ITEM_SUBTITLE_TEXT_METRICS[density], { color: theme.colors.text.secondary }]}
-            numberOfLines={preview ? undefined : 3}
-            selectable={preview}
-        >
-            {snippet === undefined
-                ? t('externalSessions.browseContentNotSearchable')
-                : <FindHighlightedText text={snippet} ranges={range ? [{ ...range, current: preview }] : undefined} />}
-        </Text>
-    );
 }
 
 function resolveBrowseCandidateAccessibilityLabel(
@@ -563,7 +503,9 @@ function buildCandidateVirtualizedSource(params: Readonly<{
                 ) : undefined,
                 subtitle: candidatePath ?? '',
                 subtitleContent: () => interaction.searchTarget === 'content'
-                    ? <ExternalSessionCandidateMatch candidate={candidate} query={interaction.searchQuery} />
+                    ? <ConversationHitSummary snippet={candidate.match?.snippet ?? t('externalSessions.browseContentNotSearchable')} query={interaction.searchQuery}
+                        where={resolveBrowseCandidateIdentity(presentationContext, candidate, candidatePath).secondaryLabel}
+                        atMs={candidate.updatedAtMs} testID={`external-session-candidate-match:${candidate.remoteSessionId}`} />
                     : renderBrowseCandidateSubtitle(presentationContext, candidate, candidatePath),
                 rightAccessory: () => renderBrowseCandidateRightAccessory(
                     candidate,
@@ -632,8 +574,12 @@ function buildCandidateVirtualizedSource(params: Readonly<{
                 id: `project:${group.path}`,
                 title: group.path === UNKNOWN_PROJECT_KEY
                     ? t('externalSessions.browseCandidates')
-                    : formatPathRelativeToHome(group.path, params.machineHomeDir ?? undefined),
+                    : formatSessionPath(group.path, params.machineHomeDir ?? undefined),
                 count: group.candidateIndexes.length,
+                rightAccessory: params.getInteractionState().searchTarget === 'content'
+                    && group.candidateIndexes.some(index => getCandidate(index).searchMode === 'indexed')
+                    && group.candidateIndexes.some(index => getCandidate(index).searchMode === 'standard')
+                    ? t('conversationSearch.mixedResults') : undefined,
             };
         },
     };
@@ -651,7 +597,6 @@ function BrowseLoadingState(props: Readonly<{
     /** `banner` sits above served rows; `content` fills the empty list area. */
     placement?: 'content' | 'banner';
 }>): React.ReactElement {
-    const { theme } = useUnistyles() as { theme: AppTheme };
     const isBanner = props.placement === 'banner';
     const preparation = props.preparation;
     const total = preparation?.total;
@@ -684,58 +629,10 @@ function BrowseLoadingState(props: Readonly<{
             </View>
         );
     }
-    const fraction = total !== undefined && total > 0
-        ? Math.max(0, Math.min(1, preparation.scanned / total))
-        : null;
     return (
         <View style={isBanner ? styles.indexing : [styles.indexing, styles.loading]}>
-            <View
-                accessibilityElementsHidden={fraction !== null}
-                importantForAccessibility={fraction !== null ? 'no-hide-descendants' : undefined}
-                {...(fraction !== null ? ({ 'aria-hidden': true } as Record<string, unknown>) : {})}
-            >
-                <MeterBar tone="neutral" fillFraction={fraction ?? 0} height={2}
-                    fillColor={theme.colors.text.secondary} trackColor={theme.colors.border.default} />
-            </View>
-            <View style={styles.indexingStatus}>
-                <View
-                    testID="direct-session-candidates:indexing"
-                    style={styles.indexingRegion}
-                    accessibilityRole="progressbar"
-                    accessibilityLabel={progressLabel}
-                    accessibilityValue={total === undefined ? undefined : {
-                        min: 0,
-                        max: total,
-                        now: preparation.scanned,
-                    }}
-                    {...({ role: 'progressbar' } as Record<string, unknown>)}
-                >
-                    {total === undefined ? (
-                        <View
-                            accessibilityElementsHidden
-                            importantForAccessibility="no-hide-descendants"
-                            {...({ 'aria-hidden': true } as Record<string, unknown>)}
-                        >
-                            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-                        </View>
-                    ) : null}
-                    <Text style={[styles.indexingLabel, Typography.tabular()]} numberOfLines={1}>
-                        {total === undefined
-                            ? t('externalSessions.browseIndexing')
-                            : `${t('externalSessions.browseIndexing')} · ${progressLabel}`}
-                    </Text>
-                </View>
-                {props.onCancelPreparation ? (
-                    <RoundButton
-                        testID="direct-session-candidates:indexing:cancel"
-                        size="small"
-                        display="inverted"
-                        title={t('externalSessions.browseIndexingStop')}
-                        accessibilityLabel={t('externalSessions.browseIndexingStop')}
-                        onPress={props.onCancelPreparation}
-                    />
-                ) : null}
-            </View>
+            <ExternalSessionSearchProgress label={progressLabel} scanned={preparation.scanned} total={total}
+                onStop={props.onCancelPreparation} testID="direct-session-candidates:indexing" stopTestID="direct-session-candidates:indexing:cancel" />
             {skeleton}
         </View>
     );
@@ -750,8 +647,8 @@ export type ExternalSessionBrowseScope =
     | Readonly<{ kind: 'ready' }>
     | Readonly<{ kind: 'unselected'; onChooseMachine?: () => void }>
     | Readonly<{ kind: 'gone'; homeName: string | null; onChooseMachine?: () => void }>
-    /** The machine's Home has not answered with its machine list: not known to be gone. */
-    | Readonly<{ kind: 'unreachable'; homeName: string | null; onChooseMachine?: () => void }>
+    /** The inventory read's own status, without inferring whether its Home is reachable. */
+    | Readonly<{ kind: 'inventory'; status: 'loading' | 'error' | 'signedOut'; onChooseMachine?: () => void }>
     | Readonly<{ kind: 'offline'; onChooseMachine?: () => void }>
     | Readonly<{ kind: 'locked'; onChooseMachine?: () => void }>;
 
@@ -782,6 +679,8 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     contentSearchExplicitlyUnsupported?: boolean;
     contentSearchSubmitted?: boolean;
     contentCoverage?: 'complete' | 'partial' | 'unsupported' | null;
+    contentCoverageLabel?: string;
+    contentScanAvailable?: boolean;
     onSearchSubmit?: (query: string) => void;
     onSearchQueryChange: (query: string) => void;
     selectionAuthorityGeneration: number;
@@ -902,7 +801,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
             ],
             // Only reached while a cursor page is still continuing; a settled empty listing and a
             // search without matches are content states below.
-            emptyStateLabel: t(isContentSearch ? 'common.loading' : hasSearchQuery
+            emptyStateLabel: isContentSearch ? '' : t(hasSearchQuery
                 ? 'externalSessions.browseNoSearchResults'
                 : 'externalSessions.browseNoCandidates'),
             sections: [],
@@ -921,7 +820,9 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     const annotationsIncompleteAnnouncement = showAnnotationsIncomplete
         ? t('externalSessions.browseAnnotationsIncomplete')
         : null;
-    const contentCoverageAnnouncement = isContentSearch && props.candidates.length > 0 && props.contentCoverage !== 'complete'
+    const showContentCoverage = isContentSearch && props.contentCoverage !== 'complete'
+        && (props.candidates.length > 0 || (props.contentCoverage === 'partial' && props.nextCursor !== null));
+    const contentCoverageAnnouncement = isContentSearch && props.contentCoverageLabel ? props.contentCoverageLabel : showContentCoverage
         ? t('externalSessions.browseContentPartial')
         : null;
     const incompleteAnnouncement = [searchIncompleteAnnouncement, contentCoverageAnnouncement, annotationsIncompleteAnnouncement]
@@ -938,6 +839,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
      */
     const indexingBannerVisible = hasLoadedRows && props.preparation !== null;
     const projectionPhase = props.projectionPhase ?? 'ready';
+    const scope = props.scope ?? READY_SCOPE;
     const projectionFailureMessage = projectionPhase === 'unsupported' || projectionPhase === 'error'
         ? t('newSession.daemonRpcUnavailableBody')
         : null;
@@ -945,7 +847,8 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     // An index build is announced by the hidden status below instead, because its
     // visible progress deliberately is not live (count ticks must not speak).
     const loadingAnnouncement = !props.preparation
-        && !hasLoadedRows && (projectionPhase === 'loading' || props.loading || props.loadingMore)
+        && !hasLoadedRows && (projectionPhase === 'loading' || props.loading || props.loadingMore
+            || (scope.kind === 'inventory' && scope.status === 'loading'))
         ? t('common.loading')
         : null;
     useIosAccessibilityAnnouncement(loadingAnnouncement);
@@ -964,7 +867,6 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
         : props.error;
     const retainedRowsLoading = hasLoadedRows
         && (props.loading || projectionPhase === 'loading');
-    const scope = props.scope ?? READY_SCOPE;
     const machineName = props.machineLabel?.trim() || null;
     const machineInSentence = machineName ?? t('externalSessions.browseThisMachine');
     const trimmedQuery = props.searchQuery.trim();
@@ -1007,16 +909,15 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
                 ? { label: t('settingsPlugins.targetSelection.chooseAnother'), onPress: onChooseMachine }
                 : undefined}
         />
-    ) : scope.kind === 'unreachable' ? (
+    ) : scope.kind === 'inventory' && scope.status === 'loading' ? (
+        <BrowseLoadingState preparation={null} />
+    ) : scope.kind === 'inventory' ? (
         <SurfaceStateCard
-            testID="direct-session-candidates:home-unreachable"
-            kind="unavailable"
-            iconName="cloud-slash"
+            testID="direct-session-candidates:inventory-unavailable"
+            kind={scope.status === 'error' ? 'error' : 'unavailable'}
+            iconName="desktop"
             accessibilitySemantics="status"
-            title={scope.homeName
-                ? t('settingsPlugins.targetSelection.unreachableHome', { home: scope.homeName })
-                : t('settingsPlugins.targetSelection.unreachableThisHome')}
-            reason={t('externalSessions.browseHomeUnreachableBody')}
+            title={scope.status === 'signedOut' ? t('server.signedOut') : t('common.unavailable')}
             action={onChooseMachine
                 ? { label: t('settingsPlugins.targetSelection.chooseAnother'), onPress: onChooseMachine }
                 : undefined}
@@ -1146,12 +1047,12 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
      * band, above the rows, so the band stays the top of the card as in Search / ⌘K.
      */
     const hasStatusRows = indexingBannerVisible
-        || (isContentSearch && hasLoadedRows && props.contentCoverage !== 'complete')
+        || showContentCoverage
         || (!isContentSearch && props.candidates.length > 0 && props.searchIncomplete === true)
         || showAnnotationsIncomplete;
     const statusRows = hasStatusRows ? (
         <View testID="direct-session-candidates-status">
-            {isContentSearch && hasLoadedRows && props.contentCoverage !== 'complete' ? (
+            {showContentCoverage ? (
                 <Text
                     testID="direct-session-candidates-content-partial"
                     style={styles.searchIncomplete}
@@ -1211,7 +1112,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
                 inputAccessoryRow={statusRows}
                 inputSuffix={isContentSearch || props.searchAugmenting || props.bandTrailing ? (
                     <View style={styles.searchSuffix}>
-                        {isContentSearch ? (
+                        {isContentSearch && (props.contentScanAvailable !== false || props.loading || props.loadingMore) ? (
                             <RoundButton
                                 testID="direct-session-candidates-content-submit"
                                 size="small"
@@ -1258,7 +1159,7 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
                     onEndReached: props.onLoadMore,
                     onRetry: props.onRetry,
                     loadingLabel: t('common.loading'),
-                    moreLabel: t('common.more'),
+                    moreLabel: t(isContentSearch ? 'externalSessions.browseContentMore' : 'common.more'),
                     retryLabel: t('common.retry'),
                     endReachedLabel: t('common.done'),
                 } : undefined}

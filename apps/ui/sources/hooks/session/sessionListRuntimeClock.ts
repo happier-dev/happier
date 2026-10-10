@@ -12,8 +12,9 @@ import React from 'react';
  * This store is the canonical owner of that timestamp: consumers subscribe to
  * one `nowMs` value and register the wake time they need; the clock keeps a
  * single timer at the earliest requested wake. When it fires, every
- * subscriber re-renders in the same batched React commit with the same
- * timestamp, so placement and row indicators can never disagree about "now".
+ * subscriber can read the same timestamp, so placement and row indicators
+ * cannot disagree about "now". Status-only surfaces retain their snapshot
+ * until their own freshness boundary instead of rendering for unrelated wakes.
  */
 export type SessionListRuntimeClock = Readonly<{
     getNowMs: () => number;
@@ -135,6 +136,34 @@ export function useSessionListRuntimeNowMs(
         [clock, enabled],
     );
     return React.useSyncExternalStore(subscribe, clock.getNowMs, clock.getNowMs);
+}
+
+/** Status-only surfaces need the shared instant at their own freshness boundary,
+ * not a render for every relative-time or other surface's wake. Source changes
+ * refresh the instant immediately; deadlines still use the single clock/timer. */
+export function useSessionListRuntimeDeadlineNowMs(
+    readNextRefreshAtMs: (nowMs: number) => number | null,
+    enabled = true,
+    clock: SessionListRuntimeClock = sessionListRuntimeClock,
+): number {
+    const snapshot = React.useMemo(() => {
+        let nowMs = Math.max(clock.getNowMs(), Date.now());
+        let nextRefreshAtMs = readNextRefreshAtMs(nowMs);
+        return {
+            get: () => {
+                const sharedNowMs = clock.getNowMs();
+                if (enabled && nextRefreshAtMs !== null && sharedNowMs >= nextRefreshAtMs) {
+                    nowMs = sharedNowMs;
+                    nextRefreshAtMs = readNextRefreshAtMs(nowMs);
+                }
+                return nowMs;
+            },
+            nextRefresh: () => nextRefreshAtMs,
+        };
+    }, [clock, enabled, readNextRefreshAtMs]);
+    const nowMs = React.useSyncExternalStore(enabled ? clock.subscribe : noopSubscribe, snapshot.get, snapshot.get);
+    useSessionListRuntimeWake(snapshot.nextRefresh(), enabled, clock);
+    return nowMs;
 }
 
 /**

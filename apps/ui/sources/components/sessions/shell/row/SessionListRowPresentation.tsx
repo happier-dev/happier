@@ -1,13 +1,12 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import { resolveHappierWorkStatusSurfaceStyle } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { resolveHappierWorkStatusSurfaceStyle, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Text, type AppTextProps } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { WorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { projectWorkColors } from '@/components/work/status/workStatusTreatment';
-import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 import {
     SESSION_LIST_ROW_CORNER_RADIUS,
@@ -36,10 +35,10 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 15,
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'sidebar', true),
+        backgroundColor: theme.colors.surface.base,
         borderLeftWidth: 2,
         borderRightWidth: 2,
-        borderColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'sidebar', true),
+        borderColor: theme.colors.surface.base,
     },
     first: {
         borderTopLeftRadius: SESSION_LIST_ROW_CORNER_RADIUS,
@@ -57,17 +56,17 @@ const styles = StyleSheet.create((theme) => ({
     minimalNativePhone: { height: SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE },
     // The open row is a rounded fill inside its group's sheet, the sheet's paper showing around it.
     selected: {
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.selected, 'sidebar', true),
-        borderColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'sidebar', true),
+        backgroundColor: theme.colors.surface.selected,
+        borderColor: theme.colors.surface.base,
         borderRadius: SESSION_LIST_ROW_SELECTION_RADIUS,
     },
     attention: {
         ...resolveHappierWorkStatusSurfaceStyle('attention', projectWorkColors(theme)),
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.state.warning.background, 'sidebar', true),
+        backgroundColor: theme.colors.state.warning.background,
     },
     danger: {
         ...resolveHappierWorkStatusSurfaceStyle('danger', projectWorkColors(theme)),
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.state.danger.background, 'sidebar', true),
+        backgroundColor: theme.colors.state.danger.background,
     },
     identity: {
         position: 'relative',
@@ -132,6 +131,12 @@ export function SessionListRowPresentation(props: RowDensityProps & Readonly<{
     /** Measures the whole row (the trailing slot included). */
     onLayout?: (event: LayoutChangeEvent) => void;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
+    const selected = props.selected === true;
+    const danger = props.statusTone === 'danger';
+    const attention = props.statusTone === 'attention';
+    const baseColor = danger ? theme.colors.state.danger.background : attention ? theme.colors.state.warning.background : selected ? theme.colors.surface.selected : theme.colors.surface.base;
     const compact = props.density !== 'default';
     const minimal = props.density === 'minimal';
     const textScale = typeof props.textScale === 'number' && Number.isFinite(props.textScale)
@@ -158,6 +163,10 @@ export function SessionListRowPresentation(props: RowDensityProps & Readonly<{
         // title and context remain readable instead of being clipped by a fixed height.
         largeText ? { minHeight: scaledRowHeight, height: undefined } : null,
         props.statusTone === 'attention' ? styles.attention : props.statusTone === 'danger' ? styles.danger : null,
+        {
+            backgroundColor: materialColor(baseColor, danger || attention || selected ? baseColor : 'transparent'),
+            ...(!danger && !attention ? { borderColor: materialColor(theme.colors.surface.base, 'transparent') } : null),
+        },
     ];
     const pressContent = <>
         {hasIdentity ? <View style={[

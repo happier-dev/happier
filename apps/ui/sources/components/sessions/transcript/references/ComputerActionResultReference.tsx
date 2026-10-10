@@ -16,6 +16,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { useBrowserSessionAgentIdentity } from '@/components/browser/copresence/BrowserShellPresence';
+import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { resolveTranscriptComputerActionReference, type TranscriptComputerActionReference, type TranscriptComputerVerb } from './transcriptComputerActionReference';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -186,7 +187,9 @@ function MountedComputerActionReference(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const { reference, sessionId } = props;
-    const identity = useBrowserSessionAgentIdentity({ sessionId, serverId: props.serverId });
+    const accountLifetime = useSessionViewerSourceAccountLifetime();
+    const serverId = props.serverId ?? accountLifetime?.scope.serverId ?? null;
+    const identity = useBrowserSessionAgentIdentity({ sessionId, serverId });
     const [shared, setShared] = React.useState<ComputerApprovalDisplayV1 | null>(null);
     // The row is where this device learns the Session uses this machine for computer use.
     React.useEffect(() => {
@@ -197,12 +200,13 @@ function MountedComputerActionReference(props: Readonly<{
     const choose = React.useCallback(() => {
         openComputerTargetPickerForSession({
             sessionId,
-            serverId: props.serverId,
+            serverId,
+            accountLifetime,
             machineId: reference.machineId,
             machineName,
             onSelected: (selection) => setShared(selection.approvalDisplay),
         });
-    }, [machineName, props.serverId, reference.machineId, sessionId]);
+    }, [accountLifetime, machineName, serverId, reference.machineId, sessionId]);
 
     if (reference.kind === 'action') {
         return <ComputerActionLine reference={reference} sessionId={sessionId} serverId={props.serverId} mediaPreviewEnabled={props.mediaPreviewEnabled} testID={testID} />;

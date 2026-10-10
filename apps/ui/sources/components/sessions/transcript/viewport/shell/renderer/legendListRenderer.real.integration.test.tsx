@@ -1781,6 +1781,108 @@ describe('Legend installed web-package cleanup', () => {
         expect(physicalScrollWrites.some((write) => write.top === expectedTargetOffset)).toBe(true);
     });
 
+    it.each([
+        { headHeight: 175, headerHeight: 32, change: 'shrinking rows above the stale anchor' },
+        { headHeight: 262, headerHeight: 133, change: 'growing a row in the physical viewport' },
+    ])('preserves physical user scroll progress when measurements precede its scroll event: $change', async ({ headHeight, headerHeight }) => {
+        useMeasuredLegendGeometry = true;
+        viewportHeight = 258;
+        const data: Row[] = [262, 33, 28, 34, 5_731].map((height, index) => ({
+            height,
+            id: `user-progress-${index}`,
+        }));
+        const listRef = React.createRef<LegendListRef>();
+        await act(async () => {
+            root.render(
+                <div id="installed-pinned-host" style={{ height: viewportHeight }}>
+                    <LegendList
+                        data={data}
+                        drawDistance={1_000}
+                        estimatedItemSize={262}
+                        keyExtractor={(item) => item.id}
+                        maintainVisibleContentPosition={{ data: true, size: true }}
+                        recycleItems={false}
+                        ref={listRef}
+                        renderItem={renderRow}
+                    />
+                </div>,
+            );
+        });
+        await flushLegendWork();
+        const scroller = findInstalledScrollElement();
+        await act(async () => {
+            scroller.scrollTo({ top: 452 });
+            await vi.runOnlyPendingTimersAsync();
+        });
+        await flushLegendWork();
+        expect(scroller.scrollTop).toBe(452);
+
+        deliverBrowserScrollEventsAsynchronously();
+        // The browser advances a smooth user gesture before its next scroll event.
+        // ResizeObserver can deliver the newly visible row geometry in that gap.
+        scroller.scrollTop = 78;
+        scroller.dispatchEvent(new Event('scroll'));
+        const head = container.querySelector<HTMLElement>('[data-testid="real-legend-row-user-progress-0"]');
+        const header = container.querySelector<HTMLElement>('[data-testid="real-legend-row-user-progress-1"]');
+        expect(head).not.toBeNull();
+        expect(header).not.toBeNull();
+        head!.dataset.height = String(headHeight);
+        header!.dataset.height = String(headerHeight);
+        physicalScrollWrites.length = 0;
+        act(() => flushResizeObservers());
+        expect(Math.max(scroller.scrollTop, ...physicalScrollWrites.map((write) => write.top))).toBeLessThanOrEqual(78);
+        expect(scroller.scrollTop).toBeLessThanOrEqual(78);
+
+        await act(async () => {
+            scroller.scrollTop = 0;
+            scroller.dispatchEvent(new Event('scroll'));
+            await vi.runOnlyPendingTimersAsync();
+        });
+        await flushLegendWork();
+        expect(scroller.scrollTop).toBe(0);
+    });
+
+    it('preserves a surviving cached visible key when data shrinks before its scroll event', async () => {
+        useMeasuredLegendGeometry = true;
+        viewportHeight = 258;
+        const data: Row[] = [262, 33, 28, 34, 5_731].map((height, index) => ({
+            height,
+            id: `shrinking-reader-${index}`,
+        }));
+        const render = (items: readonly Row[]) => (
+            <div id="installed-pinned-host" style={{ height: viewportHeight }}>
+                <LegendList
+                    data={items}
+                    drawDistance={1_000}
+                    estimatedItemSize={262}
+                    keyExtractor={(item) => item.id}
+                    maintainVisibleContentPosition={{ data: true, size: true }}
+                    recycleItems={false}
+                    renderItem={renderRow}
+                />
+            </div>
+        );
+        await act(async () => root.render(render(data)));
+        await flushLegendWork();
+        const scroller = findInstalledScrollElement();
+        await act(async () => {
+            scroller.scrollTo({ top: 600 });
+            await vi.runOnlyPendingTimersAsync();
+        });
+        await flushLegendWork();
+        expect(scroller.scrollTop).toBe(600);
+
+        deliverBrowserScrollEventsAsynchronously();
+        scroller.scrollTop = 452;
+        scroller.dispatchEvent(new Event('scroll'));
+        await act(async () => root.render(render([data[4]!])));
+        // The surviving row began at 357, so the user's physical reading offset
+        // inside that row is 452 - 357, regardless of the pending scroll event.
+        expect(scroller.scrollTop).toBe(95);
+        await flushLegendWork();
+        expect(scroller.scrollTop).toBe(95);
+    });
+
     it('retains an offscreen known size while its item-size version is unchanged', async () => {
         const listRef = React.createRef<LegendListRef>();
         const targetIndex = 20;

@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CurrentSessionPresentationIntentV1 } from '@happier-dev/protocol/sessions';
 
 import type { PresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import {
+    CLOSED_SESSION_VIEWER,
+    resolveSessionViewerPresentation,
+    type SessionViewerPresentationState,
+} from '@/components/sessions/viewer/sessionViewerPresentation';
 
 import {
     HIDDEN_SESSION_COMPANION_PREFERENCE_V1,
@@ -81,6 +86,58 @@ function ports(overrides: Partial<SessionPresentationPorts> = {}): SessionPresen
 const intent = (value: CurrentSessionPresentationIntentV1) => value;
 
 describe('applySessionPresentationIntent', () => {
+    it('routes semantic viewer operations through the exact mounted viewer owner', () => {
+        let state: SessionViewerPresentationState = CLOSED_SESSION_VIEWER;
+        const companion = controllerStub();
+        const originalCompanion = companion.preference;
+        const exactPorts = ports({ companion, viewer: {
+            apply: (viewerIntent) => {
+                const transition = resolveSessionViewerPresentation(state, viewerIntent, {
+                    phone: false, canPresentSource: () => true,
+                });
+                state = transition.state;
+                return transition.result;
+            },
+        } });
+        expect(applySessionPresentationIntent(exactPorts, { kind: 'viewer.open', source: 'computer' })).toEqual({ status: 'applied' });
+        expect(state).toMatchObject({ source: 'computer', mode: 'floating' });
+        expect(applySessionPresentationIntent(exactPorts, { kind: 'viewer.open', source: 'computer' })).toEqual({ status: 'unchanged' });
+        expect(applySessionPresentationIntent(exactPorts, { kind: 'viewer.source.select', source: 'browser' })).toEqual({ status: 'applied' });
+        expect(state).toMatchObject({ source: 'browser', mode: 'floating' });
+        expect(applySessionPresentationIntent(exactPorts, { kind: 'viewer.expand' })).toEqual({ status: 'applied' });
+        expect(state).toMatchObject({ source: 'browser', mode: 'expanded', restore: { mode: 'floating' } });
+        expect(applySessionPresentationIntent(exactPorts, { kind: 'viewer.restore' })).toEqual({ status: 'applied' });
+        expect(state).toMatchObject({ source: 'browser', mode: 'floating', restore: null });
+        expect(applySessionPresentationIntent(exactPorts, { kind: 'viewer.close' })).toEqual({ status: 'applied' });
+        expect(state).toMatchObject({ source: 'browser', mode: 'closed' });
+        expect(applySessionPresentationIntent(exactPorts, { kind: 'viewer.close' })).toEqual({ status: 'unchanged' });
+        expect(companion.preference).toBe(originalCompanion);
+    });
+
+    it('reports unavailable without a mounted viewer port', () => {
+        const exactPorts = ports();
+        for (const viewerIntent of [
+            { kind: 'viewer.open', source: 'computer' },
+            { kind: 'viewer.source.select', source: 'browser' },
+            { kind: 'viewer.expand' }, { kind: 'viewer.restore' }, { kind: 'viewer.close' },
+        ] as const) expect(applySessionPresentationIntent(exactPorts, viewerIntent)).toEqual({ status: 'unavailable' });
+    });
+
+    it('retains viewer state when the source owner refuses presentation', () => {
+        let state: SessionViewerPresentationState = { ...CLOSED_SESSION_VIEWER, source: 'computer', mode: 'floating' };
+        const previous = state;
+        const exactPorts = ports({ viewer: {
+            apply: (viewerIntent) => {
+                const transition = resolveSessionViewerPresentation(state, viewerIntent, {
+                    phone: false, canPresentSource: (source) => source === 'computer',
+                });
+                state = transition.state;
+                return transition.result;
+            },
+        } });
+        expect(applySessionPresentationIntent(exactPorts, { kind: 'viewer.source.select', source: 'browser' })).toEqual({ status: 'unavailable' });
+        expect(state).toBe(previous);
+    });
     it('reports a guarded transfer refusal instead of pretending a changed item was removed', () => {
         const companion = controllerStub();
         const instance = { v: 1 as const, id: 'copy-a', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };

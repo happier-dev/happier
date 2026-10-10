@@ -3,7 +3,7 @@ import {
 } from '@happier-dev/agents';
 import {
     SESSION_METADATA_LAYOUT_VERSION_V1,
-    SessionSharedMetadataV1Schema,
+    StoredSessionSharedMetadataV1Schema,
 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
@@ -20,7 +20,7 @@ export function readSessionPresentationAgentId(
 ): string | null {
     const metadataLayoutVersion = readSessionMetadataLayoutVersion(session.metadataLayoutVersion);
     if (metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
-        const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(session.metadata);
+        const sharedMetadata = StoredSessionSharedMetadataV1Schema.safeParse(session.metadata);
         const sharedAgentId = sharedMetadata.success
             ? sharedMetadata.data.agentPresentation?.agentId
             : null;

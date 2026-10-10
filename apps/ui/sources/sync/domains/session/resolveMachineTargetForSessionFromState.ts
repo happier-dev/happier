@@ -32,6 +32,7 @@ type MachineTargetLikeState = SessionListLookupStateLike & Readonly<{
     sessionListRowsByServerId?: SessionListRowStateByServerId;
     machines?: Record<string, Machine>;
     machineListByServerId?: Readonly<Record<string, readonly Machine[] | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
     getProjectForSession?: (sessionId: string, serverId?: string | null) => { key?: { machineId?: string; rootPath?: string } } | null;
 }>;
 
@@ -98,6 +99,7 @@ function readSessionMachines(state: SessionMachineTargetState, serverId?: string
         activeServerId: getActiveServerSnapshot().serverId,
         activeMachines: Object.values(state.machines ?? {}),
         machineListByServerId: state.machineListByServerId ?? {},
+        machineListStatusByServerId: state.machineListStatusByServerId,
     }) ?? [];
 }
 

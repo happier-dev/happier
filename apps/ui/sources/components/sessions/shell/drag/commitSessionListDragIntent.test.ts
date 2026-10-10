@@ -6,7 +6,10 @@ import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domai
 import { commitSessionListDragIntent, resolveSessionListDragIntent } from './commitSessionListDragIntent';
 import { createSessionListOrganizationActionAdapter, invokeSessionListOrganizationAction,
     registerMountedSessionListOrganizationAction } from './sessionListOrganizationAction';
-import { resolveSessionListEntityDrop } from './resolveSessionListEntityDrop';
+import { listSessionListEntityDropDestinations, readSessionListFolderAssignmentDestination, resolveSessionListFolderAssignmentDrop, resolveSessionListEntityDrop } from './resolveSessionListEntityDrop';
+import { buildSessionListIndexWithServerScope } from '@/sync/store/sessionListIndex/buildSessionListIndexWithServerScope';
+import { buildSessionFolderAssignmentKey, resolveFolderAwareSessionListSourceForLayout } from '@/sync/domains/session/folders';
+import { projectSessionListIndexForLayout } from '@/sync/domains/session/listing/sessionListLayout';
 import { createSessionFixture } from '@/dev/testkit';
 import { resolvePutUnderEligibility } from '@/components/sessions/work/putUnderCandidates';
 import { createSessionReportsToEligibilitySnapshot } from '@/sync/ops/relations/sessionReportsToEligibility';
@@ -126,6 +129,58 @@ function makeContext(overrides?: Partial<Parameters<typeof commitSessionListDrag
         spies: { setSessionFoldersV1, setSessionListGroupOrderV1, setSessionWorkspaceOrderV1, setSessionFolderAssignment },
     };
 }
+
+describe('session list chooser destinations independent of folder presentation', () => {
+    it.each(['project', 'date'] as const)('keeps folder assignment available through the real %s producer and Recent activity projection', grouping => {
+        const session = createSessionFixture({ id: 'root-a', metadata: { machineId: 'machine-a', path: '/repo/a', host: 'a' } });
+        const source = buildSessionListIndexWithServerScope({ sessions: { 'root-a': session }, machines: {},
+            activeGroupingV1: grouping, inactiveGroupingV1: grouping, serverScope: { serverId: 'server-a' } });
+        const assigned = resolveFolderAwareSessionListSourceForLayout({ source, layoutChoice: 'recent_activity',
+            foldersFeatureEnabled: true, folderViewModeV1: 'off',
+            folders: { v: 1, folders: folders().folders.map(folder => ({ ...folder, serverId: 'server-a' })) },
+            assignmentsBySessionKey: { [buildSessionFolderAssignmentKey('server-a', 'root-a')]: 'folder-a' },
+            collapsedGroupKeys: {}, focusedFolder: null });
+        const recent = projectSessionListIndexForLayout({ source: assigned.items, choice: 'recent_activity',
+            resolveSessionRow: () => session, nowMs: 100 });
+        const row = recent.find(item => item.type === 'session');
+        expect(row).toEqual(expect.objectContaining({ workspace: workspaceA, folderId: 'folder-a' }));
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const { context } = makeContext({ scope, latestItems: recent.filter(item => item.type === 'session'),
+            isFolderOrganizationEnabled: () => true });
+        const item = { kind: 'session', scope, address: { serverId: 'server-a', sessionId: 'root-a' } } as const;
+        const destinations = listSessionListEntityDropDestinations({ item, context,
+            preview: () => ({ verb: 'Move', target: 'Folder' }), folderPreview: () => ({ verb: 'Move', target: 'Folder' }) });
+        expect(destinations.some(entry => readSessionListFolderAssignmentDestination(entry.destination)?.folderId === 'folder-b')).toBe(true);
+        const resolve = (folderId: string | null) => resolveSessionListFolderAssignmentDrop({ item, folderId, context,
+            preview: () => ({ verb: 'Move', target: 'Folder' }), reason: code => ({ code, message: code }) });
+        expect(resolve(null).status).toBe('allowed');
+        expect(resolve('folder-a').status).toBe('refused');
+    });
+
+    it('offers a workspace folder absent from the visible list index', async () => {
+        const scope = { serverId: 'server-a', accountId: 'account' };
+        const { context } = makeContext({
+            scope,
+            isFolderOrganizationEnabled: () => true,
+            latestItems: [projectHeader(), sessionItem('root-a', projectGroupKey, null, 0)],
+        });
+        const item = { kind: 'session', scope, address: { serverId: 'server-a', sessionId: 'root-a' } } as const;
+        const destinations = listSessionListEntityDropDestinations({ item, context,
+            preview: () => ({ verb: 'Move', target: 'Folder' }), folderPreview: () => ({ verb: 'Move', target: 'Folder' }) });
+        const folderDestination = destinations.find(entry => readSessionListFolderAssignmentDestination(entry.destination)?.folderId === 'folder-a');
+        expect(folderDestination).toBeDefined();
+        const resolve = (folderId: string | null, current = context) => resolveSessionListFolderAssignmentDrop({ item,
+            folderId, context: current, preview: () => ({ verb: 'Move', target: 'Folder' }),
+            reason: code => ({ code, message: code }) });
+        expect(resolve('folder-a')).toEqual(expect.objectContaining({ status: 'allowed', effect: expect.objectContaining({
+            actionId: 'session.folder.set', input: { sessionId: 'root-a', folderId: 'folder-a' },
+        }) }));
+        expect(resolve(null).status).toBe('refused');
+        expect(resolve('removed-folder').status).toBe('refused');
+        expect(resolve('folder-a', { ...context, isFolderOrganizationEnabled: () => false }).status).toBe('refused');
+        expect(resolve('folder-a', { ...context, scope: { ...scope, accountId: 'replacement' } }).status).toBe('refused');
+    });
+});
 
 describe('commitSessionListDragIntent — putting a Session under a lead', () => {
     function underIntent(targetSessionId: string): SessionListDragIntent {

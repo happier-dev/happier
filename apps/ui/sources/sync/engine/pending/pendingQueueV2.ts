@@ -49,7 +49,7 @@ import { SessionExecutionRunPendingEnqueueRequestV1Schema } from '@happier-dev/p
 import { normalizePendingDeliveryStatusV1, parsePendingDeliveryStatusV1, shouldExposePendingDeliveryInDiscardedHistoryV1, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { normalizePendingDeliveryBlockedReason, type PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
-import { PendingRequestedActionV1Schema, DEFAULT_PENDING_REQUESTED_ACTION_V1, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { PendingRequestedActionV1Schema, PendingResetStartSetResultV1Schema, DEFAULT_PENDING_REQUESTED_ACTION_V1, type PendingRequestedActionV1, type PendingResetStartSetResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema, type SessionPendingMessageComposerAdmissionAcceptedRequestV1, type SessionPendingMessageComposerAdmissionPrepareResponseV1 } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { hasRawComposerAttachmentSelectionV1, HappierStructuredInputV1Schema, RawIngressStructuredInputV1Schema, readIngressComposerAttachmentSelectionV1, type RawIngressStructuredInputV1, type HappierStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { PendingMessageMutationFingerprintV1Schema } from '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1';
@@ -3151,7 +3151,7 @@ export async function updatePendingRequestedActionV2(params: {
     outboxScope: ServerAccountScope;
     /** Captured owner currentness; the local projection is this Home's alone. */
     isOutboxScopeCurrent?: () => boolean | Promise<boolean>;
-}): Promise<void> {
+}): Promise<PendingResetStartSetResultV1> {
     const localId = params.localId;
     (await assertCanonicalPendingLocalIdTransportable(params.sessionId, localId, params.outboxScope));
     const { recipient } = await resolvePendingMutationIdentity(params.sessionId, localId, params.outboxScope);
@@ -3192,10 +3192,17 @@ export async function updatePendingRequestedActionV2(params: {
         );
     }
     // Recorded at the RESPONSE, for the reason given in `updatePendingMessageV2`: the PATCH
-    // succeeded, so the server holds the row, and the malformed-payload return below is downstream
+    // succeeded, so the server holds the row, and receipt validation below is downstream
     // of that fact.
     markPendingLocalIdAcceptedAfterSnapshotCapture(params.outboxScope, params.sessionId, localId);
-    if (!isPlainObject(payload) || typeof payload.didUpdate !== 'boolean') return;
+    const receipt = PendingResetStartSetResultV1Schema.safeParse(isPlainObject(payload)
+        ? { didUpdate: payload.didUpdate, requestedAction: payload.requestedAction }
+        : payload);
+    if (!receipt.success) {
+        throw Object.assign(new Error('Pending action acknowledgement is invalid'), {
+            code: 'pending_action_receipt_invalid',
+        });
+    }
     const current = (await findPendingOutboxMessage(params.sessionId, localId, params.outboxScope));
     const projection = findPendingProjectionByCanonicalLocalId(params.sessionId, localId, params.outboxScope);
     // Past the accepted PATCH a retired owner scope may only stop the LOCAL
@@ -3209,13 +3216,14 @@ export async function updatePendingRequestedActionV2(params: {
             deliveryStatus: 'accepted',
             sendState: undefined,
             pendingOutboxOperation: undefined,
-            pendingRequestedAction: wireRequestedAction,
+            pendingRequestedAction: receipt.data.requestedAction,
             pendingRequestedActionMalformed: undefined,
         });
     }
     if (current?.operation === 'enqueue') {
         (await removePendingOutboxMessage(params.sessionId, localId, params.outboxScope, 'enqueue'));
     }
+    return receipt.data;
 }
 
 type PendingMessageDeletionParams = {

@@ -88,6 +88,7 @@ export const ToolCallsGroupRowWithSessionCommon = React.memo(function ToolCallsG
     }, [props.interaction.permissionDisabledReason, toolMessages]);
 
     const status = resolveToolCallsGroupStatus({
+        showToolCalls: props.toolChromeCommon.showToolCalls,
         toolMessages: toolMessagesForSession,
     });
 

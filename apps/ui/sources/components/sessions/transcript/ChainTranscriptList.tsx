@@ -1,4 +1,8 @@
 import * as React from 'react';
+import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { resolveTranscriptToolVisibility } from './resolveTranscriptToolVisibility';
+import { useTranscriptToolCallsExpansionState } from './rowHost/useTranscriptToolCallsExpansionState';
+import { TranscriptSessionActivityLine } from './TranscriptSessionActivityLine';
 import { Platform, View } from 'react-native';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
@@ -195,6 +199,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
     const source = useSessionTranscriptSource();
     const transcriptGroupingMode = useSetting('transcriptGroupingMode');
     const transcriptGroupToolCalls = useSetting('transcriptGroupToolCalls');
+    const transcriptShowToolCalls = useSetting('transcriptShowToolCalls');
     const transcriptTurnToolCallsGroupStrategy = useSetting('transcriptTurnToolCallsGroupStrategy');
     const transcriptSessionCommon = useTranscriptSessionCommon();
     const transcriptMessageSelection = useOptionalTranscriptSelectionState();
@@ -208,9 +213,19 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
     const messagesById = React.useMemo(() => buildMessagesById(props.messages), [props.messages]);
 
     const groupingMode = transcriptGroupingMode === 'turns' ? 'turns' : 'linear';
-    const groupToolCalls =
-        transcriptGroupToolCalls === true &&
-        toolViewTimelineChromeMode === 'activity_feed';
+    const toolVisibility = resolveTranscriptToolVisibility({
+        sessionOverride: props.metadata?.work?.viewPreferences?.showToolCalls,
+        isBot: readSessionBotV1(props.metadata?.bot) !== null,
+        accountShowToolCalls: transcriptShowToolCalls,
+        groupToolCalls: transcriptGroupToolCalls === true && toolViewTimelineChromeMode === 'activity_feed',
+        collapsedPreviewCount: transcriptSessionCommon.toolChrome.transcriptToolCallsCollapsedPreviewCount,
+    });
+    const groupToolCalls = toolVisibility.groupToolCalls;
+    const toolChromeCommon = React.useMemo(() => ({
+        ...transcriptSessionCommon.toolChrome,
+        showToolCalls: toolVisibility.showToolCalls,
+        transcriptToolCallsCollapsedPreviewCount: toolVisibility.collapsedPreviewCount,
+    }), [transcriptSessionCommon.toolChrome, toolVisibility.collapsedPreviewCount, toolVisibility.showToolCalls]);
     const toolCallsGroupStrategy =
         transcriptTurnToolCallsGroupStrategy === 'all_tools_in_turn' ? 'all_tools_in_turn' : 'consecutive_tools';
 
@@ -269,13 +284,19 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
     // composer inset to track — the overlay anchors to the bottom edge (`bottomInset` 0) and shows
     // whenever sync is catching this session up to newer activity (fail-closed signal).
     const isCatchingUpNewer = useSessionCatchingUpNewer(props.sessionId);
-    const transcriptToolCallsCollapsedPreviewCountSetting = useSetting('transcriptToolCallsCollapsedPreviewCount');
+    const transcriptToolCallsCollapsedPreviewCountSetting = toolVisibility.collapsedPreviewCount;
 
     // Tool-group expansion state is keyed by anchor message ids (declared before the
     // items memo: N2c per-unit decomposition derives the list rows from it).
-    const [expandedToolCallsAnchorMessageIds, setExpandedToolCallsAnchorMessageIds] = React.useState<ReadonlySet<string>>(
-        () => new Set<string>(),
-    );
+    const listRef = React.useRef<TranscriptListShellRef<ChainTranscriptListItem> | null>(null);
+    const prepareRowLayoutMutation = React.useCallback((mutation: TranscriptRowLayoutMutation): void => {
+        const ownershipAction = resolveRowLayoutMutationViewportOwnershipAction({ reason: mutation.reason });
+        if (ownershipAction === 'arm-visible-anchor-hold') listRef.current?.armVisibleAnchorHold?.();
+    }, []);
+    const { expandedToolCallsAnchorMessageIds, applyToolCallsGroupExpanded } = useTranscriptToolCallsExpansionState({
+        showToolCalls: toolVisibility.showToolCalls,
+        prepareExpansionStateChange: prepareRowLayoutMutation,
+    });
 
     const items = React.useMemo<ChainTranscriptListItem[]>(() => {
         if (groupingMode === 'turns') {
@@ -365,18 +386,9 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
     const [thinkingExpandedByMessageId, setThinkingExpandedByMessageId] = React.useState<ReadonlyMap<string, boolean>>(
         () => new Map<string, boolean>(),
     );
-    const listRef = React.useRef<TranscriptListShellRef<ChainTranscriptListItem> | null>(null);
     const resolveThinkingExpanded = React.useCallback((messageId: string): boolean => {
         return thinkingExpandedByMessageId.get(messageId) ?? thinkingDefaultExpanded;
     }, [thinkingDefaultExpanded, thinkingExpandedByMessageId]);
-    const prepareRowLayoutMutation = React.useCallback((mutation: TranscriptRowLayoutMutation): void => {
-        const ownershipAction = resolveRowLayoutMutationViewportOwnershipAction({
-            reason: mutation.reason,
-        });
-        if (ownershipAction === 'arm-visible-anchor-hold') {
-            listRef.current?.armVisibleAnchorHold?.();
-        }
-    }, []);
     const setThinkingExpanded = React.useCallback((messageId: string, expanded: boolean) => {
         if (resolveThinkingExpanded(messageId) !== expanded) {
             prepareRowLayoutMutation({
@@ -471,22 +483,10 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                 sourceId: params.toolCallsGroupId,
             });
         }
-        setExpandedToolCallsAnchorMessageIds((prev) => {
-            const next = new Set(prev);
-            if (params.expanded) {
-                const anchor = params.toolMessageIds.length > 0 ? params.toolMessageIds[params.toolMessageIds.length - 1] : null;
-                if (typeof anchor === 'string' && anchor.length > 0) {
-                    next.add(anchor);
-                }
-            } else {
-                for (const id of params.toolMessageIds) {
-                    next.delete(id);
-                }
-            }
-            return next;
-        });
+        applyToolCallsGroupExpanded(params);
     }, [
         expandedToolCallsAnchorMessageIds,
+        applyToolCallsGroupExpanded,
         prepareRowLayoutMutation,
     ]);
 
@@ -568,7 +568,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     })}
                     forkCommon={transcriptSessionCommon.fork}
                     messageDisplayCommon={transcriptSessionCommon.messageDisplay}
-                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolChromeCommon={toolChromeCommon}
                     toolRouteCommon={transcriptSessionCommon.toolRoute}
                 />
             );
@@ -591,7 +591,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     })}
                     forkCommon={transcriptSessionCommon.fork}
                     messageDisplayCommon={transcriptSessionCommon.messageDisplay}
-                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolChromeCommon={toolChromeCommon}
                     toolRouteCommon={transcriptSessionCommon.toolRoute}
                 />
             );
@@ -611,7 +611,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
                     forkCommon={transcriptSessionCommon.fork}
                     messageDisplayCommon={transcriptSessionCommon.messageDisplay}
-                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolChromeCommon={toolChromeCommon}
                     toolRouteCommon={transcriptSessionCommon.toolRoute}
                 />
             );
@@ -626,7 +626,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     interaction={props.interaction}
                     forkCommon={transcriptSessionCommon.fork}
                     messageDisplayCommon={transcriptSessionCommon.messageDisplay}
-                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolChromeCommon={toolChromeCommon}
                     toolRouteCommon={transcriptSessionCommon.toolRoute}
                 />
             );
@@ -646,7 +646,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     interaction={props.interaction}
                     forkCommon={transcriptSessionCommon.fork}
                     messageDisplayCommon={transcriptSessionCommon.messageDisplay}
-                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolChromeCommon={toolChromeCommon}
                     toolRouteCommon={transcriptSessionCommon.toolRoute}
                 />
             );
@@ -688,7 +688,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     onThinkingExpandedChange={isThinking ? (next) => setThinkingExpanded(message.id, next) : undefined}
                     forkCommon={transcriptSessionCommon.fork}
                     messageDisplayCommon={transcriptSessionCommon.messageDisplay}
-                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolChromeCommon={toolChromeCommon}
                     toolRouteCommon={transcriptSessionCommon.toolRoute}
                 />
             </View>
@@ -709,7 +709,7 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
         testIdPrefix,
         transcriptSessionCommon.fork,
         transcriptSessionCommon.messageDisplay,
-        transcriptSessionCommon.toolChrome,
+        toolChromeCommon,
         transcriptSessionCommon.toolRoute,
     ]);
 
@@ -736,6 +736,9 @@ function ChainTranscriptListContent(props: ChainTranscriptListProps) {
                     }
                     footer={
                         <>
+                            {!toolVisibility.showToolCalls && source.kind === 'app' && source.serverId ? (
+                                <TranscriptSessionActivityLine sessionId={source.sessionId} serverId={source.serverId} />
+                            ) : null}
                             {items.length === 0 && props.isInitialLoadInFlight !== false ? (
                                 <View testID="chain-transcript-loading-footer" style={{ paddingVertical: 12 }}>
                                     <ActivitySpinner size="small" />

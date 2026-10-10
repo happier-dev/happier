@@ -30,7 +30,9 @@ export type ExternalSessionBrowseCandidate = Readonly<{
     linkedSessionId?: string;
     imported?: boolean;
     materializedThrough?: number;
-    match?: NonNullable<Extract<ExternalSessionsCandidatesListResponse, { ok: true }>['candidates'][number]['match']>;
+    searchMode?: 'indexed' | 'standard';
+    /** Native indexed hits have a source item identity, not a transcript ordinal. */
+    match?: Readonly<Omit<NonNullable<Extract<ExternalSessionsCandidatesListResponse, { ok: true }>['candidates'][number]['match']>, 'messageIndex'> & { messageIndex?: number }>;
 }>;
 
 export type ExternalSessionBrowsePreparation = NonNullable<
@@ -191,9 +193,6 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     providerId: ExternalSessionsAgentId | null;
     source: ExternalSessionsSource | null;
     searchTerm?: string;
-    searchTarget?: 'metadata' | 'content';
-    /** Must come from the selected source's current daemon projection, never inferred from an ok page. */
-    contentSearchSupported?: boolean;
     /** Exact selected Home credentials; legacy browser callers retain the active Account fence. */
     accountLifetime?: ServerAccountScopeLifetime;
     /** List the Agent's internal threads too (the "Sub-agent threads" filter). */
@@ -203,14 +202,10 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     const { accountLifetime, machineId, providerId, searchTerm, source, serverId } = params;
     const accountScope = accountLifetime?.scope;
     const includeThreads = params.includeThreads === true;
-    const searchTarget = params.searchTarget ?? 'metadata';
-    const isContentSearch = searchTarget === 'content';
-    const contentSearchSupported = params.contentSearchSupported === true;
     const normalizedSearchTerm = typeof searchTerm === 'string' ? searchTerm.trim() : '';
-    const effectiveSearchTerm = isContentSearch && typeof searchTerm === 'string' ? searchTerm : normalizedSearchTerm;
+    const effectiveSearchTerm = normalizedSearchTerm;
     const enabled = params.enabled !== false
-        && (!accountLifetime || accountLifetime.isCurrent())
-        && (!isContentSearch || (contentSearchSupported && normalizedSearchTerm.length > 0));
+        && (!accountLifetime || accountLifetime.isCurrent());
     const currentScopeKey = React.useMemo(() => JSON.stringify({
         machineId,
         serverId: serverId ?? null,
@@ -218,13 +213,11 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         source,
         includeThreads,
         searchTerm: effectiveSearchTerm || null,
-        searchTarget,
         ...(accountScope ? { accountScope } : {}),
-    }), [accountScope, effectiveSearchTerm, includeThreads, machineId, providerId, searchTarget, serverId, source]);
+    }), [accountScope, effectiveSearchTerm, includeThreads, machineId, providerId, serverId, source]);
     /**
      * The listing the rows belong to: machine, Home, Agent, source and whether it includes internal
-     * threads and search target. Metadata searches retain their preview while replacing the query;
-     * content rows belong to one submitted phrase and cannot carry into another.
+     * threads. Metadata searches retain their preview while replacing the query.
      */
     const currentListingKey = React.useMemo(() => JSON.stringify({
         machineId,
@@ -232,10 +225,8 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         providerId,
         source,
         includeThreads,
-        searchTarget,
-        ...(isContentSearch ? { searchTerm: effectiveSearchTerm } : {}),
         ...(accountScope ? { accountScope } : {}),
-    }), [accountScope, effectiveSearchTerm, includeThreads, isContentSearch, machineId, providerId, searchTarget, serverId, source]);
+    }), [accountScope, includeThreads, machineId, providerId, serverId, source]);
     const scopedSourceRef = React.useRef<Readonly<{
         scopeKey: string;
         source: ExternalSessionsSource | null;
@@ -263,7 +254,6 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         React.useState<ExternalSessionBrowseAutoLinkPolicyScope | null>(null);
     const [error, setError] = React.useState<string | null>(null);
     const [cancelled, setCancelled] = React.useState(false);
-    const [contentCoverage, setContentCoverage] = React.useState<'complete' | 'partial' | 'unsupported' | null>(null);
     const [loadedScopeKey, setLoadedScopeKey] = React.useState<string | null>(null);
     /**
      * Whether the rows on screen were published by the request that owns the current
@@ -348,11 +338,6 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 setAutoLinkPolicyScope(null);
                 setError(null);
                 setCancelled(false);
-                if (isContentSearch) {
-                    setCandidates([]);
-                    setNextPage(null);
-                    setContentCoverage(contentSearchSupported ? null : 'unsupported');
-                }
             }
             return;
         }
@@ -390,7 +375,6 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 setAutoLinkPolicyScope(null);
                 setError(null);
                 setCancelled(false);
-                setContentCoverage(null);
                 return;
             }
             abortController = new AbortController();
@@ -400,6 +384,23 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             activeScopeAccountCurrentnessRef.current = accountCurrentness;
             activeScopeAccountRetirementRef.current = accountCurrentness.onRetire(() => {
                 abortController.abort();
+                // Completed rows are just as Account-private as pending replies. Retire
+                // their presentation here so every consumer loses the old authority at once.
+                loadedScopeKeyRef.current = null;
+                setLoadedScopeKey(null);
+                setCandidates([]);
+                setNextPage(null);
+                setCandidatesAuthoritative(false);
+                setCandidateDeleteSupported(false);
+                setAutoLinkPolicyScope(null);
+                setAnnotationsIncomplete(false);
+                setSearchIncomplete(false);
+                setPreparation(null);
+                setPreparationStopped(false);
+                setError(null);
+                setLoading(false);
+                setLoadingMore(false);
+                setSearchAugmenting(false);
             });
             if (loadedScopeKeyRef.current !== currentScopeKey) {
                 loadedScopeKeyRef.current = null;
@@ -413,7 +414,6 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 setCandidates([]);
                 setNextPage(null);
                 setAnnotationsIncomplete(false);
-                setContentCoverage(null);
             }
             seenPageContinuationsRef.current = {
                 scopeKey: currentScopeKey,
@@ -448,7 +448,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             setCancelled(false);
         }
 
-        const shouldStartWithFastSearch = !isContentSearch && !append && !requestedContinuation && normalizedSearchTerm.length > 0;
+        const shouldStartWithFastSearch = !append && !requestedContinuation && normalizedSearchTerm.length > 0;
         let requestObservedPreparation = false;
         const requestCandidates = async (
             searchMode?: CandidateSearchMode,
@@ -462,12 +462,12 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 ...(normalizedSearchTerm ? { searchTerm: effectiveSearchTerm } : {}),
                 ...(cursor ? { cursor } : {}),
                 ...(searchMode ? { searchMode } : {}),
-                ...(isContentSearch ? { searchTarget: 'content' as const } : {}),
                 // Absent means top-level only, which is also all a daemon predating the field lists.
                 ...(includeThreads ? { includeThreads: true } : {}),
             };
             return machineExternalSessionsCandidatesList(request, {
                 ...(serverId ? { serverId } : {}),
+                ...(accountLifetime ? { accountId: accountLifetime.scope.accountId } : {}),
                 signal: abortController.signal,
             });
         };
@@ -541,11 +541,6 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                         : mergeExternalSessionBrowseCandidates(current, nextItems),
             ));
             setSearchIncomplete(result.searchIncomplete === true);
-            if (isContentSearch) {
-                setContentCoverage((current) => append && current === 'partial'
-                    ? 'partial'
-                    : result.contentCoverage ?? 'unsupported');
-            }
             setAnnotationsIncomplete((current) => mode === 'replace' || mode === 'republish'
                 ? result.annotationsIncomplete === true
                 : current || result.annotationsIncomplete === true);
@@ -613,7 +608,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 ) {
                     return null;
                 }
-                if (isContentSearch || !result.ok || !result.preparation || append || cursor !== null) {
+                if (!result.ok || !result.preparation || append || cursor !== null) {
                     return { result, prepared };
                 }
                 preparationRequestCount += 1;
@@ -701,7 +696,6 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             }
 
             const ok = applyResult(result, append ? 'append' : 'replace', initialSearchMode);
-            if (isContentSearch && result.ok) setPreparation(result.preparation ?? null);
             if (!ok || !shouldStartWithFastSearch || !result.ok || !result.searchIncomplete) {
                 return;
             }
@@ -798,7 +792,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 }
             }
         }
-    }, [accountLifetime, contentSearchSupported, currentListingKey, currentScopeKey, effectiveSearchTerm, enabled, includeThreads, isContentSearch, machineId, normalizedSearchTerm, providerId, scopedSource, serverId]);
+    }, [accountLifetime, currentListingKey, currentScopeKey, effectiveSearchTerm, enabled, includeThreads, machineId, normalizedSearchTerm, providerId, scopedSource, serverId]);
 
     React.useEffect(() => {
         void loadCandidates();
@@ -829,10 +823,9 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         setSearchAugmenting(false);
         setPreparation(null);
         setPreparationStopped(true);
-        setError(t(isContentSearch ? 'externalSessions.browseContentStopped' : 'externalSessions.browseIndexingCancelled'));
-        if (isContentSearch) setContentCoverage('partial');
+        setError(t('externalSessions.browseIndexingCancelled'));
         setCancelled(true);
-    }, [currentScopeKey, isContentSearch]);
+    }, [currentScopeKey]);
     const reload = React.useCallback(async () => {
         await loadCandidates();
     }, [loadCandidates]);
@@ -857,7 +850,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     }, []);
 
     return {
-        candidates: scopeMatches && (!isContentSearch || enabled) ? candidates : [],
+        candidates: scopeMatches ? candidates : [],
         candidatesAuthoritative: scopeMatches && candidatesAuthoritative && (!accountLifetime || accountLifetime.isCurrent()),
         candidateDeleteSupported: scopeMatches && candidateDeleteSupported && (!accountLifetime || accountLifetime.isCurrent()),
         /**
@@ -880,9 +873,6 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         autoLinkPolicyScope: scopeMatches ? autoLinkPolicyScope : null,
         error: scopeMatches ? error : null,
         cancelled: scopeMatches ? cancelled : false,
-        contentCoverage: isContentSearch && !contentSearchSupported
-            ? 'unsupported' as const
-            : scopeMatches ? contentCoverage : null,
         loadMore,
         cancelPreparation,
         reload,

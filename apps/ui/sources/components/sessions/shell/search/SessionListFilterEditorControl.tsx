@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -8,7 +8,9 @@ import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/componen
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
 import { useIsTablet } from '@/utils/platform/responsive';
+import { shouldUseReadablePhoneMinimalSessionRow } from '../resolveSessionListDensityViewState';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 
@@ -69,6 +71,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 20,
         color: theme.colors.text.primary,
     },
+    phoneTriggerLabel: {
+        ...pageTitleTypography(),
+    },
     modalBody: {
         minHeight: 320,
         alignItems: 'stretch',
@@ -96,6 +101,8 @@ export const SessionListFilterEditorControl = React.memo(function SessionListFil
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const isTablet = useIsTablet();
+    const { width: windowWidth } = useWindowDimensions();
+    const phone = shouldUseReadablePhoneMinimalSessionRow({ isTablet, platform: Platform.OS, windowWidth });
     const usePopoverHost = Platform.OS === 'web' || isTablet;
     const [popoverOpen, setPopoverOpen] = React.useState(false);
     const anchorRef = React.useRef<View>(null);
@@ -163,7 +170,7 @@ export const SessionListFilterEditorControl = React.memo(function SessionListFil
                 pressed ? styles.triggerPressed : null,
             ]}
         >
-            <Text numberOfLines={1} style={styles.triggerLabel}>{props.label}</Text>
+            <Text numberOfLines={1} style={[styles.triggerLabel, phone ? styles.phoneTriggerLabel : null]}>{props.label}</Text>
             <Icon name="caret-down" size={12} color={theme.colors.text.secondary} />
             {props.active ? (
                 <Icon

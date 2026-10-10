@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -200,6 +201,8 @@ const SessionAllTabsCardView = React.memo(function SessionAllTabsCardView(props:
     onPress: (key: string) => void;
 }>) {
     const { row, current } = props;
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const compact = row.target.kind === 'tab';
     // The thing itself: the unsent draft first (it is the person's own), then the last thing said.
     const excerpt = compact ? null : row.draft ? t('phoneNav.switcher.draft', { text: row.draft }) : row.excerpt;
@@ -213,6 +216,7 @@ const SessionAllTabsCardView = React.memo(function SessionAllTabsCardView(props:
             onPress={() => props.onPress(row.key)}
             style={({ pressed }) => [
                 styles.card,
+                { backgroundColor: materialColor(theme.colors.surface.base) },
                 compact ? styles.cardCompact : null,
                 current ? styles.cardCurrent : null,
                 row.unavailable ? styles.cardUnavailable : null,
@@ -287,8 +291,10 @@ export function SessionAllTabsPageView(props: Readonly<{
     onDone: () => void;
 }>) {
     const insets = useSafeAreaInsets();
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     return (
-        <View style={[styles.page, { paddingTop: insets.top }]} testID="session-all-tabs-page">
+        <View style={[styles.page, { paddingTop: insets.top, backgroundColor: materialColor(theme.colors.background.canvas, 'transparent') }]} testID="session-all-tabs-page">
             <View style={styles.pageHeader}>
                 <Text style={styles.pageTitle} accessibilityRole="header">{t('phoneNav.allTabs.title')}</Text>
                 <Pressable style={styles.done} onPress={props.onDone} accessibilityRole="button" hitSlop={8} testID="session-all-tabs-done">

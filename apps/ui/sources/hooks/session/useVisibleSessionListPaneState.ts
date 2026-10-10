@@ -36,6 +36,8 @@ export type VisibleSessionListPaneStateOptions = Readonly<{
     emptyQuerySelectionComplete?: boolean;
     corpusStorage?: 'active' | 'archived';
     workFilter?: SessionListFilterV1;
+    /** The opened Bots leaf uses ordinary rows/query paging with Bot-only, inactive-inclusive presentation. */
+    botsRoster?: true;
 }>;
 
 function countVisibleSessions(index: ReadonlyArray<SessionListIndexItem> | null): number {
@@ -63,6 +65,7 @@ export function useVisibleSessionListPaneState(
         emptyQuerySelectionComplete: options.emptyQuerySelectionComplete,
         corpusStorage: options.corpusStorage,
         workFilter: options.workFilter,
+        botsRoster: options.botsRoster,
     });
     const visibleSessionCount = React.useMemo(
         () => countVisibleSessions(visibleSessionListIndex),
@@ -74,11 +77,11 @@ export function useVisibleSessionListPaneState(
             statesByServerId: query?.statesByServerId ?? {},
             coverageComplete: query?.active === true ? query.coverageComplete : ordinarySummary.sessionsReady,
             retainedRowCount: visibleSessionCount,
-            sessionsEnabled: options.workFilter?.show !== 'runs',
+            sessionsEnabled: options.botsRoster === true || options.workFilter?.show !== 'runs',
             workflowRunWindow,
             workflowRunUnavailableHomes,
         })
-        : undefined, [options.queryHomes, options.workFilter?.show, ordinarySummary.sessionsReady, query, visibleSessionCount, workflowRunWindow, workflowRunUnavailableHomes]);
+        : undefined, [options.botsRoster, options.queryHomes, options.workFilter?.show, ordinarySummary.sessionsReady, query, visibleSessionCount, workflowRunWindow, workflowRunUnavailableHomes]);
     const summary = React.useMemo(() => queryPresentation
         ? {
             sessionsReady: queryPresentation.kind !== 'initial_loading',

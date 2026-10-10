@@ -10,6 +10,7 @@ import { useSessionBoardContinuity } from '@/components/sessions/board/SessionBo
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { resolveActiveSessionBoardViewId } from '@/sync/domains/session/board';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { useOptionalSessionViewerController } from '@/components/sessions/viewer/SessionViewerController';
 
 import { useSessionCompanionController } from '../state/useSessionCompanionController';
 import { canAddSessionCompanionItem } from '../sessionCompanionContentModel';
@@ -50,6 +51,9 @@ export const SessionCompanionPresentationBridge = React.memo(
         openFullSurface: () => SessionPresentationMutationOutcome;
     }>) {
         const { openBoard, revealBoardItem, returnToChat, serverId = null, sessionId } = props;
+        // Only this exact Session's mounted viewer owner answers viewer intents; absent, they are
+        // typed unavailable rather than claiming a rendered viewer.
+        const viewer = useOptionalSessionViewerController()?.port;
         const controller = useSessionCompanionController({
             sessionId,
             serverId,
@@ -154,12 +158,13 @@ export const SessionCompanionPresentationBridge = React.memo(
         ): CurrentSessionPresentationIntentResultV1 => applySessionPresentationIntent({
             companion: controller,
             board,
+            viewer,
             canAddCompanionItem: (item) => canAddSessionCompanionItem(item, mountedBoard?.pluginRuntime ?? null, board.canReadItem),
             returnToChat,
             openFullSurface: props.openFullSurface,
             publishNotice: publishPresentationNotice,
             noticeKeyPrefix: buildSessionPresentationNoticeKeyPrefix(address, sessionId),
-        }, intent, onCompanionMutation), [address, board, controller, mountedBoard?.pluginRuntime, props.openFullSurface, returnToChat, sessionId]);
+        }, intent, onCompanionMutation), [address, board, controller, mountedBoard?.pluginRuntime, props.openFullSurface, viewer, returnToChat, sessionId]);
 
         const applierRef = props.applierRef;
         React.useEffect(() => {

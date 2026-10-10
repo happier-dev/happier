@@ -15,7 +15,7 @@ import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtur
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 import { buildSessionRowMoreMenuItems } from './buildSessionRowActionMenuItems';
-import { SESSION_ROW_ACTION_SELECT_ID } from './sessionRowActionMenuTypes';
+import { SESSION_ROW_ACTION_OPEN_ID, SESSION_ROW_ACTION_SELECT_ID } from './sessionRowActionMenuTypes';
 
 function makeSession(): SessionListRenderableSession {
     return {
@@ -62,7 +62,46 @@ function makeViewOnlySession(overrides?: Partial<SessionListRenderableSession>):
 }
 
 describe('buildSessionRowMoreMenuItems', () => {
-    it('composes leading row actions with shared session actions and folder targets', () => {
+    it('gives a Bot in the roster its compact menu: Open, Talk, the rail choice with what it does, Instructions and voice, Make a regular session', () => {
+        const target = createSessionActionTarget({
+            session: {
+                ...makeSession(), metadataLayoutVersion: 1,
+                metadata: { path: '/project', host: 'host', bot: { kind: 'bot' } },
+                ownerMetadataView: { path: '/project', host: 'host', bot: { kind: 'bot' } },
+                // A loaded Session (not only its list row) carries the owner view the marker setter needs.
+                agentState: null,
+            } as SessionListRenderableSession,
+            serverId: 'server_1',
+            currentUserId: 'user_1',
+            isConnected: true,
+            isPinned: false,
+        });
+
+        const items = buildSessionRowMoreMenuItems({ target, iconColor: 'test-icon-color', surface: 'botsRoster', canMoveToFolder: true });
+
+        expect(items.map((item) => item.id)).toEqual([
+            SESSION_ROW_ACTION_OPEN_ID,
+            'ui.session.talk',
+            'ui.session.rail.pin',
+            'ui.session.work.open',
+            'ui.session.make-regular',
+        ]);
+        // Only the rail choice explains itself; the list's organising rows stay in the Sessions list.
+        expect(items.filter((item) => item.subtitle !== undefined).map((item) => item.id))
+            .toEqual(['ui.session.rail.pin', 'ui.session.make-regular']);
+        expect(items.map((item) => item.id)).not.toContain(SESSION_ACTION_RENAME_ID);
+        expect(items.map((item) => item.id)).not.toContain(SESSION_ACTION_MOVE_TO_FOLDER_ID);
+
+        // A bare list row cannot read the owner view, so it never offers a change it cannot make.
+        const rowOnly = createSessionActionTarget({
+            session: { ...makeSession(), metadata: { path: '/project', host: 'host', bot: { kind: 'bot' } } },
+            serverId: 'server_1', currentUserId: 'user_1', isConnected: true, isPinned: false,
+        });
+        expect(buildSessionRowMoreMenuItems({ target: rowOnly, iconColor: 'c', surface: 'botsRoster' }).map((item) => item.id))
+            .not.toContain('ui.session.make-regular');
+    });
+
+    it('composes leading row actions with shared session actions and the folder chooser', () => {
         const target = createSessionActionTarget({
             session: makeSession(),
             serverId: 'server_1',
@@ -77,10 +116,7 @@ describe('buildSessionRowMoreMenuItems', () => {
             leadingItems: [
                 { id: SESSION_ROW_ACTION_SELECT_ID, title: 'Select', icon: React.createElement('Icon') },
             ],
-            canMoveToFolder: false,
-            folderMoveMenuItems: [
-                { id: 'session-folder-move-root', title: 'Workspace root', icon: React.createElement('Icon') },
-            ],
+            canMoveToFolder: true,
         });
 
         expect(items.map((item) => item.id)).toEqual([
@@ -96,11 +132,6 @@ describe('buildSessionRowMoreMenuItems', () => {
         expect(items.at(-1)).toEqual(expect.objectContaining({
             id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
             disabled: false,
-            submenu: expect.objectContaining({
-                items: [
-                    expect.objectContaining({ id: 'session-folder-move-root' }),
-                ],
-            }),
         }));
     });
 
@@ -117,7 +148,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             target,
             iconColor: 'test-icon-color',
             canMoveToFolder: false,
-            folderMoveMenuItems: [],
         });
 
         expect(items.some((item) => item.id === SESSION_ACTION_MOVE_TO_FOLDER_ID)).toBe(false);
@@ -137,7 +167,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             target,
             iconColor: 'test-icon-color',
             canMoveToFolder: false,
-            folderMoveMenuItems: [],
             leadingItems: [{ id: 'session.fork', title: 'Fork session' }],
             reminderPresets: [{ rule: { kind: 'relative_day', daysAhead: 1, minuteOfDay: 840 } }],
         });
@@ -177,7 +206,6 @@ describe('buildSessionRowMoreMenuItems', () => {
             target,
             iconColor: 'test-icon-color',
             canMoveToFolder: false,
-            folderMoveMenuItems: [],
         }).map((item) => item.id);
 
         expect(ids).toContain('attention-reminder');

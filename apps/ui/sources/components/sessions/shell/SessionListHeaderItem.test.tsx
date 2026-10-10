@@ -172,6 +172,9 @@ describe('SessionListHeaderItem', () => {
         expect(secondProps.onReset).toBe(firstProps.onReset);
         expect(secondProps.onToggleCollapse).toBe(firstProps.onToggleCollapse);
 
+        secondProps.onOpenProject();
+        expect(onOpenProject).toHaveBeenCalledWith('workspace-ref-1', 'server_a');
+
         secondProps.onCreateSession();
         expect(onCreateSessionFromWorkspaceScope).toHaveBeenCalledWith(item.workspaceScopeHint, {
             seedSessionId: 'seed-session',

@@ -1,11 +1,11 @@
+import { SESSION_LIST_ORDERING_MODES_V1, SESSION_LIST_ORDERING_MODE_DEFAULT_V1, type SessionListOrderingModeV1, normalizeSessionListOrderingModeV1, normalizeSessionListFolderSortModeV1, resolveEffectiveSessionListFolderSortMode } from '@happier-dev/protocol/actions/settings/accountSettingChoiceReducers';
+export { SESSION_LIST_ORDERING_MODES_V1, SESSION_LIST_ORDERING_MODE_DEFAULT_V1, normalizeSessionListOrderingModeV1, normalizeSessionListFolderSortModeV1, resolveEffectiveSessionListFolderSortMode };
+export type { SessionListOrderingModeV1 };
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 
-export const SESSION_LIST_ORDERING_MODES_V1 = ['custom', 'created', 'updated'] as const;
-export type SessionListOrderingModeV1 = typeof SESSION_LIST_ORDERING_MODES_V1[number];
-export const SESSION_LIST_ORDERING_MODE_DEFAULT_V1: SessionListOrderingModeV1 = 'custom';
 
 export const SESSION_LIST_UPDATED_ORDERING_BUCKET_MS = 5 * 60_000;
 
@@ -33,15 +33,7 @@ function normalizePositiveTimestamp(value: unknown): number {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-export function normalizeSessionListOrderingModeV1(value: unknown): SessionListOrderingModeV1 {
-    return value === 'created' || value === 'updated' || value === 'custom'
-        ? value
-        : SESSION_LIST_ORDERING_MODE_DEFAULT_V1;
-}
 
-export function normalizeSessionListFolderSortModeV1(value: unknown): SessionListFolderSortModeV1 {
-    return value === 'mixed' ? 'mixed' : 'foldersFirst';
-}
 
 export function readSessionListMeaningfulActivityAt(row: SessionListOrderingTimestampSource | null | undefined): number {
     if (!row) return 0;
@@ -110,11 +102,4 @@ export function resolveEffectiveSessionListOrderingModeForGroup(params: Readonly
     }
 
     return params.userOrderingMode;
-}
-
-export function resolveEffectiveSessionListFolderSortMode(params: Readonly<{
-    orderingMode: SessionListOrderingModeV1;
-    folderSortMode: SessionListFolderSortModeV1;
-}>): SessionListFolderSortModeV1 {
-    return params.orderingMode === 'custom' ? params.folderSortMode : 'foldersFirst';
 }

@@ -1,8 +1,6 @@
 import { t } from '@/text';
-import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
 import {
     resolveSessionListLayoutApplicability,
-    resolveSessionListLayoutSettingsDelta,
     type SessionListLayoutChoice,
     type SessionListLayoutSettings,
 } from '@/sync/domains/session/listing/sessionListLayout';
@@ -142,37 +140,4 @@ export function resolveSessionListViewOptionsPresentation(
     };
 }
 
-export function resolveSessionListViewOptionSelectionDelta(
-    itemId: string,
-    currentSettings: SessionListViewOptionsSettings,
-): SettingsWriteDelta | null {
-    if (itemId.startsWith('layout:')) {
-        const choice = itemId.slice('layout:'.length);
-        if (choice === 'projects' || choice === 'recent_activity' || choice === 'active_inactive') {
-            return resolveSessionListLayoutSettingsDelta(choice, currentSettings);
-        }
-        return null;
-    }
-    if (itemId === 'grouping:active:project') return { sessionListActiveGroupingV1: 'project' };
-    if (itemId === 'grouping:active:date') return { sessionListActiveGroupingV1: 'date' };
-    if (itemId === 'grouping:inactive:project') return { sessionListInactiveGroupingV1: 'project' };
-    if (itemId === 'grouping:inactive:date') return { sessionListInactiveGroupingV1: 'date' };
-    if (itemId === 'attention:off') return { sessionListAttentionPromotionModeV1: 'off' };
-    if (itemId === 'attention:global') return { sessionListAttentionPromotionModeV1: 'global' };
-    if (itemId === 'attention:withinGroups') return { sessionListAttentionPromotionModeV1: 'withinGroups' };
-    if (itemId === 'working:off') return { sessionListWorkingPlacementModeV1: 'off' };
-    if (itemId === 'working:global') return { sessionListWorkingPlacementModeV1: 'global' };
-    if (itemId === 'working:withinGroups') return { sessionListWorkingPlacementModeV1: 'withinGroups' };
-    if (itemId === 'ordering:custom') return { sessionListOrderingModeV1: 'custom' };
-    if (itemId === 'ordering:updated') return { sessionListOrderingModeV1: 'updated' };
-    if (itemId === 'ordering:created') return { sessionListOrderingModeV1: 'created' };
-    if (itemId === 'folderDisplay:off') return { sessionFolderViewModeV1: 'off' };
-    if (itemId === 'folderDisplay:tree') return { sessionFolderViewModeV1: 'tree' };
-    if (itemId === 'folderSort:foldersFirst') return { sessionListFolderSortModeV1: 'foldersFirst' };
-    if (itemId === 'folderSort:mixed' && normalizeSessionListOrderingModeV1(
-        currentSettings.sessionListOrderingModeV1,
-    ) === 'custom') {
-        return { sessionListFolderSortModeV1: 'mixed' };
-    }
-    return null;
-}
+export { resolveSessionListViewOptionSelectionDelta } from '@happier-dev/protocol/actions/settings/accountSettingChoiceReducers';

@@ -142,7 +142,9 @@ describe('accepted managed input native prerequisite', () => {
                 resumeWhenAvailable: options?.resumeWhenAvailable, accountLifetime: account.accountLifetime,
             }),
             sendMessage: sync.sendMessage.bind(sync),
-            updatePendingRequestedAction: (sessionId, localId, requestedAction) => updatePendingRequestedActionV2({ sessionId, localId, requestedAction, outboxScope: scope, request }),
+            updatePendingRequestedAction: async (sessionId, localId, requestedAction) => {
+                await updatePendingRequestedActionV2({ sessionId, localId, requestedAction, outboxScope: scope, request });
+            },
             ensureSessionRuntimeForPendingInput,
             refreshSessionForSubmit: sync.refreshSessionForSubmit.bind(sync),
             isSessionTargetRemoteToActiveServer: () => false,

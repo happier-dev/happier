@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { orderRowsForSessionListHydration } from './sessionListHydrationPriority';
 
 describe('orderRowsForSessionListHydration', () => {
+    it('hydrates unopened report summaries even when generic background hydration is disabled', () => {
+        const result = orderRowsForSessionListHydration({
+            rows: [{ id: 'unrelated', active: false },
+                { id: 'child', active: false, reportsTo: { sessionId: 'lead' } },
+                { id: 'grandchild', active: false, reportsTo: { sessionId: 'child' } }],
+            eagerHydrationCount: 0, maxBackgroundHydrationRows: 0,
+        });
+        expect(result.rows.map(row => row.id)).toEqual(['child', 'grandchild']);
+        expect(result.reasonCounts).toMatchObject({ priority: 2, skippedBackground: 1 });
+    });
     it('keeps required and route ids ahead of active viewing ids', () => {
         const params = {
             rows: [

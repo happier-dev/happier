@@ -10,6 +10,7 @@ import { buildDismissedThisComputerSetupIntent } from './pendingSetupIntent.shar
  */
 export function dismissPendingSetupIntent(): void {
     const current = getPendingSetupIntent();
+    if (current?.branch === 'askHappier') return;
     if (current) {
         if (current.phase !== 'dismissed') {
             setPendingSetupIntent({ ...current, phase: 'dismissed' });

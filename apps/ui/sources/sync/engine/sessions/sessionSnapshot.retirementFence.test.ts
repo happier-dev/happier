@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
@@ -15,6 +15,7 @@ import { createSessionListQueryHomeController } from '@/sync/domains/session/lis
 import { subscribeSessionListQueryHomeInvalidation } from '@/sync/domains/session/listing/sessionListQueryInvalidation';
 import { fetchAndApplySessions } from './sessionSnapshot';
 import { handleDeleteSessionSocketUpdate } from './syncSessions';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 const PLAIN_ACCOUNT_CURRENTNESS = {
     mode: 'plain',
@@ -122,9 +123,11 @@ function readEncryptedQuery(input: {
         sessionDataKeyEnvelopes: input.sessionDataKeyEnvelopes,
         accountCurrentness: { ...PLAIN_ACCOUNT_CURRENTNESS, mode: 'e2ee' },
         request: input.request,
-        // These tests decide DEK and membership publication, not background title hydration.
+        // Generic background rows remain undemanded; listed reports still need readable summaries.
         sessionListBackgroundHydrationMaxRows: 0,
         applySessions: () => {},
+        getCurrentSessionListRenderable: id => storage.getState().sessionListRowsByServerId['home-a']?.[id],
+        applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches('home-a', patches),
         applySessionListRenderables: (rows) => storage.getState().applyServerScopedSessionListRows(
             'home-a', rows, { source: 'rowOnly', mode: 'replace' },
         ),
@@ -135,6 +138,22 @@ function readEncryptedQuery(input: {
 describe('fetchAndApplySessions exact-Home retirement fence', () => {
     beforeEach(() => {
         storage.setState(initialState, true);
+    });
+
+    it('opens unopened report summaries from one encrypted list page without visiting a child', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(4));
+        const child = { ...await encryptedRow(encryption, 'child'), reportsTo: { sessionId: 'lead' } };
+        const grandchild = { ...await encryptedRow(encryption, 'grandchild'), reportsTo: { sessionId: 'child' } };
+        const unrelated = await encryptedRow(encryption, 'unrelated');
+        const request = vi.fn(async () => queryPage([unrelated, child, grandchild]));
+        await readEncryptedQuery({ encryption, request });
+        await vi.waitFor(() => {
+            const rows = storage.getState().sessionListRowsByServerId['home-a']!;
+            expect([getSessionName(rows.child!), getSessionName(rows.grandchild!)]).toEqual(['child', 'grandchild']);
+            expect(rows.unrelated?.metadata).toBeNull();
+        });
+        expect(storage.getState().sessions.child).toBeUndefined();
+        expect(request).toHaveBeenCalledTimes(1);
     });
 
     it('does not let a list read that started before a deletion reinsert that Home\'s row', async () => {

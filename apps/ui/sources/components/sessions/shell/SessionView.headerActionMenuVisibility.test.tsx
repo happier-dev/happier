@@ -351,6 +351,7 @@ vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
     homeNameByTeamId: {},
     currentResourceKeys: teamCredentialCatalogState.currentResourceKeys,
     current: true,
+    condition: null,
   }),
 }));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({

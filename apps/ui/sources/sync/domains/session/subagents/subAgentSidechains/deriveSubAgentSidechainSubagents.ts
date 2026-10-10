@@ -1,10 +1,12 @@
+import { compareTranscriptMessagesOldestFirst } from '@happier-dev/session-core/messages';
+import { readToolCallStartedAtMs, readToolCallFinishedAtMs, readToolCallObservedAtMs } from '../toolCallActivityTimestamps';
 import type { Message, ToolCallMessage } from "@happier-dev/session-core/messages";
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import { buildToolCallMessageRouteId } from "@happier-dev/session-core/messages";
 
 import type { SessionSubagent } from '../types';
 import { resolveSubAgentSidechainProviderLabel } from './resolveSubAgentSidechainProviderLabel';
-import { isAsyncSubAgentLaunchToolResult, isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
+import { isAsyncSubAgentLaunchToolResult, isGenericSubAgentToolName, readSubAgentToolResultStatus } from '@happier-dev/protocol/tools/v2';
 import { resolvePendingPermissionRouteForSubAgentTool } from './resolvePendingPermissionRouteForSubAgentTool';
 
 function readNonEmptyString(value: unknown): string | null {
@@ -29,12 +31,19 @@ function readSubAgentDisplayTitle(toolMessage: ToolCallMessage): string {
  * started. `isAsyncSubAgentLaunchToolResult` is the shared owner of that question, so this row and
  * the agent runtime's activity headline cannot disagree about it.
  *
- * A failed launch is still a failure: the exception is bounded to a non-error completion.
+ * Launch acknowledgements cannot hide a failed call. Explicit interruption is cancellation,
+ * including when a transport represents its terminal result as a tool error.
  */
 function deriveSubAgentStatus(toolMessage: ToolCallMessage): SessionSubagent['status'] {
     if (toolMessage.tool.state === 'running') return 'running';
-    if (toolMessage.tool.state === 'completed') {
-        return isAsyncSubAgentLaunchToolResult(toolMessage.tool.result) ? 'running' : 'succeeded';
+    if (toolMessage.tool.state === 'completed' || toolMessage.tool.state === 'error') {
+        const result = toolMessage.tool.result;
+        const status = readSubAgentToolResultStatus(result);
+        if (status === 'stopped' || status === 'interrupted' || status === 'aborted' || status === 'cancelled' || status === 'killed' || status === 'canceled') return 'cancelled';
+        if (toolMessage.tool.state === 'completed') {
+            if (isAsyncSubAgentLaunchToolResult(result)) return 'running';
+            return 'succeeded';
+        }
     }
     if (toolMessage.tool.state === 'error') return 'failed';
     return 'unknown';
@@ -45,8 +54,7 @@ export function deriveSubAgentSidechainSubagents(params: Readonly<{
     flavor?: string | null;
     excludedSidechainIds?: ReadonlySet<string>;
 }>): readonly SessionSubagent[] {
-    const subagents: SessionSubagent[] = [];
-    const seenIds = new Set<string>();
+    const subagents = new Map<string, { message: ToolCallMessage; subagent: SessionSubagent }>();
     const providerLabel = resolveSubAgentSidechainProviderLabel(params.flavor);
 
     for (const message of params.messages) {
@@ -62,8 +70,8 @@ export function deriveSubAgentSidechainSubagents(params: Readonly<{
         if (params.excludedSidechainIds?.has(sidechainId)) continue;
 
         const id = `subagent_sidechain:${sidechainId}`;
-        if (seenIds.has(id)) continue;
-        seenIds.add(id);
+        const previous = subagents.get(id);
+        if (previous && compareTranscriptMessagesOldestFirst(previous.message, toolMessage) >= 0) continue;
 
         const toolId = typeof toolMessage.tool.id === 'string' ? toolMessage.tool.id.trim() : '';
         const defaultToolMessageRouteId = buildToolCallMessageRouteId({
@@ -74,7 +82,10 @@ export function deriveSubAgentSidechainSubagents(params: Readonly<{
             messages: params.messages,
             toolMessage,
         }) ?? defaultToolMessageRouteId;
-        subagents.push({
+        const startedAtMs = readToolCallStartedAtMs(toolMessage);
+        const updatedAtMs = readToolCallObservedAtMs(toolMessage);
+        const finishedAtMs = readToolCallFinishedAtMs(toolMessage);
+        subagents.set(id, { message: toolMessage, subagent: {
             id,
             kind: 'subagent_sidechain',
             status: deriveSubAgentStatus(toolMessage),
@@ -97,11 +108,12 @@ export function deriveSubAgentSidechainSubagents(params: Readonly<{
                 canOpenAdvancedRun: false,
             },
             timestamps: {
-                startedAtMs: typeof toolMessage.createdAt === 'number' ? toolMessage.createdAt : undefined,
-                updatedAtMs: typeof toolMessage.createdAt === 'number' ? toolMessage.createdAt : undefined,
+                ...(startedAtMs !== null ? { startedAtMs } : {}),
+                ...(updatedAtMs !== null ? { updatedAtMs } : {}),
+                ...(finishedAtMs !== null ? { finishedAtMs } : {}),
             },
-        });
+        } });
     }
 
-    return subagents;
+    return Array.from(subagents.values(), (entry) => entry.subagent);
 }

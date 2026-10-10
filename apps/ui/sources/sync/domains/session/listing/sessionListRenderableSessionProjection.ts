@@ -155,7 +155,7 @@ export function buildSessionFromListRenderable(
         runtimeActivityRevision: renderable.runtimeActivityRevision ?? null,
         lastRuntimeIssue: renderable.lastRuntimeIssue ?? null,
         lastTurnCompletedAt: renderable.lastTurnCompletedAt ?? null,
-        reportsTo: renderable.reportsTo ?? options.baseSession?.reportsTo ?? null,
+        reportsTo: renderable.reportsTo !== undefined ? renderable.reportsTo : options.baseSession?.reportsTo ?? null,
         origin: renderable.origin ?? options.baseSession?.origin,
         workDepth: renderable.workDepth ?? options.baseSession?.workDepth,
         reports: renderable.reports ?? options.baseSession?.reports ?? null,

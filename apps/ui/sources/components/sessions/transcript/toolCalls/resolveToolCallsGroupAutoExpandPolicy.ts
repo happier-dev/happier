@@ -26,10 +26,12 @@ export function resolveToolCallsGroupAutoExpandLimit(params: {
 }
 
 export function shouldAutoExpandToolCallsGroupForShortTranscript(params: {
+    showToolCalls?: boolean;
     toolMessageCount: number;
     collapsedPreviewCount: number;
     maxTurnEntriesPerListItem: number;
 }): boolean {
+    if (params.showToolCalls === false) return false;
     const toolMessageCount = normalizeCount(params.toolMessageCount);
     const collapsedPreviewCount = normalizeCount(params.collapsedPreviewCount);
     if (toolMessageCount <= collapsedPreviewCount) return false;

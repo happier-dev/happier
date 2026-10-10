@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import { filterCollapsedSessionListItems } from './filterCollapsedSessionListItems';
 
@@ -16,6 +16,40 @@ function makeSession(id: string, groupKey: string): SessionListIndexItem {
 }
 
 describe('filterCollapsedSessionListItems', () => {
+    it('folds a Bot\'s reports by default behind its disclosure, and an explicit local choice wins either way', () => {
+        const bot = { ...makeSession('bot', 'g'), reportsParent: true as const, reportsDefaultCollapsed: true as const };
+        const ordinary = { ...makeSession('ordinary', 'g'), reportsParent: true as const };
+        const items: SessionListIndexItem[] = [bot,
+            { ...makeSession('child', 'g'), reportsDepth: 1 },
+            { ...makeSession('grandchild', 'g'), reportsDepth: 2 },
+            ordinary, { ...makeSession('ordinary-child', 'g'), reportsDepth: 1 }];
+        const foldedBot = { ...bot, reportsCollapsed: true };
+        expect(filterCollapsedSessionListItems(items, {})).toEqual([foldedBot, items[3], items[4]]);
+        expect(filterCollapsedSessionListItems(items, { unrelated: true })).toEqual([foldedBot, items[3], items[4]]);
+        expect(filterCollapsedSessionListItems(items, { [buildSessionListIndexNodeId(bot)]: false })).toBe(items);
+        expect(filterCollapsedSessionListItems(items, { [buildSessionListIndexNodeId(bot)]: true }))
+            .toEqual([foldedBot, items[3], items[4]]);
+        expect(filterCollapsedSessionListItems(items, {
+            [buildSessionListIndexNodeId(bot)]: false,
+            [buildSessionListIndexNodeId(ordinary)]: true,
+        })).toEqual([...items.slice(0, 3), { ...ordinary, reportsCollapsed: true }]);
+    });
+
+    it('honors a nested local fold after its Bot ancestor is revealed, without crossing Homes or headers', () => {
+        const bot = { ...makeSession('bot', 'g'), reportsDefaultCollapsed: true };
+        const nested = { ...makeSession('child', 'g'), reportsDepth: 1 };
+        const header: SessionListIndexItem = { type: 'header', title: 'Other Home', headerKind: 'server', serverId: 'server-b' };
+        const items: SessionListIndexItem[] = [bot, nested,
+            { ...makeSession('grandchild', 'g'), reportsDepth: 2 },
+            { ...makeSession('sibling', 'g'), reportsDepth: 1 }, header,
+            { ...makeSession('bot', 'g'), serverId: 'server-b' },
+            { ...makeSession('other-child', 'g'), serverId: 'server-b', reportsDepth: 1 }];
+        expect(filterCollapsedSessionListItems(items, {
+            [buildSessionListIndexNodeId(bot)]: false,
+            [buildSessionListIndexNodeId(nested)]: true,
+        })).toEqual([items[0], items[1], items[3], items[4], items[5], items[6]]);
+    });
+
     it('returns the original array when there are no collapsed groups to apply', () => {
         const items: SessionListIndexItem[] = [
             { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: 'inactive:server-a', serverId: 'server-a', serverName: 'Server A' },

@@ -6,6 +6,11 @@ import {
 } from './resolveToolCallsGroupAutoExpandPolicy';
 
 describe('resolveToolCallsGroupAutoExpandPolicy', () => {
+    it('never auto-expands hidden tool calls even when the group and transcript are short', () => {
+        expect(shouldAutoExpandToolCallsGroupForShortTranscript({
+            showToolCalls: false, toolMessageCount: 2, collapsedPreviewCount: 0, maxTurnEntriesPerListItem: 3,
+        })).toBe(false);
+    });
     it('does not auto-expand groups with no hidden tools', () => {
         expect(shouldAutoExpandToolCallsGroupForShortTranscript({
             toolMessageCount: 5,

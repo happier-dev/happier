@@ -3,7 +3,7 @@ import { SessionAccessAccountSummaryV1Schema } from '@happier-dev/protocol/sessi
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { V2SessionListResponseSchema, V2SessionRecordSchema, V2SessionByIdNotFoundSchema, type V2SessionListResponse } from '@happier-dev/protocol/sessions/control/contract';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
-import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
+import { buildSessionListServerQueryV1, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 import {
@@ -612,7 +612,7 @@ export async function fetchSessionListPageCompat(params: Readonly<{
                 headers: buildSessionRequestHeaders(params.token, { includeSessionListTiming: true }),
             } satisfies RequestInit;
         }
-        const { cursor: _sourceCursor, attentionCursor: _sourceAttentionCursor, limit: _sourceLimit, ...queryBase } = source.body;
+        const { cursor: _sourceCursor, attentionCursor: _sourceAttentionCursor, limit: _sourceLimit, ...queryBase } = buildSessionListServerQueryV1(source.body);
         const cursor = params.cursor !== undefined ? params.cursor : _sourceCursor ?? null;
         const attentionCursor = params.attentionCursor !== undefined
             ? params.attentionCursor

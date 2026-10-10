@@ -35,7 +35,7 @@ installSessionShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                storage: createStorageStoreMock({}),
+                storage: createStorageStoreMock({ sessionOrganizationPinsBySessionKey: {} }),
                 useHasUnreadMessages: () => false,
                 useProfile: () => ({
                     id: 'u1',

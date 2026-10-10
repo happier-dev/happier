@@ -42,6 +42,8 @@ export type AgentActivityCountable = Readonly<{
     id: string;
     kind: AgentActivityCountKind;
     status: AgentActivityStatusV1;
+    /** False means an available retained handle has no current work. */
+    isActive?: boolean;
     /** The unit this one belongs to, when it belongs to one. Grouping and layout only. */
     parentId?: string | null;
     /**
@@ -91,6 +93,7 @@ export function toAgentActivityCountable(entry: AgentActivityEntry): AgentActivi
         id: entry.id,
         kind: entry.kind === 'workflow_run' ? 'workflow' : 'subagent',
         status: entry.status,
+        ...(entry.isActive !== undefined ? { isActive: entry.isActive } : {}),
         parentId: entry.parentId,
         runId: entry.runId,
     };
@@ -137,7 +140,7 @@ export function deriveAgentActivityCounts(
     const liveRunEntryIdByRunId = new Map<string, string>();
     for (const entry of entries) {
         if (entry.kind !== 'workflow') continue;
-        if (!isInProgressAgentActivityStatus(entry.status)) continue;
+        if (entry.isActive === false || !isInProgressAgentActivityStatus(entry.status)) continue;
         liveRuns.push(entry);
         liveRunEntryIds.add(entry.id);
         const runId = normalizeId(entry.runId);
@@ -150,7 +153,7 @@ export function deriveAgentActivityCounts(
     const liveMembersByRunEntryId = new Map<string, number>();
     if (liveRuns.length > 0) {
         for (const entry of entries) {
-            if (!isInProgressAgentActivityStatus(entry.status)) continue;
+            if (entry.isActive === false || !isInProgressAgentActivityStatus(entry.status)) continue;
             const runEntryId = resolveDescribingRunId(entry, liveRunEntryIds, liveRunEntryIdByRunId);
             if (runEntryId === null) continue;
             liveMembersByRunEntryId.set(runEntryId, (liveMembersByRunEntryId.get(runEntryId) ?? 0) + 1);
@@ -169,7 +172,7 @@ export function deriveAgentActivityCounts(
         if (groupingIds.has(entry.id)) continue;
         total += 1;
         if (entry.kind === 'workflow') continue;
-        if (!isInProgressAgentActivityStatus(entry.status)) continue;
+        if (entry.isActive === false || !isInProgressAgentActivityStatus(entry.status)) continue;
         // A run's own agents are deliberately absent here: the run's live complement already counts
         // them, and adding them again is the double count this owner exists to prevent.
         if (resolveDescribingRunId(entry, liveRunEntryIds, liveRunEntryIdByRunId) !== null) continue;

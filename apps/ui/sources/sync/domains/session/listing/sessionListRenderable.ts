@@ -1,4 +1,6 @@
+import { normalizeSessionOrderingNumber, reconcileSessionLifecycleProjection } from '../sessionLifecycleProjection';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import type { SessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import {
     hasUnreadActivityForSessionViewer,
     isSessionPersonallyTrackedForViewer,
@@ -6,7 +8,7 @@ import {
 } from '@/sync/domains/session/readState/sessionViewer';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { AgentState, Metadata } from '@happier-dev/session-core/state';
-import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { readSessionWorkStateV1FromMetadata, type SessionWorkStateV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { parseSessionAgentActivityHeadlineV1, type SessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 import { SessionWorkflowActivityHeadlineV1Schema, type SessionWorkflowActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
@@ -60,6 +62,7 @@ import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 export { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 export interface SessionListRenderableMetadata {
+    bot?: SessionBotV1;
     name?: string;
     summaryText?: string | null;
     path: string;
@@ -294,7 +297,7 @@ export function readSessionListRenderableSourceMetadata(
         return null;
     }
     if (isSessionAccessRecipient(session.access, session.accessLevel)) {
-        const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(session.metadata);
+        const sharedMetadata = StoredSessionSharedMetadataV1Schema.safeParse(session.metadata);
         if (!sharedMetadata.success) return null;
         const presentationAgentId = sharedMetadata.data.agentPresentation?.agentId;
         return {
@@ -723,10 +726,35 @@ export function preserveSessionListRenderableTransientState(
     };
 }
 
+function preserveSessionListRenderablePendingFlags(
+    previous: SessionListRenderableSession | undefined,
+    next: SessionListRenderableSession,
+): SessionListRenderableSession {
+    if (!previous) return next;
+    const previousObservedAt = normalizeSessionOrderingNumber(previous.pendingRequestObservedAt);
+    const nextObservedAt = normalizeSessionOrderingNumber(next.pendingRequestObservedAt);
+    const hasPreviousFlags = typeof previous.hasPendingPermissionRequests === 'boolean'
+        || typeof previous.hasPendingUserActionRequests === 'boolean';
+    const hasOlderObservation = hasPreviousFlags
+        && previousObservedAt !== null
+        && nextObservedAt !== null
+        && nextObservedAt < previousObservedAt;
+    const preserveMissingFlags = shouldPreserveSessionListRenderablePendingFlags(next, previous);
+    if (!hasOlderObservation && !preserveMissingFlags) return next;
+    return {
+        ...next,
+        agentStateVersion: preserveMissingFlags ? previous.agentStateVersion : next.agentStateVersion,
+        hasPendingPermissionRequests: previous.hasPendingPermissionRequests,
+        hasPendingUserActionRequests: previous.hasPendingUserActionRequests,
+        pendingRequestObservedAt: previous.pendingRequestObservedAt ?? null,
+    };
+}
+
 export function preserveSessionListRenderableStaleFields(
     previous: SessionListRenderableSession | undefined,
     next: SessionListRenderableSession,
 ): SessionListRenderableSession {
+    next = preserveSessionListRenderablePendingFlags(previous, reconcileSessionLifecycleProjection(previous, next));
     // A projection pass re-derives every renderable, so an unchanged session still arrives as a
     // fresh object. Handing that object on defeats identity all the way up the session list: the row
     // is rebuilt around it, then the array, then the whole list re-renders. Returning the previous
@@ -747,7 +775,6 @@ export function preserveSessionListRenderableStaleFields(
         && next.metadata == null
         && previous?.metadata == null
         && previous?.metadataUnavailable === true;
-    const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(next, previous);
     const preservePendingBlockedCount = shouldPreserveSessionListRenderablePendingBlockedCount(next, previous);
     const preserveExternalSessionClassification =
         previous?.metadata?.externalSessionV1 != null
@@ -756,8 +783,6 @@ export function preserveSessionListRenderableStaleFields(
         && readSessionMetadataLayoutVersion(previous.metadataLayoutVersion)
             === readSessionMetadataLayoutVersion(next.metadataLayoutVersion)
         && previous.metadataVersion === next.metadataVersion;
-    const preserveReadyEventSeq = next.latestReadyEventSeq == null && previous?.latestReadyEventSeq != null;
-    const preserveReadyEventAt = next.latestReadyEventAt == null && previous?.latestReadyEventAt != null;
     const preserveUnread = isSessionPersonallyTrackedForViewer(next)
         && next.viewer === undefined
         && previous?.hasUnreadMessages === true
@@ -768,11 +793,8 @@ export function preserveSessionListRenderableStaleFields(
         || (
             !preserveMetadata
             && !preserveMetadataUnavailable
-            && !preservePendingFlags
             && !preservePendingBlockedCount
             && !preserveExternalSessionClassification
-            && !preserveReadyEventSeq
-            && !preserveReadyEventAt
             && !preserveUnread
         )
     ) {
@@ -788,12 +810,8 @@ export function preserveSessionListRenderableStaleFields(
             }
             : next.metadata;
 
-    const latestReadyEventSeq = preserveReadyEventSeq
-        ? previous.latestReadyEventSeq ?? null
-        : next.latestReadyEventSeq ?? null;
-    const latestReadyEventAt = preserveReadyEventAt
-        ? previous.latestReadyEventAt ?? null
-        : next.latestReadyEventAt ?? null;
+    const latestReadyEventSeq = next.latestReadyEventSeq ?? null;
+    const latestReadyEventAt = next.latestReadyEventAt ?? null;
     const nextReadableSeq = resolveSessionListReadableSeq({
         seq: next.seq,
         latestTurnStatus: next.latestTurnStatus,
@@ -816,7 +834,7 @@ export function preserveSessionListRenderableStaleFields(
                 }),
                 lastViewedPendingActivityAt: nextMetadata?.readStateV1?.pendingActivityAt,
             })
-            : preserveReadyEventSeq || preserveReadyEventAt || resolveSessionListReadableSeq(next, undefined) <= 0;
+            : resolveSessionListReadableSeq(next, undefined) <= 0;
     }
 
     return {
@@ -837,22 +855,12 @@ export function preserveSessionListRenderableStaleFields(
             ? previous.metadataLayoutVersion
             : next.metadataLayoutVersion,
         metadataVersion: preserveMetadata ? previous.metadataVersion : next.metadataVersion,
-        agentStateVersion: preservePendingFlags ? previous.agentStateVersion : next.agentStateVersion,
         metadata: nextMetadata,
         metadataUnavailable: preserveMetadata
             ? false
             : preserveMetadataUnavailable
                 ? true
                 : next.metadataUnavailable,
-        hasPendingPermissionRequests: preservePendingFlags
-            ? previous.hasPendingPermissionRequests
-            : next.hasPendingPermissionRequests,
-        hasPendingUserActionRequests: preservePendingFlags
-            ? previous.hasPendingUserActionRequests
-            : next.hasPendingUserActionRequests,
-        pendingRequestObservedAt: preservePendingFlags
-            ? previous.pendingRequestObservedAt ?? null
-            : next.pendingRequestObservedAt ?? null,
         hasUnreadMessages,
     };
 }
@@ -933,11 +941,11 @@ export function applySessionListRenderablePatch(
     renderable: SessionListRenderableSession,
     patch: SessionListRenderablePatchFields,
 ): SessionListRenderableSession {
-    const next = {
+    const next = preserveSessionListRenderablePendingFlags(renderable, reconcileSessionLifecycleProjection(renderable, {
         ...renderable,
         ...patch,
         id: renderable.id,
-    };
+    }));
     return {
         ...next,
         lockedDisplayTitle: readSessionMetadataLayoutVersion(next.metadataLayoutVersion) === 1
@@ -1068,6 +1076,7 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     const nextMeta = next.metadata;
     if ((prevMeta?.name ?? null) !== (nextMeta?.name ?? null)) return true;
     if ((prevMeta?.summaryText ?? null) !== (nextMeta?.summaryText ?? null)) return true;
+    if ((prevMeta?.bot?.kind ?? null) !== (nextMeta?.bot?.kind ?? null)) return true;
     if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
     if ((prevMeta?.homeDir ?? null) !== (nextMeta?.homeDir ?? null)) return true;
     if ((prevMeta?.host ?? null) !== (nextMeta?.host ?? null)) return true;

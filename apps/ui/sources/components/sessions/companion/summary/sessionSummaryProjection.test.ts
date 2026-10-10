@@ -233,6 +233,24 @@ const fivePlan = projectSessionAgentPlan([
 ]);
 
 describe('the live hero (lab CA)', () => {
+    it.each([
+        { kind: 'full' } as const,
+        { kind: 'card', density: 'compact' } as const,
+        { kind: 'widgetSummary' } as const,
+    ])('keeps Recap visible alongside Work for $kind presentation', (presentation) => {
+        const model = projectSessionSummaryCard(input({
+            openApprovalCount: 1,
+            awareness: awareness({ currentWork: { title: 'Reviewing access', activeWorkflowRunCount: 1 } }),
+            recap: { source: 'worker_update', text: 'Runbook published', atMs: 1 },
+        }));
+        const visible = resolveSessionSummaryDetailRows(model, presentation);
+        expect(visible.rows.find((row) => row.kind === 'recap')).toMatchObject({
+            text: 'Runbook published', destination: 'workTab',
+        });
+        expect(model.rows.find((row) => row.kind === 'work')).toMatchObject({ label: 'Reviewing access' });
+        expect(visible.hiddenCount).toBe(presentation.kind === 'widgetSummary' ? 2 : 0);
+    });
+
     it('shows an older question before permissions and includes all waiting requests in the count', () => {
         const model = projectSessionSummaryCard(input({
             pendingPermissions: [pending('permission', 2_000)],

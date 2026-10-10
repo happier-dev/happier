@@ -39,7 +39,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export type SessionCompanionAddBinding = CompanionWidgetAddSource;
+export type SessionCompanionAddBinding = CompanionWidgetAddSource & Readonly<{
+    acquireBoardContent?: () => () => void;
+}>;
 
 export function SessionCompanionAddControl(props: Readonly<{
     binding: SessionCompanionAddBinding;
@@ -52,6 +54,11 @@ export function SessionCompanionAddControl(props: Readonly<{
     const { theme } = useUnistyles();
     const anchorRef = React.useRef<View | null>(null);
     const [open, setOpen] = React.useState(false);
+    const acquireBoardContent = props.binding.acquireBoardContent;
+    React.useEffect(() => {
+        if (!open) return;
+        return acquireBoardContent?.();
+    }, [acquireBoardContent, open]);
     React.useEffect(() => {
         if (props.openRequest) setOpen(true);
     }, [props.openRequest]);

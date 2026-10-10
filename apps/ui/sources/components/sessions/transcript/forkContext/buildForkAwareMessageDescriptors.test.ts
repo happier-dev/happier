@@ -9,6 +9,37 @@ function message(id: string, createdAt: number): Message {
 }
 
 describe('buildForkAwareMessageDescriptors', () => {
+    it('keeps imported visual storage in the child while recognizing its original acknowledged source', () => {
+        const imported = { ...message('imported', 1), meta: { forkVisualOriginV1: {
+            v: 1 as const, serverId: 'home', sessionId: 'parent', sourceMessageId: 'original', sourceSeq: 3,
+        } } };
+        const fork: ForkedTranscriptSnapshot = {
+            segments: [{ sessionId: 'child', isReadOnlyContext: false, cutoffSeqInclusive: null, messageIdsOldestFirst: ['imported'] }],
+            combinedMessageIdsOldestFirst: ['imported'], combinedMessagesById: { imported },
+            messageOriginById: { imported: { sessionId: 'child', isReadOnlyContext: true } },
+            visualSessionId: 'child', visualCopies: [], isLoaded: true,
+        };
+        expect(buildForkAwareMessageDescriptors(fork).metadataByMessageId.imported).toMatchObject({
+            originSessionId: 'child', isReadOnlyContext: true,
+            visualContext: { sessionId: 'child', copies: [], originAddress: { serverId: 'home', sessionId: 'parent' } },
+        });
+    });
+    it('routes inherited visuals to the child copies while preserving their origin', () => {
+        const fork: ForkedTranscriptSnapshot = {
+            segments: [{ sessionId: 'parent', isReadOnlyContext: true, cutoffSeqInclusive: 2, messageIdsOldestFirst: ['p'] },
+                { sessionId: 'child', isReadOnlyContext: false, cutoffSeqInclusive: null, messageIdsOldestFirst: ['c'] }],
+            combinedMessageIdsOldestFirst: ['p', 'c'],
+            combinedMessagesById: { p: message('p', 1), c: message('c', 2) },
+            messageOriginById: { p: { sessionId: 'parent', isReadOnlyContext: true }, c: { sessionId: 'child', isReadOnlyContext: false } },
+            visualCopies: [{ originServerId: 'home', originSessionId: 'parent', originItemId: 'chart', status: 'copied', itemId: 'child-chart' }],
+            visualSessionId: 'child',
+            isLoaded: true,
+        };
+        const result = buildForkAwareMessageDescriptors(fork);
+        expect(result.metadataByMessageId.p).toMatchObject({ originSessionId: 'parent',
+            visualContext: { sessionId: 'child', copies: fork.visualCopies } });
+        expect(result.metadataByMessageId.c).not.toHaveProperty('visualContext');
+    });
     it('preserves combined order and exposes stable fork boundary inputs', () => {
         const fork: ForkedTranscriptSnapshot = {
             segments: [

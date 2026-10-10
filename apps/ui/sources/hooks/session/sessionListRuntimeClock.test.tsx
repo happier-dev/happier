@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { formatNextScheduledRun, readNextScheduledRunRefreshAtMs } from '@/components/workflows/triggers/formatTriggerSummary';
+import { formatRelativeTimeShort, readRelativeTimeShortRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 
 import {
     createSessionListRuntimeClock,
     SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS,
     useSessionListRelativeNowMs,
+    useSessionListRuntimeDeadlineNowMs,
     useSessionListRuntimeNowMs,
     useSessionListRuntimeWake,
 } from './sessionListRuntimeClock';
@@ -26,6 +29,88 @@ function useClockConsumer(params: {
 }
 
 describe('sessionListRuntimeClock', () => {
+    it('refreshes rounded occurrences and floor ages independently while unrelated subscribers stay stable', async () => {
+        vi.useFakeTimers();
+        const now = new Date(2026, 9, 10, 10).getTime();
+        vi.setSystemTime(now);
+        const clock = createSessionListRuntimeClock();
+        const next = now + 120_000;
+        const started = now - 90_000;
+        const readNextOccurrence = (at: number) => readNextScheduledRunRefreshAtMs(next, at);
+        const readNextAge = (at: number) => readRelativeTimeShortRefreshAtMs(started, at);
+        const noDeadline = () => null;
+        let idleRenders = 0;
+        const idle = await renderHook(() => {
+            idleRenders += 1;
+            return useSessionListRuntimeDeadlineNowMs(noDeadline, true, clock);
+        });
+        const occurrence = await renderHook(() => formatNextScheduledRun(next, true,
+            useSessionListRuntimeDeadlineNowMs(readNextOccurrence, true, clock)));
+        const age = await renderHook(() => formatRelativeTimeShort(started,
+            useSessionListRuntimeDeadlineNowMs(readNextAge, true, clock)));
+        const before = idleRenders;
+        const firstOccurrence = occurrence.getCurrent();
+        const firstAge = age.getCurrent();
+        await flushHookEffects({ advanceTimersMs: 30_000, cycles: 1, turns: 2 });
+        expect(age.getCurrent()).not.toBe(firstAge);
+        expect(occurrence.getCurrent()).toBe(firstOccurrence);
+        await flushHookEffects({ advanceTimersMs: 1, cycles: 1, turns: 2 });
+        expect(occurrence.getCurrent()).not.toBe(firstOccurrence);
+        expect(idleRenders).toBe(before);
+        expect(vi.getTimerCount()).toBe(1);
+        await occurrence.unmount();
+        await age.unmount();
+        await idle.unmount();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+    it('withdraws a status deadline while inactive and observes current time on re-enable', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const clock = createSessionListRuntimeClock();
+        const next = (nowMs: number) => nowMs < 2_000 ? 2_000 : null;
+        let renders = 0;
+        const status = await renderHook((props: { enabled: boolean }) => {
+            renders += 1;
+            return useSessionListRuntimeDeadlineNowMs(next, props.enabled, clock);
+        }, { initialProps: { enabled: true } });
+        await status.rerender({ enabled: false });
+        const inactiveRenders = renders;
+        expect(vi.getTimerCount()).toBe(0);
+        await flushHookEffects({ advanceTimersMs: 2_000, cycles: 1, turns: 2 });
+        expect(renders).toBe(inactiveRenders);
+        expect(status.getCurrent()).toBe(1_000);
+        await status.rerender({ enabled: true });
+        expect(status.getCurrent()).toBe(3_000);
+        expect(vi.getTimerCount()).toBe(0);
+        await status.unmount();
+    });
+
+    it('keeps status consumers stable until their own deadlines and schedules the next boundary', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const clock = createSessionListRuntimeClock();
+        const readNextRefresh = (nowMs: number) => nowMs < 3_000 ? 3_000 : nowMs < 5_000 ? 5_000 : null;
+        let renders = 0;
+        const status = await renderHook(() => {
+            renders += 1;
+            return useSessionListRuntimeDeadlineNowMs(readNextRefresh, true, clock);
+        });
+        const before = renders;
+        const otherSurface = {};
+        clock.requestWake(otherSurface, 2_000);
+        await flushHookEffects({ advanceTimersMs: 1_000, cycles: 1, turns: 2 });
+        expect(status.getCurrent()).toBe(1_000);
+        expect(renders).toBe(before);
+        expect(vi.getTimerCount()).toBe(1);
+        await flushHookEffects({ advanceTimersMs: 1_000, cycles: 1, turns: 2 });
+        expect(status.getCurrent()).toBe(3_000);
+        expect(vi.getTimerCount()).toBe(1);
+        await flushHookEffects({ advanceTimersMs: 2_000, cycles: 1, turns: 2 });
+        expect(status.getCurrent()).toBe(5_000);
+        expect(vi.getTimerCount()).toBe(0);
+        await status.unmount();
+    });
+
     it('advances all subscribers together at the earliest requested wake time', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);

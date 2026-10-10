@@ -1,7 +1,27 @@
 import * as React from 'react';
+import { SessionForkVisualOriginV1Schema, type SessionForkVisualContextV1 } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import type { SessionTranscriptSource } from './types';
 
 const SessionTranscriptSourceContext = React.createContext<SessionTranscriptSource | null>(null);
+const TranscriptVisualContext = React.createContext<SessionForkVisualContextV1 | undefined>(undefined);
+
+export function useTranscriptVisualContext(): SessionForkVisualContextV1 | undefined {
+    return React.useContext(TranscriptVisualContext);
+}
+
+export function TranscriptVisualContextProvider(props: Readonly<{
+    visualContext?: SessionForkVisualContextV1;
+    visualOriginV1?: unknown;
+    children: React.ReactNode;
+}>) {
+    const inherited = useTranscriptVisualContext();
+    const base = props.visualContext ?? inherited;
+    const value = React.useMemo(() => {
+        const origin = SessionForkVisualOriginV1Schema.safeParse(props.visualOriginV1);
+        return base && origin.success ? { ...base, originAddress: { serverId: origin.data.serverId, sessionId: origin.data.sessionId } } : base;
+    }, [base, props.visualOriginV1]);
+    return <TranscriptVisualContext.Provider value={value}>{props.children}</TranscriptVisualContext.Provider>;
+}
 
 export class SessionTranscriptSourceMissingError extends Error {
     constructor() {

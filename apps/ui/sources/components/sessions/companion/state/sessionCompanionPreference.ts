@@ -1,4 +1,4 @@
-import { SessionCompanionPresentationItemRefV1Schema, SessionCompanionPresentationItemRefV1StoredSchema, SESSION_COMPANION_BUILTIN_ITEM_IDS, type SessionCompanionPresentationItemRefV1 } from '@happier-dev/protocol/sessions';
+import { SessionCompanionPresentationItemRefV1Schema, SessionCompanionPresentationItemRefV1StoredSchema, SESSION_COMPANION_BUILTIN_ITEM_IDS, type SessionCompanionPresentationItemRefV1 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
 import { z } from 'zod';
 import type { WidgetExpectedPresentationV1, WidgetInputBindingsV1, WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';

@@ -122,6 +122,37 @@ describe('WarningActionBanner', () => {
         });
     });
 
+    it('gives every banner action the shared interaction owner: keyboard focus ring and busy state', async () => {
+        const { WarningActionBanner } = await import('./WarningActionBanner');
+        const screen = await renderScreen(
+            <WarningActionBanner
+                testID="warning"
+                title="This folder is missing"
+                actionTestID="warning-primary"
+                actionLabel="Continue"
+                onActionPress={vi.fn()}
+                actionBusy
+                disabled
+                secondaryActions={[{
+                    key: 'not-now',
+                    testID: 'warning-not-now',
+                    label: 'Not now',
+                    accessibilityLabel: 'Not now',
+                    variant: 'quiet',
+                    onPress: vi.fn(),
+                }]}
+            />,
+        );
+
+        const secondary = screen.findByTestId('warning-not-now')!;
+        expect(flattenStyle(secondary.props.style({ pressed: false })).outlineStyle).not.toBe('solid');
+        await act(async () => { secondary.props.onFocus({}); });
+        expect(flattenStyle(screen.findByTestId('warning-not-now')!.props.style({ pressed: false })))
+            .toMatchObject({ outlineStyle: 'solid', outlineWidth: 2 });
+
+        expect(screen.findByTestId('warning-primary')?.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+    });
+
     it('renders semantic details and keeps quiet actions visually tertiary', async () => {
         const { WarningActionBanner } = await import('./WarningActionBanner');
         const screen = await renderScreen(
@@ -218,7 +249,8 @@ describe('WarningActionBanner', () => {
             />,
         );
 
-        expect(screen.findByTestId('warning-title-row')?.findAllByProps({ testID: 'warning-primary' })).toHaveLength(1);
+        expect(screen.findByTestId('warning-title-row')?.findAll((node) => typeof node.type === 'string'
+            && node.props.testID === 'warning-primary')).toHaveLength(1);
     });
 
     it('wraps a long action run into a right-aligned block beside the copy on desktop', async () => {

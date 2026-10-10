@@ -1,6 +1,7 @@
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awareness/sessionAwarenessContentLabels';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
+import { readSessionAwarenessPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { SessionAwarenessEncryptionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import * as React from 'react';
@@ -8,6 +9,11 @@ import { Message } from "@happier-dev/session-core/messages";
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
 import { storage, useSession, useSessionMessagesVersion, useSessionPendingMessages, useSetting } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from './machineDisplayNames';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { resolveSessionWorkspaceDisplayPresentation } from '@/sync/domains/session/listing/sessionWorkspaceDisplayPresentation';
+import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
@@ -37,7 +43,7 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
-import { formatPathRelativeToHome } from './formatPathRelativeToHome';
+import { formatSessionPath } from './formatPathRelativeToHome';
 import { useUnistyles } from 'react-native-unistyles';
 export { formatPathRelativeToHome } from './formatPathRelativeToHome';
 
@@ -377,10 +383,8 @@ function resolveGetSessionStatusOptions(options?: GetSessionStatusOptionsInput):
  * Uses centralized session state from storage.ts
  */
 /**
- * The ONE ordering that turns canonical awareness into a presented Session state and its
- * label. Content readability, an unservable runtime, resuming, an offline or unknown runtime
- * and staleness all outrank `operational.primary`, which is why a consumer that reads
- * `operational.primary` alone reports an offline Session as "Online". Every presenter —
+ * Localized words for Protocol's shared presentation precedence. Readability, lifecycle,
+ * runtime and freshness are decided there, along with Work buckets and tones. Every presenter —
  * the list row, the Session header and the Companion Summary pill — consumes this answer and
  * adds only its own chrome (colour, dot, pill variant, visibility).
  */
@@ -393,21 +397,22 @@ export function presentSessionAwarenessV1(
         workingLabel?: string;
     }>,
 ): SessionAwarenessPresentationV1 {
-    if (awareness.lifecycle === 'archived') {
+    const state = readSessionAwarenessPresentationV1(awareness);
+    if (state === 'archived') {
         return { state: 'waiting', statusText: t('status.online'), quiet: true };
     }
     // Every state the content owner cannot read stays visible and quiet: guessing an operational
     // state from facts we cannot see is how a blocked session reports itself as working.
-    if (!isSessionAwarenessContentReadableV1(awareness.encryption)) {
+    if (state === 'locked' || state === 'preparing' || state === 'repair_needed' || state === 'access_pending' || state === 'setup_required' || state === 'content_unavailable') {
         return { ...presentUnreadableSessionContent(awareness.encryption), quiet: false };
     }
-    if (awareness.operational.reasons.includes('runtime_unservable')) {
+    if (state === 'recoverable_unservable') {
         return { state: 'recoverable_unservable', statusText: t('status.disconnected'), quiet: false };
     }
-    if (awareness.operational.reasons.includes('resuming')) {
+    if (state === 'resuming') {
         return { state: 'resuming', statusText: t('session.resuming'), quiet: false };
     }
-    if (awareness.runtime === 'offline') {
+    if (state === 'disconnected') {
         const lastSeenAtMs = options?.lastSeenAtMs;
         return {
             state: 'disconnected',
@@ -417,24 +422,24 @@ export function presentSessionAwarenessV1(
             quiet: false,
         };
     }
-    if (awareness.runtime === 'unknown') return { state: 'unknown', statusText: t('status.unknown'), quiet: false };
-    if (awareness.freshness === 'stale') return { state: 'stale', statusText: t('status.awaitingUpdates'), quiet: false };
-    switch (awareness.operational.primary) {
+    if (state === 'unknown') return { state: 'unknown', statusText: t('status.unknown'), quiet: false };
+    if (state === 'stale') return { state: 'stale', statusText: t('status.awaitingUpdates'), quiet: false };
+    switch (state) {
         case 'failed': return { state: 'failed', statusText: t('status.error'), quiet: false };
         case 'action_required': return { state: 'action_required', statusText: t('status.actionRequired'), quiet: false };
         case 'permission_required': return { state: 'permission_required', statusText: t('status.permissionRequired'), quiet: false };
-        case 'working': return {
+        case 'thinking': return {
             state: 'thinking',
             statusText: options?.workingLabel ?? t('status.working'),
             quiet: false,
         };
         case 'ready': return { state: 'ready', statusText: t('status.ready'), quiet: false };
         case 'pending_input': return { state: 'pending_input', statusText: t('status.queuedInput'), quiet: false };
-        case 'none': return awareness.runtime === 'background_active'
-            ? { state: 'background_active', statusText: t('status.backgroundActive'), quiet: false }
+        case 'background_active': return { state: 'background_active', statusText: t('status.backgroundActive'), quiet: false };
+        case 'waiting':
             // An idle, reachable Session is not news: the canonical presenter has always kept
             // this one quiet rather than labelling it.
-            : { state: 'waiting', statusText: t('status.online'), quiet: true };
+            return { state: 'waiting', statusText: t('status.online'), quiet: true };
     }
 }
 
@@ -610,7 +615,7 @@ export function getSessionName(session: SessionDisplayNameSource, serverId?: str
  * Generates a deterministic avatar ID from machine ID and path.
  * This ensures the same machine + path combination always gets the same avatar.
  */
-export function getSessionAvatarId(session: SessionStatusSource, serverId?: string | null): string {
+export function getSessionAvatarId(session: SessionDisplayNameSource, serverId?: string | null): string {
     const ownerMetadata = readDisplayOwnerMetadata(session);
     const displayMetadata = ownerMetadata;
     const reachableTarget = readPrivateDisplayMachineTarget(session, ownerMetadata, serverId);
@@ -633,8 +638,34 @@ export function getSessionAvatarId(session: SessionStatusSource, serverId?: stri
 }
 
 /**
- * Returns the session path for the subtitle.
+ * The carried card's state line for a Session (DnD lab C2: "Working · happier · devbox"): its state when
+ * that is news, then where it works. An idle, reachable Session's state stays quiet, as in its row.
  */
+export function getSessionCarriedLine(session: SessionStatusSource, serverId?: string | null): string | null {
+    const status = getSessionStatus(session);
+    return [status.quiet ? null : status.statusText, getSessionWorkContext(session, serverId)].filter(Boolean).join(' · ') || null;
+}
+
+/** Compact Work identity: Agent · named machine, otherwise the workspace owner's display name. */
+export function getSessionWorkContext(session: SessionStatusSource, serverId?: string | null): string | null {
+    const state = storage.getState();
+    const ownerMetadata = readDisplayOwnerMetadata(session);
+    const target = readPrivateDisplayMachineTarget(session, ownerMetadata, serverId);
+    const home = serverId?.trim() || session.serverId || getActiveServerId();
+    const machineId = target?.machineId ?? ownerMetadata?.machineId;
+    const machine = machineId ? state.machineListByServerId[home]?.find(item => item.id === machineId)
+        ?? (home === getActiveServerId() ? state.machines[machineId] : undefined) : undefined;
+    const machineName = getMachineDisplayName(machine) ?? ownerMetadata?.host;
+    const agentId = readSessionPresentationAgentId(session);
+    const agent = agentId ? resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] }).title : null;
+    const workspace = !machineName && ownerMetadata && readSessionDirectoryKind(ownerMetadata) !== 'managed'
+        ? resolveSessionWorkspaceDisplayPresentation({ serverId: home, metadata: ownerMetadata,
+            machineTarget: target, workspaceRefs: readProjectWorkspaceRefs(state), workspacePathDisplayModeV1: 'name' }).displayTitle
+        : null;
+    return [agent, machineName || workspace].filter(Boolean).join(' · ') || null;
+}
+
+/** Returns the session path for the subtitle on existing path-oriented surfaces. */
 export function getSessionSubtitle(session: SessionStatusSource, serverId?: string | null): string {
     const ownerMetadata = readDisplayOwnerMetadata(session);
     if (readSessionDirectoryKind(ownerMetadata) === 'managed') {
@@ -647,7 +678,7 @@ export function getSessionSubtitle(session: SessionStatusSource, serverId?: stri
         ?? ownerMetadata?.path
         ?? null;
     if (path) {
-        return formatPathRelativeToHome(path, ownerMetadata?.homeDir ?? undefined);
+        return formatSessionPath(path, ownerMetadata?.homeDir ?? undefined);
     }
     return t('status.unknown');
 }

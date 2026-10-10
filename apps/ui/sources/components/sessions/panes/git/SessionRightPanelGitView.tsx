@@ -260,6 +260,8 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         createCommitFromMessage,
         commitMessageGeneratorEnabled,
         generateCommitMessageSuggestion,
+        cancelCommitMessageSuggestion,
+        commitMessageSuggestionContextKey,
     } = useFilesScmOperations({
         sessionId: props.sessionId, serverId: props.serverId,
         sessionPath,
@@ -759,6 +761,8 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             onCommitFromMessage={onCommitFromMessage}
             commitMessageGeneratorEnabled={commitMessageGeneratorEnabled}
             onGenerateCommitMessageSuggestion={onGenerateCommitMessageSuggestion}
+            onCancelCommitMessageSuggestion={cancelCommitMessageSuggestion}
+            suggestionContextKey={commitMessageSuggestionContextKey}
             onOpenFilesSidebar={onOpenFilesSidebar}
             onOpenReviewAllChanges={onOpenReviewAllChanges}
             onOpenCommitPlan={openCommitPlan}

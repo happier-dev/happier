@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -211,7 +212,7 @@ describe('SessionCompanionContent (mounted)', () => {
             ?.resolveSourceAvailability as ((source: unknown) => unknown) | undefined;
         expect(resolveSourceAvailability?.({
             kind: 'hostedHtml',
-            source: { kind: 'html', html: '<main>Companion</main>' },
+            source: artifactHtmlBundleFromBodyV1('<main>Companion</main>'),
             requestedCapabilities: {},
         })).toEqual({ kind: 'available' });
     });
@@ -558,7 +559,7 @@ describe('SessionCompanionContent (mounted)', () => {
         const actions = owner?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
         actions.find(action => action.id === 'move-up')?.onPress?.();
         expect(preference.items).toEqual([SESSION_SUMMARY_COMPANION_ITEM, instance, pane]);
-        expect(readPresentationNotice()).toMatchObject({ key: 'widgets.instance.move', severity: 'error' });
+        expect(readPresentationNotice()).toMatchObject({ key: 'widgets.item.move', severity: 'error' });
     });
 
     it('keeps a refused personal rename draft and treats the unchanged empty name as a no-op', async () => {

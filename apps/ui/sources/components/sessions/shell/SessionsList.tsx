@@ -7,6 +7,7 @@ import type { SessionListStorageFilter } from '@/sync/domains/session/sessionSto
 import { sessionListStyles } from './sessionListStyles';
 import { SessionListDropOverlay } from './drag/SessionListDropOverlay';
 import { SessionListVirtualizedContent } from './sessionListVirtualizedContent';
+import { ScheduledWorkflowSection } from '@/components/workflows/triggers/ScheduledWorkflowSection';
 import { SessionListSearchChrome } from './search/SessionListSearchChrome';
 import { readSessionListWorkFilterSummary } from './search/SessionListFilterControl';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
@@ -312,6 +313,10 @@ function VisibleSessionsListViewContent(
     const safeArea = useChromeSafeAreaInsets();
     const sourceScopeKey = props.filterController.retentionScopeKey;
     const surfaceOwnership = props.surfaceOwnership;
+    const showSessionSections = props.corpusStorage === 'active' && props.filterController.filters.show !== 'runs';
+    const scheduledSection = React.useMemo(() => showSessionSections && surfaceOwnership.dataActive
+        && props.filterController.viewContext.kind === 'global' ? <ScheduledWorkflowSection /> : undefined,
+    [showSessionSections, surfaceOwnership.dataActive, props.filterController.viewContext.kind]);
     const surfaceDataActiveRef = React.useRef(surfaceOwnership.dataActive);
     surfaceDataActiveRef.current = surfaceOwnership.dataActive;
     React.useEffect(() => () => {
@@ -537,7 +542,8 @@ function VisibleSessionsListViewContent(
                             if (typeof event?.stopPropagation === 'function') event.stopPropagation();
                         }}
                         folderFocus={viewState.folderFocus}
-                        showDrafts={props.corpusStorage === 'active'}
+                        showDrafts={showSessionSections}
+                        scheduledSection={scheduledSection}
                         folderFocusRootTitle={viewState.folderFocusRootTitle}
                         onClearFolderFocus={viewState.onClearFolderFocus}
                         onSelectFolderBreadcrumb={viewState.onSelectFolderBreadcrumb}

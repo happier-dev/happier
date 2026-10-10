@@ -63,6 +63,12 @@ export type SessionListIndexItem =
          * report drawn under its lead. Absent for a row drawn at its own level.
          */
         reportsDepth?: number;
+        /** Presentation default from the admitted parent identity; local disclosure wins. */
+        reportsDefaultCollapsed?: true;
+        /** The row leads reports nested under it in this list, so it carries their disclosure. */
+        reportsParent?: true;
+        /** Its nested reports are folded away (local choice, else the presentation default). */
+        reportsCollapsed?: true;
         workspace?: SessionFolderWorkspaceRefV1;
         /**
          * Host-derived provenance for a contextual session-list search row.
@@ -187,6 +193,8 @@ export function areSessionListIndexItemsEqual(
             && (previous.folderId ?? null) === (next.folderId ?? null)
             && (previous.folderDepth ?? null) === (next.folderDepth ?? null)
             && (previous.reportsDepth ?? 0) === (next.reportsDepth ?? 0)
+            && (previous.reportsParent === true) === (next.reportsParent === true)
+            && (previous.reportsCollapsed === true) === (next.reportsCollapsed === true)
             && (previous.contextualSearchSourceMachineId ?? null) === (next.contextualSearchSourceMachineId ?? null)
             && (previous.contextualSearchReasons ?? []).join('\u0001') === (next.contextualSearchReasons ?? []).join('\u0001')
             && areWorkspaceRefsEqual(previous.workspace ?? null, next.workspace ?? null);

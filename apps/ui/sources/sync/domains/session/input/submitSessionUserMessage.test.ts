@@ -382,7 +382,8 @@ describe('submitSessionUserMessage Pending action ownership', () => {
     it.each(['enqueue', 'unconfirmed_enqueue', 'wake'] as const)('reports pending custody when exact Account retires after %s acceptance', async (phase) => {
         const harness = createPort();
         const account = createAccountLifetime();
-        const onOutboundHandoff = vi.fn();
+        const handoffCurrentness: boolean[] = [];
+        const onOutboundHandoff = vi.fn(() => { handoffCurrentness.push(account.lifetime.isCurrent()); });
         harness.port.enqueuePendingMessage = async () => {
             if (phase !== 'wake') account.retire();
             return { localId: 'accepted-local', accepted: phase !== 'unconfirmed_enqueue' };
@@ -401,7 +402,13 @@ describe('submitSessionUserMessage Pending action ownership', () => {
         })).resolves.toMatchObject({
             type: 'send_failed', persistence: 'pending', localId: 'accepted-local', errorCode: 'session_account_scope_retired',
         });
-        expect(onOutboundHandoff).not.toHaveBeenCalled();
+        if (phase === 'wake') {
+            expect(onOutboundHandoff).toHaveBeenCalledExactlyOnceWith({ persistence: 'pending', localId: 'accepted-local' });
+            expect(handoffCurrentness).toEqual([true]);
+        } else {
+            expect(onOutboundHandoff).not.toHaveBeenCalled();
+            expect(handoffCurrentness).toEqual([]);
+        }
     });
 
     it('does not hand off Composer custody until Pending persistence succeeds', async () => {

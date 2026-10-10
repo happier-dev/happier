@@ -10,7 +10,7 @@ import { describeWorkflowRunState, isTerminalWorkflowRunState } from '@/componen
 import { normalizeResultPreview } from '@/components/workflows/presentation/resultPreview';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
-import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
+import { describeWorkflowRunDestinationProgress, describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { workStatusGlyphColor, workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { getStorage, useWorkflowRun } from '@/sync/domains/state/storage';
@@ -44,6 +44,8 @@ export type WorkflowRunItemProps = Readonly<{
     includeResult?: boolean;
     /** Work-pane configuration rows use the same Item anatomy as Triggers. */
     presentation?: 'list' | 'work';
+    /** Writes-here rows retain their destination, separately from the Run's origin. */
+    destinationSessionId?: string;
 }>;
 
 const styles = StyleSheet.create((theme) => ({
@@ -120,7 +122,9 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     } });
     const word = summary.attentionRequired === true && status.tone === 'attention'
         ? t('workStatus.buckets.needs_you') : status.word;
-    const context = describeWorkflowRunProgress(summary.stepProgress);
+    const destinationProgress = props.destinationSessionId
+        ? describeWorkflowRunDestinationProgress(summary.stepProgress, props.destinationSessionId) : [];
+    const context = [describeWorkflowRunProgress(summary.stepProgress), ...destinationProgress].filter(Boolean).join(' · ') || null;
     const resultLine = !resultEnabled ? null : result.text
         ?? t(result.status === 'failed' ? 'workflows.contentUnavailable'
             : result.status === 'pending' ? 'common.loading' : 'workflows.finalOutput.none');

@@ -9,6 +9,7 @@ import {
     isSessionListRenderableWarmCacheProgressOnlyChange,
     preserveSessionListRenderableStaleFields,
     preserveSessionListRenderableTransientState,
+    readSessionListRenderableSourceMetadata,
 } from './sessionListRenderable';
 import { resolveSessionReadStateAction } from '../readState/sessionReadState';
 import { buildSessionListRenderableMetadataComparison } from './sessionListRenderableMetadataComparison';
@@ -75,6 +76,18 @@ function buildRenderable(
 }
 
 describe('derivePendingRequestFlagsFromAgentState', () => {
+    it('reads forward shared Bot metadata without admitting owner facts or malformed known markers', () => {
+        const session = {
+            metadataLayoutVersion: 1,
+            accessLevel: 'view',
+            access: createSessionAccessFixture('view'),
+            metadata: { v: 1, bot: { kind: 'bot', futureMarkerField: true }, futureSharedField: true },
+        } as unknown as Pick<Session, 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'accessLevel' | 'access'>;
+        expect(readSessionListRenderableSourceMetadata(session)).toEqual({ v: 1, bot: { kind: 'bot' } });
+        expect(readSessionListRenderableSourceMetadata({ ...session,
+            metadata: { v: 1, bot: { kind: 'ordinary' } } as unknown as Session['metadata'],
+        })).toBeNull();
+    });
     it('reuses a shared empty flags object when there are no requests', () => {
         const first = derivePendingRequestFlagsFromAgentState(null);
         const second = derivePendingRequestFlagsFromAgentState(undefined);

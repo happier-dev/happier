@@ -10,7 +10,7 @@ import type {
     ServerAccountRequestAuthority,
 } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 
-import { createHostedSystemSessionEnsurer } from './hostedSystemSession';
+import { createHostedSystemSessionEnsurer, createSessionCreateOrLoad, type SessionCreateOrLoadInput } from './hostedSystemSession';
 
 const SERVER_BASIS = Object.freeze({ serverId: 'server-a', generation: 41 });
 const ACCOUNT_A_AUTHORITY = {
@@ -91,6 +91,25 @@ function createEncryptionFixture() {
 }
 
 describe('createHostedSystemSessionEnsurer', () => {
+    it('returns the server-selected row and refuses stale requester preparation', async () => {
+        let current = true;
+        const input = {
+            credentials: { token: 'requester-token' }, accountMode: 'plain', encryption: null,
+            tag: 'action:requester-creation', metadata: {},
+            randomBytes: (length: number) => new Uint8Array(length),
+            assertCurrent: () => { if (!current) throw new Error('scope_changed'); },
+            request: async () => sessionResponse({ id: 'returned-session', metadata: '{}',
+                ownerMetadata: plainOwnerEnvelope({ name: 'Retained row' }), encryptionMode: 'plain',
+                dataEncryptionKey: null, created: false }),
+        } satisfies SessionCreateOrLoadInput;
+        const result = await createSessionCreateOrLoad(input);
+        expect(result).toMatchObject({ disposition: 'rejoined', session: { id: 'returned-session',
+            ownerMetadata: plainOwnerEnvelope({ name: 'Retained row' }), dataEncryptionKey: null } });
+        await expect(createSessionCreateOrLoad({ ...input, request: async () => {
+            current = false;
+            return input.request();
+        } })).rejects.toThrow('scope_changed');
+    });
     it('binds create/load dispatch to the captured account credential and server generation', async () => {
         const credentials = createDataKeyCredentials('account-a-token');
         const request = vi.fn(async (...args: unknown[]) => {
@@ -549,7 +568,7 @@ describe('createHostedSystemSessionEnsurer', () => {
             metadata: {
                 systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
             },
-        })).rejects.toThrow('Invalid hosted system session create/load response');
+        })).rejects.toThrow('Invalid Session create/load response');
         expect(hydrate).not.toHaveBeenCalled();
     });
 });

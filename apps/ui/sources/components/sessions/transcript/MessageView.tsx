@@ -1,5 +1,7 @@
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import * as React from "react";
+import { useShallow } from 'zustand/react/shallow';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import { View, Pressable, Platform } from 'react-native';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -70,7 +72,10 @@ import {
   useTranscriptSessionCommon,
 } from '@/components/sessions/transcript/transcriptSessionCommon';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
-import { useSessionDisplayNameSource } from '@/sync/domains/state/storage';
+import { getStorage, useSessionDisplayNameSource } from '@/sync/domains/state/storage';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -205,6 +210,70 @@ function SessionMessageProvenanceAttribution(props: Readonly<{
   );
 }
 
+type WorkflowMessageProvenanceProps = Readonly<{
+  messageId: string;
+  runId: string;
+  invocationRecordId: string;
+  /** The step's visible number, stamped on the provenance by the host that ran it. */
+  stepOrdinal?: string;
+  serverId?: string | null;
+}>;
+
+function AppWorkflowMessageProvenanceAttribution(props: WorkflowMessageProvenanceProps) {
+  const transcriptSource = useSessionTranscriptSource();
+  const { theme } = useUnistyles();
+  const serverId = props.serverId ?? transcriptSource.serverId;
+  // The transcript owner batches missing facts. Each chip reads only its exact title and authored
+  // ordinal; unrelated Runs/invocations never repaint the message. A host-stamped number wins.
+  const display = getStorage()(useShallow((state) => {
+    const inScope = !serverId || Boolean(state.profileScope
+      && areServerProfileIdentifiersEquivalent(state.profileScope.serverId, serverId));
+    const run = inScope ? state.workflowRunsById[props.runId] : undefined;
+    return {
+      inScope,
+      title: run?.metadata?.kind === 'available' ? run.metadata.value.title : null,
+      stepOrdinal: props.stepOrdinal ?? (inScope
+        ? state.workflowRunInvocationsByRunId[props.runId]?.factsById[props.invocationRecordId]?.stepOrdinal : undefined),
+    };
+  }));
+  const source = display.title ?? t('message.provenanceWorkflow');
+  const label = display.stepOrdinal === undefined
+    ? t('message.provenanceFrom', { source })
+    : t('sessionWork.scheduled.provenanceWorkflowStep', { source, step: display.stepOrdinal });
+  const testID = `transcript-provenance-attribution:${props.messageId}`;
+  if (!display.inScope || transcriptSource.navigate === null) {
+    return <MessageProvenanceAttributionLabel testID={testID} label={label} />;
+  }
+  return (
+    <View style={styles.workflowProvenanceRow}>
+      <HappierPressable
+        testID={testID}
+        accessibilityRole="link"
+        accessibilityLabel={label}
+        onPress={() => transcriptSource.navigate?.(createWorkflowInvocationRoute(props.runId, props.invocationRecordId))}
+        style={({ pressed, focused }) => [
+          styles.workflowProvenanceChip,
+          pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+          focusRingStyle({ focused, color: theme.colors.border.focus }),
+        ]}
+      >
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.workflowProvenanceText}>{label}</Text>
+      </HappierPressable>
+    </View>
+  );
+}
+
+function WorkflowMessageProvenanceAttribution(props: WorkflowMessageProvenanceProps) {
+  const source = useSessionTranscriptSource();
+  // Static/public transcripts never subscribe to private Account Run content.
+  return source.kind === 'app'
+    ? <AppWorkflowMessageProvenanceAttribution {...props} />
+    : <MessageProvenanceAttributionLabel
+      testID={`transcript-provenance-attribution:${props.messageId}`}
+      label={t('message.provenanceFrom', { source: t('message.provenanceWorkflow') })}
+    />;
+}
+
 function MessageProvenanceAttribution(props: Readonly<{ message: Message; serverId?: string | null }>) {
   const provenance = React.useMemo(() => props.message.kind === 'user-text'
     ? readSessionMessageProvenance(props.message.meta)
@@ -212,6 +281,15 @@ function MessageProvenanceAttribution(props: Readonly<{ message: Message; server
   // Authenticated Account actors and descriptive producer provenance are
   // independent: producer metadata never invents or suppresses a human actor.
   if (!provenance || provenance.kind === 'host') return null;
+  if (provenance.kind === 'workflow_invocation') {
+    return <WorkflowMessageProvenanceAttribution
+      messageId={props.message.id}
+      runId={provenance.runId}
+      invocationRecordId={provenance.invocationRecordId}
+      {...(provenance.stepOrdinal === undefined ? {} : { stepOrdinal: provenance.stepOrdinal })}
+      serverId={props.serverId}
+    />;
+  }
   if (provenance.kind === 'happierSession') {
     return (
       <SessionMessageProvenanceAttribution
@@ -1560,6 +1638,28 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: 4,
     color: theme.colors.text.secondary,
     textAlign: 'right',
+  },
+  workflowProvenanceRow: {
+    alignSelf: 'stretch',
+    alignItems: 'flex-end',
+    paddingHorizontal: 16,
+    marginBottom: 4,
+  },
+  workflowProvenanceChip: {
+    maxWidth: '100%',
+    minWidth: 0,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.border.default,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface.inset,
+  },
+  workflowProvenanceText: {
+    ...Typography.rowMeta(),
+    flexShrink: 1,
+    color: theme.colors.text.secondary,
   },
   userMessageContainer: {
     maxWidth: '100%',

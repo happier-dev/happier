@@ -4,13 +4,12 @@ import type { FindController } from '@happier-dev/plugin-ui/presentation';
 import { resolveHistoricalAgentIdAtSeq, type Message } from '@happier-dev/session-core/messages';
 
 import { FindBar } from '@/components/ui/find/FindBar';
-import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
+import { FindBarPlacement, useFindBarPresentation } from '@/components/ui/find/FindBarPlacement';
+import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { ChatFindSeedHost } from '@/components/appShell/panes/fileFindSeedHost';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
-import { readDocumentFocusReturnTarget, restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { t } from '@/text';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 import { useReviewRunsComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
@@ -46,7 +45,7 @@ export function TranscriptFindSurface(props: Props) {
     const eligible = usePluginSurfaceFocusEligibility() && props.focused;
     const input = React.useRef<TextInput | null>(null);
     const [inputFocused, setInputFocused] = React.useState(false);
-    const returnFocus = React.useRef<FocusReturnTarget>(null);
+    const focusReturn = useFindSurfaceFocusReturn();
     const containsFocus = () => {
         if (!eligible) return false;
         if (Platform.OS !== 'web') return true;
@@ -61,8 +60,7 @@ export function TranscriptFindSurface(props: Props) {
     };
     const close = () => {
         model.close(); setInputFocused(false);
-        restoreFocusToBestTarget(returnFocus);
-        returnFocus.current = null;
+        focusReturn.restore();
     };
     const controller: FindController = {
         get query() { return model.query; }, get options() { return model.options; },
@@ -70,13 +68,7 @@ export function TranscriptFindSurface(props: Props) {
         setQuery: model.setQuery, setOptions: model.setOptions, step: model.step, stop: model.stop, close,
     };
     const openFind = () => {
-        if (!model.getSnapshot().open) {
-            if (Platform.OS === 'web' && typeof document !== 'undefined') {
-                returnFocus.current = readDocumentFocusReturnTarget(document);
-            } else {
-                returnFocus.current = TextInput.State.currentlyFocusedInput();
-            }
-        }
+        focusReturn.capture(model.getSnapshot().open);
         model.open(); input.current?.focus();
     };
     useFindSurfaceRegistration({
@@ -197,13 +189,12 @@ function TranscriptFindActive(props: Props & Readonly<{
             || reviewRunIds.some((id) => reviewComments.get(id)?.status === 'failed'),
     }), [messages, history, displayContexts, workflowDetails, workflowMessages, reviewRunIds, reviewComments]);
     React.useLayoutEffect(() => { props.publishCorpus(corpus); props.model.refresh(); }, [corpus, props.model, props.publishCorpus]);
-    const deviceType = useDeviceType();
-    const phone = Platform.OS !== 'web' && deviceType === 'phone';
+    const phone = useFindBarPresentation() === 'keyboardSeated';
     const coverage = snapshot.status.kind === 'results' ? snapshot.status.coverage : null;
-    const bar = <View style={{ maxWidth: 560 }}>
+    const bar = <FindBarPlacement>{(presentation) =>
         <FindBar query={snapshot.query} options={snapshot.options} status={snapshot.status}
             capabilities={props.controller.capabilities} surfaceLabel={t('find.surface.chat')}
-            presentation={phone ? 'keyboardSeated' : 'inline'} autoFocus inputRef={props.inputRef}
+            presentation={presentation} autoFocus inputRef={props.inputRef}
             onInputFocus={props.onInputFocus} onInputBlur={props.onInputBlur}
             onQueryChange={props.controller.setQuery} onOptionsChange={props.controller.setOptions}
             onStep={props.controller.step} onStop={props.controller.stop} onClose={props.controller.close}
@@ -219,7 +210,7 @@ function TranscriptFindActive(props: Props & Readonly<{
                     action: { label: t('transcriptFind.searchOlder'), onPress: props.model.searchOlder, testID: 'transcript-find-search-older' },
                 }
                 : coverage === 'olderRemaining' ? { icon: 'history', text: t('transcriptFind.olderRemaining') } : undefined} />
-    </View>;
+    }</FindBarPlacement>;
     return <>
         {workflowMessages.map((message) => <WorkflowFindObservation key={message.id} message={message}
             source={props.source} metadata={metadata} publish={publishWorkflow} />)}
@@ -227,8 +218,6 @@ function TranscriptFindActive(props: Props & Readonly<{
         {phone ? null : <TranscriptFindRuler model={props.model} measureMessage={props.measureMessage}
             contentHeight={props.contentHeight}
             olderRemaining={history.hasOlder && snapshot.query !== '' && snapshot.status.kind !== 'invalidPattern'} />}
-        {phone ? <ComposerKeyboardFloatingInset baseBottom={8} style={{ position: 'absolute', left: 8, right: 8 }}>
-            {bar}</ComposerKeyboardFloatingInset> : <View pointerEvents="box-none"
-                style={{ position: 'absolute', top: 10, right: 14, left: 14, alignItems: 'flex-end' }}>{bar}</View>}
+        {bar}
     </>;
 }

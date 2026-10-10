@@ -4,7 +4,8 @@ import { createReadOnlySessionTranscriptSource } from '@/components/sessions/tra
 
 const DEMO_SESSION_ID = 'demo-messages-session';
 
-type DemoMessagesOptions = Pick<Parameters<typeof createReadOnlySessionTranscriptSource>[0], 'interaction' | 'actions'>;
+type DemoMessagesInput = Parameters<typeof createReadOnlySessionTranscriptSource>[0];
+type DemoMessagesOptions = Pick<DemoMessagesInput, 'interaction' | 'actions'> & Partial<Pick<DemoMessagesInput, 'metadata'>>;
 
 export function useDemoMessages(messages: readonly Message[], options?: DemoMessagesOptions) {
     const orderedMessages = useMemo(() => [...messages].sort(compareTranscriptMessagesOldestFirst), [messages]);
@@ -13,9 +14,9 @@ export function useDemoMessages(messages: readonly Message[], options?: DemoMess
         // These rows are already materialized, so no normalization/reducer
         // provenance exists. Route lookup uses the dataset's message identities.
         reducerState: null,
-        metadata: null,
+        metadata: options?.metadata ?? null,
         agentState: null,
-    }), [orderedMessages]);
+    }), [orderedMessages, options?.metadata]);
     // Demo rows are already materialized, including tool children; keep them intact.
     const [source] = useState(() => createReadOnlySessionTranscriptSource({
         sessionId: DEMO_SESSION_ID,

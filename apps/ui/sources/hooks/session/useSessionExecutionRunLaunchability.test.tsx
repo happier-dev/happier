@@ -165,7 +165,7 @@ describe('useSessionExecutionRunLaunchability', () => {
 
         expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-explicit');
 
-        sessionState.value = { ...sessionState.value, serverId: 'server-updated' };
+        sessionState.value = createSessionFixture({ ...sessionState.value, serverId: 'server-updated' });
         await hook.rerender(sessionState.value);
 
         expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-updated');

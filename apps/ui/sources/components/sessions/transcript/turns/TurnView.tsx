@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { Message } from "@happier-dev/session-core/messages";
+import type { SessionForkVisualContextV1 } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { TranscriptOriginSourceProvider, useTranscriptMessage } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
@@ -25,6 +26,7 @@ import {
 type TranscriptItemOriginLookup = (messageId: string) => {
     sessionId: string;
     isReadOnlyContext: boolean;
+    visualContext?: SessionForkVisualContextV1;
 } | null;
 
 const TurnMessageRow = React.memo(function TurnMessageRow(props: {
@@ -113,7 +115,7 @@ const TurnMessageRow = React.memo(function TurnMessageRow(props: {
         <View testID={`${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${message.id}`}>
             <View testID={`transcript-message-${message.id}`}>
                 <TranscriptEnterWrapper id={message.id} createdAt={message.createdAt}>
-                    <TranscriptOriginSourceProvider originSessionId={effectiveSessionId} readOnly={origin?.isReadOnlyContext === true}>
+                    <TranscriptOriginSourceProvider originSessionId={effectiveSessionId} readOnly={origin?.isReadOnlyContext === true} visualContext={origin?.visualContext}>
                         {messageView}
                     </TranscriptOriginSourceProvider>
                 </TranscriptEnterWrapper>
@@ -220,7 +222,7 @@ export const TurnViewWithSessionCommon = React.memo((props: TurnViewProps & Tran
                 const origin = props.getMessageOrigin?.(c.toolMessageIds[0] ?? '') ?? null;
                 const interaction = deriveReadOnlyTranscriptInteraction(props.interaction, origin?.isReadOnlyContext === true);
                 return (
-                    <TranscriptOriginSourceProvider key={c.id} originSessionId={origin?.sessionId} readOnly={origin?.isReadOnlyContext === true}>
+                    <TranscriptOriginSourceProvider key={c.id} originSessionId={origin?.sessionId} readOnly={origin?.isReadOnlyContext === true} visualContext={origin?.visualContext}>
                     <ToolCallsGroupRowWithSessionCommon
                         sessionId={props.sessionId}
                         toolCallsGroupId={c.id}

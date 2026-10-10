@@ -61,7 +61,7 @@ function getFunctionIdentity(fn: Function): number {
 
 function buildProjectHeaderActionCacheKey(input: Readonly<{
     headerViewState: Extract<SessionListHeaderViewState, { kind: 'project' }>;
-    onOpenProject: (workspaceRefId: string) => void;
+    onOpenProject: (workspaceRefId: string, serverId?: string) => void;
     onCreateSessionFromWorkspaceScope: CreateSessionFromWorkspaceScopeHandler;
     onRenameWorkspace: (params: Readonly<{
         legacyWorkspaceKey: string;
@@ -110,7 +110,7 @@ function buildSectionHeaderActionCacheKey(input: Readonly<{
 
 export function resolveSessionListHeaderActionHandlers(input: Readonly<{
     headerViewState: SessionListHeaderViewState | null;
-    onOpenProject: (workspaceRefId: string) => void;
+    onOpenProject: (workspaceRefId: string, serverId?: string) => void;
     onCreateSessionFromWorkspaceScope: CreateSessionFromWorkspaceScopeHandler;
     onRenameWorkspace: (params: Readonly<{
         legacyWorkspaceKey: string;
@@ -157,7 +157,7 @@ export function resolveSessionListHeaderActionHandlers(input: Readonly<{
                 if (!headerViewState.workspaceRefId) {
                     return;
                 }
-                input.onOpenProject(headerViewState.workspaceRefId);
+                input.onOpenProject(headerViewState.workspaceRefId, headerViewState.scopeHint?.serverId);
             },
             onCreateSession: () => {
                 if (!headerViewState.newSessionTarget) {

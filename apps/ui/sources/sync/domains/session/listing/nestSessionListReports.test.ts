@@ -26,6 +26,24 @@ function shape(items: SessionListIndexItem[]) {
 }
 
 describe('nestSessionListReports', () => {
+    it('projects Bot child disclosure from the admitted parent marker and clears it after demotion', () => {
+        const resolve = rows({ bot: null, worker: 'bot', ordinary: null, other: 'ordinary' });
+        const items = [session('bot'), session('worker'), session('ordinary'), session('other')];
+        const nested = nestSessionListReports(items, (serverId, sessionId) => {
+            const row = resolve(serverId, sessionId);
+            return row && sessionId === 'bot' ? { ...row, metadata: { path: '', bot: { kind: 'bot' } } } : row;
+        });
+        expect(nested[0]).toMatchObject({ sessionId: 'bot', reportsParent: true, reportsDefaultCollapsed: true });
+        expect(nested[2]).toMatchObject({ sessionId: 'ordinary', reportsParent: true });
+        expect(nested[2]).not.toHaveProperty('reportsDefaultCollapsed');
+        expect(nested[1]).not.toHaveProperty('reportsParent');
+        expect(shape(nested)).toEqual(['bot:0', 'worker:1', 'ordinary:0', 'other:1']);
+        expect(nestSessionListReports(nested, resolve)[0]).not.toHaveProperty('reportsDefaultCollapsed');
+        // A lead whose reports were detached is no longer a disclosure.
+        expect(nestSessionListReports(nested, rows({ bot: null, worker: null, ordinary: null, other: null }))[0])
+            .not.toHaveProperty('reportsParent');
+    });
+
     it('draws each report under its lead in the same group, one level deeper, reports of reports deeper still', () => {
         const items = [header('g1'), session('ledger'), session('lead'), session('solo'), session('api'), session('checkout')];
         const nested = nestSessionListReports(items, rows({

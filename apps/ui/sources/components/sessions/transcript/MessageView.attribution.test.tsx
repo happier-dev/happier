@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { createSessionFixture, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { UserTextMessage } from "@happier-dev/session-core/messages";
@@ -8,8 +9,19 @@ import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionMessageProvenance } from '@happier-dev/protocol';
+import { createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
+import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { createReadOnlySessionTranscriptSource } from './source/readOnlySessionTranscriptSource';
+import { SessionTranscriptSourceProvider } from './source/SessionTranscriptSourceContext';
 
-installMessageViewCommonModuleMocks();
+const attributionBoundaries = vi.hoisted(() => ({ push: vi.fn(), transcriptCommits: vi.fn() }));
+installMessageViewCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ router: { push: attributionBoundaries.push } }).module;
+    },
+});
 const { MessageView, MessageViewWithSessionCommon } = await import('./MessageView');
 const { AppSessionTranscriptSourceProvider } = await import('./source/appSessionTranscriptSource');
 
@@ -17,7 +29,7 @@ const { AppSessionTranscriptSourceProvider } = await import('./source/appSession
 function renderScreen(element: React.ReactElement<{ sessionId: string; serverId?: string | null }>) {
     return renderBareScreen(
         <AppSessionTranscriptSourceProvider sessionId={element.props.sessionId} serverId={element.props.serverId}>
-            {element}
+            <React.Profiler id="message-attribution" onRender={attributionBoundaries.transcriptCommits}>{element}</React.Profiler>
         </AppSessionTranscriptSourceProvider>,
     );
 }
@@ -25,9 +37,129 @@ function renderScreen(element: React.ReactElement<{ sessionId: string; serverId?
 afterEach(() => {
     standardCleanup();
     storage.setState(storage.getInitialState(), true);
+    attributionBoundaries.push.mockClear();
+    attributionBoundaries.transcriptCommits.mockClear();
 });
 
 describe('MessageView Account attribution', () => {
+    it('opens the producing workflow step and scopes live attribution to that exact run and invocation', async () => {
+        const run = createWorkflowRunSummaryFixture({ id: 'run-a' });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, { kind: 'available', value: { title: 'Daily digest' } })]);
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'invocation-a', runId: run.id, parentRecordId: 'root', memberOrdinal: '2', sequence: '87' });
+        storage.getState().upsertWorkflowRunInvocation({ runId: run.id, invocation, parentRevision: run.revision });
+        const screen = await renderScreen(
+            <MessageViewWithSessionCommon
+                sessionId="session-b" metadata={null}
+                message={{ kind: 'user-text', id: 'workflow-message', localId: null, createdAt: 1, text: 'Summarize today',
+                    meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: run.id, invocationRecordId: invocation.id, stepOrdinal: '3' } } }}
+                forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
+                messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+            />,
+        );
+        const chip = 'transcript-provenance-attribution:workflow-message';
+        expect(screen.findHostByTestId(chip)?.props.accessibilityLabel).toBe('sessionWork.scheduled.provenanceWorkflowStep(source=Daily digest,step=3)');
+        const chipProps = screen.findHostByTestId(chip)?.props;
+        expect(chipProps?.role ?? chipProps?.accessibilityRole).toBe('link');
+        await screen.pressByTestIdAsync(chip);
+        expect(attributionBoundaries.push).toHaveBeenCalledWith(createWorkflowInvocationRoute(run.id, invocation.id));
+
+        attributionBoundaries.transcriptCommits.mockClear();
+        await act(async () => {
+            storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'other-run' }), { kind: 'available', value: { title: 'Other work' } })]);
+            storage.getState().upsertWorkflowRunInvocation({ runId: run.id,
+                invocation: createWorkflowInvocationIndexFixture({ id: 'other-step', runId: run.id, memberOrdinal: '8' }), parentRevision: 1 });
+        });
+        expect(attributionBoundaries.transcriptCommits).toHaveBeenCalledTimes(0);
+        await act(async () => storage.getState().upsertWorkflowRuns([
+            workflowRunRowFromSummary({ ...run, revision: 2 }, { kind: 'available', value: { title: 'Renamed digest' } }),
+        ]));
+        expect(storage.getState().workflowRunsById[run.id]?.metadata).toEqual({ kind: 'available', value: { title: 'Renamed digest' } });
+        expect(screen.findHostByTestId(chip)?.props.accessibilityLabel).toBe('sessionWork.scheduled.provenanceWorkflowStep(source=Renamed digest,step=3)');
+        expect(attributionBoundaries.transcriptCommits).toHaveBeenCalledTimes(1);
+        await act(async () => storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary({ ...run, revision: 3 })]));
+        expect(screen.findHostByTestId(chip)?.props.accessibilityLabel).toBe('sessionWork.scheduled.provenanceWorkflowStep(source=Renamed digest,step=3)');
+    });
+
+    it('hydrates an unstamped step without changing the message and honors a navigation-free transcript', async () => {
+        const run = createWorkflowRunSummaryFixture({ id: 'run-a' });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, { kind: 'available', value: { title: 'Daily digest' } })]);
+        const screen = await renderBareScreen(
+            <AppSessionTranscriptSourceProvider sessionId="session-b" navigation="none">
+                <MessageViewWithSessionCommon
+                    sessionId="session-b" metadata={null}
+                    message={{ kind: 'user-text', id: 'workflow-without-step', localId: null, createdAt: 1, text: 'Summarize today',
+                        meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: run.id, invocationRecordId: 'invocation-a' } } }}
+                    forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
+                    messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
+                    toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                />
+            </AppSessionTranscriptSourceProvider>,
+        );
+        const attribution = screen.findHostByTestId('transcript-provenance-attribution:workflow-without-step');
+        expect(attribution?.props.accessibilityLabel).toBe('message.provenanceFrom(source=Daily digest)');
+        expect(attribution?.props.accessibilityRole).toBe('text');
+        expect(attribution?.props.onPress).toBeUndefined();
+        await act(async () => storage.getState().upsertWorkflowRunInvocation({ runId: run.id,
+            invocation: { ...createWorkflowInvocationIndexFixture({ id: 'invocation-a', runId: run.id, memberOrdinal: '8', sequence: '87' }), stepOrdinal: '3' },
+            parentRevision: run.revision }));
+        expect(screen.findHostByTestId('transcript-provenance-attribution:workflow-without-step')?.props.accessibilityLabel)
+            .toBe('sessionWork.scheduled.provenanceWorkflowStep(source=Daily digest,step=3)');
+        expect(screen.findHostByTestId('transcript-provenance-attribution:workflow-without-step')?.props.onPress).toBeUndefined();
+    });
+
+    it('does not disclose a same-id workflow from another transcript Home', async () => {
+        const homeA = await upsertServerProfile({ serverUrl: 'https://workflow-home-a.example.test' });
+        const homeB = await upsertServerProfile({ serverUrl: 'https://workflow-home-b.example.test' });
+        storage.setState({ profileScope: { serverId: homeA.id, accountId: 'viewer-a' } });
+        const run = createWorkflowRunSummaryFixture({ id: 'run-a' });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, { kind: 'available', value: { title: 'Private other Home title' } })]);
+        storage.getState().upsertWorkflowRunInvocation({ runId: run.id,
+            invocation: createWorkflowInvocationIndexFixture({ id: 'invocation-a', runId: run.id, memberOrdinal: '2' }), parentRevision: 1 });
+        const screen = await renderScreen(
+            <MessageViewWithSessionCommon
+                sessionId="session-b" serverId={homeB.id} metadata={null}
+                message={{ kind: 'user-text', id: 'workflow-other-home', localId: null, createdAt: 1, text: 'Summarize today',
+                    meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: run.id, invocationRecordId: 'invocation-a' } } }}
+                forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
+                messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+            />,
+        );
+        expect(screen.findHostByTestId('transcript-provenance-attribution:workflow-other-home')?.props.accessibilityLabel)
+            .toBe('message.provenanceFrom(source=message.provenanceWorkflow)');
+        expect(screen.findHostByTestId('transcript-provenance-attribution:workflow-other-home')?.props.accessibilityRole).toBe('text');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Private other Home title');
+    });
+
+    it('keeps public transcript provenance independent of private Account run content', async () => {
+        const run = createWorkflowRunSummaryFixture({ id: 'run-a' });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, { kind: 'available', value: { title: 'Private workflow title' } })]);
+        const message: UserTextMessage = { kind: 'user-text', id: 'public-workflow-message', localId: null, createdAt: 1, text: 'Summarize today',
+            meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: run.id, invocationRecordId: 'invocation-a' } } };
+        const source = createReadOnlySessionTranscriptSource({ sessionId: 'public-session', messages: [message], metadata: null, agentState: null, reducerState: null });
+        const screen = await renderBareScreen(
+            <SessionTranscriptSourceProvider source={source}>
+                <React.Profiler id="public-message-attribution" onRender={attributionBoundaries.transcriptCommits}>
+                    <MessageViewWithSessionCommon
+                        sessionId="public-session" metadata={null} message={message}
+                        forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
+                        messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
+                        toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                    />
+                </React.Profiler>
+            </SessionTranscriptSourceProvider>,
+        );
+        expect(screen.findHostByTestId('transcript-provenance-attribution:public-workflow-message')?.props.accessibilityLabel)
+            .toBe('message.provenanceFrom(source=message.provenanceWorkflow)');
+        attributionBoundaries.transcriptCommits.mockClear();
+        await act(async () => storage.getState().upsertWorkflowRuns([
+            workflowRunRowFromSummary({ ...run, revision: 2 }, { kind: 'available', value: { title: 'Changed private title' } }),
+        ]));
+        expect(attributionBoundaries.transcriptCommits).toHaveBeenCalledTimes(0);
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('private title');
+    });
+
     it.each([
         [{ v: 1, kind: 'happierSession', sourceSessionId: 'session-source-a', via: 'mcp' }, 'message.provenanceFrom(source=Lead A)'],
         [{ v: 1, kind: 'pluginSession', pluginId: 'acme.preview', contributionLocalId: 'inbound', surface: 'unspecified' }, 'message.pluginAttribution(pluginId=acme.preview)'],

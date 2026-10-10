@@ -64,6 +64,8 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
         | { ok: true; message: string }
         | { ok: false; error: string }
     >;
+    onCancelCommitMessageSuggestion?: () => Promise<unknown>;
+    suggestionContextKey?: string;
     /** The Changes view is the one showing (its sub-tab is active); leaving it retires a fold line. */
     active?: boolean;
     onOpenFilesSidebar: (revealPath?: string) => void;
@@ -432,6 +434,8 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             onCommitFromMessage={onCommitFromMessage}
             commitMessageGeneratorEnabled={props.commitMessageGeneratorEnabled}
             onGenerateCommitMessageSuggestion={props.onGenerateCommitMessageSuggestion}
+            onCancelCommitMessageSuggestion={props.onCancelCommitMessageSuggestion}
+            suggestionContextKey={props.suggestionContextKey}
             onClearSelection={commitSelectionUiEnabled && repositorySelectedCount > 0 ? bulkSelectNone : undefined}
             commitSelectionAvailable={false}
             selectionModeActive={selectionModeActive}

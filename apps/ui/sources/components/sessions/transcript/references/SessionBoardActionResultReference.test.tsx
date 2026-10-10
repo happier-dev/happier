@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -340,7 +341,7 @@ async function renderRow(
         ? <AppShellPluginUiProjectionValueProvider value={{
             pluginUiProjection: normalizePluginUiProjection(harness.daemonProjection), pluginBrowserProjection: null,
             phase: 'current', interactionEnabled: true, serverId: harness.serverId, machineId: 'machine-a', platform: 'web',
-            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
+            accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
         }}>{row}</AppShellPluginUiProjectionValueProvider> : row);
     return { screen, readScopeState: () => scopeState };
 }

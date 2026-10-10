@@ -6,7 +6,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import type { ChatFooterExternalControlState } from './ChatFooter';
-import type { PendingMessageEditRequest } from '@/components/sessions/pending/PendingMessagesTranscriptBlock';
+import type { PendingMessageEditHandler } from '@/components/sessions/pending/PendingMessagesTranscriptBlock';
 import type { TranscriptNavigationEntry } from '@/components/sessions/transcript/navigation/transcriptNavigationTypes';
 import type { TranscriptJumpResult } from '@/components/sessions/transcript/viewport/jump/transcriptJumpTargetTypes';
 import type { TranscriptRowShellItem } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
@@ -79,7 +79,7 @@ export type ChatListProps = Readonly<{
     followBottomIntentKey?: string | number | null;
     onJumpLanded?: (result: Extract<TranscriptJumpResult, { status: 'scrolled' | 'window-rendered' }>) => void;
     onViewportChange?: (state: TranscriptViewportChangeState) => void;
-    onEditPendingMessage?: (request: PendingMessageEditRequest) => void | Promise<void>;
+    onEditPendingMessage?: PendingMessageEditHandler;
     isWarmKeepAliveInstance?: boolean;
     routeHydrationPending?: boolean;
 }>;
@@ -120,7 +120,7 @@ export type ChatListInternalProps = Readonly<{
     followBottomIntentKey?: string | number | null;
     onJumpLanded?: (result: Extract<TranscriptJumpResult, { status: 'scrolled' | 'window-rendered' }>) => void;
     onViewportChange?: (state: TranscriptViewportChangeState) => void;
-    onEditPendingMessage?: (request: PendingMessageEditRequest) => void | Promise<void>;
+    onEditPendingMessage?: PendingMessageEditHandler;
     onDismissExternalSessionOperation: (actionRef: ExternalSessionOperationActionRef) => void;
     /** Renderer-local activity dismissal; it never mutates the plugin Resource. */
     onDismissPluginTranscriptActivity: (identityKey: string) => void;

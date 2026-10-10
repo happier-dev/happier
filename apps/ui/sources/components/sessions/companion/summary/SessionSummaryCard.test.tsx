@@ -231,7 +231,7 @@ describe('SessionSummaryCard (the Companion hero)', () => {
             .toBe('sessionCompanion.ask.answerWhenBack(machine=MacBook Pro)');
     });
 
-    it('opens each fact and each remaining row at its existing owner, with a compact overflow', async () => {
+    it('opens each fact and the dedicated Recap row at its existing owner in a compact card', async () => {
         const openWorkTab = vi.fn();
         const openGit = vi.fn();
         const openApprovals = vi.fn();
@@ -240,6 +240,7 @@ describe('SessionSummaryCard (the Companion hero)', () => {
             <SessionSummaryCard
                 model={model({
                     rows: [
+                        { kind: 'work', label: 'Testing the next change', status: null, destination: 'work' },
                         { kind: 'approvals', count: 1, destination: 'approvals' },
                         { kind: 'workflow', runCount: 2, destination: 'workTab' },
                         { kind: 'recap', text: 'Wrapped up the resize test', source: 'synopsis', destination: 'workTab' },
@@ -264,9 +265,34 @@ describe('SessionSummaryCard (the Companion hero)', () => {
         expect(openApprovals).toHaveBeenCalledTimes(1);
         // A fact with no handler is quiet text, never a dead button.
         expect(screen.findByTestId('session-companion-summary-fact-context')?.props.onPress).toBeUndefined();
-        // Recap became the status line's "what", not a row.
-        expect(screen.findByTestId('session-companion-summary-row-recap')).toBeNull();
+        expect(screen.findByTestId('session-companion-summary-what')?.props.children).toBe('Testing the next change');
+        const recap = screen.findByTestId('session-companion-summary-row-recap');
+        expect(recap).not.toBeNull();
+        expect(recap?.props.accessibilityLabel).toContain('sessionCompanion.recap.title');
+        expect(recap?.props.accessibilityLabel).toContain('Wrapped up the resize test');
+        screen.pressByTestId('session-companion-summary-row-recap');
+        expect(openWorkTab).toHaveBeenCalledTimes(2);
         expect(screen.findByTestId('session-companion-summary-more')).toBeNull();
+    });
+
+    it('keeps Recap navigable in a compact widget without repeating it in the status line', async () => {
+        const openWorkTab = vi.fn();
+        const screen = await renderScreen(
+            <WidgetPresentationProvider value={{ size: 'small', footprint: {
+                columns: 2, columnSpan: 1, rowSpan: 1, width: 'half', height: 'compact',
+            } }}>
+                <SessionSummaryCard
+                    model={model({ rows: [{ kind: 'recap', text: 'Runbook published', source: 'worker_update', destination: 'workTab' }] })}
+                    density="compact"
+                    destinations={{ workTab: openWorkTab }}
+                    onOpenFullSurface={() => undefined}
+                />
+            </WidgetPresentationProvider>,
+        );
+        expect(screen.findByTestId('session-companion-summary-row-recap')).not.toBeNull();
+        expect(screen.findByTestId('session-companion-summary-what')).toBeNull();
+        screen.pressByTestId('session-companion-summary-row-recap');
+        expect(openWorkTab).toHaveBeenCalledOnce();
     });
 
     it('mirrors every directional disclosure caret in RTL', async () => {

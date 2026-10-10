@@ -30,17 +30,8 @@ vi.mock('react-native-worklets', () => ({
 }));
 
 vi.mock('react-native-reanimated', async () => {
-    const { useRef } = await import('react');
-    return ({
-    Easing: {
-        bezier: () => () => 0,
-        linear: () => 0,
-    },
-    useSharedValue: (initial: unknown) => useRef({ value: initial }).current,
-    useAnimatedStyle: (fn: any) => fn(),
-    withSpring: (value: any) => value,
-    withTiming: (value: any) => value,
-    });
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
 });
 
 type MockGesture = Readonly<{

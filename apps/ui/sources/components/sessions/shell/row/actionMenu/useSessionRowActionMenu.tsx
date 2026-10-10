@@ -13,6 +13,14 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_RAIL_PIN_ID,
+    SESSION_ACTION_RAIL_UNPIN_ID,
+    SESSION_ACTION_WORK_OPEN_ID,
+    SESSION_ACTION_TALK_ID,
+    SESSION_ACTION_MAKE_BOT_ID,
+    SESSION_ACTION_MAKE_REGULAR_ID,
+    SESSION_ACTION_TOOL_CALLS_TOGGLE_ID,
+    SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
     SESSION_ACTION_UNARCHIVE_ID,
@@ -33,6 +41,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { sessionClearAttentionReminderWithServerScope, sessionSetAttentionReminderWithServerScope } from '@/sync/ops/sessionOrganization';
 import { buildSessionTagsMenuContent } from '@/components/sessions/organization/SessionTagsMenuContent';
 import {
+    SESSION_ROW_ACTION_OPEN_ID,
     SESSION_ROW_ACTION_SELECT_ID,
     type SessionRowActionMenuState,
 } from './sessionRowActionMenuTypes';
@@ -58,6 +67,14 @@ function resolveActionIdFromMenuItemId(itemId: string): SessionActionId | null {
         case SESSION_ACTION_UNPIN_ID:
         case SESSION_ACTION_EDIT_TAGS_ID:
         case SESSION_ACTION_PUT_UNDER_ID:
+        case SESSION_ACTION_RAIL_PIN_ID:
+        case SESSION_ACTION_RAIL_UNPIN_ID:
+        case SESSION_ACTION_WORK_OPEN_ID:
+        case SESSION_ACTION_TALK_ID:
+        case SESSION_ACTION_MAKE_BOT_ID:
+        case SESSION_ACTION_MAKE_REGULAR_ID:
+        case SESSION_ACTION_TOOL_CALLS_TOGGLE_ID:
+        case SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID:
             return itemId;
         default:
             return null;
@@ -109,9 +126,10 @@ export function useSessionRowActionMenu(params: Readonly<{
     onTogglePinned?: (() => void) | null;
     leadingMenuItems?: readonly DropdownMenuItem[];
     onSelectLeadingMenuItem?: (itemId: string) => boolean | Promise<boolean>;
-    folderMoveMenuItems?: readonly DropdownMenuItem[];
+    /** The Bots roster's compact menu instead of the list's; its Open row runs `onOpen`. */
+    surface?: 'rowMenu' | 'botsRoster';
+    onOpen?: () => void;
     onMoveToFolder?: () => void;
-    onSelectFolderMoveMenuItem?: (itemId: string) => void | Promise<void>;
     selectionModeAvailable?: boolean;
     selectionModeActive?: boolean;
     onEnterSelectionMode?: () => void;
@@ -273,6 +291,9 @@ export function useSessionRowActionMenu(params: Readonly<{
                 icon: <Icon name="check-circle" size={16} color={params.iconColor} />,
             }]
             : [];
+        if (params.surface === 'botsRoster') {
+            return buildSessionRowMoreMenuItems({ target, iconColor: params.iconColor, surface: 'botsRoster' });
+        }
         return buildSessionRowMoreMenuItems({
             target,
             iconColor: params.iconColor,
@@ -280,14 +301,12 @@ export function useSessionRowActionMenu(params: Readonly<{
                 ...selectItem,
                 ...(params.leadingMenuItems ?? []),
             ],
-            folderMoveMenuItems: params.folderMoveMenuItems,
             canMoveToFolder: typeof params.onMoveToFolder === 'function',
             reminderPresets,
             reminder: params.reminder,
             reminderNowMs: Date.now(),
         });
     }, [
-        params.folderMoveMenuItems,
         params.iconColor,
         params.isNativeMobile,
         params.leadingMenuItems,
@@ -295,6 +314,7 @@ export function useSessionRowActionMenu(params: Readonly<{
         params.onMoveToFolder,
         params.selectionModeActive,
         params.selectionModeAvailable,
+        params.surface,
         reminderPresets,
         params.reminder,
         target,
@@ -329,6 +349,10 @@ export function useSessionRowActionMenu(params: Readonly<{
             params.onEnterSelectionMode?.();
             return;
         }
+        if (itemId === SESSION_ROW_ACTION_OPEN_ID) {
+            params.onOpen?.();
+            return;
+        }
         if (await params.onSelectLeadingMenuItem?.(itemId)) {
             return;
         }
@@ -338,10 +362,6 @@ export function useSessionRowActionMenu(params: Readonly<{
                 actionId: SESSION_ACTION_MOVE_TO_FOLDER_ID,
                 onMoveToFolder: params.onMoveToFolder,
             });
-            return;
-        }
-        if (itemId === 'session-folder-move-root' || itemId.startsWith('session-folder-move-')) {
-            await params.onSelectFolderMoveMenuItem?.(itemId);
             return;
         }
 
@@ -371,8 +391,16 @@ export function useSessionRowActionMenu(params: Readonly<{
             case SESSION_ACTION_UNARCHIVE_ID:
                 await handleUnarchiveSession();
                 return;
+            case SESSION_ACTION_WORK_OPEN_ID:
+            case SESSION_ACTION_TALK_ID:
             case SESSION_ACTION_PUT_UNDER_ID:
-                await executeSessionAction({ actionId: SESSION_ACTION_PUT_UNDER_ID, target });
+            case SESSION_ACTION_RAIL_PIN_ID:
+            case SESSION_ACTION_RAIL_UNPIN_ID:
+            case SESSION_ACTION_MAKE_BOT_ID:
+            case SESSION_ACTION_MAKE_REGULAR_ID:
+            case SESSION_ACTION_TOOL_CALLS_TOGGLE_ID:
+            case SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID:
+                await executeSessionAction({ actionId, target }).catch(showActionError);
                 return;
             default:
                 return;
@@ -386,10 +414,10 @@ export function useSessionRowActionMenu(params: Readonly<{
         handleUnarchiveSession,
         target,
         params.onEnterSelectionMode,
+        params.onOpen,
         params.onOpenFollowEditor,
         params.onMoveToFolder,
         params.onSelectLeadingMenuItem,
-        params.onSelectFolderMoveMenuItem,
         reminderPresets,
         applyReminderPresetIntent,
     ]);

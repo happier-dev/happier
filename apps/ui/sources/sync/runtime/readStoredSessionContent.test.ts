@@ -3,6 +3,17 @@ import { describe, it, expect } from 'vitest';
 import { readStoredSessionMessage, readStoredSessionRawRecord } from './readStoredSessionContent';
 
 describe('readStoredSessionRawRecord', () => {
+    it('exposes witnessed accepted delivery only from matching plain Session content', async () => {
+        const facts = { v: 1, acceptedAtMs: 1234, delivery: { kind: 'newTurn', turnId: 'turn-1' } } as const;
+        const message = { id: 'accepted-plain', seq: 1, localId: 'input-1', createdAt: 1, updatedAt: 1,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+            deliveryResolution: { v: 1, kind: 'provider_accepted', content: { t: 'plain', v: facts } },
+        } as const;
+        expect((await readStoredSessionMessage({ message, sessionEncryptionMode: 'plain' }))?.acceptedDelivery).toEqual(facts);
+        expect((await readStoredSessionMessage({ message: { ...message, deliveryResolution: {
+            v: 1, kind: 'provider_accepted', content: { t: 'encrypted', c: 'opaque-facts' },
+        } }, sessionEncryptionMode: 'plain' }))?.acceptedDelivery).toBeUndefined();
+    });
     const structuredPresentation = {
         v: 1,
         profile: 'pluginTranscriptV1',

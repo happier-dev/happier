@@ -3,6 +3,8 @@
  */
 
 import { apiSocket } from '../api/session/apiSocket';
+import { Platform } from 'react-native';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode as readSessionRpcErrorCode } from '../runtime/rpcErrors';
@@ -971,6 +973,7 @@ async function sendSessionPermissionResponse(
 ): Promise<void> {
     const request: SessionPermissionRespondRpcParamsV1 = {
         ...params,
+        answeringClientCategory: readAnsweringClientCategory(),
         turnId: resolveSessionPermissionTurnId(sessionId, params.id, params.turnId, options?.serverId),
     };
     await sessionRpcWithPreferredSessionScope<void, SessionPermissionRespondRpcParamsV1>({
@@ -987,6 +990,14 @@ async function sendSessionPermissionResponse(
     storage.getState().clearSessionThinkingGrace(sessionId);
     if (!session || session.thinking !== true) return;
     storage.getState().applySessions([{ ...session, thinking: false, updatedAt: nowServerMs() }]);
+}
+
+function readAnsweringClientCategory(): SessionPermissionRespondRpcParamsV1['answeringClientCategory'] {
+    // Platform evidence describes this executing client, never the Account or
+    // the Session's machine. A desktop browser is still a web client.
+    if (Platform.OS === 'web' && isDesktopHost()) return 'desktop';
+    return Platform.OS === 'ios' || Platform.OS === 'android' || Platform.OS === 'web'
+        ? Platform.OS : undefined;
 }
 
 export async function sessionAllow(
@@ -1057,11 +1068,20 @@ export async function sessionAllowWithAnswers(
         approved: true,
         answers,
     };
-    await sessionRpcWithPreferredSessionScope<void, SessionPermissionRespondRpcParamsV1>({
+    await sessionRespondToUserAction(sessionId, request, options);
+}
+
+/** Shared user-action response effect below canonical Action admission. */
+export async function sessionRespondToUserAction(
+    sessionId: string,
+    params: SessionPermissionRespondRpcParamsV1,
+    options?: Readonly<{ serverId?: string }>,
+): Promise<unknown> {
+    return await sessionRpcWithPreferredSessionScope<unknown, SessionPermissionRespondRpcParamsV1>({
         sessionId,
         ...(options?.serverId !== undefined ? { serverId: options.serverId } : {}),
         method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
-        payload: request,
+        payload: { ...params, answeringClientCategory: readAnsweringClientCategory() },
     });
 }
 
@@ -1374,9 +1394,8 @@ const SESSION_DELETE_FAILURE_CODE_BY_STATUS: Readonly<Record<number, SessionDele
 };
 
 /**
- * Single reader for a failed DELETE response, shared by every transport this module
- * uses (active socket, scoped runtime fetch, server-Account authority) so one status
- * cannot mean different things depending on which one carried the request.
+ * Internal Voice-history cleanup uses its already-bound Account authority.
+ * User-command deletion is admitted by the canonical session.delete Action.
  */
 async function readSessionDeleteFailure(response: Response): Promise<SessionDeleteResult> {
     const error = await response.text().catch(() => '');
@@ -1388,20 +1407,9 @@ async function readSessionDeleteFailure(response: Response): Promise<SessionDele
     };
 }
 
-/**
- * Permanently delete a session from the server
- * This will remove the session and all its associated data (messages, usage reports, access keys)
- * The session should be inactive before deletion
- */
-export async function sessionDelete(sessionId: string): Promise<SessionDeleteResult> {
-    return await sessionDeleteWithServerScope(sessionId, {
-        serverId: resolvePreferredServerIdForSessionId(sessionId) ?? null,
-    });
-}
-
 export async function sessionDeleteWithServerAccountAuthority(
     sessionId: string,
-    authority: ServerAccountRequestAuthority,
+    authority: Pick<ServerAccountRequestAuthority, 'request'>,
 ): Promise<SessionDeleteResult> {
     try {
         const response = await authority.request(
@@ -1418,31 +1426,6 @@ export async function sessionDeleteWithServerAccountAuthority(
             success: false,
             message: error instanceof Error ? error.message : 'Unknown error',
         };
-    }
-}
-
-export async function sessionDeleteWithServerScope(
-    sessionId: string,
-    opts?: Readonly<{ serverId?: string | null }>,
-): Promise<SessionDeleteResult> {
-    const context = await resolveServerAccountRequestContext({ serverId: opts?.serverId ?? null });
-    try {
-        const response = await createServerRequestForResolvedServerScope({
-            context,
-            activeRequest: (path, init) => apiSocket.request(path, init),
-        })(`/v1/sessions/${sessionId}`, { method: 'DELETE' });
-        if (response.ok) {
-            await response.json().catch(() => null);
-            return { success: true };
-        }
-        return await readSessionDeleteFailure(response);
-    } catch (error) {
-        return {
-            success: false,
-            message: error instanceof Error ? error.message : 'Unknown error',
-        };
-    } finally {
-        if (context.scope === 'scoped') await context.release?.();
     }
 }
 

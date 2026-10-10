@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import {
     createSessionPartClaims,
     useSessionPartClaim,
@@ -90,6 +91,7 @@ export function EmbeddedSessionTranscriptPart(props: Readonly<{ testID?: string 
     const parts = useEmbeddedSessionParts();
     const owns = useEmbeddedSessionPartClaim(TRANSCRIPT_PART);
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     if (!parts || !owns) return null;
     return (
         <View
@@ -100,7 +102,7 @@ export function EmbeddedSessionTranscriptPart(props: Readonly<{ testID?: string 
                 minWidth: 0,
                 position: 'relative',
                 overflow: 'hidden',
-                backgroundColor: theme.colors.surface.base,
+                backgroundColor: materialColor(theme.colors.surface.base, 'transparent'),
             }}
         >
             {parts.transcript ? (
@@ -145,6 +147,7 @@ export function EmbeddedSessionComposerPart(props: Readonly<{ testID?: string }>
 
 function EmbeddedSessionComposerFrame(props: Readonly<{ testID: string; children: React.ReactNode }>) {
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const safeArea = useChromeSafeAreaInsets();
     const layout = useComposerKeyboardLayout({ safeAreaBottom: safeArea.bottom });
     const liftStyle = useAnimatedStyle(() => ({ paddingBottom: layout.bottomInset.value }), [layout]);
@@ -156,7 +159,7 @@ function EmbeddedSessionComposerFrame(props: Readonly<{ testID: string; children
             <Animated.View
                 testID={props.testID}
                 onLayout={handleLayout}
-                style={[{ minWidth: 0, backgroundColor: theme.colors.surface.base }, liftStyle]}
+                style={[{ minWidth: 0, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }, liftStyle]}
             >
                 {props.children}
             </Animated.View>

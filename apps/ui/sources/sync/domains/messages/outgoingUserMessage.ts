@@ -1,4 +1,5 @@
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { getAgentModelConfig } from '@happier-dev/agents';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
 import type { MessageMeta } from "@happier-dev/session-core/messages";
 import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
@@ -41,44 +42,41 @@ export function resolveOutgoingUserMessageModel(params: Readonly<{
     structuredModelSelection?: SessionModelSelectionV1 | null;
 }>): MessageMeta['model'] | undefined {
     if (!params.agentId || !isBundledAgentId(params.agentId)) return undefined;
-    const agentCore = getAgentCore(params.agentId);
+    const model = getAgentModelConfig(params.agentId);
     if (params.structuredModelSelection) {
-        return agentCore.model?.supportsSelection !== false
+        return model?.supportsSelection !== false
             ? projectSessionMessageModelSelectionToLegacyModelV1(params.structuredModelSelection)
             : undefined;
     }
-    const modelMode = params.modelMode || agentCore.model?.defaultMode;
-    return agentCore.model?.supportsSelection !== false && modelMode !== 'default' ? modelMode : undefined;
+    const modelMode = params.modelMode || model?.defaultMode;
+    return model?.supportsSelection !== false && modelMode !== 'default' ? modelMode : undefined;
 }
 
-function resolveStructuredOutgoingModelSelection(sessionValue: unknown): SessionModelSelectionV1 | null {
-    if (!sessionValue || typeof sessionValue !== 'object' || Array.isArray(sessionValue)) return null;
-    const session = sessionValue as Session;
-    const defaultBackend = resolveSessionActionDefaultBackend({ session });
+function resolveOutgoingModelContext(sessionValue: unknown, fallbackAgentId: string | null) {
+    const session = sessionValue && typeof sessionValue === 'object' && !Array.isArray(sessionValue)
+        ? sessionValue as Session : null;
+    const defaultBackend = session ? resolveSessionActionDefaultBackend({ session }) : null;
     const defaultTarget = resolveSessionActionDefaultTarget(defaultBackend);
-    const agentId = readSessionPresentationAgentId(session);
+    const agentId = (session ? readSessionPresentationAgentId(session) : null) ?? fallbackAgentId;
     const agentTargetKey = defaultTarget ? resolveBackendTargetKeyV2(defaultTarget)
         : agentId ? buildAgentUniverseBackendTargetKey(agentId) : null;
-    if (!agentTargetKey) return null;
-    const modelOverride = getModelOverrideForSpawn(
-        session,
-        agentTargetKey,
-    );
-    return modelOverride?.modelSelection ?? null;
+    const modelOverride = session && agentTargetKey ? getModelOverrideForSpawn(session, agentTargetKey) : null;
+    return { agentTargetKey, selection: modelOverride?.modelSelection ?? null };
 }
 
 /**
  * The model a message runs on when its sender may use only `allowedModels` (an embed's grant, or a
  * presentation that narrows the picker): the Session's own choice when it is allowed, else the first
- * allowed model (plan 04 §4.6, the same rule new chats use). The grant decision is the protocol's
+ * allowed model for the current Agent (plan 04 §4.6, the same rule new chats use). The grant decision is the protocol's
  * (`resolveEffectiveApiTokenModelRefV1`); with no list the Session's choice, Automatic included, stands.
  */
 function constrainOutgoingModelSelection(
     selection: SessionModelSelectionV1 | null,
     allowedModels: readonly ProviderBoundModelRef[] | null | undefined,
+    agentTargetKey: string | null,
 ): SessionModelSelectionV1 | null {
     if (!allowedModels) return selection;
-    const effective = resolveEffectiveApiTokenModelRefV1({ models: [...allowedModels] }, selection?.ref ?? 'automatic');
+    const effective = resolveEffectiveApiTokenModelRefV1({ models: [...allowedModels] }, selection?.ref ?? 'automatic', agentTargetKey ?? undefined);
     if (effective === null || effective === 'automatic') return selection;
     if (selection && sameModelRef(selection.ref, effective)) return selection;
     return { v: 1, updatedAt: nowServerMs(), ref: effective };
@@ -122,9 +120,11 @@ export function buildOutgoingUserTextRecord(params: Readonly<{
     /** Per-input permission grant; absent/null retains the unrestricted sender's policy. */
     allowedPermissionModes?: readonly PermissionMode[] | null;
 }>): RawRecord {
+    const modelContext = resolveOutgoingModelContext(params.session, params.agentId);
     const structuredModelSelection = constrainOutgoingModelSelection(
-        resolveStructuredOutgoingModelSelection(params.session),
+        modelContext.selection,
         params.allowedModels,
+        modelContext.agentTargetKey,
     );
     const callerMeta = stripOutgoingUserMessageProtectedMeta(params.metaOverrides);
     const mergedMeta = buildSendMessageMeta({

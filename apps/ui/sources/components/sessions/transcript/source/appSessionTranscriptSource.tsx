@@ -1,18 +1,16 @@
 import * as React from 'react';
+import type { SessionForkVisualContextV1 } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import type { Message } from '@happier-dev/session-core/messages';
 import type { AgentEvent } from '@happier-dev/session-core/raw';
 import { shouldReadTranscriptForPendingRequestList } from '@happier-dev/session-core/pending';
-import { deriveLatestPendingRequestObservedAtFromSession, derivePendingRequestFlagsFromSession, listPendingRequestListsFromSession, readPendingRequestFactsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
-import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
-import { readSessionRuntimePresentationFreshnessExpirations } from '@/sync/domains/session/attention/runtimePresentation';
-import { useSessionListRelativeNowMs, useSessionListRuntimeWake } from '@/hooks/session/sessionListRuntimeClock';
+import { listPendingRequestListsFromSession, readPendingRequestFactsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
+import { useSessionAwareness } from '@/sync/domains/session/awareness/useSessionAwareness';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { getForkedTranscriptSnapshotCached } from '@/sync/domains/sessionFork/forkedTranscriptSnapshot';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { nowServerMs } from '@/sync/runtime/time';
 import { sync } from '@/sync/sync';
 import {
     getStorage, storage, useForkedTranscriptSnapshot, useMessage, useMessagesByRefs,
@@ -27,7 +25,8 @@ import type { StorageState } from '@/sync/store/types';
 import { deriveTranscriptInteractionFromSession, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useSessionMessageAuthorshipScope } from '../useSessionMessageAuthorshipScope';
 import { deriveReadOnlyTranscriptInteraction } from '../forkContext/deriveReadOnlyTranscriptInteraction';
-import { SessionTranscriptSourceProvider, useSessionTranscriptSource } from './SessionTranscriptSourceContext';
+import { SessionTranscriptSourceProvider, TranscriptVisualContextProvider, useSessionTranscriptSource } from './SessionTranscriptSourceContext';
+export { useTranscriptVisualContext } from './SessionTranscriptSourceContext';
 import type { SessionTranscriptSource, TranscriptHistoryState } from './types';
 import type { SessionMessagesWindowState } from '@/sync/runtime/sessionMessagesWindowState';
 import { createAppSessionTranscriptActions } from './appSessionTranscriptActions';
@@ -213,23 +212,7 @@ function createAppSessionTranscriptReads(sessionId: string, serverId: string | n
             const { messages } = useSessionMessages(sessionId, { enabled: readTranscript });
             return React.useMemo(() => session ? listPendingRequestListsFromSession(session, messages) : EMPTY_PENDING, [messages, session]);
         },
-        useAwareness: () => {
-            const session = useSession(sessionId, serverId);
-            const localNow = useSessionListRelativeNowMs(session !== null);
-            const serverNow = React.useMemo(() => nowServerMs(), [localNow, session]);
-            const wakeAt = React.useMemo(() => {
-                if (!session) return null;
-                const pending = derivePendingRequestFlagsFromSession(session, []);
-                const expirations = readSessionRuntimePresentationFreshnessExpirations({
-                    ...session,
-                    ...pending,
-                    pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(session, []),
-                }, serverNow).filter((expiry) => expiry > serverNow);
-                return expirations.length > 0 ? Math.min(...expirations) - (serverNow - localNow) : null;
-            }, [localNow, serverNow, session]);
-            useSessionListRuntimeWake(wakeAt, session !== null);
-            return React.useMemo(() => session ? projectUiSessionAwareness(session, serverNow) : null, [serverNow, session]);
-        },
+        useAwareness: () => useSessionAwareness(sessionId, serverId).awareness,
         useRuntimeLastObservedAt: () => useSessionField((session) => typeof session?.activeAt === 'number' && Number.isFinite(session.activeAt) ? session.activeAt : null),
     } satisfies Pick<SessionTranscriptSource,
         | 'useMessageIdsOldestFirst' | 'useMessagesById' | 'useMessage' | 'useMessagesByIds'
@@ -258,14 +241,17 @@ export function AppSessionTranscriptSourceProvider(props: AppSourceProviderProps
 export function TranscriptOriginSourceProvider(props: Readonly<{
     originSessionId?: string;
     readOnly: boolean;
+    visualContext?: SessionForkVisualContextV1;
     children: React.ReactNode;
 }>) {
     const source = useSessionTranscriptSource();
-    if (source.kind !== 'app' || !props.readOnly) return <>{props.children}</>;
-    if (source.actions === null && (props.originSessionId ?? source.sessionId) === source.sessionId) return <>{props.children}</>;
-    return <TranscriptOriginAppSourceRoot key={`app:${source.serverId ?? ''}:${props.originSessionId ?? source.sessionId}`} source={source} sessionId={props.originSessionId ?? source.sessionId}>
-        {props.children}
-    </TranscriptOriginAppSourceRoot>;
+    const children = source.kind !== 'app' || !props.readOnly
+        || (source.actions === null && (props.originSessionId ?? source.sessionId) === source.sessionId)
+        ? props.children
+        : <TranscriptOriginAppSourceRoot key={`app:${source.serverId ?? ''}:${props.originSessionId ?? source.sessionId}`} source={source} sessionId={props.originSessionId ?? source.sessionId}>
+            {props.children}
+        </TranscriptOriginAppSourceRoot>;
+    return <TranscriptVisualContextProvider visualContext={props.visualContext}>{children}</TranscriptVisualContextProvider>;
 }
 
 /** Ancestry changes data scope without mounting another live action/paging controller. */

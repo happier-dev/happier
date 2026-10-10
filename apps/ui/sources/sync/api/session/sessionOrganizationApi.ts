@@ -7,6 +7,7 @@ import { SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION, SESSION_ORGANIZATION_M
 import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema, type SessionOrganizationSnapshotRequest, type SessionOrganizationSnapshotResponse } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SetSessionAttentionStandingResponseSchema, type SetSessionAttentionStandingRequest, type SetSessionAttentionStandingResponse } from '@happier-dev/protocol/sessions/organization/standings';
 import type { z } from 'zod';
+import { SetSessionPinRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 
 const SESSION_ORGANIZATION_ROUTE = '/v2/session-organization';
 
@@ -192,17 +193,20 @@ export async function importLegacySessionOrganization(params: Readonly<{
 export async function setSessionPin(params: Readonly<{
     credentials: AuthCredentials;
     serverUrl?: string;
+    requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     sessionId: string;
     request: SetSessionPinRequest;
 }>): Promise<SetSessionPinResponse> {
+    const request = SetSessionPinRequestSchema.parse(params.request);
     const response = await fetchSessionOrganizationRoute({
         credentials: params.credentials,
         serverUrl: params.serverUrl,
+        requestAtEndpoint: params.requestAtEndpoint,
         path: `${SESSION_ORGANIZATION_ROUTE}/pins/${encodeURIComponent(params.sessionId)}`,
         init: {
             method: 'PUT',
             headers: authHeaders(params.credentials),
-            body: JSON.stringify(params.request),
+            body: JSON.stringify(request),
         },
     });
     return parseJsonResponse(response, SetSessionPinResponseSchema, 'Failed to set session pin');

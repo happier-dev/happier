@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { createSessionFixture, renderHook } from '@/dev/testkit';
+import { createSessionFixture, createSessionListRenderableSessionFixture, renderHook } from '@/dev/testkit';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storageStore';
-import { getSessionStatus, shouldShowAbortButtonForSessionState } from '@/utils/sessions/sessionUtils';
+import { getSessionName, getSessionStatus, shouldShowAbortButtonForSessionState } from '@/utils/sessions/sessionUtils';
 import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 
@@ -66,6 +66,14 @@ function createSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('buildSessionViewShellSessionSignature', () => {
+    it('opens an unopened exact-Home list projection without fetching each report', () => {
+        const row = createSessionListRenderableSessionFixture({ id: 'unopened', metadata: { name: 'Report title', path: '/repo', host: 'machine' } });
+        const state = { sessions: {}, sessionListIndexByServerId: {}, sessionListRowsByServerId: { 'home-a': { unopened: row } } };
+        const selected = selectSessionViewShellSessionForRouteState(state, 'unopened', 'home-a');
+        expect(selected).not.toBeNull();
+        expect(getSessionName(selected!)).toBe('Report title');
+        expect(selectSessionViewShellSessionForRouteState(state, 'unopened', 'home-b')).toBeNull();
+    });
     it('stays stable for timestamp-only session heartbeats', () => {
         const base = createSession({
             latestUsage: {

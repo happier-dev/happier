@@ -1,20 +1,24 @@
 import * as React from 'react';
-import { Platform, View, type LayoutChangeEvent } from 'react-native';
+import { BackHandler, Platform, View, type LayoutChangeEvent } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   FloatingFrame,
-  HAPPIER_MOTION_V1,
+  HAPPIER_FLOATING_FRAME_METRICS,
   resolveFloatingFrameBodyRect,
+  resolveFloatingFrameChromeHeight,
   resolveFloatingFrameCornerRect,
   resolveFloatingFrameHeight,
   resolveFloatingFrameRect,
+  resolveFloatingFrameSettleTransition,
   type CompanionReleaseMotion,
   type FloatingFrameMode,
   type FloatingFrameRectChange,
   type FrameRect,
 } from '@happier-dev/plugin-ui/presentation';
 
+import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
 import { COMPANION_WEB_POINTER_BINDING } from '@/components/companion/interaction/useCompanionPointerDragSession';
+import { NativeFloatingFrame } from '@/components/companion/interaction/NativeFloatingFrame';
 import { SessionComputerScreenPane } from '@/components/computer/SessionComputerScreenPane';
 import { SessionRightPanelBrowserView } from '@/components/sessions/panes/browser/SessionRightPanelBrowserView';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -33,10 +37,16 @@ import { t } from '@/text';
 
 import {
   useOptionalSessionViewerController,
+  useSessionViewerHasPresence,
   type SessionViewerController,
 } from './SessionViewerController';
 import { SessionViewerControls, type SessionViewerFrameCommands } from './SessionViewerControls';
+import { SessionViewerPresenceFooter } from './SessionViewerPresenceFooter';
 import type { SessionViewerSource } from './sessionViewerPresentation';
+import {
+  resolveSessionViewerWatchingLabel,
+  useSessionViewerMachine,
+} from './useSessionViewerMachine';
 import {
   DEFAULT_WIDTH_SHARE,
   SESSION_VIEWER_DEFAULT_ASPECT,
@@ -48,17 +58,23 @@ import {
 
 
 /**
- * A thrown viewer comes to rest on the shared travel spring (critically damped), aiming where the
- * throw points with the same projection the floating presences use; the frame's companion release
- * owner applies it.
+ * A released viewer aims where the throw points (the same projection the floating presences use)
+ * and travels there for the travel spring's duration on the frame's critically damped settle curve.
+ * The frame reads only the duration and the projection; the retained body, drawn in its own layer,
+ * takes the same settle transition from the frame's owner.
  */
 const SESSION_VIEWER_RELEASE_MOTION: CompanionReleaseMotion = Object.freeze({
   durationMs: motionTokens.spring.travel.durationMs,
   dampingRatio: motionTokens.spring.travel.dampingRatio,
   overshootClamping: false,
-  carryVelocity: true,
+  carryVelocity: false,
   projectionSeconds: VOICE_MOTION.throwProjectionSeconds,
 });
+const SESSION_VIEWER_SETTLE = resolveFloatingFrameSettleTransition(
+  SESSION_VIEWER_RELEASE_MOTION,
+);
+/** The viewer floats over the transcript and under the session's popovers and sheets. */
+const SESSION_VIEWER_LAYER = 20;
 
 type Size = Readonly<{ width: number; height: number }>;
 type Point = Readonly<{ x: number; y: number }>;
@@ -164,8 +180,17 @@ function MountedSessionViewerHost(
   );
 
   const committedRect = controller.state.rect;
-  const { setRect, apply, setReadingInset } = controller;
-  // Open, viewport and obstacle changes revalidate the settled placement at the one geometry owner.
+  const { setRect, apply, requestSemantic, setReadingInset } = controller;
+  const facts = controller.facts[source];
+  // The picture's own shape once its source reports it; the lab's 16:10 until then.
+  const aspectRatio = facts?.aspectRatio ?? SESSION_VIEWER_DEFAULT_ASPECT;
+  const watching = facts?.watching === true;
+  const footer = useSessionViewerHasPresence(source);
+  const chromeHeight = resolveFloatingFrameChromeHeight({ footer });
+  // The narrowest frame whose controls still fit across, as the controls measured themselves.
+  const [minWidth, setMinWidth] = React.useState(0);
+  // Open, viewport, obstacle, aspect and footer changes revalidate the settled placement at the one
+  // geometry owner; the height always follows the width through the picture's aspect.
   React.useEffect(() => {
     if (
       !floating ||
@@ -179,15 +204,18 @@ function MountedSessionViewerHost(
       Math.round(availableRect.width * DEFAULT_WIDTH_SHARE);
     const sized = {
       width,
-      height: resolveFloatingFrameHeight(width, SESSION_VIEWER_DEFAULT_ASPECT),
+      height: resolveFloatingFrameHeight(width, aspectRatio, { footer }),
     };
-    const desired =
-      committedRect ??
-      resolveFloatingFrameCornerRect('br', sized, availableRect);
+    const desired = committedRect
+      ? { ...committedRect, ...sized }
+      : resolveFloatingFrameCornerRect('br', sized, availableRect);
     const placement = resolveFloatingFrameRect({
       rect: desired,
       availableRect,
       avoidRects,
+      aspectRatio,
+      chromeHeight,
+      minWidth,
     });
     if (!placement.fits) {
       apply({ kind: 'viewer.dock' });
@@ -202,10 +230,12 @@ function MountedSessionViewerHost(
       next.height !== committedRect.height
     )
       setRect(next);
-  }, [apply, availableRect, avoidRects, committedRect, floating, setRect]);
+  }, [apply, aspectRatio, availableRect, avoidRects, chromeHeight, committedRect, floating, footer, minWidth, setRect]);
 
   const rect = liveRect ?? committedRect;
-  const settledFloatingRect = floating && !liveRect ? committedRect : null;
+  // The resting rect: a drag in flight neither reflows the reading column nor moves the obstacle the
+  // floating presences avoid; both follow the frame where it settles.
+  const settledFloatingRect = floating ? committedRect : null;
   const reportViewerRect = useReportSessionCockpitViewerRect(
     { sessionId: props.sessionId, serverId: props.serverId },
     floating,
@@ -221,6 +251,7 @@ function MountedSessionViewerHost(
         ? resolveSessionViewerReadingInset({
             areaWidth: size.width,
             columnMaxWidth: layout.maxWidth,
+            columnMinWidth: PANE_SIZING_DEFAULTS.mainMinPx,
             rect: settledFloatingRect,
           })
         : { left: 0, right: 0 },
@@ -239,13 +270,15 @@ function MountedSessionViewerHost(
     [setRect],
   );
   // Menu geometry goes through the mounted owner's local validator, then the one placement owner.
-  const geometryRef = React.useRef({ rect: committedRect, availableRect, avoidRects });
-  geometryRef.current = { rect: committedRect, availableRect, avoidRects };
+  const geometryRef = React.useRef({ rect: committedRect, availableRect, avoidRects, aspectRatio, chromeHeight, footer, minWidth });
+  geometryRef.current = { rect: committedRect, availableRect, avoidRects, aspectRatio, chromeHeight, footer, minWidth };
   const frameCommands = React.useMemo<SessionViewerFrameCommands>(() => {
     const place = (next: FrameRect) => {
-      const { availableRect: available, avoidRects: avoid } = geometryRef.current;
+      const { availableRect: available, avoidRects: avoid, aspectRatio: aspect, chromeHeight: chrome, minWidth: min } = geometryRef.current;
       if (!available) return;
-      const placement = resolveFloatingFrameRect({ rect: next, availableRect: available, avoidRects: avoid });
+      const placement = resolveFloatingFrameRect({
+        rect: next, availableRect: available, avoidRects: avoid, aspectRatio: aspect, chromeHeight: chrome, minWidth: min,
+      });
       if (placement.fits) setRect(placement.rect);
       else apply({ kind: 'viewer.dock' });
     };
@@ -257,37 +290,42 @@ function MountedSessionViewerHost(
         place(resolveFloatingFrameCornerRect(corner, current, available));
       },
       resize: (direction) => {
-        const { rect: current, availableRect: available } = geometryRef.current;
+        const { rect: current, availableRect: available, aspectRatio: aspect, footer: withFooter } = geometryRef.current;
         if (!current || !available) return;
-        const width = Math.min(available.width, current.width * (direction === 'larger' ? 1.1 : 1 / 1.1));
+        const step = 1 + HAPPIER_FLOATING_FRAME_METRICS.resizeStep;
+        const width = Math.min(available.width, current.width * (direction === 'larger' ? step : 1 / step));
         if (apply({ kind: 'viewer.size.set', width }).status !== 'applied') return;
         const right = current.x + current.width;
-        place({ x: right - width, y: current.y, width, height: resolveFloatingFrameHeight(width, SESSION_VIEWER_DEFAULT_ASPECT) });
+        place({ x: right - width, y: current.y, width, height: resolveFloatingFrameHeight(width, aspect, { footer: withFooter }) });
       },
     };
   }, [apply, setRect]);
   const onModeChange = React.useCallback(
     (next: FloatingFrameMode) => {
       if (next === 'docked') apply({ kind: 'viewer.dock' });
-      else if (next === 'expanded') apply({ kind: 'viewer.expand' });
-      else if (next === 'floating') apply({ kind: 'viewer.restore' });
-      else apply({ kind: 'viewer.close' });
+      else if (next === 'expanded') void requestSemantic({ kind: 'viewer.expand' });
+      else if (next === 'floating') void requestSemantic({ kind: 'viewer.restore' });
+      else void requestSemantic({ kind: 'viewer.close' });
     },
-    [apply],
+    [apply, requestSemantic],
   );
 
+  // Back on a phone or Android leaves the deliberate expanded overlay for where the viewer was.
+  const expanded = mode === 'expanded';
+  React.useEffect(() => {
+    if (!expanded) return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      void requestSemantic({ kind: 'viewer.restore' });
+      return true;
+    });
+    return () => subscription.remove();
+  }, [expanded, requestSemantic]);
+
   const frameRect = mode === 'expanded' ? availableRect : rect;
-  const bodyRect = frameRect ? resolveFloatingFrameBodyRect(frameRect) : null;
+  const bodyRect = frameRect ? resolveFloatingFrameBodyRect(frameRect, { footer }) : null;
   const windowGeometry = bodyRect && size ? offsetRect(bodyRect, origin) : null;
-  const transition =
-    liveRect || reducedMotion
-      ? null
-      : {
-          durationMs: SESSION_VIEWER_RELEASE_MOTION.durationMs,
-          easingCss: HAPPIER_MOTION_V1.standardEasingCss,
-        };
-  const facts = controller.facts[source];
-  const machineLabel = facts?.machineName ?? '';
+  const transition = liveRect || reducedMotion ? null : SESSION_VIEWER_SETTLE;
+  const machine = useSessionViewerMachine(props.sessionId, props.serverId, source);
 
   return (
     <View
@@ -300,7 +338,7 @@ function MountedSessionViewerHost(
         top: 0,
         right: 0,
         bottom: 0,
-        zIndex: 20,
+        zIndex: SESSION_VIEWER_LAYER,
       }}
       testID="session-viewer-host"
     >
@@ -311,27 +349,25 @@ function MountedSessionViewerHost(
           rect={frameRect}
           availableRect={availableRect}
           avoidRects={avoidRects}
-          aspectRatio={SESSION_VIEWER_DEFAULT_ASPECT}
-          // The retained body renders in the route-stable portal, above this frame: watching
-          // moves by the floating controls and the grip; the picture keeps its own input.
-          moveInput="chrome"
+          aspectRatio={aspectRatio}
+          minWidth={minWidth}
+          // The retained body paints in the route-stable portal above this frame. While it is only
+          // watched it lets the pointer through, so the picture moves (and double-click expands)
+          // the frame; while the person drives it, the picture's input is the content's own.
+          moveInput={watching ? 'surface' : 'chrome'}
           onRectChange={onRectChange}
           onModeChange={onModeChange}
-          accessibilityLabel={t('computerUse.viewer.watchingA11y', {
-            source: t(
-              source === 'computer'
-                ? 'computerUse.viewer.sourceComputer'
-                : 'computerUse.viewer.sourceBrowser',
-            ),
-            machine: machineLabel,
-          })}
+          accessibilityLabel={resolveSessionViewerWatchingLabel(source, machine.name)}
           resizeLabel={t('computerUse.viewer.resizeView')}
           pointer={
             Platform.OS === 'web' ? COMPANION_WEB_POINTER_BINDING : undefined
           }
+          nativeBinding={NativeFloatingFrame}
           releaseMotion={SESSION_VIEWER_RELEASE_MOTION}
           reducedMotion={reducedMotion}
-          controlsAlwaysVisible={controller.phone}
+          // Hover reaches the frame only through a watched picture; a driven picture keeps them shown.
+          // (A pointer that cannot hover keeps them shown at the frame's own reveal rule.)
+          controlsAlwaysVisible={controller.phone || !watching}
           colors={{
             grip: theme.colors.text.tertiary,
             focusRing: theme.colors.border.focus,
@@ -342,7 +378,18 @@ function MountedSessionViewerHost(
               serverId={props.serverId}
               source={source}
               frame={frameCommands}
+              onMinWidthChange={setMinWidth}
             />
+          }
+          footer={
+            footer ? (
+              <SessionViewerPresenceFooter
+                sessionId={props.sessionId}
+                serverId={props.serverId}
+                source={source}
+                compact={controller.phone}
+              />
+            ) : undefined
           }
         >
           <SessionViewerBody
@@ -352,6 +399,7 @@ function MountedSessionViewerHost(
             pluginProjection={props.pluginProjection}
             windowGeometry={windowGeometry}
             transition={transition}
+            inputPassthrough={watching}
           />
         </FloatingFrame>
       ) : null}
@@ -373,6 +421,8 @@ export function SessionViewerBody(
     pluginProjection?: PluginUiProjectionCurrentness;
     windowGeometry?: FrameRect | null;
     transition?: Readonly<{ durationMs: number; easingCss: string }> | null;
+    /** The watched picture lets the pointer reach the frame beneath it. */
+    inputPassthrough?: boolean;
   }>,
 ): React.ReactElement | null {
   // Computer use targets the Session's own machine (the same rule the Watch opener applies).
@@ -389,6 +439,7 @@ export function SessionViewerBody(
         presentation="viewer"
         windowGeometry={props.windowGeometry}
         transition={props.transition}
+        inputPassthrough={props.inputPassthrough}
         testID="session-viewer-computer"
       />
     );
@@ -400,7 +451,7 @@ export function SessionViewerBody(
       presentation="viewer"
       windowGeometry={props.windowGeometry}
       transition={props.transition}
+      inputPassthrough={props.inputPassthrough}
     />
   );
 }
-

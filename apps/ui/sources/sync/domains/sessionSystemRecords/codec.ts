@@ -1,6 +1,7 @@
 import { SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { openSessionStoredContent, type SessionStoredContentContext } from '@happier-dev/sync-client';
 import type { HostSessionSystemRecordAddress } from './transport';
+import { SessionSurfaceItemV1StoredSchema, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board/item';
 
 export type SessionSystemRecordPayloadResult<T> =
     | Readonly<{ status: 'ready'; value: T }>
@@ -56,4 +57,15 @@ export async function openSessionSystemRecord<T>(params: Readonly<{
     }
     if (address.owner !== 'host' || address.namespace !== params.address.namespace || address.kind !== params.address.kind || address.localId !== params.address.localId) return { status: 'malformed' };
     return await openSessionSystemRecordPayload({ content, context: params.context, decode: params.decode });
+}
+
+/** One stored item decoder for Board placements and addressed Session replies. */
+export function openSessionSurfaceItemRecord(record: SessionSystemRecordStored, context: SessionStoredContentContext | null): Promise<OpenSessionSystemRecordResult<SessionSurfaceItemV1>> {
+    return openSessionSystemRecord({ record, address: record.address, context, decode: value => {
+        if (value && typeof value === 'object' && 'v' in value && typeof value.v === 'number' && value.v !== 1) {
+            return { status: 'unsupported_version', version: value.v };
+        }
+        const parsed = SessionSurfaceItemV1StoredSchema.safeParse(value);
+        return parsed.success ? { status: 'ready', value: parsed.data } : { status: 'malformed' };
+    } });
 }

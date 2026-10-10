@@ -20,7 +20,7 @@ export type SessionBoardExecutableCurrentness =
     | 'not_executable';
 
 export function resolveSessionBoardExecutableCurrentness(
-    snapshot: SessionBoardSnapshot,
+    snapshot: Pick<SessionBoardSnapshot, 'capabilities' | 'reachability' | 'freshness' | 'itemsById'>,
     item: SessionBoardItemProjection,
     pluginRuntime?: Pick<
         PluginUiProjectionCurrentness,

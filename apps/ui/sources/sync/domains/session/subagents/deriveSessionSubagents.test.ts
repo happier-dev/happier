@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import type { Message, ToolCallMessage } from "@happier-dev/session-core/messages";
 import type { MessageMeta } from "@happier-dev/session-core/messages";
 import { deriveSessionSubagents } from './deriveSessionSubagents';
+import { deriveSessionSubagentActivityPreview } from './deriveSessionSubagentActivityPreview';
+import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 
 function createToolMessage(params: {
     id: string;
@@ -58,6 +61,65 @@ function deriveSubagents(params: {
 }
 
 describe('deriveSessionSubagents', () => {
+    it('binds a proven native child turn to its transcript and preserves explicit interruption', () => {
+        const message = createToolMessage({ id: 'native', name: 'SubAgent', state: 'completed', toolExtras: { id: JSON.stringify(['child', 'turn-1']) }, input: { sidechainId: 'child', threadId: 'child', providerTurnId: 'turn-1' }, result: { sidechainId: 'child', status: 'interrupted' } });
+        expect(deriveSessionSubagents({ session: createSessionFixture({ metadata: { path: '/repo', host: 'test', flavor: 'codex' } }), messages: [message] })[0]).toMatchObject({ status: 'cancelled', transcript: { sidechainId: 'child' } });
+    });
+
+    it('preserves interruption from an error-shaped native occurrence result', () => {
+        const sidechainId = JSON.stringify(['thread-resumed-child', 'child-first']);
+        const message = createToolMessage({ id: 'native-error', name: 'SubAgent', state: 'error',
+            toolExtras: { id: sidechainId },
+            input: { threadId: 'thread-resumed-child', providerTurnId: 'child-first', sidechainId },
+            result: { threadId: 'thread-resumed-child', providerTurnId: 'child-first', sidechainId, status: 'interrupted' },
+        });
+        expect(deriveSessionSubagents({ session: createSessionFixture({ metadata: { path: '/repo', host: 'test', flavor: 'codex' } }), messages: [message] })[0])
+            .toMatchObject({ status: 'cancelled', transcript: { sidechainId, toolId: sidechainId } });
+    });
+
+    it('opens the exact resumed native occurrence while retaining its completed history', () => {
+        const firstSidechainId = JSON.stringify(['thread-resumed-child', 'child-first']);
+        const resumedSidechainId = JSON.stringify(['thread-resumed-child', 'child-resumed']);
+        const first = createToolMessage({ id: 'native-first', name: 'SubAgent', state: 'completed', seq: 1,
+            toolExtras: { id: firstSidechainId },
+            input: { threadId: 'thread-resumed-child', providerTurnId: 'child-first', sidechainId: firstSidechainId },
+            result: { threadId: 'thread-resumed-child', providerTurnId: 'child-first', sidechainId: firstSidechainId, status: 'completed' },
+        });
+        const resumed = createToolMessage({ id: 'native-resumed', name: 'SubAgent', state: 'running', seq: 2,
+            toolExtras: { id: resumedSidechainId },
+            input: { threadId: 'thread-resumed-child', providerTurnId: 'child-resumed', sidechainId: resumedSidechainId },
+        });
+        const reducerState = { sidechains: new Map([
+            [firstSidechainId, [{ text: 'First turn output' }]],
+            [resumedSidechainId, [{ text: 'Resumed turn output' }]],
+        ]) };
+        for (const messages of [[first, resumed], [resumed, first]]) {
+            const rows = deriveSessionSubagents({ session: createSessionFixture({ metadata: { path: '/repo', host: 'test', flavor: 'codex' } }), messages });
+            expect(rows).toHaveLength(2);
+            const current = rows.filter((row) => row.status === 'running');
+            expect(current).toHaveLength(1);
+            expect(current[0]?.transcript).toMatchObject({ sidechainId: resumedSidechainId, toolId: resumedSidechainId });
+            expect(resolveToolTranscriptSidechainId({ tool: resumed.tool, normalizedToolName: 'SubAgent' })).toBe(resumedSidechainId);
+            expect(deriveSessionSubagentActivityPreview({ subagent: current[0]!, reducerState })).toBe('Resumed turn output');
+            const history = rows.find((row) => row.status === 'succeeded');
+            expect(history?.transcript.sidechainId).toBe(firstSidechainId);
+            expect(deriveSessionSubagentActivityPreview({ subagent: history!, reducerState })).toBe('First turn output');
+        }
+    });
+
+    it('projects the newest native turn of a retained child independently of transcript input order', () => {
+        const oldTurn = createToolMessage({ id: 'old', name: 'SubAgent', state: 'completed', toolExtras: { id: JSON.stringify(['child', 'turn-1']) }, input: { sidechainId: 'child' }, result: { sidechainId: 'child', status: 'completed' } });
+        oldTurn.createdAt = 1_000;
+        const newTurn = createToolMessage({ id: 'new', name: 'SubAgent', state: 'running', toolExtras: { id: JSON.stringify(['child', 'turn-2']) }, input: { sidechainId: 'child' } });
+        newTurn.createdAt = 5_000;
+        for (const messages of [[oldTurn, newTurn], [newTurn, oldTurn]]) {
+            const rows = deriveSessionSubagents({ session: createSessionFixture({ metadata: { path: '/repo', host: 'test', flavor: 'codex' } }), messages });
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({ status: 'running', transcript: { sidechainId: 'child', toolId: JSON.stringify(['child', 'turn-2']) } });
+        }
+    });
+
+
     it('derives running execution run subagents with control capabilities', async () => {
         const subagents = await deriveSubagents({
             session: { metadata: { flavor: 'claude' } },
@@ -532,6 +594,13 @@ describe('deriveSessionSubagents: sidechain rows after the owning session runtim
         return subagents.find((subagent) => subagent.kind === 'subagent_sidechain')?.status;
     }
 
+    it('preserves sidechain evidence newer than an old loss witness', () => {
+        const message = createToolMessage({ id: 'launch', name: 'SubAgent', state: 'running', createdAt: NOW_MS - 30 * MINUTE_MS, toolExtras: { id: 'child' } });
+        message.children = [{ kind: 'agent-text', id: 'child-activity', localId: null, createdAt: NOW_MS - MINUTE_MS, text: 'Still working' }];
+        const result = deriveSubagents({ session: { metadata: { flavor: 'codex' }, active: false, activeAt: NOW_MS - 20 * MINUTE_MS, presence: NOW_MS - 20 * MINUTE_MS }, messages: [message], nowMs: NOW_MS });
+        expect(result[0]?.status).toBe('running');
+    });
+
     it('retires an otherwise-running sidechain once the owning session runtime is durably gone', () => {
         expect(deriveSidechainStatus({
             session: {
@@ -540,7 +609,7 @@ describe('deriveSessionSubagents: sidechain rows after the owning session runtim
                 activeAt: NOW_MS - 20 * MINUTE_MS,
                 presence: NOW_MS - 20 * MINUTE_MS,
             },
-        })).toBe('terminated');
+        })).toBe('unknown');
     });
 
     it('retires an archived session\'s sidechain even though its final report said running', () => {
@@ -552,7 +621,7 @@ describe('deriveSessionSubagents: sidechain rows after the owning session runtim
                 presence: NOW_MS - 20 * MINUTE_MS,
                 archivedAt: NOW_MS - 10 * MINUTE_MS,
             },
-        })).toBe('terminated');
+        })).toBe('unknown');
     });
 
     it('leaves the sidechain running while the owning session runtime is still attached', () => {
@@ -634,7 +703,7 @@ describe('deriveSessionSubagents: sidechain rows after the owning session runtim
             active: false,
             activeAt: NOW_MS - 20 * MINUTE_MS,
             presence: NOW_MS - 20 * MINUTE_MS,
-        })).toBe('terminated');
+        })).toBe('unknown');
     });
 
     it('keeps an async-launched sidechain running while its session runtime is still attached', () => {

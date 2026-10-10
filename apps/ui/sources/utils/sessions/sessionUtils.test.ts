@@ -2007,7 +2007,35 @@ describe('shouldShowAbortButtonForSessionState', () => {
     });
 });
 
+describe('getSessionCarriedLine', () => {
+    it('says a carried Session\'s state, then where it works, on one line (DnD lab C2 carried card)', async () => {
+        const { getSessionCarriedLine, getSessionStatus } = await import('./sessionUtils');
+        const row = createSessionListRenderableSessionFixture({ metadata: {
+            path: '/Users/alice/projects/payments', homeDir: '/Users/alice', machineId: 'work-mac', host: 'MacBook Pro',
+        } });
+        const status = getSessionStatus(row);
+        const line = getSessionCarriedLine(row);
+        expect(line).toContain('MacBook Pro');
+        expect(line).not.toContain('/projects/');
+        // An idle, reachable Session's state is not news; any other state leads the line.
+        if (status.quiet) expect(line).not.toContain(status.statusText);
+        else expect(line?.startsWith(`${status.statusText} · `)).toBe(true);
+    });
+});
+
 describe('getSessionName', () => {
+    it('presents work identity from the named machine, then the workspace owner, without an unknown placeholder', async () => {
+        const { getSessionWorkContext } = await import('./sessionUtils');
+        const row = createSessionListRenderableSessionFixture({ metadata: {
+            path: '/Users/alice/projects/payments', homeDir: '/Users/alice', machineId: 'work-mac', host: 'MacBook Pro',
+        } });
+        expect(getSessionWorkContext(row)).toContain('MacBook Pro');
+        expect(getSessionWorkContext(row)).not.toContain('/projects/');
+        expect(getSessionWorkContext(createSessionListRenderableSessionFixture({ metadata: {
+            path: 'C:\\Users\\alice\\projects\\payments', homeDir: 'C:\\Users\\alice',
+        } }))).toBe('payments');
+        expect(getSessionWorkContext(createSessionListRenderableSessionFixture({ metadata: null }))).toBeNull();
+    });
     it('reads the owner name from a narrow layout-1 display projection', async () => {
         const { getSessionName } = await import('./sessionUtils');
         expect(getSessionName({
@@ -2145,6 +2173,28 @@ describe('getSessionName for a list row', () => {
 });
 
 describe('reachable target session display helpers', () => {
+    it('keeps the ordinary avatar seed through registered Bot promotion, demotion and reload', async () => {
+        const { getSessionAvatarId } = await import('./sessionUtils');
+        const { MetadataSchema } = await import('@happier-dev/session-core/state');
+        const { writeSessionStateFieldToMetadata } = await import('@happier-dev/agents/session/state/metadataWriters');
+        const inputs = [
+            { path: '/project', host: 'host', machineId: 'machine' },
+            { path: '/private/session-directory', host: 'host', machineId: 'machine',
+                sessionDirectoryV1: { v: 1, kind: 'managed' } },
+            {},
+        ];
+        for (const input of inputs) {
+            const metadata = MetadataSchema.parse(input);
+            const session = createBaseSession({ id: 'same-session', metadata });
+            const seed = getSessionAvatarId(session);
+            const promoted = MetadataSchema.parse(writeSessionStateFieldToMetadata(metadata, 'display.bot', { kind: 'bot' }));
+            const demoted = MetadataSchema.parse(writeSessionStateFieldToMetadata(promoted, 'display.bot', null));
+            for (const next of [promoted, demoted, MetadataSchema.parse(JSON.parse(JSON.stringify(promoted)))]) {
+                expect(getSessionAvatarId({ ...session, metadata: next })).toBe(seed);
+            }
+        }
+        expect(getSessionAvatarId(createBaseSession({ id: 'same-session', metadata: null }))).toBe('same-session');
+    });
     it('uses the owner compatibility view for layout-v1 private workspace fallbacks', async () => {
         const { getSessionAvatarId, getSessionName, getSessionSubtitle } = await import('./sessionUtils');
         const session = createBaseSession({

@@ -2,13 +2,13 @@ import * as React from 'react';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import { PromptInvocationEntryV1Schema, validatePromptInvocationTokenV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import { validatePromptInvocationTokenV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { storage, useSettingMutable } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { randomUUID } from '@/platform/randomUUID';
 
 export type SaveMessageAsPromptSaved = Readonly<{ artifactId: string; title: string; favorite: boolean }>;
 
@@ -30,8 +30,8 @@ export function useSaveMessageAsPrompt(props: Readonly<{
     const [error, setError] = React.useState<string | null>(null);
     const saving = React.useRef(false);
     const [isSaving, setIsSaving] = React.useState(false);
-    const [, setInvocations] = useSettingMutable('promptInvocationsV1');
     const [lifetime] = React.useState(captureActiveServerAccountScopeLifetime);
+    const invocationCatalog = usePromptLibraryCatalogValue('invocations', lifetime?.scope ?? null);
     const [controller] = React.useState(() => new AbortController());
     React.useEffect(() => {
         const retirement = lifetime?.onRetire(() => controller.abort());
@@ -46,8 +46,12 @@ export function useSaveMessageAsPrompt(props: Readonly<{
             return;
         }
         const actionTokens = listActionSpecs().filter((spec) => spec.surfaces.ui === true).flatMap((spec) => spec.slash?.tokens ?? []);
-        const validation = shortcut.trim() ? validatePromptInvocationTokenV1({ token: shortcut,
-            entries: storage.getState().settings.promptInvocationsV1.entries, actionTokens }) : null;
+        if (shortcut.trim() && (invocationCatalog.status !== 'ready' || invocationCatalog.stale || !invocationCatalog.value)) {
+            setError(t('promptLibrary.saveError'));
+            return;
+        }
+        const validation = shortcut.trim() && invocationCatalog.value ? validatePromptInvocationTokenV1({ token: shortcut,
+            entries: invocationCatalog.value.entries, actionTokens }) : null;
         if (validation && !validation.ok) {
             setError(validation.reason === 'reserved' ? t('promptLibrary.templateTokenReserved')
                 : validation.reason === 'actionCollision' ? t('promptLibrary.templateTokenConflictsWithAction')
@@ -69,21 +73,22 @@ export function useSaveMessageAsPrompt(props: Readonly<{
             }
             const artifactId = result.result.artifactId;
             if (validation?.ok) {
-                // Read the current projection after the Artifact round-trip, not the form's
-                // opening snapshot, so a concurrent shortcut is never overwritten.
+                // The Action reads the current catalog after the Artifact round-trip and owns the CAS.
                 try {
-                    const current = storage.getState().settings.promptInvocationsV1;
-                    const latest = validatePromptInvocationTokenV1({ token: validation.token, entries: current.entries, actionTokens });
-                    if (!latest.ok) throw new Error('shortcut_unavailable');
-                    const entry = PromptInvocationEntryV1Schema.parse({ id: randomUUID(), token: latest.token,
-                        title: title.trim(), target: { kind: 'doc', artifactId },
-                        behavior: 'insert', allowArgs: false, availableIn: 'global' });
-                    setInvocations({ ...current, entries: [...current.entries, entry] });
+                    const shortcutResult = await createDefaultActionExecutor().execute('prompts.invocation.create', {
+                        token: validation.token, title: title.trim(), target: { kind: 'doc', artifactId, serverId: lifetime.scope.serverId },
+                        behavior: 'insert', allowArgs: false, availableIn: 'global',
+                    }, { surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId, signal: controller.signal });
+                    if (!shortcutResult.ok || !shortcutResult.result || typeof shortcutResult.result !== 'object'
+                        || !('status' in shortcutResult.result) || shortcutResult.result.status !== 'updated') throw new Error('shortcut_unavailable');
                 } catch {
                     // Creation already succeeded. Do not offer a retry that creates a second doc.
-                    Modal.alert(t('committedMessageActions.savedOpen'), t('committedMessageActions.shortcutNotSaved'));
+                    if (lifetime.isCurrent() && !controller.signal.aborted) {
+                        Modal.alert(t('committedMessageActions.savedOpen'), t('committedMessageActions.shortcutNotSaved'));
+                    }
                 }
             }
+            if (!lifetime.isCurrent() || controller.signal.aborted) return;
             props.onSaved({ artifactId, title: title.trim(), favorite });
         } catch {
             if (!controller.signal.aborted) setError(t('promptLibrary.saveError'));

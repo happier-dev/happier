@@ -17,6 +17,17 @@ const baseSubagent: SessionSubagent = {
 const claudeSession = { metadata: { flavor: 'claude' } } as any;
 
 describe('deriveSessionSubagentActivityPreview', () => {
+    it('keeps an opaque child identity when looking up output', () => {
+        const params = {
+            subagent: { ...baseSubagent, transcript: { sidechainId: ' child ' } },
+            reducerState: { sidechains: new Map([
+                ['child', [{ text: 'Another child', createdAt: 100 }]],
+                [' child ', [{ text: 'Native child output', createdAt: 200 }]],
+            ]) },
+        };
+        expect(deriveSessionSubagentActivityPreview(params)).toBe('Native child output');
+    });
+
     it('returns the latest normal text preview for standard subagent transcripts', () => {
         const preview = deriveSessionSubagentActivityPreview({
             subagent: {

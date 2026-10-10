@@ -293,20 +293,25 @@ function resolveFacts(rows: readonly SessionSummaryRow[]): readonly SessionSumma
 }
 
 /** Rows the hero already says in its own shape: facts, and the status line's "what". */
-const HERO_ROW_KINDS: ReadonlySet<SessionSummaryRow['kind']> = new Set(['activity', 'workspace', 'usage', 'work', 'recap']);
+const HERO_ROW_KINDS: ReadonlySet<SessionSummaryRow['kind']> = new Set(['activity', 'workspace', 'usage', 'work']);
 
 /**
- * The rows left under the hero (approval requests from Actions, workflows), with
- * the same density budget and overflow affordance as before.
+ * Recap remains a dedicated destination beside the hero's Work text, even in a
+ * compact widget. Other details retain their existing density/overflow owner.
  */
 export function resolveSessionSummaryDetailRows(
     model: SessionSummaryCardModel,
     presentation: SessionSummaryRowPresentation,
 ): Readonly<{ rows: readonly SessionSummaryRow[]; hiddenCount: number }> {
-    return resolveSessionSummaryRows(
-        { ...model, rows: model.rows.filter((row) => !HERO_ROW_KINDS.has(row.kind)) },
+    const detailRows = model.rows.filter((row) => !HERO_ROW_KINDS.has(row.kind));
+    const visible = resolveSessionSummaryRows(
+        { ...model, rows: detailRows.filter((row) => row.kind !== 'recap') },
         presentation,
     );
+    return Object.freeze({
+        rows: Object.freeze(detailRows.filter((row) => row.kind === 'recap' || visible.rows.includes(row))),
+        hiddenCount: visible.hiddenCount,
+    });
 }
 
 /**

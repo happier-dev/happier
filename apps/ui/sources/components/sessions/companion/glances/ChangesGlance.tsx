@@ -17,6 +17,7 @@ import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame, type WidgetFrameBody, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { Typography } from '@/constants/Typography';
 import { useSessionProjectScmSnapshot } from '@/sync/store/hooks';
+import { DiffStat } from '@/components/workspaces/scm/DiffStat';
 import { t } from '@/text';
 
 import { resolveChangesGlanceFiles, type ChangesGlanceState } from './glanceModels';
@@ -26,14 +27,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     branchName: { ...Typography.default('medium'), ...happierPageTextMetrics('meta'), color: theme.colors.text.primary, flexShrink: 1 },
     quiet: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.secondary },
     dot: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary },
-    added: { ...Typography.default(), ...Typography.tabular(), ...happierPageTextMetrics('meta'), color: theme.colors.versionControl.added.foreground },
-    removed: { ...Typography.default(), ...Typography.tabular(), ...happierPageTextMetrics('meta'), color: theme.colors.versionControl.removed.foreground },
     file: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 28, minWidth: 0 },
     letter: { ...Typography.default('bold'), width: 14, textAlign: 'center', fontSize: 11, color: theme.colors.text.tertiary },
     letterAdded: { color: theme.colors.versionControl.added.foreground },
     path: { ...Typography.default(), ...happierPageTextMetrics('rowDescription'), color: theme.colors.text.primary, flex: 1, minWidth: 0 },
     directory: { color: theme.colors.text.tertiary },
-    delta: { flexDirection: 'row', gap: 4, flexShrink: 0 },
     more: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary, paddingTop: 2, paddingLeft: 22 },
 }));
 
@@ -82,8 +80,7 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
                         {summary.hasLineChanges ? (
                             <>
                                 <Text style={styles.dot}>·</Text>
-                                <Text style={styles.added}>+{summary.linesAdded}</Text>
-                                <Text style={styles.removed}>−{summary.linesRemoved}</Text>
+                                <DiffStat added={summary.linesAdded} removed={summary.linesRemoved} />
                             </>
                         ) : null}
                     </View>
@@ -94,10 +91,7 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
                                 {file.directory ? <Text style={styles.directory}>{file.directory}</Text> : null}
                                 {file.name}
                             </Text>
-                            <View style={styles.delta}>
-                                {file.linesAdded > 0 ? <Text style={styles.added}>+{file.linesAdded}</Text> : null}
-                                {file.linesRemoved > 0 ? <Text style={styles.removed}>−{file.linesRemoved}</Text> : null}
-                            </View>
+                            <DiffStat added={file.linesAdded} removed={file.linesRemoved} />
                         </View>
                     ))}
                     {files.remaining > 0 ? (

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { Animated, Easing, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
@@ -77,7 +78,8 @@ export function TranscriptFirstPaintPlaceholder(
     props: TranscriptFirstPaintPlaceholderProps,
 ): React.ReactElement {
     const styles = stylesheet;
-    useUnistyles();
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const contentMaxWidth = useLayoutMaxWidth();
     const opacity = React.useRef(new Animated.Value(PLACEHOLDER_MIN_OPACITY)).current;
     React.useEffect(() => {
@@ -123,7 +125,7 @@ export function TranscriptFirstPaintPlaceholder(
                     style={[
                         styles.bubble,
                         row.align === 'left' ? styles.bubbleLeft : styles.bubbleRight,
-                        { width: row.bubbleWidth },
+                        { width: row.bubbleWidth, backgroundColor: materialColor(theme.colors.surface.inset) },
                     ]}
                 >
                     {row.lineWidths.map((width, lineIndex) => (
@@ -141,7 +143,7 @@ export function TranscriptFirstPaintPlaceholder(
         <View
             testID="transcript-first-paint-placeholder"
             pointerEvents="none"
-            style={styles.overlay}
+            style={[styles.overlay, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}
             aria-hidden={true}
             accessibilityElementsHidden={true}
             importantForAccessibility="no-hide-descendants"

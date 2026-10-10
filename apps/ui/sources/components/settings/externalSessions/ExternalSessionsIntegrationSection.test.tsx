@@ -629,6 +629,20 @@ describe('ExternalSessionsIntegrationSection', () => {
         })).toHaveLength(0);
     });
 
+    it('defers a repeated machine inventory failure to its page notice, but not across a grouped scope', async () => {
+        const { ExternalSessionsIntegrationSection } = await import('./ExternalSessionsIntegrationSection');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const section = <ExternalSessionsIntegrationSection integrations={[]} autoLinkSources={[]}
+            machineId="machine-1" agent={null} inventoryState={{ status: 'error', diagnosticCodes: [] }} />;
+        const page = await renderSettingsView(<ListPresentationProvider value="page" pageNoticeActive>{section}</ListPresentationProvider>);
+        expect(page.findRow('settings-external-sessions-inventory-status')).toBeNull();
+        expect(page.findRow('settings-external-sessions-integration-privacy')).not.toBeNull();
+        const grouped = await renderSettingsView(<ListPresentationProvider value="page" pageNoticeActive>
+            <ListPresentationProvider value="grouped">{section}</ListPresentationProvider>
+        </ListPresentationProvider>);
+        expect(grouped.findRow('settings-external-sessions-inventory-status')).not.toBeNull();
+    });
+
     it.each(['idle', 'loading', 'partial', 'error'] as const)(
         'does not present a definitive empty inventory while the authoritative inventory is %s',
         async (status) => {

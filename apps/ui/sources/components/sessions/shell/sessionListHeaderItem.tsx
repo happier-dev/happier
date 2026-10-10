@@ -42,7 +42,7 @@ type SessionListHeaderItemProps = Readonly<{
     collapsedKeys: Readonly<Record<string, boolean>>;
     projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>;
     hasMultipleMachines: boolean;
-    onOpenProject: (workspaceRefId: string) => void;
+    onOpenProject: (workspaceRefId: string, serverId?: string) => void;
     onCreateSessionFromWorkspaceScope: CreateSessionFromWorkspaceScopeHandler;
     onAddFolderToWorkspace: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
     onRenameWorkspace: (params: Readonly<{

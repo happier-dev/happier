@@ -33,6 +33,22 @@ type TeamHomeSelectionResolver = (input: Readonly<{
 >;
 
 describe('sessionListViewFilters', () => {
+    it('carries the Bot projection through the existing Home corpus and ordinary paging adapter', () => {
+        const filters = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'], bot: 'bot' });
+        const [home] = buildSessionListFilterQueryHomes(filters, {
+            mountedHomeServerIds: ['home-a'], storage: 'active', includeInactive: true,
+        });
+        expect(home?.query.bot).toBe('bot');
+        expect(resolveSessionListFilterOrdinaryPageAdapter(filters, home!.query)).toEqual({
+            path: '/v2/sessions', allowV1Fallback: true, membership: 'ordinary',
+        });
+        expect(shouldUseSessionListFilterQuerySource(filters, {
+            mountedHomeServerIds: ['home-a'], queryEnabled: false, hasOrdinaryAdapter: false,
+        })).toBe(true);
+        const eligibility = { eligibleHomeServerIds: ['home-a'], eligibleAudiences: [], eligibleTagIds: [] };
+        expect(buildSessionListSelectionScopeSignature(filters, eligibility))
+            .not.toBe(buildSessionListSelectionScopeSignature({ ...filters, bot: 'ordinary' }, eligibility));
+    });
     it('keeps control-character-bearing Home and Team identities distinct', () => {
         expect(buildQualifiedAudienceSelectionKey({ serverId: 'home\u0000one', kind: 'team', teamId: 'team' }))
             .not.toBe(buildQualifiedAudienceSelectionKey({ serverId: 'home', kind: 'team', teamId: 'one\u0000team' }));

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { InvalidateSync } from './sync';
 import { PauseController } from '@/utils/timing/pauseController';
-import { ServerFetchConnectivityTimeoutError } from '@/sync/http/client';
+import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 
 function createDeferred<T>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -45,9 +45,9 @@ describe('InvalidateSync.awaitQueue', () => {
 });
 
 describe('InvalidateSync.invalidateAndAwait', () => {
-    it('retries a transient connectivity timeout on its default policy', async () => {
+    it('retries a transient Home response on its default policy', async () => {
         const command = vi.fn()
-            .mockRejectedValueOnce(new ServerFetchConnectivityTimeoutError())
+            .mockRejectedValueOnce(new RetryableServerResponseError(503, 'temporarily unavailable'))
             .mockResolvedValueOnce(undefined);
         const sync = new InvalidateSync(command, { backoff: { minDelayMs: 0, maxDelayMs: 0, maxFailureCount: 2 } });
         await expect(sync.invalidateAndAwait()).resolves.toBeUndefined();

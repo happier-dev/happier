@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import type { MemorySearchHitV1 } from '@happier-dev/protocol/memory/memorySearch';
+import { isMemoryDocumentSearchHitV1, type MemorySearchHitV1 } from '@happier-dev/protocol/memory/memorySearch';
 
 import {
     captureMemorySearchSessionReadAuthority,
@@ -278,6 +278,7 @@ export function useSessionListMemorySearchAugmentationForContext(
             const seenKeys = new Set<string>();
             const hitTargets: SessionListMemorySearchTarget[] = [];
             for (const hit of authorizedResult.hits) {
+                if (isMemoryDocumentSearchHitV1(hit)) continue;
                 const sessionId = normalizeMemorySearchSessionId(hit.sessionId);
                 if (!sessionId) continue;
                 const sessionKey = sessionTagKey(serverId, sessionId);
@@ -377,7 +378,9 @@ export function useSessionListMemorySearchAugmentationForContext(
                         return;
                     }
 
-                    await applySearchHits(result.hits, authority);
+                    await applySearchHits(result.hits.filter((hit): hit is MemorySearchHitV1 =>
+                        !isMemoryDocumentSearchHitV1(hit),
+                    ), authority);
                 } catch (error) {
                     // A superseded query owns no state: the query that replaced it does.
                     if (isAbortSupersession(error, signal) || !isCurrentRequest()) return;

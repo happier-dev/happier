@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 
@@ -40,6 +40,7 @@ export const SessionListSkeletonRows = React.memo(function SessionListSkeletonRo
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     const isTablet = useIsTablet();
+    const { width: windowWidth } = useWindowDimensions();
     const sessionListDensity = useSetting('sessionListDensity');
     const uiFontScale = useLocalSetting('uiFontScale');
     // Same resolver and inputs as the list's own rows, so loading → loaded does not shift.
@@ -47,6 +48,7 @@ export const SessionListSkeletonRows = React.memo(function SessionListSkeletonRo
         isTablet,
         platform: Platform.OS,
         uiFontScale,
+        windowWidth,
     });
     const color = theme.colors.surface.pressedOverlay;
 

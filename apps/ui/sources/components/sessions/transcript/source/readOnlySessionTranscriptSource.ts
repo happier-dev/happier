@@ -34,7 +34,10 @@ type ReadOnlySessionTranscriptSourceInput = ReadOnlySessionTranscriptSnapshot & 
 export function createReadOnlySessionTranscriptSource(input: ReadOnlySessionTranscriptSourceInput): SessionTranscriptSource & Readonly<{
     update(snapshot: ReadOnlySessionTranscriptSnapshot): void;
 }> {
-    const interaction = input.interaction ?? deriveTranscriptInteraction({ kind: 'public' });
+    const actions = input.actions ?? null;
+    const interaction = actions === null
+        ? deriveTranscriptInteraction({ kind: 'public' })
+        : input.interaction ?? deriveTranscriptInteraction({ kind: 'public' });
     const loadOlder = input.loadOlder;
     let olderLoadCount = 0;
     let suppliedHistoryState = input.historyState;
@@ -130,7 +133,7 @@ export function createReadOnlySessionTranscriptSource(input: ReadOnlySessionTran
             } : null,
             loadTargetWindow: null,
         },
-        loadSidechain: null, navigate: null, actions: input.actions ?? null,
+        loadSidechain: null, navigate: null, actions,
         update: (snapshot) => {
             suppliedHistoryState = snapshot.historyState;
             current = materialize(snapshot);

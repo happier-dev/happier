@@ -13,6 +13,7 @@ export type SessionListHydrationPriorityResult<T> = Readonly<{
 type HydrationPriorityRow = Readonly<{
     id: string;
     active?: boolean;
+    reportsTo?: Readonly<{ sessionId: string }> | null;
 }>;
 
 function normalizeSessionIds(sessionIds?: Iterable<string> | null): string[] {
@@ -101,7 +102,13 @@ export function orderRowsForSessionListHydration<T extends HydrationPriorityRow>
         reasonById,
         usedSessionIds,
         rowsById,
-        sessionIds: normalizeSessionIds(params.prioritySessionIds),
+        // A listed report is consumed by its lead's Work and the nested session list even
+        // before its transcript opens. Its summary is demanded content, not optional generic
+        // background work. Open the projection already in this page; never fetch each child.
+        sessionIds: normalizeSessionIds([
+            ...(params.prioritySessionIds ?? []),
+            ...params.rows.filter(row => row.reportsTo?.sessionId.trim()).map(row => row.id),
+        ]),
     });
 
     for (const row of params.rows) {

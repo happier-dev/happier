@@ -14,6 +14,7 @@ import {
     type SocketRpcContent,
 } from '@happier-dev/sync-client';
 import { getRandomBytes } from '@/platform/cryptoRandom';
+import { createPrivateContinuationTransportError } from '@/sync/domains/machines/peer/mediation/rpc/client';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { observeServerTimestamp } from '@/sync/runtime/time';
@@ -71,7 +72,6 @@ import { registerExternalSessionStatusDemandTransport } from '@/sync/runtime/orc
 import { isServerRuntimeTransportPublished, resolveActiveServerRuntimeOrigin } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 import { getActiveServerHomeCarrier } from '@/sync/domains/server/serverRuntime';
 import { ServerScopedTransportUnavailableError } from '@/sync/runtime/homeCarrier';
-import { fetchAccountEncryptionCurrentness, getAccountEncryptionModeCacheRevision } from '@/sync/api/account/apiAccountEncryptionMode';
 import { MachineLiveStreamPayloadErrorV1, type MachineLiveStreamContentV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 import { createMachineLiveStreamSocketTransport } from '@/sync/domains/machines/peer/mediation/stream/socketTransport';
 
@@ -113,6 +113,8 @@ function readMachineStorageModeFromLocalState(machineId: string): 'plain' | 'e2e
     if (!normalizedMachineId) return null;
     try {
         const row = storage.getState().machines[normalizedMachineId] ?? null;
+        if (row?.availability?.kind === 'locked' || (row?.access && row.access.accessState !== 'ready')) return null;
+        if (row?.access) return row.access.resourceMode;
         if (row?.storageMode === 'plain') return 'plain';
         if (row?.storageMode === 'e2ee') return 'e2ee';
         return null;
@@ -433,9 +435,7 @@ class ApiSocket {
                 void startServerReachabilitySupervisor({
                     serverUrl: this.config.endpoint,
                     token: this.config.token,
-                    ...(canonicalizeServerUrl(nextRuntimeOrigin) === canonicalizeServerUrl(this.config.endpoint)
-                        ? {}
-                        : { runtimeOrigin: nextRuntimeOrigin }),
+                    runtimeOrigin: nextRuntimeOrigin,
                     homeCarrier: this.config.homeCarrier,
                 }).then(() => {
                     if (this.currentConnectionState.phase === 'online') this.handleReachabilityStateChange(this.currentConnectionState);
@@ -448,7 +448,7 @@ class ApiSocket {
         void startServerReachabilitySupervisor({
             serverUrl,
             token,
-            ...(canonicalizeServerUrl(runtimeOrigin) === canonicalizeServerUrl(serverUrl) ? {} : { runtimeOrigin }),
+            runtimeOrigin,
             homeCarrier: 'homeCarrier' in this.config
                 ? this.config.homeCarrier ?? null
                 : getActiveServerHomeCarrier(),
@@ -629,6 +629,7 @@ class ApiSocket {
             authorization?: SocketRpcAuthorizationContext;
             onIssued?: () => void;
             signal?: AbortSignal;
+            requestId?: string;
         },
     ): Promise<R> {
         try {
@@ -639,6 +640,17 @@ class ApiSocket {
             const machineEncryption = usePlaintextParams
                 ? null
                 : this.encryption?.getMachineEncryption(machineId) ?? null;
+            const capturedMachine = storage.getState().machines[machineId];
+            const capturedEncryption = this.encryption;
+            const isMachineCurrent = () => {
+                const current = storage.getState().machines[machineId];
+                if (current?.availability?.kind === 'locked' || (current?.access && current.access.accessState !== 'ready')) return false;
+                if (current?.dataEncryptionKey !== capturedMachine?.dataEncryptionKey || current?.keyBasis?.dataEncryptionKey !== capturedMachine?.keyBasis?.dataEncryptionKey) return false;
+                return this.encryption === capturedEncryption && (usePlaintextParams
+                    ? readMachineStorageModeFromLocalState(machineId) === 'plain'
+                    : capturedEncryption?.getMachineEncryption(machineId) === machineEncryption);
+            };
+            if (!isMachineCurrent()) throw new Error(`Machine encryption not found for ${machineId}`);
             if (!usePlaintextParams && !machineEncryption) {
                 throw new Error(`Machine encryption not found for ${machineId}`);
             }
@@ -652,8 +664,13 @@ class ApiSocket {
                     ? { mode: 'plain' }
                     : { mode: 'e2ee', cipher: machineEncryption! },
                 ...options,
+                onIssued: () => {
+                    if (!isMachineCurrent()) throw new Error(`Machine encryption context changed for ${machineId}`);
+                    options?.onIssued?.();
+                },
             });
         } catch (error) {
+            if (method === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE) throw createPrivateContinuationTransportError(error);
             throw await this.coerceAckTimeoutAuthError(error);
         }
     }
@@ -1285,7 +1302,6 @@ class ApiSocket {
         socketRole: HappierSocketRole,
     ) {
         const installedConfig = this.config;
-        let modeRead: { revision: number; promise: Promise<'plain' | 'e2ee'> } | null = null;
         const liveStreamTransport = createMachineLiveStreamSocketTransport({
             emit: (wire) => socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, wire),
             deliver: (decoded) => {
@@ -1297,18 +1313,9 @@ class ApiSocket {
             onError: (error) => this.setError(error),
             resolveContent: async (machineId): Promise<MachineLiveStreamContentV1> => {
                 if (!installedConfig) throw new MachineLiveStreamPayloadErrorV1('stream_transport_unavailable');
-                const revision = getAccountEncryptionModeCacheRevision();
-                if (!modeRead || modeRead.revision !== revision) {
-                    modeRead = { revision, promise: fetchAccountEncryptionCurrentness({ token: installedConfig.token }, {
-                        request: (path, init) => this.request(path, init),
-                    }).then((currentness) => currentness.mode) };
-                }
-                let mode: 'plain' | 'e2ee';
-                try { mode = await modeRead.promise; }
-                catch (error) { modeRead = null; throw error; }
                 if (this.socket !== socket || this.config !== installedConfig) throw new MachineLiveStreamPayloadErrorV1('stream_transport_unavailable');
-                if (getAccountEncryptionModeCacheRevision() !== revision) throw new MachineLiveStreamPayloadErrorV1('stream_encryption_mode_unavailable');
-                if (readMachineStorageModeFromLocalState(machineId) !== mode) throw new MachineLiveStreamPayloadErrorV1('stream_payload_mode_mismatch');
+                const mode = readMachineStorageModeFromLocalState(machineId);
+                if (!mode) throw new MachineLiveStreamPayloadErrorV1('stream_payload_mode_mismatch');
                 if (mode === 'plain') return { mode };
                 const cipher = this.encryption?.getMachineEncryption(machineId);
                 if (!cipher) throw new MachineLiveStreamPayloadErrorV1('stream_encryption_material_unavailable');
@@ -1407,6 +1414,7 @@ class ApiSocket {
         const machineId = separatorIndex > 0 ? method.slice(0, separatorIndex) : '';
         const usePlaintextParams =
             readMachineStorageModeFromLocalState(machineId) === 'plain';
+        const capturedMachine = storage.getState().machines[machineId];
         const machineEncryption = machineId && !usePlaintextParams
             ? this.encryption?.getMachineEncryption(machineId) ?? null
             : null;
@@ -1425,6 +1433,14 @@ class ApiSocket {
         let decryptedParams: unknown;
         try {
             const decoded = await socketRpcCodec.decodeRequestParams(content, request.params, method);
+            const currentMachine = storage.getState().machines[machineId];
+            if (currentMachine?.availability?.kind === 'locked' || (currentMachine?.access && currentMachine.access.accessState !== 'ready')
+                || currentMachine?.dataEncryptionKey !== capturedMachine?.dataEncryptionKey
+                || currentMachine?.keyBasis?.dataEncryptionKey !== capturedMachine?.keyBasis?.dataEncryptionKey
+                || (!usePlaintextParams && this.encryption?.getMachineEncryption(machineId) !== machineEncryption)
+                || (usePlaintextParams && readMachineStorageModeFromLocalState(machineId) !== 'plain')) {
+                return await respond({ error: 'Machine encryption context changed', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+            }
             decryptedParams = decoded.params;
             callId = decoded.callId;
         } catch (error) {

@@ -90,14 +90,24 @@ export function buildSessionOrganizationProjection(
         }
     }
 
-    const pinnedSessionIds = Object.values(pinsBySessionId)
+    const sortedPins = Object.values(pinsBySessionId)
         .sort((a, b) => compareNullableSortKey(a.sortKey, b.sortKey) || a.pinnedAt - b.pinnedAt || a.sessionId.localeCompare(b.sessionId))
         .map((pin) => pin.sessionId);
+    const pinnedOrderKey = buildSessionOrganizationOrderScopeKey({ serverId, scopeKind: 'pinned', scopeKey: 'pins' });
+    const orderedPinSessionIds = [...new Set([
+        ...(orderEntriesByScopeKey[pinnedOrderKey] ?? [])
+            .filter(entry => entry.itemKind === 'session' && pinsBySessionId[entry.itemKey] !== undefined)
+            .sort((a, b) => compareNullableSortKey(a.sortKey, b.sortKey) || a.itemKey.localeCompare(b.itemKey))
+            .map(entry => entry.itemKey),
+        ...sortedPins,
+    ])];
 
     return {
         schemaVersion: state.schemaVersionByServerId[serverId] ?? null,
         version: state.snapshotVersionByServerId[serverId] ?? null,
-        pinnedSessionIds,
+        orderedPinSessionIds,
+        pinnedSessionIds: orderedPinSessionIds.filter(sessionId => pinsBySessionId[sessionId]?.listPinned === true),
+        railPinnedSessionIds: orderedPinSessionIds.filter(sessionId => pinsBySessionId[sessionId]?.railPinned === true),
         pinsBySessionId,
         foldersById,
         folderAssignmentsBySessionId,

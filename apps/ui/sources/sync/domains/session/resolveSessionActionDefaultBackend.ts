@@ -122,7 +122,7 @@ function readCanonicalAgentTarget(
 }
 
 export function resolveSessionActionDefaultBackend(params: Readonly<{
-  session: Session | null | undefined;
+  session: Pick<Session, 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'> | null | undefined;
   enabledAgentIds?: readonly AgentId[] | null;
   fallbackAgentId?: AgentId | null;
 }>): ResolvedSessionActionDefaultBackend | null {

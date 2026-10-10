@@ -675,6 +675,14 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput): Se
 
     const result = React.useMemo(() => {
         const previous = previousRef.current;
+        const coverageComplete = layer.coverageComplete && layer.homes.every((home) => (
+            isSessionListQueryHomeCoverageComplete({
+                state: layer.statesByServerId[home.serverId],
+                requestedQueryKey: home.queryKey,
+                bot: home.query.bot,
+                rowsBySessionId: rowsByServerId[home.serverId] ?? undefined,
+            })
+        ));
         const nextByServerId: Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined> = {};
         for (const home of layer.homes) {
             const status = layer.statusByServerId[home.serverId];
@@ -734,7 +742,7 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput): Se
             && previousResult.byServerId === byServerId
             && previousResult.source === source
             && previousResult.statesByServerId === layer.statesByServerId
-            && previousResult.coverageComplete === layer.coverageComplete
+            && previousResult.coverageComplete === coverageComplete
             && previousResult.loadNext === layer.loadNext
             && previousResult.refresh === layer.refresh
         ) {
@@ -744,7 +752,7 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput): Se
             statesByServerId: layer.statesByServerId,
             byServerId,
             source,
-            coverageComplete: layer.coverageComplete,
+            coverageComplete,
             loadNext: layer.loadNext,
             refresh: layer.refresh,
         };

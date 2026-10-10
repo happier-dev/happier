@@ -153,6 +153,22 @@ describe('projectSessionBoard', () => {
         expect(snapshot.unplacedItemIds).toEqual(['a', 'b']);
     });
 
+    it('recovers only Board-intended unplaced items and retains transcript content after unpin', () => {
+        const items = new Map<string, SessionBoardOpenedRecord<SessionSurfaceItemV1>>();
+        for (const destination of ['transcript', 'board', 'both'] as const) {
+            items.set(destination, { revision: `ssr1:${destination}`, outcome: {
+                status: 'ready', value: { ...noteItem(destination), destination },
+            } });
+        }
+        const snapshot = projectSessionBoard(input({
+            layout: layoutRecord({ v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [] }] }),
+            items,
+        }));
+        expect(snapshot.unplacedItemIds).toEqual(['board']);
+        expect(snapshot.itemsById.get('transcript')?.state.kind).toBe('ready');
+        expect(snapshot.itemsById.get('both')?.state.kind).toBe('ready');
+    });
+
     it('preserves referential identity for rows whose revision and state did not change', () => {
         const first = projectSessionBoard(input());
         const second = projectSessionBoard(input({ freshness: 'stale', loading: 'refreshing' }), first);

@@ -75,6 +75,7 @@ export function toLocalAgentActivityEntry(params: Readonly<{
         // who owns status stays about sources rather than about statuses. WHICH prompt it is travels
         // beside the status rather than collapsing into it.
         status: attentionKinds.length > 0 ? 'waiting' : fromSubagentStatus(subagent.status),
+        ...(subagent.isActive !== undefined ? { isActive: subagent.isActive } : {}),
         title: subagent.display.title,
         metaDetail: subagent.display.subtitle ?? null,
         startedAtMs: readInstant(subagent.timestamps.startedAtMs),

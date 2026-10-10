@@ -6,7 +6,7 @@ import {
 } from './parsePlainSessionPayload';
 
 describe('parsePlainSessionMetadata metadata privacy layout', () => {
-    it('uses the strict shared-envelope schema for layout v1', () => {
+    it('uses the canonical shared-envelope read projection for layout v1', () => {
         expect(parsePlainSessionMetadata(JSON.stringify({
             v: 1,
             summary: { text: 'Safe title', updatedAt: 10 },
@@ -16,13 +16,16 @@ describe('parsePlainSessionMetadata metadata privacy layout', () => {
         });
     });
 
-    it('fails closed when a layout-v1 payload injects private or unknown fields', () => {
+    it('drops unknown fields without admitting private authority from layout-v1 stored data', () => {
         expect(parsePlainSessionMetadata(JSON.stringify({
             v: 1,
             summary: { text: 'Safe title', updatedAt: 10 },
             path: '/malicious-private-path',
             futurePrivateAuthority: { token: 'never-admit' },
-        }), 1)).toBeNull();
+        }), 1)).toEqual({ v: 1, summary: { text: 'Safe title', updatedAt: 10 } });
+        expect(parsePlainSessionMetadata(JSON.stringify({ v: 1, bot: { kind: 'bot', future: true } }), 1))
+            .toEqual({ v: 1, bot: { kind: 'bot' } });
+        expect(parsePlainSessionMetadata(JSON.stringify({ v: 1, bot: { kind: 'ordinary' } }), 1)).toBeNull();
     });
 
     it('distinguishes absent legacy layout from present invalid null', () => {
@@ -46,7 +49,7 @@ describe('parsePlainSessionMetadata metadata privacy layout', () => {
         });
     });
 
-    it('applies the same strict boundary after E2EE decryption', () => {
+    it('applies the same known-field boundary after E2EE decryption', () => {
         expect(parseDecryptedSessionMetadata({
             v: 1,
             publicAgentState: {
@@ -77,7 +80,7 @@ describe('parsePlainSessionMetadata metadata privacy layout', () => {
             v: 1,
             summary: { text: 'Safe title', updatedAt: 10 },
             resumeToken: 'private-authority',
-        }, 1)).toBeNull();
+        }, 1)).toEqual({ v: 1, summary: { text: 'Safe title', updatedAt: 10 } });
     });
 
     it('keeps layout-zero decrypted metadata on the released parser', () => {

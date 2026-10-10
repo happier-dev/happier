@@ -6,8 +6,8 @@ import type {
 } from '@happier-dev/protocol';
 
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
-import type { Settings } from '@/sync/domains/settings/settings';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ExternalSessionBrowseLabels } from './resolveExternalSessionBrowseSourceOptions';
 
 import {
     listExternalSessionBrowseProviderIds,
@@ -44,7 +44,8 @@ export function resolveExternalSessionBrowseLockedSource(params: Readonly<{
     machineId?: string | null;
     agentOptionState?: Record<string, unknown> | null;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
-    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
+    labelsByKey: ExternalSessionBrowseLabels;
+    agentSettings?: Readonly<Record<string, unknown>>;
     projection: PluginProjectionV2 | null | undefined;
     /** See `canBrowseExternalSessions`. */
     interaction?: 'openSession' | 'pickRemoteSessionId';
@@ -54,7 +55,8 @@ export function resolveExternalSessionBrowseLockedSource(params: Readonly<{
         providerId: params.providerId,
         machineId: params.machineId,
         profile: params.profile,
-        settings: params.settings,
+        labelsByKey: params.labelsByKey,
+        agentSettings: params.agentSettings,
         projection: params.projection,
         interaction: params.interaction,
     });
@@ -68,7 +70,6 @@ export function resolveExternalSessionBrowseLockedSource(params: Readonly<{
             sourceOptions,
             agentOptionState: params.agentOptionState ?? null,
             profile: params.profile,
-            settings: params.settings as Settings,
         })
         : null;
 

@@ -1290,6 +1290,78 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         ]);
     });
 
+    it.each([true, false])('returns the server requested-action receipt without guessing an update (didUpdate=%s)', async (didUpdate) => {
+        const sessionId = 's_test_action_receipt';
+        const localId = 'action-receipt';
+        const resetAction = {
+            v: 1,
+            kind: 'reset_start',
+            reset: {
+                source: {
+                    bindingKind: 'account',
+                    ref: { service: { pluginId: 'happier.agent.codex', localId: 'codex-account' }, accountId: 'connected-account' },
+                },
+                recordId: 'paug_v1_receipt1',
+                meterId: 'requests',
+                witness: { id: 'accepted-history-row', observedAtMs: 100 },
+            },
+        } as const;
+        const serverAction = didUpdate ? resetAction : { v: 1, kind: 'enqueue' } as const;
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: localId, localId, createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted',
+            pendingRequestedAction: { v: 1, kind: 'enqueue' }, text: 'held input', rawRecord: null,
+        });
+
+        await expect(updatePendingRequestedActionV2({
+            sessionId, localId, requestedAction: resetAction,
+            request: async () => Response.json({ ok: true, didUpdate, requestedAction: serverAction, pendingVersion: 2 }),
+        })).resolves.toEqual({ didUpdate, requestedAction: serverAction });
+        expect(storage.getState().sessionPending[sessionId]?.messages[0]?.pendingRequestedAction).toEqual(serverAction);
+    });
+
+    it.each([
+        { requestedAction: { v: 1, kind: 'send_now' } },
+        { didUpdate: true },
+        { didUpdate: true, requestedAction: { v: 1, kind: 'reset_start' } },
+    ])('rejects an incomplete requested-action receipt before changing its local projection: %j', async (payload) => {
+        const sessionId = 's_test_invalid_action_receipt';
+        const localId = 'invalid-action-receipt';
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: localId, localId, createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted',
+            pendingRequestedAction: { v: 1, kind: 'enqueue' }, text: 'queued input', rawRecord: null,
+        });
+
+        await expect(updatePendingRequestedActionV2({
+            sessionId, localId, requestedAction: { v: 1, kind: 'send_now' },
+            request: async () => Response.json(payload),
+        })).rejects.toMatchObject({ code: 'pending_action_receipt_invalid' });
+        expect(storage.getState().sessionPending[sessionId]?.messages[0]?.pendingRequestedAction).toEqual({ v: 1, kind: 'enqueue' });
+    });
+
+    it('returns the committed action receipt after scope retirement without updating the replacement projection', async () => {
+        const sessionId = 's_test_retired_action_receipt';
+        const localId = 'retired-action-receipt';
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: localId, localId, createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted',
+            pendingRequestedAction: { v: 1, kind: 'enqueue' }, text: 'replacement scope input', rawRecord: null,
+        });
+        const requestedAction = { v: 1, kind: 'send_now' } as const;
+        let scopeCurrent = true;
+
+        await expect(updatePendingRequestedActionV2({
+            sessionId, localId, requestedAction,
+            isOutboxScopeCurrent: () => scopeCurrent,
+            request: async () => {
+                scopeCurrent = false;
+                return Response.json({ didUpdate: true, requestedAction });
+            },
+        })).resolves.toEqual({ didUpdate: true, requestedAction });
+        expect(storage.getState().sessionPending[sessionId]?.messages[0]?.pendingRequestedAction).toEqual({ v: 1, kind: 'enqueue' });
+    });
+
     it('retires action PATCH enqueue custody without inventing server snapshot provenance', async () => {
         const sessionId = 's_test_action_patch_hands_off_custody';
         const localId = 'action-patch-hands-off-custody';
@@ -1309,7 +1381,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             sessionId,
             localId,
             requestedAction: { v: 1, kind: 'steer_if_active' },
-            request: async () => Response.json({ didUpdate: true }),
+            request: async () => Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'steer_if_active' } }),
         });
 
         expect((await loadPendingOutboxForSession(sessionId, outboxScope))).toEqual([]);
@@ -1392,7 +1464,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             serverWireMode,
             request: async (_path, init) => {
                 body = JSON.parse(String(init?.body));
-                return Response.json({ didUpdate: true });
+                return Response.json({ didUpdate: true, requestedAction: expectedProjectionAction });
             },
         });
 
@@ -1669,7 +1741,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             request: async () => {
                 patchStarted();
                 await patchGate;
-                return Response.json({ didUpdate: true });
+                return Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } });
             },
         });
         await patchStartedGate;
@@ -1738,7 +1810,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
                 sessionId,
                 localId,
                 requestedAction: { v: 1, kind: 'steer_if_active' },
-                request: async () => Response.json({ didUpdate }),
+                request: async () => Response.json({ didUpdate, requestedAction: { v: 1, kind: 'steer_if_active' } }),
             });
 
             expect((await loadPendingOutboxForSession(sessionId, outboxScope))).toEqual([]);
@@ -1777,7 +1849,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             const request = async (path: string, init?: RequestInit) => {
                 const method = init?.method ?? 'GET';
                 requests.push({ path, method });
-                if (operation === 'action') return Response.json({ didUpdate: true });
+                if (operation === 'action') return Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } });
                 if (operation === 'handled' && method === 'GET') return Response.json({ pending: [] });
                 return new Response(null, { status: 204 });
             };
@@ -1904,7 +1976,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             requestedAction: { v: 1, kind: 'send_now' },
             request: async (path, init) => {
                 requests.push({ path, method: init?.method ?? 'GET' });
-                return Response.json({ didUpdate: true });
+                return Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } });
             },
         });
 
@@ -2068,9 +2140,9 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             sessionId, localId, requestedAction: { v: 1, kind: 'send_now' },
             request: async () => {
                 requestCount += 1;
-                return Response.json({ didUpdate: true });
+                return Response.json({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } });
             },
-        })).resolves.toBeUndefined();
+        })).resolves.toEqual({ didUpdate: true, requestedAction: { v: 1, kind: 'send_now' } });
         expect(requestCount).toBe(1);
         expect(storage.getState().sessionPending[sessionId]?.messages).toContainEqual(expect.objectContaining({
             id: 'canonical-server-synthetic',

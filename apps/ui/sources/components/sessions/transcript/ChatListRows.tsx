@@ -36,6 +36,7 @@ import {
 } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import type { TranscriptEventEmphasisByMessageId } from '@/components/sessions/transcript/events/transcriptEventEmphasis';
+import type { SessionForkVisualContextV1 } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 
 export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: {
     sessionId: string;
@@ -43,6 +44,7 @@ export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: 
     messageOverride?: Message | null;
     originSessionId?: string;
     isReadOnlyContext?: boolean;
+    visualContext?: SessionForkVisualContextV1;
     // Resolved at row render time (not materialized by the list renderItem): streaming
     // deltas mutate the message in place and only bump the revision, and the memoized
     // MessageView below re-renders on revision change. `useMessage` re-renders this row
@@ -120,7 +122,7 @@ export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: 
     return (
         <View testID={`${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${props.messageId}`}>
             <View testID={`transcript-message-${props.messageId}`}>
-                <TranscriptOriginSourceProvider originSessionId={originSessionId} readOnly={props.isReadOnlyContext === true}>
+                <TranscriptOriginSourceProvider originSessionId={originSessionId} readOnly={props.isReadOnlyContext === true} visualContext={props.visualContext}>
                     {messageView}
                 </TranscriptOriginSourceProvider>
             </View>

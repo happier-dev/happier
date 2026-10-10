@@ -110,6 +110,8 @@ export type TranscriptToolChromeCommon = Pick<TranscriptSessionCommonSettings,
 > & Readonly<{
     /** Exact Home identity carried once by the mounted transcript host. */
     serverId?: string | null;
+    /** Resolved once at the transcript root, including the private Session override. */
+    showToolCalls?: boolean;
     /**
      * Tool display settings given as values instead of read from the store. Only surfaces that show
      * sample rows outside a session (settings previews) set it; the transcript host never does.

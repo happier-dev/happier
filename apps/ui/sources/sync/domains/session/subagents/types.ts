@@ -17,6 +17,8 @@ export type SessionSubagent = Readonly<{
     id: string;
     kind: SessionSubagentKind;
     status: SessionSubagentStatus;
+    /** Current work, separate from a retained execution-run handle's lifecycle. */
+    isActive?: boolean;
     display: Readonly<{
         title: string;
         subtitle?: string;
@@ -50,4 +52,6 @@ export type SessionSubagent = Readonly<{
 export type SessionSubagentActiveExecutionRunState = Readonly<{
     runId: string;
     status?: string | null;
+    runClass?: string | null;
+    turnInFlight?: boolean | null;
 }>;

@@ -140,9 +140,11 @@ describe('pendingQueueV2 requested-action replay', () => {
     persistence.set(key, JSON.stringify(parsed));
   }
 
-  it('write-aheads the explicit requested action and reuses that frozen body', async () => {
+  it('write-aheads the selected ordinary Machine and explicit action and reuses that frozen body', async () => {
     const sessionId = 's_action_outbox';
-    storage.getState().applySessions([buildSession({ sessionId })]);
+    storage.getState().applySessions([buildSession({ sessionId, overrides: { metadata: {
+      machineId: 'selected-machine-not-first-key', path: '/workspace', host: 'host', version: 'test',
+    } } })]);
     const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 3 });
     let firstBody = '';
 
@@ -160,7 +162,10 @@ describe('pendingQueueV2 requested-action replay', () => {
     });
 
     expect(result.accepted).toBe(false);
-    expect(JSON.parse(firstBody)).toMatchObject({ requestedAction: { v: 1, kind: 'steer_if_active' } });
+    expect(JSON.parse(firstBody)).toMatchObject({ targetMachineId: 'selected-machine-not-first-key', requestedAction: { v: 1, kind: 'steer_if_active' } });
+    storage.getState().applySessions([buildSession({ sessionId, overrides: { metadata: {
+      machineId: 'replacement-must-not-retarget-retained-input', path: '/workspace', host: 'host', version: 'test',
+    } } })]);
     let replayBody = '';
     await retryPendingOutboxOperationV2({
       sessionId,

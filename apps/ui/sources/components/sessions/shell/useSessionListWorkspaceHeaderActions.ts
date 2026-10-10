@@ -1,7 +1,8 @@
 import { Modal } from '@/modal';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
-import { addWorkspaceRefToAccount, resetWorkspaceRefNameInAccount } from '@/sync/ops/workspaceRefs';
+import { updateProjectWorkspace } from '@/sync/ops/actions/projectWorkspaceActions';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 
 export function useSessionListWorkspaceHeaderActions(input: Readonly<{
@@ -16,6 +17,10 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
             currentLabel: string;
         }>) => {
             if (!params.scopeHint) return;
+            const currentRef = findWorkspaceRefByScope(input.workspaceRefs, params.scopeHint);
+            if (!currentRef) { Modal.alert(t('common.error'), t('common.saveError')); return; }
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime?.isCurrent()) return;
             const newName = await Modal.prompt(
                 t('sessionsList.renameWorkspacePromptTitle'),
                 undefined,
@@ -27,15 +32,14 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
                 },
             );
             if (newName !== null && newName.trim()) {
-                const currentRef = findWorkspaceRefByScope(input.workspaceRefs, params.scopeHint);
                 if ((currentRef?.label ?? null) === newName.trim()) {
                     return;
                 }
-                const result = await addWorkspaceRefToAccount({
-                    scope: params.scopeHint,
-                    nowMs: Date.now(),
-                    patch: { label: newName.trim() },
-                });
+                const result = await updateProjectWorkspace({
+                    serverId: currentRef.serverId,
+                    workspaceId: currentRef.id,
+                    label: newName.trim(),
+                }, lifetime);
                 if (!result.ok) Modal.alert(t('common.error'), t('common.saveError'));
             }
         },
@@ -48,9 +52,10 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
             if ((currentRef?.label ?? null) === null) {
                 return;
             }
-            const result = await resetWorkspaceRefNameInAccount({
+            const result = await updateProjectWorkspace({
                 serverId: params.scopeHint.serverId,
-                workspaceRefId: currentRef!.id,
+                workspaceId: currentRef!.id,
+                label: null,
             });
             if (!result.ok) Modal.alert(t('common.error'), t('common.saveError'));
         },

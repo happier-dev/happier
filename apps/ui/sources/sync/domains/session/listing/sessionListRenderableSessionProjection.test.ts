@@ -88,6 +88,13 @@ describe('locked shared title projection', () => {
 });
 
 describe('buildSessionFromListRenderable', () => {
+    it('preserves an explicit detached list edge rather than reviving the opened session lead', () => {
+        const base = createSessionFixture({ reportsTo: { sessionId: 'former-lead' } });
+        const detached = buildSessionListRenderableFromSession({ ...base, reportsTo: null });
+        expect(buildSessionFromListRenderable(detached, { baseSession: base }).reportsTo).toBeNull();
+        expect(buildSessionFromListRenderable({ ...detached, reportsTo: undefined }, { baseSession: base }).reportsTo)
+            .toEqual({ sessionId: 'former-lead' });
+    });
     it('keeps legacy row metadata readable without reviving an unavailable layout-v1 owner view', () => {
         const legacy = createSessionFixture({
             metadata: {

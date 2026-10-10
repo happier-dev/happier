@@ -82,3 +82,9 @@ describe('deriveSubAgentSidechainSubagents — a launch is not a result', () => 
         expect(subagent.status).toBe('failed');
     });
 });
+
+
+it.each(['stopped', 'cancelled', 'aborted', 'interrupted', 'killed', 'canceled'])('keeps serialized native %s tool results cancelled', status => {
+    const message = subAgentToolMessage({ state: 'error', result: JSON.stringify({ tool_use_result: JSON.stringify({ status, result: 'Agent ended' }) }) });
+    expect(deriveSingle([message]).status).toBe('cancelled');
+});

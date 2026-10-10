@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
+import { HappierPressable, happierFocusRingStyle } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -102,16 +103,17 @@ export function CommittedMessageActions(props: Props) {
                 enabled visible role={props.selectableText?.role} previewText={props.selectableText?.text}
                 testID={`transcript-message-select:${props.message.id}`} invertedActionsLayout={props.invertTimestampAndActions}
                 onHoverIn={props.onActionHoverIn} onHoverOut={props.onActionHoverOut} />;
-            if (action.id === 'savePrompt' && savedArtifactId) return <Pressable key={action.id}
+            if (action.id === 'savePrompt' && savedArtifactId) return <HappierPressable key={action.id}
                 testID={`transcript-message-saved-prompt:${props.message.id}`} accessibilityRole="button"
                 accessibilityLabel={t('committedMessageActions.savedOpen')}
                 onPress={() => source.navigate?.(promptCollectionItemHref('doc', savedArtifactId))}
-                style={({ pressed }) => [styles.saved, pressed ? styles.savedPressed : null]}>
+                style={({ pressed, focused }) => [styles.saved, pressed ? styles.savedPressed : null,
+                    happierFocusRingStyle({ visible: focused, color: theme.colors.border.focus })]}>
                 <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.state.success.foreground} />
                 <Text style={styles.savedText} numberOfLines={1}>
                     {t('committedMessageActions.savedToLibrary')}{' · '}<Text style={styles.savedLink}>{t('common.open')}</Text>
                 </Text>
-            </Pressable>;
+            </HappierPressable>;
             return <View key={action.id} ref={action.id === 'savePrompt' ? saveAnchorRef : undefined} collapsable={false}
                 style={props.invertTimestampAndActions ? styles.inverted : styles.button}><IconButton testID={`transcript-message-${action.id === 'savePrompt' ? 'save-prompt' : action.id === 'makeRepeatable' ? 'repeatable' : action.id}:${props.message.id}`}
                 size={Platform.OS === 'web' ? 28 : resolveMinimumInteractiveTargetSize(Platform.OS)}

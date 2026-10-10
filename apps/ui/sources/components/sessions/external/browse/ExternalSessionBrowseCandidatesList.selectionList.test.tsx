@@ -155,6 +155,23 @@ function defaultProps() {
     } as const;
 }
 
+describe('ExternalSessionBrowseCandidatesList machine inventory', () => {
+    it.each(['loading', 'signedOut'] as const)('shows the inventory %s before daemon capability state', async (inventoryStatus) => {
+        const { ExternalSessionBrowseCandidatesList } = await import('./ExternalSessionBrowseCandidatesList');
+        const screen = await renderScreen(<ExternalSessionBrowseCandidatesList
+            {...defaultProps()}
+            candidates={[]}
+            projectionPhase="unsupported"
+            scope={{ kind: 'inventory', status: inventoryStatus }}
+        />);
+        expect(screen.findByTestId(inventoryStatus === 'loading'
+            ? 'direct-session-candidates:loading'
+            : 'direct-session-candidates:inventory-unavailable')).not.toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:home-unreachable')).toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:unavailable')).toBeNull();
+    });
+});
+
 describe('ExternalSessionBrowseCandidatesList Agent-session deletion affordance', () => {
     const TRIGGER_TEST_ID = 'external-session-candidate-actions:session-1';
 
@@ -243,6 +260,27 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         />);
         expect(screen.findByTestId('direct-session-candidates:content-unsupported')).not.toBeNull();
         expect(screen.findByTestId('direct-session-candidates:no-matches')).toBeNull();
+    });
+
+    it('shows incomplete coverage and an explicit continuation for a settled empty content page', async () => {
+        const props = defaultProps();
+        const { ExternalSessionBrowseCandidatesList } = await import('./ExternalSessionBrowseCandidatesList');
+        const screen = await renderScreen(<ExternalSessionBrowseCandidatesList
+            {...props}
+            candidates={[]}
+            searchQuery="body"
+            searchTarget="content"
+            contentSearchSupported
+            contentSearchSubmitted
+            contentCoverage="partial"
+            nextCursor="unfinished-content-scan"
+        />);
+
+        expect(screen.getTextContent()).toContain('externalSessions.browseContentPartial');
+        expect(screen.getTextContent()).not.toContain('common.loading');
+        expect(screen.getTextContent()).toContain('externalSessions.browseContentMore');
+        await screen.pressByTestIdAsync('direct-session-candidates:pagination:more');
+        expect(props.onLoadMore).toHaveBeenCalledTimes(1);
     });
 
     it('keeps candidate options and pending-state projection within the virtualized window', async () => {
@@ -502,7 +540,7 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         expect(onChooseMachine).toHaveBeenCalledTimes(1);
     });
 
-    it('says the Home cannot be reached, not that the machine is gone, while its machine list is unread', async () => {
+    it('shows an inventory read failure without diagnosing the Home or declaring the machine gone', async () => {
         const props = defaultProps();
         const onChooseMachine = vi.fn();
         const { ExternalSessionBrowseCandidatesList } = await import('./ExternalSessionBrowseCandidatesList');
@@ -511,14 +549,15 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
             candidates={[]}
             nextCursor={null}
             browseCapabilityAvailable={false}
-            scope={{ kind: 'unreachable', homeName: 'Studio', onChooseMachine }}
+            scope={{ kind: 'inventory', status: 'error', onChooseMachine }}
         />);
 
-        expect(screen.findByTestId('direct-session-candidates:home-unreachable')).not.toBeNull();
+        expect(screen.findByTestId('direct-session-candidates:inventory-unavailable')).not.toBeNull();
         expect(screen.findByTestId('direct-session-candidates:machine-gone')).toBeNull();
         expect(screen.findByTestId('direct-session-candidates:no-agents')).toBeNull();
-        expect(screen.getTextContent()).toContain('settingsPlugins.targetSelection.unreachableHome');
-        await screen.pressByTestIdAsync('direct-session-candidates:home-unreachable-action');
+        expect(screen.getTextContent()).toContain('common.unavailable');
+        expect(screen.getTextContent()).not.toContain('settingsPlugins.targetSelection.unreachableHome');
+        await screen.pressByTestIdAsync('direct-session-candidates:inventory-unavailable-action');
         expect(onChooseMachine).toHaveBeenCalledTimes(1);
     });
 
@@ -759,9 +798,7 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         const progress = screen.findByTestId('direct-session-candidates:indexing');
         expect(progress).not.toBeNull();
         expect(progress?.props.accessibilityLabel).toBe('externalSessions.browseIndexingProgress');
-        expect(screen.findAllByProps({
-            testID: 'direct-session-candidates:indexing',
-        })).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('direct-session-candidates:indexing')).toHaveLength(1);
         expect(screen.findByTestId('direct-session-candidates:loading')).toBeNull();
 
         await screen.pressByTestIdAsync('direct-session-candidates:indexing:cancel');
@@ -864,7 +901,7 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         const screen = await renderScreen(<ExternalSessionBrowseCandidatesList
             {...props}
             candidates={[]}
-            loading
+            scope={{ kind: 'inventory', status: 'loading' }}
             nextCursor={null}
             preparation={null}
         />);

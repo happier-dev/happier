@@ -5,6 +5,7 @@ import {
     buildSessionOrganizationProjections,
 } from './projection';
 import {
+    buildSessionOrganizationOrderScopeKey,
     buildSessionOrganizationServerKey,
     buildSessionOrganizationSessionKey,
 } from './keys';
@@ -18,9 +19,9 @@ describe('buildSessionOrganizationProjection', () => {
             schemaVersionByServerId: { 'server-a': 1 },
             snapshotVersionByServerId: { 'server-a': 9 },
             pinsBySessionKey: {
-                [sessionKey('server-a', 's2')]: { sessionId: 's2', sortKey: '0002', pinnedAt: 20 },
-                [sessionKey('server-a', 's1')]: { sessionId: 's1', sortKey: '0001', pinnedAt: 10 },
-                [sessionKey('server-b', 's3')]: { sessionId: 's3', sortKey: '0000', pinnedAt: 1 },
+                [sessionKey('server-a', 's2')]: { sessionId: 's2', sortKey: '0002', pinnedAt: 20, listPinned: true, railPinned: false },
+                [sessionKey('server-a', 's1')]: { sessionId: 's1', sortKey: '0001', pinnedAt: 10, listPinned: true, railPinned: false },
+                [sessionKey('server-b', 's3')]: { sessionId: 's3', sortKey: '0000', pinnedAt: 1, listPinned: true, railPinned: false },
             },
             foldersByFolderKey: {
                 [buildSessionOrganizationServerKey('server-a', 'folder-a')]: {
@@ -89,5 +90,26 @@ describe('buildSessionOrganizationProjection', () => {
 
         expect(requested).toEqual(['home-a', 'home-b']);
         expect(Object.keys(projections)).toEqual(['home-a', 'home-b']);
+    });
+
+    it('keeps rail-only pins out of the list while preserving one shared personal order', () => {
+        const projection = buildSessionOrganizationProjection({
+            schemaVersionByServerId: {}, snapshotVersionByServerId: {},
+            pinsBySessionKey: {
+                [sessionKey('server-a', 'list')]: { sessionId: 'list', sortKey: 'b', pinnedAt: 2, listPinned: true, railPinned: false },
+                [sessionKey('server-a', 'rail')]: { sessionId: 'rail', sortKey: 'a', pinnedAt: 1, listPinned: false, railPinned: true },
+                [sessionKey('server-a', 'both')]: { sessionId: 'both', sortKey: 'c', pinnedAt: 3, listPinned: true, railPinned: true },
+            }, foldersByFolderKey: {}, folderAssignmentsBySessionKey: {}, tagsByTagKey: {},
+            tagAssignmentsBySessionKey: {}, attentionStandingsBySessionKey: {}, orderEntriesByScopeKey: {
+                [buildSessionOrganizationOrderScopeKey({ serverId: 'server-a', scopeKind: 'pinned', scopeKey: 'pins' })]: [
+                    { scopeKind: 'pinned', scopeKey: 'pins', itemKind: 'session', itemKey: 'both', sortKey: 'a' },
+                    { scopeKind: 'pinned', scopeKey: 'pins', itemKind: 'session', itemKey: 'rail', sortKey: 'b' },
+                    { scopeKind: 'pinned', scopeKey: 'pins', itemKind: 'session', itemKey: 'list', sortKey: 'c' },
+                ],
+            }, labelsByLabelKey: {},
+        }, 'server-a');
+        expect(projection.pinnedSessionIds).toEqual(['both', 'list']);
+        expect(projection.railPinnedSessionIds).toEqual(['both', 'rail']);
+        expect(Object.keys(projection.pinsBySessionId).sort()).toEqual(['both', 'list', 'rail']);
     });
 });

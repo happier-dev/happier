@@ -1,7 +1,7 @@
 import { AgentStateSchema, MetadataSchema, type AgentState, type Metadata } from '@happier-dev/session-core/state';
 import {
     SESSION_METADATA_LAYOUT_VERSION_V1,
-    SessionSharedMetadataV1Schema,
+    StoredSessionSharedMetadataV1Schema,
 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 export function readSessionMetadataLayoutVersion(value: unknown): number {
@@ -46,8 +46,8 @@ export function tryParseDecryptedSessionMetadata(
 ): Metadata | undefined {
     const normalizedLayoutVersion = readSessionMetadataLayoutVersion(metadataLayoutVersion);
     if (normalizedLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
-        const shared = SessionSharedMetadataV1Schema.safeParse(value);
-        // Session state still carries the historical Metadata type. The strict
+        const shared = StoredSessionSharedMetadataV1Schema.safeParse(value);
+        // Session state still carries the historical Metadata type. The known-field
         // parse above is the authority boundary; this cast does not add fields.
         return shared.success ? shared.data as unknown as Metadata : undefined;
     }

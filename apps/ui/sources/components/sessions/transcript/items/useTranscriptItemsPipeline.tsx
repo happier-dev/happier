@@ -104,6 +104,7 @@ export type TranscriptItemsPipelineDeps = Readonly<{
     targetWindowActiveRef: Ref<boolean>;
     targetWindowState?: TranscriptTargetWindowState;
     transcriptToolCallsCollapsedPreviewCountSetting: unknown;
+    showToolCalls?: boolean;
 }>;
 
 export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
@@ -137,6 +138,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         targetWindowActiveRef,
         targetWindowState,
         transcriptToolCallsCollapsedPreviewCountSetting,
+        showToolCalls,
     } = deps;
 
     const getTurnMessageById = React.useCallback((messageId: string): Message | null => {
@@ -172,7 +174,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
             getMessageById: getTurnMessageById,
             metadataByMessageId: forkMessageMetadataById ?? undefined,
             isGroupExpanded: (toolMessageIds) => toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id)),
-            collapsedPreviewCount: resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCountSetting),
+            collapsedPreviewCount: showToolCalls === false ? 0 : resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCountSetting),
         });
     }, [
         expandedToolCallsAnchorMessageIds,
@@ -180,6 +182,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         getTurnMessageById,
         items,
         transcriptToolCallsCollapsedPreviewCountSetting,
+        showToolCalls,
     ]);
 
     const jumpWindowFacts = useTranscriptJumpWindowFacts({
@@ -514,6 +517,7 @@ type ToolCallsGroupExpansionRequest = Readonly<{
 }>;
 
 export type TranscriptToolAutoExpandEffectDeps = Readonly<{
+    showToolCalls?: boolean;
     applyToolCallsGroupExpanded: (request: ToolCallsGroupExpansionRequest) => void;
     expandedToolCallsAnchorMessageIds: ReadonlySet<string>;
     hasAutoExpandedToolCallsGroups: (sessionId: string) => boolean;
@@ -547,6 +551,7 @@ export function useTranscriptToolAutoExpandEffect(deps: TranscriptToolAutoExpand
         const items = preDecompositionItemsRef.current;
         const shouldAutoExpandGroup = (toolMessageIds: readonly string[]): boolean => (
             shouldAutoExpandToolCallsGroupForShortTranscript({
+                showToolCalls: deps.showToolCalls,
                 toolMessageCount: toolMessageIds.length,
                 collapsedPreviewCount: previewCount,
                 maxTurnEntriesPerListItem,
@@ -586,6 +591,7 @@ export function useTranscriptToolAutoExpandEffect(deps: TranscriptToolAutoExpand
         maxTurnEntriesPerListItem,
         preDecompositionItemsRef,
         resolveToolCallsCollapsedPreviewCount,
+        deps.showToolCalls,
     ]);
 
     React.useEffect(() => {

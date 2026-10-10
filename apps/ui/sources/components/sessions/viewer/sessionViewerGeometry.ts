@@ -11,13 +11,17 @@ export const DEFAULT_WIDTH_SHARE = 0.42;
 export const SESSION_VIEWER_DEFAULT_ASPECT = 16 / 10;
 
 /**
- * How far the centred reading column must yield so a settled floating viewer never covers it.
+ * How far the centred reading column must yield so a settled floating viewer does not cover it.
  * The column keeps its width while the free margin allows, then narrows; zero when it already fits.
+ * It never narrows below `columnMinWidth`, the main content's minimum width (the same threshold at
+ * which a widened Details pane stops squeezing the main content and overlays it): past that the
+ * column stays where it is and the viewer floats over it.
  */
 export function resolveSessionViewerReadingInset(
   input: Readonly<{
     areaWidth: number;
     columnMaxWidth: number;
+    columnMinWidth: number;
     rect: FrameRect;
   }>,
 ): Readonly<{ left: number; right: number }> {
@@ -35,5 +39,6 @@ export function resolveSessionViewerReadingInset(
   const keep = areaWidth + columnMaxWidth - 2 * reach;
   const inset = areaWidth - keep >= columnMaxWidth ? keep : areaWidth - reach;
   const yielded = Math.max(0, Math.ceil(inset));
+  if (areaWidth - yielded < input.columnMinWidth) return { left: 0, right: 0 };
   return leftSide ? { left: yielded, right: 0 } : { left: 0, right: yielded };
 }

@@ -5,14 +5,12 @@ import { I18nManager, Platform, Pressable, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useSessionListRelativeNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awareness/sessionAwarenessContentLabels';
@@ -36,6 +34,7 @@ import {
     resolveSessionSummaryApprovalEmphasisMotion,
     shouldEmphasizeNewSessionSummaryApproval,
 } from './sessionSummaryApprovalEmphasis';
+import { SessionSummaryStatusLine } from './SessionSummaryStatusLine';
 
 /**
  * The first-party Session Summary, recomposed as the Companion's live hero (lab CA).
@@ -59,14 +58,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: { gap: 12 },
     statusBlock: { gap: 1 },
     statusRow: { flexDirection: 'row', alignItems: 'center', gap: 7, minHeight: 26 },
-    statusWords: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-        fontSize: 15,
-        lineHeight: 20,
-        flexShrink: 1,
-    },
-    timer: { ...Typography.default(), ...Typography.tabular(), color: theme.colors.text.secondary, fontSize: 13 },
     grow: { flex: 1 },
     what: {
         ...Typography.default(),
@@ -192,31 +183,14 @@ function resolveWhatLine(model: SessionSummaryCardModel): string | null {
     }
     const work = model.rows.find((row) => row.kind === 'work');
     if (work?.kind === 'work') return work.label;
-    const recap = model.rows.find((row) => row.kind === 'recap');
-    return recap?.kind === 'recap' ? recap.text : null;
+    return null;
 }
-
-function formatElapsedClock(seconds: number): string {
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    const pad = (value: number) => String(value).padStart(2, '0');
-    return hours > 0
-        ? `${hours}:${pad(minutes % 60)}:${pad(seconds % 60)}`
-        : `${minutes}:${pad(seconds % 60)}`;
-}
-
-/** The one ticking leaf: only this Text re-renders every second. */
-const ElapsedClock = React.memo(function ElapsedClock(props: Readonly<{ sinceMs: number; testID: string }>) {
-    const seconds = useElapsedTime(props.sinceMs);
-    return <Text testID={props.testID} style={stylesheet.timer}>{formatElapsedClock(seconds)}</Text>;
-});
 
 const SummaryStatus = React.memo(function SummaryStatus(props: Readonly<{
     model: SessionSummaryCardModel;
     headerAccessory?: React.ReactNode;
     testID: string;
 }>) {
-    const { theme } = useUnistyles();
     const { model } = props;
     const words = model.needsYou
         ? t('sessionCompanion.status.waitingForYou')
@@ -224,26 +198,8 @@ const SummaryStatus = React.memo(function SummaryStatus(props: Readonly<{
     const what = resolveWhatLine(model);
     return (
         <View style={stylesheet.statusBlock}>
-            <View style={stylesheet.statusRow}>
-                {model.agentId ? (
-                    <AgentIcon agentId={model.agentId} size={15} />
-                ) : (
-                    <Icon name="stack" size={15} color={theme.colors.text.tertiary} />
-                )}
-                <Text
-                    testID={`${props.testID}-status`}
-                    style={stylesheet.statusWords}
-                    numberOfLines={1}
-                    accessibilityRole="header"
-                >
-                    {words}
-                </Text>
-                {model.sinceMs !== null ? (
-                    <ElapsedClock sinceMs={model.sinceMs} testID={`${props.testID}-timer`} />
-                ) : null}
-                <View style={stylesheet.grow} />
-                {props.headerAccessory}
-            </View>
+            <SessionSummaryStatusLine words={words} agentId={model.agentId} sinceMs={model.sinceMs}
+                testID={props.testID} headerAccessory={props.headerAccessory} />
             {what ? (
                 <Text testID={`${props.testID}-what`} style={stylesheet.what} numberOfLines={2}>{what}</Text>
             ) : null}
@@ -468,6 +424,8 @@ const DetailRow = React.memo(function DetailRow(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const label = detailRowLabel(props.row);
+    const recapTitle = props.row.kind === 'recap' ? t('sessionCompanion.recap.title') : null;
+    const accessibilityLabel = recapTitle ? `${recapTitle}: ${label}` : label;
     const emphasis = useSharedValue(1);
     React.useEffect(() => {
         if (props.row.kind !== 'approvals' || props.approvalEmphasisSignal === 0) return;
@@ -486,6 +444,7 @@ const DetailRow = React.memo(function DetailRow(props: Readonly<{
                 size={14}
                 color={needsYou ? theme.colors.state.warning.foreground : theme.colors.text.tertiary}
             />
+            {recapTitle ? <Text style={stylesheet.rowValueAction}>{recapTitle}</Text> : null}
             <Text numberOfLines={1} style={stylesheet.rowLabel}>{label}</Text>
             {needsYou && props.onPress ? (
                 <Text style={stylesheet.rowValueAction}>{t('sessionBoard.companion.summary.review')}</Text>
@@ -501,7 +460,7 @@ const DetailRow = React.memo(function DetailRow(props: Readonly<{
                 <Pressable
                     testID={props.testID}
                     accessibilityRole="button"
-                    accessibilityLabel={label}
+                    accessibilityLabel={accessibilityLabel}
                     onPress={props.onPress}
                     style={({ pressed }) => [
                         stylesheet.row,

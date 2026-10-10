@@ -11,7 +11,6 @@ import type {
     UseSessionInlineDragResolvedDrop,
     UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
-import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
 import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
@@ -46,14 +45,13 @@ type SessionListSessionItemProps = Readonly<{
     compactMinimal: boolean;
     rowAttentionAnimationEnabled: boolean;
     agentSwitchingEnabled?: boolean;
-    folderMoveTargets: readonly SessionFolderMoveTarget[];
     forkActionContext?: SessionItemProps['forkActionContext'];
-    onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
     onMoveToFolder?: () => void;
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
     onMoveDown?: () => void;
     onDeleteDraft?: () => void | Promise<void>;
+    onSetReportsCollapsed?: SessionItemProps['onSetReportsCollapsed'];
     measurementTarget?: SessionListRowProps['measurementTarget'];
 }>;
 
@@ -117,13 +115,13 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             variant={props.item.variant}
             folderDepth={props.item.folderDepth}
             reportsDepth={props.item.reportsDepth}
+            reportsDisclosure={props.item.reportsParent ? (props.item.reportsCollapsed ? 'collapsed' : 'expanded') : undefined}
+            onSetReportsCollapsed={props.item.reportsParent ? props.onSetReportsCollapsed : undefined}
             secondaryLineMode={rowViewModel.secondaryLineMode}
             compact={props.compact}
             compactMinimal={props.compactMinimal}
             rowAttentionAnimationEnabled={props.rowAttentionAnimationEnabled}
-            folderMoveTargets={props.folderMoveTargets}
             forkActionContext={props.forkActionContext}
-            onMoveToSessionFolder={props.onMoveToSessionFolder}
             onMoveToFolder={props.onMoveToFolder}
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}

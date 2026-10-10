@@ -5,10 +5,11 @@ import {
     createSessionBoardFailureV1, createSessionBoardOutcomeUnknownFailureV1,
     projectSessionBoardActionFailureV1, projectSessionBoardFeatureGateFailureV1, projectSessionBoardGetResultV1,
     projectSessionBoardAdapterFailureV1,
+    sessionBoardActionUsesLayoutV1,
     SessionBoardGetInputV1Schema,
     SessionBoardItemRemoveInputV1Schema, SessionBoardLayoutUpdateInputV1Schema,
     SessionBoardItemUpsertInputV1Schema, SessionBoardLayoutV1StoredSchema, SessionBoardMutationV1Schema,
-    SessionBoardMutationActionResultV1Schema, SessionSurfaceItemV1StoredSchema,
+    SessionBoardMutationActionResultV1Schema, SessionSurfaceItemV1Schema, SessionSurfaceItemV1StoredSchema,
     type SessionBoardGetResultV1, type SessionBoardItemPlacementParticipantV1,
     type SessionBoardLayoutV1, type SessionBoardReadProjectionEntryV1,
 } from '@happier-dev/protocol/sessions/board';
@@ -40,6 +41,7 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
     repository: SessionSystemRecordRepository;
     contentContext: SessionStoredContentContext | null;
     capabilities: SessionBoardGetResultV1['capabilities'];
+    boardEnabled?: boolean;
     /** Retain the exact sealed request before dispatch for post-dispatch scope-retirement recovery. */
     onMutationPrepared?: (details: ReturnType<typeof createSessionBoardOutcomeUnknownFailureV1>['details']) => void;
     /** Observe the canonical HTTP issue boundary; preparation alone is not dispatch. */
@@ -155,11 +157,14 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
             const parsed = SessionBoardGetInputV1Schema.safeParse(input);
             if (!parsed.success) return createSessionBoardFailureV1('session_board_invalid');
             const args = parsed.data;
+            if (sessionBoardActionUsesLayoutV1(actionId, args) && options.boardEnabled !== true) return projectSessionBoardFeatureGateFailureV1(actionId);
             const sessionId = args.sessionId ?? context.defaultSessionId;
             if (!sessionId) return createSessionBoardFailureV1('session_board_invalid');
             if (sessionId !== options.session.sessionId) return createSessionBoardFailureV1('session_board_forbidden');
             const session = { serverId: options.scope.serverId, sessionId };
-            const layout = await readLayout(session, actionId);
+            const layout = args.itemIds !== undefined && options.boardEnabled !== true
+                ? { ok: true as const, layout: null }
+                : await readLayout(session, actionId);
             if (!layout.ok) return layout;
             const listed = args.itemIds === undefined
                 ? await records.list(session, { namespace: 'surface', kind: 'item.v1', limit: args.limit, cursor: args.cursor })
@@ -189,9 +194,17 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
                 ? SessionBoardLayoutUpdateInputV1Schema.safeParse(input) : SessionBoardItemRemoveInputV1Schema.safeParse(input);
             if (!parsed.success) return createSessionBoardFailureV1('session_board_invalid');
             const args = parsed.data;
+            if (sessionBoardActionUsesLayoutV1(actionId, args) && options.boardEnabled !== true) return projectSessionBoardFeatureGateFailureV1(actionId);
             const sessionId = args.sessionId ?? context.defaultSessionId;
             if (!sessionId) return createSessionBoardFailureV1('session_board_invalid');
             if (sessionId !== options.session.sessionId) return createSessionBoardFailureV1('session_board_forbidden');
+            if ('itemId' in args && args.expectedLayoutRevision === undefined) {
+                const result = await put(actionId, sessionId, { operation: 'remove_item', itemId: args.itemId,
+                    expectedItemRevision: args.expectedItemRevision }, args, signal);
+                if (!result.ok) return result;
+                return SessionBoardMutationActionResultV1Schema.parse({ v: 1, serverId: options.session.serverId,
+                    sessionId, result: result.result, destination: null });
+            }
             const current = await readLayout({ serverId: options.scope.serverId, sessionId }, actionId);
             if (!current.ok) return current;
             if ((current.layout?.revision ?? null) !== args.expectedLayoutRevision) {
@@ -229,6 +242,12 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
         const parsed = SessionBoardItemUpsertInputV1Schema.safeParse(input);
         if (!parsed.success) return createSessionBoardFailureV1('session_board_invalid');
         const args = parsed.data;
+        if (sessionBoardActionUsesLayoutV1(actionId, args) && options.boardEnabled !== true) return projectSessionBoardFeatureGateFailureV1(actionId);
+        if (args.item.source.kind === 'hostedHtml' && 'publicationSource' in args.item.source) {
+            // This client owns record sealing, not the remote caller's workspace filesystem.
+            return createSessionBoardFailureV1('unsupported_action');
+        }
+        const authoredItem = SessionSurfaceItemV1Schema.parse(args.item);
         const sessionId = args.sessionId ?? context.defaultSessionId;
         if (!sessionId) return createSessionBoardFailureV1('session_board_invalid');
         if (sessionId !== options.session.sessionId) return createSessionBoardFailureV1('session_board_forbidden');
@@ -241,10 +260,12 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
                 currentItemRevision: current.status === 'ok' ? current.value.revision : null,
             });
         }
+        let itemDestination = args.destination;
         if (current.status === 'ok') {
             const opened = await open(current.value, { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: args.itemId }, SessionSurfaceItemV1StoredSchema);
             if (opened.status !== 'ready') return createSessionBoardFailureV1(opened.status);
-            if (!isSessionSurfaceItemSourceCompatible(opened.value, args.item)) return createSessionBoardFailureV1('session_board_source_conflict');
+            itemDestination = opened.value.destination;
+            if (!isSessionSurfaceItemSourceCompatible(opened.value, { ...authoredItem, destination: itemDestination })) return createSessionBoardFailureV1('session_board_source_conflict');
         }
         let layout: SessionBoardLayoutV1 | null = null;
         let expectedLayoutRevision: string | null = null;
@@ -260,12 +281,14 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
             if (!edited.ok) return createSessionBoardFailureV1(edited.error);
             layout = edited.layout;
         }
-        const itemContent = await sealSessionStoredContent(options.contentContext, args.item);
+        const item = { ...authoredItem, destination: itemDestination };
+        const itemContent = await sealSessionStoredContent(options.contentContext, item);
         if (itemContent.status !== 'ready') return createSessionBoardFailureV1(itemContent.status);
         const layoutContent = layout ? await sealSessionStoredContent(options.contentContext, layout) : null;
         if (layoutContent && layoutContent.status !== 'ready') return createSessionBoardFailureV1(layoutContent.status);
         const request = SessionBoardMutationV1Schema.parse({
             operation: 'upsert_item', itemId: args.itemId, expectedItemRevision: args.expectedItemRevision,
+            destination: itemDestination,
             itemContent: itemContent.content,
             ...(layoutContent?.status === 'ready' ? { placement: { expectedLayoutRevision, layoutContent: layoutContent.content } } : {}),
         });
@@ -273,10 +296,10 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
         if (!result.ok) return result;
         return SessionBoardMutationActionResultV1Schema.parse({
             v: 1, serverId: options.session.serverId, sessionId, result: result.result,
+            itemDestination,
             destination: layout && args.placement
                 ? resolveSessionBoardItemPlacementDestinationV1(layout, { itemId: args.itemId, placement: args.placement })
                 : null,
-            preview: { title: args.item.title, sourceKind: args.item.source.kind },
         });
     };
     return async (args) => {

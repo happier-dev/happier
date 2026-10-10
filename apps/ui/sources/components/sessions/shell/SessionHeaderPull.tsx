@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
@@ -73,6 +74,7 @@ export function SessionHeaderPullHint(props: Readonly<{
     top: number;
 }>) {
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const style = useAnimatedStyle(() => ({
         opacity: props.progress.value,
         transform: [{ translateY: Math.max(4, props.offset.value / 2 - 15) }],
@@ -82,7 +84,7 @@ export function SessionHeaderPullHint(props: Readonly<{
             pointerEvents="none"
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
-            style={[styles.hint, { top: props.top }, style]}
+            style={[styles.hint, { top: props.top, backgroundColor: materialColor(theme.colors.surface.elevated) }, style]}
             testID="session-header-pull-hint"
         >
             <Icon name="arrow-down" size={14} color={props.ready ? theme.colors.text.primary : theme.colors.text.secondary} />

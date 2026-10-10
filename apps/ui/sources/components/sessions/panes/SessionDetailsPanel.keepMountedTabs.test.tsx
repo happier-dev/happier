@@ -56,13 +56,14 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
 
     it('publishes pin/unpin affordances that change real tab state and retain the file icon', async () => {
         const screen = await mountPanel(runtime);
+        const { t } = await import('@/text');
         await act(async () => runtime.pane.openDetailsTab(createSessionFileDetailsTab('a.txt'), { intent: 'preview' }));
         const pin = screen.findHostByTestId('session-details-tab-pin-file_a.txt');
-        expect(pin?.props.accessibilityLabel).toContain('Pin');
+        expect(pin?.props.accessibilityLabel).toBe(`${t('session.detailsPanel.pinTabA11y')}: a.txt`);
         await screen.pressByTestIdAsync('session-details-tab-pin-file_a.txt');
         expect(runtime.pane.scopeState?.details.tabs.find(tab => tab.key === 'file:a.txt')).toMatchObject({ isPinned: true, isPreview: false });
         const unpin = screen.findHostByTestId('session-details-tab-unpin-file_a.txt');
-        expect(unpin?.props.accessibilityLabel).toContain('Unpin');
+        expect(unpin?.props.accessibilityLabel).toBe(`${t('session.detailsPanel.unpinTabA11y')}: a.txt`);
         expect(screen.findHostByTestId('session-details-tab-file-icon-file_a.txt')).not.toBeNull();
         await screen.pressByTestIdAsync('session-details-tab-unpin-file_a.txt');
         expect(runtime.pane.scopeState?.details.tabs.find(tab => tab.key === 'file:a.txt')?.isPinned).toBe(false);

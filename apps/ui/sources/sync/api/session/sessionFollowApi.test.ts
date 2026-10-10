@@ -40,6 +40,68 @@ async function setup() {
 }
 
 describe('Follow exact Home Action transport', () => {
+    it('edits declared auto-follow defaults on the captured Home without Account or device writes', async () => {
+        const env = await setup();
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { createSettingsDeclarationAction } = await import('@/sync/ops/actions/settingsDeclarationAction');
+        const { createSettingsOwnerActionExecutor } = await import('@/sync/ops/actions/settingsOwnerActionExecutor');
+        const { sessionFollowAction } = await import('./sessionFollowApi');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+        let current = true;
+        let requireApproval = false;
+        let executor: ReturnType<typeof createActionExecutor>;
+        const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: env.target.id };
+        const unused = async () => { throw new Error('unexpected unrelated transport or preference write'); };
+        const settingsDeclarationAction = createSettingsDeclarationAction({
+            host: { os: 'ios', desktop: false }, tauriDesktop: false, readPageGate: () => undefined,
+            isFeatureEnabled: async () => true, isCurrent: () => current,
+            readAccountSettings: async () => settingsDefaults, readLocalSettings: () => localSettingsDefaults,
+            writeAccountSettings: unused, mutateAccountSettings: unused, writeLocalSettings: () => { throw new Error('unexpected local preference write'); },
+            mutationServices: { executeSettingsOwnerAction: createSettingsOwnerActionExecutor(
+                request => executor.execute(request.actionId, request.input, request.context),
+                { serverId: env.target.id, accountId: 'target-account',
+                    assertCurrent: () => { if (!current) throw new Error('Account retired'); } },
+            ) },
+        });
+        executor = createActionExecutor({ settingsDeclarationAction, sessionFollowAction,
+            isActionApprovalRequired: id => requireApproval && id === 'session.follow.preferences.set',
+            executionRunStart: unused, executionRunList: unused, executionRunGet: unused, detachedExecutionRunSend: unused,
+            executionRunStop: unused, executionRunAction: unused, executionRunWait: unused, sessionOpen: unused,
+            sessionFork: unused, sessionRollback: unused, sessionSpawnNew: unused, pathsListRecent: unused,
+            machinesList: unused, serversList: unused, reviewEnginesList: unused, agentsBackendsList: unused,
+            agentsModelsList: unused, sessionSendMessage: unused, sessionModeSet: unused, sessionModesList: unused,
+            sessionList: unused, sessionActivityGet: unused, sessionRecentMessagesGet: unused, resetGlobalVoiceAgent: unused,
+            daemonMemorySearch: unused, daemonMemoryGetWindow: unused, daemonMemoryEnsureUpToDate: unused,
+        });
+        let preferences = { assigned: false, direct: true, team: false, group: true };
+        env.request.mockImplementation(async (url, init) => {
+            expect(new URL(url).origin).toBe('https://target.example');
+            expect(new URL(url).pathname).toBe('/v2/account/session-follow-preferences');
+            expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${env.token('target-account')}`);
+            if (init?.method === 'PUT') preferences = JSON.parse(String(init.body));
+            return Response.json(preferences);
+        });
+        const listing = await executor.execute('settings.list', { pageId: 'notifications' }, context);
+        expect(listing).toMatchObject({ ok: true, result: { items: expect.arrayContaining(
+            ['Assigned', 'Direct', 'Team', 'Group'].map(field => expect.objectContaining({ anchor: `notifications.autoFollow${field}`, readable: true, writable: true })),
+        ) } });
+        // The focused Home and caller-supplied scope cannot redirect the captured owner.
+        expect(await executor.execute('settings.get', { anchor: 'notifications.autoFollowAssigned' }, {
+            ...context, serverId: env.active.id, runtimeAccountId: 'active-account', expectedAccountId: 'active-account',
+        }))
+            .toEqual({ ok: true, result: { anchor: 'notifications.autoFollowAssigned', value: false } });
+        expect(await executor.execute('settings.set', { anchor: 'notifications.autoFollowAssigned', value: true }, context))
+            .toEqual({ ok: true, result: { anchor: 'notifications.autoFollowAssigned', value: true } });
+        expect(preferences).toEqual({ assigned: true, direct: true, team: false, group: true });
+        requireApproval = true;
+        expect(await executor.execute('settings.set', { anchor: 'notifications.autoFollowTeam', value: true }, { ...context, bypassApprovals: true }))
+            .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        expect(preferences.team).toBe(false);
+        current = false;
+        expect(await executor.execute('settings.get', { anchor: 'notifications.autoFollowGroup' }, context)).toMatchObject({ ok: false, errorCode: 'setting_not_bound' });
+    });
+
     it('lists sources on the requested Home with its credential even while another Home is focused', async () => {
         const env = await setup();
         const { listSessionFollowSources } = await import('./sessionFollowSourcesApi');

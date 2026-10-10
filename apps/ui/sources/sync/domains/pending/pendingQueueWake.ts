@@ -89,12 +89,11 @@ export function getPendingQueueWakeResumeOptions(opts: {
     if (!base) return null;
 
     const initialTranscriptAfterSeq = resolvePendingQueueWakeCursor(session);
-    const baseWithCursor = initialTranscriptAfterSeq === null
-        ? base
-        : {
-            ...base,
-            initialTranscriptAfterSeq,
-        };
+    const baseWithCursor = {
+        ...base,
+        ...(initialTranscriptAfterSeq === null ? {} : { initialTranscriptAfterSeq }),
+        ...(session.pendingActivationAuthorization ? { pendingActivationAuthorization: session.pendingActivationAuthorization } : {}),
+    };
 
     const backendTarget = baseWithCursor.backendTarget;
     if (typeof backendTarget === 'object' && backendTarget !== null && 'kind' in backendTarget && backendTarget.kind === 'configuredAcpBackend') {

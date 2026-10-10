@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { describe, expect, it } from 'vitest';
 
 import { createSessionSurfaceNoteDocumentV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
@@ -12,7 +13,7 @@ const EXECUTABLE_ITEM: SessionSurfaceItemV1 = {
     title: 'Status',
     frame: 'card',
     height: { mode: 'auto', fallback: 'regular' },
-    source: { kind: 'hostedHtml', source: { kind: 'html', html: '<main>Status</main>' } },
+    source: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main>Status</main>') },
 };
 
 const INSTALLED_ITEM: SessionSurfaceItemV1 = {

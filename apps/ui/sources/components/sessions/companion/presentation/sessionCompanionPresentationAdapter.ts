@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol/sessions';
 
 import type { PresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import type { SessionViewerPresentationPort } from '@/components/sessions/viewer/sessionViewerPresentation';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { t } from '@/text';
 
@@ -49,6 +50,7 @@ export type SessionBoardPresentationPort = Readonly<{
 export type SessionPresentationPorts = Readonly<{
     companion: SessionCompanionController;
     board: SessionBoardPresentationPort;
+    viewer?: SessionViewerPresentationPort;
     /** Exact mounted Session catalogs admit new personal references; existing refs remain editable when unavailable. */
     canAddCompanionItem: (item: SessionCompanionItemRefV1) => boolean;
     /** Returns to Chat preserving draft, selection, anchor and keyboard focus. */
@@ -259,6 +261,13 @@ export function applySessionPresentationIntent(
         return UNAVAILABLE;
     }
     switch (intent.kind) {
+        case 'viewer.open':
+        case 'viewer.close':
+        case 'viewer.source.select':
+        case 'viewer.expand':
+        case 'viewer.restore':
+            return exactPorts.viewer?.apply(intent) ?? UNAVAILABLE;
+
         case 'chat.return':
             return fromPresentationOutcome(
                 exactPorts,

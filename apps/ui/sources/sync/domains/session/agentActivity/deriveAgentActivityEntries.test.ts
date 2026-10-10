@@ -40,6 +40,25 @@ function local(overrides: Partial<AgentActivityLocalEntry> = {}): AgentActivityL
 }
 
 describe('deriveAgentActivityEntries', () => {
+    it('reconciles newer explicit completion with an older nonterminal headline', () => {
+        const merged = deriveAgentActivityEntries({
+            headline: headline({ active: [{ entryId: 'workflow_agent:wf_1:toolu_1', kind: 'workflow_agent', title: 'Audit', status: 'running', updatedAt: 2_000 }] }),
+            local: [local({ status: 'succeeded', endedAtMs: 3_000, updatedAtMs: 3_000 })],
+        });
+        expect(merged.entries[0]?.status).toBe('succeeded');
+    });
+
+    it('reconciles unloaded stale claims while preserving independently owned execution runs and newer child evidence', () => {
+        const merged = deriveAgentActivityEntries({
+            headline: headline({ active: [{ entryId: 'workflow_agent:wf_1:old', kind: 'workflow_agent', title: 'Audit', status: 'running', updatedAt: 2_000 }] }),
+            local: [local({ id: 'execution', handle: null, kind: 'execution_run' }), local({ id: 'new-child', handle: null, updatedAtMs: 5_000 })],
+            runtimeLostSinceMs: 4_000,
+        });
+        expect(merged.entries.find((entry) => entry.id === 'workflow_agent:wf_1:old')?.status).toBe('unknown');
+        expect(merged.entries.find((entry) => entry.id === 'execution')?.status).toBe('running');
+        expect(merged.entries.find((entry) => entry.id === 'new-child')?.status).toBe('running');
+    });
+
     it('joins a local entry to its headline entry on the provider handle, not on the entry id', () => {
         const merged = deriveAgentActivityEntries({
             headline: headline({

@@ -4,6 +4,8 @@ import {
     type PluginProjectionV2,
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -11,6 +13,24 @@ vi.mock('@/text', async () => {
 });
 
 const externalSessionBrowseModulePromise = import('./resolveExternalSessionBrowseSourceOptions');
+
+describe('qualified accounting source browse admission', () => {
+    it('maps the declared qualified identity, not a matching local string, and rejects disabled or resume-only producers', async () => {
+        const { resolveExternalSessionBrowseTargetForQualifiedSource } = await externalSessionBrowseModulePromise;
+        const projection = createProjection(['codex']);
+        const source = { kind: 'codexHome', home: 'user', homePath: '/custom/root' };
+        const agent = { pluginId: 'happier.external-sessions-fixture', localId: 'codex' };
+        expect(resolveExternalSessionBrowseTargetForQualifiedSource({ agent, source, projection })).toEqual({ agentId: 'codex', source });
+        expect(resolveExternalSessionBrowseTargetForQualifiedSource({ agent: { ...agent, pluginId: 'other-plugin' }, source, projection })).toBeNull();
+        expect(resolveExternalSessionBrowseTargetForQualifiedSource({ agent, source: { kind: 'guessed-source' }, projection })).toBeNull();
+        projection.installedPackagesById[agent.pluginId].enabled = false;
+        expect(resolveExternalSessionBrowseTargetForQualifiedSource({ agent, source, projection })).toBeNull();
+        const resumeOnly = createProjection(['codex']);
+        const descriptor = resumeOnly.agentsById.codex.externalSessions!;
+        descriptor.sources = descriptor.sources.map(source => ({ ...source, resumeOnly: true }));
+        expect(resolveExternalSessionBrowseTargetForQualifiedSource({ agent, source, projection: resumeOnly })).toBeNull();
+    });
+});
 
 const CODEX_SOURCE_DECLARATION = {
     sourceKind: 'codexHome',
@@ -187,10 +207,10 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         const projection = createProjection(['fx'], new Set(['fx']));
 
         expect(resolveExternalSessionBrowseSourceOptions({
-            providerId: 'fx', profile: null, settings: { connectedServicesProfileLabelByKey: {} }, projection,
+            providerId: 'fx', profile: null, labelsByKey: {}, projection,
         })).toEqual([]);
         expect(resolveExternalSessionBrowseSourceOptions({
-            providerId: 'fx', profile: null, settings: { connectedServicesProfileLabelByKey: {} }, projection,
+            providerId: 'fx', profile: null, labelsByKey: {}, projection,
             interaction: 'pickRemoteSessionId',
         })).toEqual([
             expect.objectContaining({ source: { kind: 'fxArchive' } }),
@@ -315,7 +335,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         expect(resolveExternalSessionBrowseSourceOptions({
             providerId: 'acme-auxiliary-agent',
             profile: null,
-            settings: { connectedServicesProfileLabelByKey: {} },
+            labelsByKey: {},
             projection,
         })).toEqual([{
             key: 'acme-auxiliary-agent:syntheticArchive',
@@ -413,14 +433,24 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         expect(resolveExternalSessionBrowseSourceOptions({
             providerId: 'pi',
             profile: null,
-            settings: { connectedServicesProfileLabelByKey: {} },
+            labelsByKey: {},
             projection,
         })[0]?.label).toBe('agentInput.agent.pi');
     });
 
     it('returns the codex user home and per-profile connected-service sources when codex profiles exist', async () => {
         const { resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
+        const presentation = {
+            labelsByKey: {
+                [connectedServiceProfileKey({
+                    serviceId: buildQualifiedPluginContributionKey({ pluginId: 'happier.agent.codex', localId: 'openai-codex' }),
+                    profileId: 'work',
+                })]: 'Work Profile',
+            },
+            settings: { connectedServicesProfileLabelByKey: { 'openai-codex/work': 'Obsolete Settings label' } },
+        };
         const options = resolveExternalSessionBrowseSourceOptions({
+            ...presentation,
             providerId: 'codex',
             profile: {
                 connectedServicesV2: [
@@ -452,11 +482,6 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
                     },
                 ],
             },
-            settings: {
-                connectedServicesProfileLabelByKey: {
-                    'openai-codex/work': 'Work Profile',
-                },
-            },
             projection: createProjection(['codex']),
         });
 
@@ -478,7 +503,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         const options = resolveExternalSessionBrowseSourceOptions({
             providerId: 'codex',
             profile: { connectedServicesV2: [] },
-            settings: { connectedServicesProfileLabelByKey: {} },
+            labelsByKey: {},
             projection: createProjection(['codex']),
         });
 
@@ -496,7 +521,8 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         const resolve = (settings: Readonly<Record<string, unknown>>) => resolveExternalSessionBrowseSourceOptions({
             providerId: 'opencode',
             profile: null,
-            settings: { connectedServicesProfileLabelByKey: {}, ...settings },
+            labelsByKey: {},
+            agentSettings: settings,
             projection,
             activeServerId: 'cloud',
         });
@@ -715,7 +741,7 @@ describe('external session browse behavior is a per-machine fact', () => {
         expect(resolveExternalSessionBrowseSourceOptions({
             providerId: 'alpha',
             profile: null,
-            settings: { connectedServicesProfileLabelByKey: {} },
+            labelsByKey: {},
             projection,
             machineId: SECOND_MACHINE_ID,
         }).map((option) => option.label)).toEqual(['secondMachineLabel']);

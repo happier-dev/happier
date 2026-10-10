@@ -5,7 +5,7 @@ import {
     wasSessionRetiredSinceFence,
 } from '@/sync/store/domains/sessions';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
-import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { isSessionEncryptionModeAllowedByClientRequirement, type ClientEncryptionRequirement } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { V2SessionListResponse } from '@happier-dev/protocol/sessions/control/contract';
@@ -356,7 +356,7 @@ function buildPlainHydratedSessionFromRow(
     const metadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
     const metadata = parsePlainSessionMetadata(row.metadata, row.metadataLayoutVersion);
     const sharedMetadata = metadataLayoutVersion === 1
-        ? SessionSharedMetadataV1Schema.safeParse(metadata)
+        ? StoredSessionSharedMetadataV1Schema.safeParse(metadata)
         : null;
     const ownerMetadataRead = readSessionListRowOwnerMetadata({
         row,
@@ -778,7 +778,7 @@ function isHydratedSessionCurrentForListState(
     return true;
 }
 
-function buildStaleHydratedSessionRenderablePatch(
+function buildHydratedSessionRenderablePatch(
     session: HydratedSession,
     currentRenderable: SessionListRenderableSession | null | undefined,
 ): SessionListRenderablePatch | null {
@@ -832,7 +832,7 @@ function buildStaleHydratedSessionRenderablePatch(
     };
 }
 
-function applyStaleHydratedSessionRenderablePatches(params: Readonly<{
+function applyHydratedSessionRenderablePatches(params: Readonly<{
     sessions: readonly HydratedSession[];
     getCurrentSessionListRenderable?: CurrentSessionListRenderableLookup;
     applySessionListRenderablePatches?: (patches: readonly SessionListRenderablePatch[]) => void;
@@ -843,7 +843,7 @@ function applyStaleHydratedSessionRenderablePatches(params: Readonly<{
     if (!params.getCurrentSessionListRenderable || !params.applySessionListRenderablePatches) return 0;
     const patches: SessionListRenderablePatch[] = [];
     for (const session of params.sessions) {
-        const patch = buildStaleHydratedSessionRenderablePatch(
+        const patch = buildHydratedSessionRenderablePatch(
             session,
             params.getCurrentSessionListRenderable(session.id),
         );
@@ -1070,7 +1070,7 @@ async function decryptSessionRow(
                         row.metadataLayoutVersion,
                     );
                 const sharedMetadata = metadataLayoutVersion === 1
-                    ? SessionSharedMetadataV1Schema.safeParse(metadata)
+                    ? StoredSessionSharedMetadataV1Schema.safeParse(metadata)
                     : null;
                 const ownerProjection = sharedMetadata?.success
                     ? projectSessionLayout1OwnerMetadata({
@@ -1135,7 +1135,7 @@ function applyHydratedSessions(params: {
         })
         : admittedSessions;
     if (currentSessions.length !== params.sessions.length) {
-        applyStaleHydratedSessionRenderablePatches({
+        applyHydratedSessionRenderablePatches({
             sessions: staleSessions,
             getCurrentSessionListRenderable: params.getCurrentSessionListRenderable,
             applySessionListRenderablePatches: params.applySessionListRenderablePatches,
@@ -1371,7 +1371,16 @@ export async function fetchAndApplySessions(params: {
 }): Promise<SessionListFetchResult> {
     const { credentials, encryption, sessionDataKeys } = params;
     const isQuerySource = params.source?.kind === 'query';
-    const applySessions = isQuerySource ? (_sessions: HydratedSession[]) => {} : params.applySessions;
+    // A query page owns qualified list rows, not opened Session entities. Its completed
+    // decryption still has to publish the readable summary through the same tuple-aware
+    // patcher used when a heartbeat overtakes hydration; discarding it leaves cold reports
+    // unnamed forever when generic background hydration is disabled.
+    const applySessions = isQuerySource ? (sessions: HydratedSession[]) => {
+        applyHydratedSessionRenderablePatches({ sessions,
+            getCurrentSessionListRenderable: params.getCurrentSessionListRenderable,
+            applySessionListRenderablePatches,
+            phase: 'flush', batchSize: sessions.length, flushDelayMs: 0 });
+    } : params.applySessions;
     const snapshotStartedAtMs = nowMs();
     // Captured before the first request: a retirement committed after this point
     // wins over whatever this read's pages still carry for that exact Home.
@@ -1450,6 +1459,22 @@ export async function fetchAndApplySessions(params: {
     let fetchedAttentionPages = 0;
     let source: 'v2' | 'v1' = 'v2';
     let accountCurrentness = params.accountCurrentness;
+    // Strict query rows may carry Account-scoped owner metadata. Its fresh
+    // authority and the page are independent reads: do not add their network
+    // latency before publishing choices. Retain a rejected read as a value until
+    // owner projection or missing-key readiness establishes that it is needed.
+    const queryCurrentnessRead = isQuerySource && !accountCurrentness
+        ? fetchAccountEncryptionCurrentness(credentials, { request }).then(
+            value => ({ ok: true as const, value }),
+            (error: unknown) => ({ ok: false as const, error }),
+        )
+        : null;
+    const readAccountCurrentness = async () => {
+        if (!queryCurrentnessRead) return fetchAccountEncryptionCurrentness(credentials, { request });
+        const result = await queryCurrentnessRead;
+        if (!result.ok) throw result.error;
+        return result.value;
+    };
     let metadataUpgradeRequiredCount = 0;
     const buildFetchResult = (): SessionListFetchResult => ({
         sessionIds: sessions.map((session) => session.id).filter(isSessionCurrent),
@@ -1623,10 +1648,7 @@ export async function fetchAndApplySessions(params: {
             && row.ownerMetadata != null
         ))
     ) {
-        accountCurrentness = await fetchAccountEncryptionCurrentness(
-            credentials,
-            { request },
-        );
+        accountCurrentness = await readAccountCurrentness();
         if (!shouldContinue()) return buildFetchResult();
     }
 
@@ -1855,7 +1877,7 @@ export async function fetchAndApplySessions(params: {
     let recipientReadiness = accountCurrentness?.recipientEnvelopeReadiness;
     if (missingEncryptedDataKeySessionIds.size > 0 && !recipientReadiness) {
         try {
-            accountCurrentness = await fetchAccountEncryptionCurrentness(credentials, { request });
+            accountCurrentness = await readAccountCurrentness();
             recipientReadiness = accountCurrentness.recipientEnvelopeReadiness;
         } catch (error) {
             if (!(error instanceof AccountEncryptionCurrentnessReadinessError)) throw error;
@@ -2094,7 +2116,7 @@ export async function fetchAndApplySessions(params: {
                                             decryptedSession,
                                             params.getCurrentSessionListRenderable,
                                         )) {
-                                            applyStaleHydratedSessionRenderablePatches({
+                                            applyHydratedSessionRenderablePatches({
                                                 sessions: [decryptedSession],
                                                 getCurrentSessionListRenderable: params.getCurrentSessionListRenderable,
                                                 applySessionListRenderablePatches,

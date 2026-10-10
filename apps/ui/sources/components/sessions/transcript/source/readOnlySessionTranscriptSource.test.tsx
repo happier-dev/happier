@@ -12,6 +12,18 @@ import { useTranscriptNavigationSessionPresent } from '../navigation/useTranscri
 afterEach(standardCleanup);
 
 describe('read-only transcript source', () => {
+    it('closes Send and Approve when custom interaction has no actions, while retaining local sample actions', () => {
+        const interaction = { canSendMessages: true, canApprovePermissions: true };
+        const input = { sessionId: 'sample', messages: [], reducerState: null, metadata: null, agentState: null, interaction };
+        const closed = createReadOnlySessionTranscriptSource(input);
+        expect(closed.actions).toBeNull();
+        expect(closed.useInteraction()).toMatchObject({ canSendMessages: false, canApprovePermissions: false });
+        const actions = { respondToPermission: async () => undefined, answerUserAction: async () => undefined,
+            abort: async () => undefined, submitMessage: async () => undefined };
+        const sample = createReadOnlySessionTranscriptSource({ ...input, actions });
+        expect(sample.actions).toBe(actions);
+        expect(sample.useInteraction()).toBe(interaction);
+    });
     it('publishes changed coverage frontiers even when the loaded rows and older state are unchanged', async () => {
         const snapshot = { messages: [], reducerState: null, metadata: null, agentState: null,
             historyState: { isLoaded: true, hasOlder: false, hasNewer: true, isLoadingOlder: false } };

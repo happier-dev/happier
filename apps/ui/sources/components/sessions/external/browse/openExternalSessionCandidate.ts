@@ -1,6 +1,5 @@
-import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
-import type { ChatFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
+import { resolveChatFindSeed, type ChatFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 
 import { Modal } from '@/modal';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
@@ -11,10 +10,12 @@ import { resolveExternalSessionBrowseRpcErrorMessage, resolveExternalSessionBrow
 import { isExternalSessionBrowseCandidateOfflineInert } from './resolveExternalSessionBrowseCandidateOfflineInert';
 import { resolveExternalSessionBrowseCompatibleLinkSource, resolveExternalSessionBrowseLinkEnsureRequestExtras } from './resolveExternalSessionBrowseSourceOptions';
 import { readExternalSessionBrowseCandidateKey, readExternalSessionBrowseCandidatePath, type ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
+import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { ExternalSessionLinkEnsureResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 
 export type ExternalSessionCandidateFind = Readonly<{ query: string; sourceItemId: string }>;
 export type ExternalSessionCandidateFindSeed = ChatFindSeed;
-export type ExternalSessionCandidateOpenTarget = Readonly<{ machineId: string; serverId: string | null }>;
+export type ExternalSessionCandidateOpenTarget = Readonly<{ machineId: string; serverId: string | null; accountId?: string }>;
 export type ExternalSessionCandidateOpenState = {
     requestToken: number;
     linkingCandidateKey: string | null;
@@ -35,6 +36,8 @@ export async function openExternalSessionCandidate(params: Readonly<{
     onPickRemoteSessionId?(remoteSessionId: string): void;
     /** Exact selected Home authority; browser callers default to the active Account. */
     accountCurrentness?: Readonly<{ isCurrent(): boolean }>;
+    /** Usage surfaces retain ordinary Action policy/approval at the existing front door. */
+    linkActionExecute?: FrontDoorActionExecute;
     openSession(sessionId: string, target: ExternalSessionCandidateOpenTarget, find?: ExternalSessionCandidateFindSeed): void | Promise<void>;
     find?: ExternalSessionCandidateFind;
 }>): Promise<'opened' | 'picked' | 'ignored' | 'failed'> {
@@ -46,22 +49,19 @@ export async function openExternalSessionCandidate(params: Readonly<{
     if (!agentId || !source) return 'ignored';
     const target = params.resolveCurrentTarget();
     if (!target || state.linkingCandidateKey !== null) return 'ignored';
-    const find: ExternalSessionCandidateFindSeed | undefined = params.find ? {
+    const openTarget = { machineId: target.machineId, serverId: target.serverId };
+    const find: ExternalSessionCandidateFindSeed | undefined = params.find ? resolveChatFindSeed({
         query: params.find.query,
-        options: { matchCase: false, regex: false },
         target: {
-            kind: 'route-message-id',
-            routeMessageId: makeExternalSessionHistoricalImportLocalId({
-                agentId, remoteSessionId: candidate.remoteSessionId, directItemId: params.find.sourceItemId,
-            }),
+            kind: 'native-message', agentId, remoteSessionId: candidate.remoteSessionId, sourceItemId: params.find.sourceItemId,
         },
-    } : undefined;
+    }) : undefined;
     if (interaction === 'pickRemoteSessionId') {
         params.onPickRemoteSessionId?.(candidate.remoteSessionId);
         return 'picked';
     }
     if (candidate.linkedSessionId) {
-        await params.openSession(candidate.linkedSessionId, target, find);
+        await params.openSession(candidate.linkedSessionId, openTarget, find);
         return 'opened';
     }
     const requestToken = ++state.requestToken;
@@ -87,15 +87,21 @@ export async function openExternalSessionCandidate(params: Readonly<{
             ...(directoryHint ? { directoryHint } : {}),
             ...extras, source: effectiveSource,
         };
-        const result = target.serverId
-            ? await machineExternalSessionLinkEnsure(request, { serverId: target.serverId })
+        const action = params.linkActionExecute ? await params.linkActionExecute('sessions.external.link.ensure', request, {
+            surface: 'ui', ...(target.serverId ? { serverId: target.serverId } : {}),
+            ...(target.accountId ? { expectedAccountId: target.accountId } : {}),
+        }) : null;
+        if (action && (!action.ok || !ExternalSessionLinkEnsureResponseSchema.safeParse(action.result).success)) return 'failed';
+        const result = action?.ok ? ExternalSessionLinkEnsureResponseSchema.parse(action.result) : target.serverId
+            ? await machineExternalSessionLinkEnsure(request, { serverId: target.serverId,
+                ...(target.accountId ? { accountId: target.accountId } : {}) })
             : await machineExternalSessionLinkEnsure(request);
         if (!requestIsCurrent()) return 'ignored';
         if (!result.ok) {
             Modal.alert(t('common.error'), resolveExternalSessionBrowseRpcErrorMessage(result.errorCode, 'link'));
             return 'failed';
         }
-        await params.openSession(result.sessionId, target, find);
+        await params.openSession(result.sessionId, openTarget, find);
         return 'opened';
     } catch (error) {
         if (!requestIsCurrent()) return 'ignored';

@@ -443,12 +443,13 @@ export function createSessionAccessClient(options: SessionAccessRequestOptions &
         getPublicLink: async () => SessionPublicLinkGetActionResultV1Schema.parse(
             await execute('session.public_link.get', { sessionId: options.sessionId }),
         ),
-        createPublicLink: async (input: Readonly<{ expiresAt?: number; maxUses?: number; isConsentRequired: boolean }>) =>
+        createPublicLink: async (input: Readonly<{ expiresAt?: number; maxUses?: number; isConsentRequired: boolean; networkOff?: boolean }>) =>
             SessionPublicLinkCreateActionResultV1Schema.parse(await execute('session.public_link.create', {
                 sessionId: options.sessionId,
                 ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
                 ...(input.maxUses !== undefined ? { maxUses: input.maxUses } : {}),
                 isConsentRequired: input.isConsentRequired,
+                ...(input.networkOff !== undefined ? { networkOff: input.networkOff } : {}),
             })),
         removePublicLink: async () => SessionPublicLinkRemoveActionResultV1Schema.parse(
             await execute('session.public_link.remove', { sessionId: options.sessionId }),

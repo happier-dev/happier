@@ -10,7 +10,7 @@ const scope = { serverId: 'home-a', accountId: 'alice' };
 const session = { serverId: scope.serverId, sessionId: 'session-one' };
 const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
 const item = {
-    v: 1, title: 'Note', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+    v: 1, destination: 'board', title: 'Note', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
     source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Hello' } } },
 } as const;
 const installed = { ...item, source: { kind: 'widget', instance: {
@@ -18,10 +18,64 @@ const installed = { ...item, source: { kind: 'widget', instance: {
 } } } as const;
 
 function createSessionBoardActionAdapter(options: Omit<Parameters<typeof createAdapter>[0], 'repository'>) {
-    return createAdapter({ ...options, repository: createSessionSystemRecordRepository(options) });
+    return createAdapter({ boardEnabled: true, ...options, repository: createSessionSystemRecordRepository(options) });
 }
 
 describe('Session Board Action adapter', () => {
+    it('refuses workspace publication explicitly without reading or writing a remote record', async () => {
+        const requests: string[] = [];
+        const execute = createSessionBoardActionAdapter({ scope, session, boardEnabled: false, contentContext: { mode: 'plain' },
+            capabilities: { readTranscript: true, editSessionRecords: true }, request: async (path) => {
+                requests.push(path);
+                return new Response(JSON.stringify({ record: null }));
+            } });
+        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input: {
+            sessionId: session.sessionId, itemId: 'html', expectedItemRevision: null, destination: 'transcript',
+            item: { ...item, source: { kind: 'hostedHtml', publicationSource: { path: 'site', entrypoint: 'index.html' } } },
+        } })).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        expect(requests).toEqual([]);
+    });
+    it('reads an explicit transcript item without Board layout when Board is disabled', async () => {
+        const execute = createSessionBoardActionAdapter({ scope, session, boardEnabled: false, contentContext: { mode: 'plain' },
+            capabilities: { readTranscript: true, editSessionRecords: true }, request: async (path) => {
+                const query = new URL(path, 'https://home-a').searchParams;
+                if (query.get('kind') === 'layout.v1') throw new Error('Disabled Board must not be read');
+                return new Response(JSON.stringify({ record: { id: 'item-row', address: {
+                    owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'note',
+                }, revision, content: { t: 'plain', v: { ...item, destination: 'transcript' } },
+                createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' } }));
+            } });
+        await expect(execute({ actionId: 'session.board.get', context: {}, input: {
+            sessionId: session.sessionId, itemIds: ['note'],
+        } })).resolves.toMatchObject({ layout: null, items: [{ itemId: 'note', item: { destination: 'transcript' } }] });
+    });
+    it('creates and removes a transcript visual without reading or writing Board layout', async () => {
+        const writes: unknown[] = [];
+        const execute = createSessionBoardActionAdapter({ scope, session, contentContext: { mode: 'plain' },
+            capabilities: { readTranscript: true, editSessionRecords: true }, request: async (path, init) => {
+                if (init?.method === 'PUT') {
+                    const body = JSON.parse(String(init.body));
+                    writes.push(body);
+                    return new Response(JSON.stringify(body.operation === 'upsert_item'
+                        ? { operation: 'upsert_item', itemId: 'note', outcome: 'created', itemRevision: revision }
+                        : { operation: 'remove_item', itemId: 'note', outcome: 'removed' }));
+                }
+                if (new URL(path, 'https://home-a').searchParams.get('kind') === 'layout.v1') throw new Error('Transcript mutation must not read layout');
+                return new Response(JSON.stringify({ record: null }));
+            } });
+        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input: {
+            sessionId: session.sessionId, itemId: 'note', expectedItemRevision: null, item,
+        } })).resolves.toEqual({ v: 1, serverId: session.serverId, sessionId: session.sessionId,
+            itemDestination: 'transcript', destination: null,
+            result: { operation: 'upsert_item', itemId: 'note', outcome: 'created', itemRevision: revision } });
+        await expect(execute({ actionId: 'session.board.item.remove', context: {}, input: {
+            sessionId: session.sessionId, itemId: 'note', expectedItemRevision: revision,
+        } })).resolves.toMatchObject({ result: { outcome: 'removed' } });
+        expect(writes).toEqual([
+            { operation: 'upsert_item', itemId: 'note', expectedItemRevision: null, destination: 'transcript', itemContent: { t: 'plain', v: { ...item, destination: 'transcript' } } },
+            { operation: 'remove_item', itemId: 'note', expectedItemRevision: revision },
+        ]);
+    });
     it('refuses a size placement whose captured layout changed before adapter assembly without writing', async () => {
         const movedLayoutRevision = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
         let writes = 0;
@@ -535,6 +589,33 @@ describe('Session Board Action adapter', () => {
         expect(body.itemContent.t).toBe('encrypted');
         expect(await encryption.decryptRaw(body.itemContent.c)).toEqual(item);
         expect(await encryption.decryptRaw(body.placement.layoutContent.c)).toMatchObject({ tabs: [{ id: 'overview' }] });
+    });
+    it('preserves sealed creation destination in updates without requiring Board layout', async () => {
+        const encryption = new SessionEncryption(session.sessionId, new SecretBoxEncryption(new Uint8Array(32).fill(7)), new EncryptionCache());
+        const content = await encryption.encryptRaw(item);
+        const writes: Array<{ destination: string; itemContent: { t: 'encrypted'; c: string } }> = [];
+        const execute = createSessionBoardActionAdapter({ scope, session, boardEnabled: false,
+            contentContext: { mode: 'e2ee', encryption }, capabilities: { readTranscript: true, editSessionRecords: true },
+            request: async (path, init) => {
+                if (init?.method === 'PUT') {
+                    writes.push(JSON.parse(String(init.body)));
+                    return new Response(JSON.stringify({ operation: 'upsert_item', itemId: 'note', outcome: 'updated', itemRevision: revision }));
+                }
+                expect(new URL(path, 'https://home-a').searchParams.get('kind')).toBe('item.v1');
+                return new Response(JSON.stringify({ record: {
+                    id: 'item-row', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'note' },
+                    revision, content: { t: 'encrypted', c: content },
+                    createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
+                } }));
+            },
+        });
+        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input: {
+            sessionId: session.sessionId, itemId: 'note', expectedItemRevision: revision, item: { ...item, title: 'Updated' },
+        } })).resolves.toEqual({ v: 1, serverId: scope.serverId, sessionId: session.sessionId,
+            result: { operation: 'upsert_item', itemId: 'note', outcome: 'updated', itemRevision: revision },
+            itemDestination: 'board', destination: null });
+        expect(writes[0].destination).toBe('board');
+        expect(await encryption.decryptRaw(writes[0].itemContent.c)).toEqual({ ...item, title: 'Updated' });
     });
     it('keeps a proven pre-dispatch network failure definite and does not retry it', async () => {
         let writes = 0;

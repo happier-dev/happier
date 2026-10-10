@@ -77,6 +77,8 @@ describe('resolveTranscriptSessionBoardItemReference', () => {
         expect(resolve()).toEqual({
             address: ADDRESS,
             itemId: 'item-1',
+            itemRevision: REVISION,
+            itemDestination: 'board',
             outcome: 'created',
             destination: { tabId: 'overview', width: 'wide' },
         });
@@ -90,6 +92,22 @@ describe('resolveTranscriptSessionBoardItemReference', () => {
         expect(resolve({
             result: { content: [{ type: 'text', text: 'ignored' }], structuredContent: appliedResult() },
         })?.itemId).toBe('item-1');
+    });
+
+    it('recognizes the first-party generic executor but never a foreign executor', () => {
+        const input = { actionId: 'session.board.item.upsert', input: upsertInput() };
+        const result = { ok: true, result: appliedResult() };
+        expect(resolve({ toolName: 'mcp__happier__action_execute', input, result })?.itemId).toBe('item-1');
+        expect(resolve({ toolName: 'mcp__acme__action_execute', input, result })).toBeNull();
+    });
+
+    it('uses preserved operands and acknowledgements from normalized tools, never truncated raw previews', () => {
+        const meta = { v: 2, protocol: 'acp', provider: 'fixture', rawToolName: UPSERT_TOOL, canonicalToolName: UPSERT_TOOL };
+        expect(resolve({
+            input: { ...upsertInput(), _happier: meta, _raw: { itemId: 'wrong' }, _mcp: {}, _acp: {}, locations: [] },
+            result: { value: JSON.stringify(appliedResult()), _happier: meta, _raw: '{truncated' },
+        })?.itemId).toBe('item-1');
+        expect(resolve({ input: { _happier: meta, _raw: upsertInput() } })).toBeNull();
     });
 
     it('accepts the direct Agent tool name and rejects a foreign server with the same trailing name', () => {
@@ -215,6 +233,8 @@ describe('resolveTranscriptSessionBoardItemReference', () => {
         })).toEqual({
             address: ADDRESS,
             itemId: 'item-1',
+            itemRevision: REVISION,
+            itemDestination: 'board',
             outcome: 'updated',
             destination: null,
         });

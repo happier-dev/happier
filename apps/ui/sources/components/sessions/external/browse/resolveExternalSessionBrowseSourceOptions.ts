@@ -4,6 +4,8 @@ import type { AccountProfile } from '@happier-dev/protocol/account/profile';
 import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type { PluginBackendExternalSessionSourceDeclarationV1 } from '@happier-dev/protocol/plugins/backendDefinitionV1';
 import type { PluginProjectedAgentV2, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveQualifiedConnectedAccountLabel } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
@@ -11,9 +13,30 @@ import type {
     ExternalSessionBrowseLinkEnsureRequestExtras,
     ExternalSessionBrowseSourceOption,
 } from '@/agents/registry/registryUiBehavior';
-import type { Settings } from '@/sync/domains/settings/settings';
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveCompatibleExternalSessionBrowseLinkSource } from './resolveCompatibleExternalSessionBrowseLinkSource';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
+
+/** Presentation input from the scoped catalog, not a live Account Settings root. */
+export type ExternalSessionBrowseLabels = Readonly<Record<string, string | undefined>>;
+
+/** Capture supplies a qualified producer and its admitted source, never a guessed Agent id. */
+export function resolveExternalSessionBrowseTargetForQualifiedSource(params: Readonly<{
+    agent: PluginContributionIdentityV1;
+    source: ExternalSessionsSource;
+    projection: PluginProjectionV2 | null | undefined;
+}>): Readonly<{ agentId: ExternalSessionsAgentId; source: ExternalSessionsSource }> | null {
+    const matches = Object.values(params.projection?.agentsById ?? {}).flatMap(agent => {
+        const projected = resolveProjectedExternalSessionBrowseAgent({ providerId: agent.id, projection: params.projection });
+        if (!projected || projected.externalSessions.agent.pluginId !== params.agent.pluginId
+            || projected.externalSessions.agent.localId !== params.agent.localId) return [];
+        const declaration = projected.externalSessions.sources.find(row => row.sourceKind === params.source.kind && row.resumeOnly !== true);
+        const source = declaration ? parseExternalSessionsSourceForDeclaration(declaration, params.source) : null;
+        return source ? [{ agentId: agent.id, source }] : [];
+    });
+    return matches.length === 1 ? matches[0] : null;
+}
 
 function resolveProjectedExternalSessionsAgent(params: Readonly<{
     providerId: string;
@@ -73,7 +96,8 @@ function materializeProjectedSourceOptions(params: Readonly<{
     agent: PluginProjectedAgentV2;
     declarations: readonly PluginBackendExternalSessionSourceDeclarationV1[];
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
-    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
+    labelsByKey: ExternalSessionBrowseLabels;
+    agentSettings?: Readonly<Record<string, unknown>>;
     activeServerId?: string | null;
     interaction?: 'openSession' | 'pickRemoteSessionId';
 }>): ExternalSessionBrowseSourceOption[] {
@@ -89,7 +113,7 @@ function materializeProjectedSourceOptions(params: Readonly<{
         const materialized = materializeExternalSessionSourceInstances({
             declaration,
             ...(params.profile ? { connectedServices: params.profile.connectedServicesV2 } : {}),
-            agentSettings: params.settings,
+            agentSettings: params.agentSettings,
             activeServerId: params.activeServerId ?? null,
         });
         for (const instance of materialized.instances) {
@@ -97,12 +121,14 @@ function materializeProjectedSourceOptions(params: Readonly<{
             if (!source) continue;
             if (instance.origin.kind === 'connectedServiceProfile') {
                 const { serviceId, profileId } = instance.origin;
+                const serviceKey = resolveQualifiedConnectedAccountServiceKey(serviceId);
+                const service = serviceKey ? parseQualifiedPluginContributionKey(serviceKey) : null;
                 options.push({
                     key: `${params.providerId}:${declaration.sourceKind}:${serviceId}:${profileId}`,
                     label,
-                    detail: params.settings.connectedServicesProfileLabelByKey[
-                        `${serviceId}/${profileId}`
-                    ] ?? profileId,
+                    detail: (service ? resolveQualifiedConnectedAccountLabel({
+                        labelsByKey: params.labelsByKey, service, accountId: profileId,
+                    }) : null) ?? profileId,
                     source,
                 });
                 continue;
@@ -133,7 +159,7 @@ function enrichProjectedSourceOptions(params: Readonly<{
     projectedOptions: readonly ExternalSessionBrowseSourceOption[];
     declarations: readonly PluginBackendExternalSessionSourceDeclarationV1[];
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
-    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
+    labelsByKey: ExternalSessionBrowseLabels;
 }>): ExternalSessionBrowseSourceOption[] {
     const getSourceOptions = resolveAgentUiBehavior(params.providerId, params.machineId, params.accountScope)
         .externalSessions?.browse?.getSourceOptions;
@@ -142,7 +168,7 @@ function enrichProjectedSourceOptions(params: Readonly<{
     for (const option of getSourceOptions({
         agentId: params.providerId,
         profile: params.profile,
-        settings: params.settings as Settings,
+        labelsByKey: params.labelsByKey,
     })) {
         const declaration = params.declarations.find((candidate) => candidate.sourceKind === option.source.kind);
         if (!declaration) continue;
@@ -171,7 +197,8 @@ export function resolveExternalSessionBrowseSourceOptions(params: Readonly<{
      */
     machineId?: string | null;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
-    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
+    labelsByKey: ExternalSessionBrowseLabels;
+    agentSettings?: Readonly<Record<string, unknown>>;
     projection: PluginProjectionV2 | null | undefined;
     activeServerId?: string | null;
     interaction?: 'openSession' | 'pickRemoteSessionId';
@@ -195,7 +222,8 @@ export function resolveExternalSessionBrowseSourceOption(params: Readonly<{
     /** See `resolveExternalSessionBrowseSourceOptions`. */
     machineId?: string | null;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
-    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
+    labelsByKey: ExternalSessionBrowseLabels;
+    agentSettings?: Readonly<Record<string, unknown>>;
     projection: PluginProjectionV2 | null | undefined;
     source: ExternalSessionsSource;
     activeServerId?: string | null;

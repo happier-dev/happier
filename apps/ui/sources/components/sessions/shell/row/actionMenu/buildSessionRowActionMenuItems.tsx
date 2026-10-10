@@ -6,6 +6,8 @@ import {
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
+    SESSION_ACTION_RAIL_PIN_ID,
+    SESSION_ACTION_RAIL_UNPIN_ID,
     SESSION_ACTION_RENAME_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
 } from '@/components/sessions/actions/sessionActionIds';
@@ -13,7 +15,7 @@ import { listVisibleSessionActionIds } from '@/components/sessions/actions/sessi
 import { createSessionActionDropdownItem } from '@/components/sessions/actions/sessionActionPresentation';
 import { t } from '@/text';
 
-import { SESSION_ROW_ACTION_SELECT_ID, type SessionRowMoreMenuBuildParams } from './sessionRowActionMenuTypes';
+import { SESSION_ROW_ACTION_OPEN_ID, SESSION_ROW_ACTION_SELECT_ID, type SessionRowMoreMenuBuildParams } from './sessionRowActionMenuTypes';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     SESSION_ATTENTION_REMINDER_CUSTOM_ID,
@@ -79,7 +81,29 @@ export function buildSessionReminderMenuItem(
     };
 }
 
+/**
+ * The Bots roster's row menu (lab `b-rail M`): Open, Talk, the rail choice with what it does, Instructions and
+ * voice, then Make a regular session. The list's organising rows (rename, read state, reminders, folders) stay
+ * in the Sessions list and the session's own menu.
+ */
+function buildBotsRosterRowMenuItems(params: SessionRowMoreMenuBuildParams): DropdownMenuItem[] {
+    const items: DropdownMenuItem[] = [{
+        id: SESSION_ROW_ACTION_OPEN_ID,
+        title: t('common.open'),
+        icon: <Icon name="arrow-right" size={16} color={params.iconColor} />,
+    }];
+    for (const actionId of listVisibleSessionActionIds({ target: params.target, surface: 'botsRoster' })) {
+        const item = createSessionActionDropdownItem({ actionId, target: params.target, iconColor: params.iconColor });
+        if (!item) continue;
+        items.push(actionId === SESSION_ACTION_RAIL_PIN_ID || actionId === SESSION_ACTION_RAIL_UNPIN_ID
+            ? { ...item, subtitle: t('bots.roster.pinHint') }
+            : item);
+    }
+    return items;
+}
+
 export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildParams): DropdownMenuItem[] {
+    if (params.surface === 'botsRoster') return buildBotsRosterRowMenuItems(params);
     const selectItems = (params.leadingItems ?? []).filter((item) => item.id === SESSION_ROW_ACTION_SELECT_ID);
     const contextualItems = (params.leadingItems ?? []).filter((item) => item.id !== SESSION_ROW_ACTION_SELECT_ID);
     const primaryActionIds = new Set([
@@ -95,31 +119,19 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
 
     for (const actionId of listVisibleSessionActionIds({ target: params.target, surface: 'rowMenu' })) {
         if (actionId === SESSION_ACTION_MOVE_TO_FOLDER_ID) {
-            const folderMoveMenuItems = params.folderMoveMenuItems ?? [];
-            if (params.canMoveToFolder === false && folderMoveMenuItems.length === 0) {
-                continue;
-            }
-
+            if (params.canMoveToFolder === false) continue;
             moveToFolderItem = {
                 id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
                 title: t('sessionsList.moveToFolder'),
                 icon: <Icon name="folder" size={16} color={params.iconColor} />,
-                disabled: params.canMoveToFolder === false
-                    ? !folderMoveMenuItems.some((item) => item.disabled !== true)
-                    : false,
-                submenu: params.canMoveToFolder === false
-                    ? {
-                        items: folderMoveMenuItems,
-                        search: folderMoveMenuItems.length > 8,
-                        searchPlaceholder: t('sessionsList.moveToFolder'),
-                    }
-                    : undefined,
+                disabled: false,
             };
             continue;
         }
 
         const item = createSessionActionDropdownItem({
             actionId,
+            target: params.target,
             iconColor: params.iconColor,
         });
         if (item) {

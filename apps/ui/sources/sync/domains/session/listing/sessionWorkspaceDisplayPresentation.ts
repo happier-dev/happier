@@ -8,7 +8,7 @@ import {
     resolveWorkspaceDisplayPresentation,
 } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import { normalizeWorkspaceRootPath, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { normalizeSessionPathForProjectGrouping } from './sessionListProjectGroupingKeys';
 
 type SessionWorkspaceDisplayMetadata = Readonly<{
@@ -63,7 +63,7 @@ export function resolveSessionWorkspaceDisplayPresentation(input: Readonly<{
     const workspaceScope = serverId && machineId && rootPath
         ? { serverId, machineId, rootPath }
         : null;
-    const fallbackPathLabel = rootPath ? formatPathRelativeToHome(rootPath, homeDir) : '';
+    const fallbackPathLabel = rootPath ? formatSessionPath(rootPath, normalizeWorkspaceRootPath(homeDir) ?? homeDir) : '';
     const presentation = resolveWorkspaceDisplayPresentation({
         scope: workspaceScope,
         workspaceRefs: input.workspaceRefs,

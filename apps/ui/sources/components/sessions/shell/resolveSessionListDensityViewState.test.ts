@@ -48,7 +48,7 @@ describe('resolveSessionListDensityViewState', () => {
         expect(first).toBe(second);
     });
 
-    it('keeps native phone narrow rows readable without changing web/tablet row height', () => {
+    it('keeps native and web phone narrow rows readable without changing tablet row height', () => {
         expect(resolveSessionListDensityViewState('narrow', {
             isTablet: false,
             platform: 'ios',
@@ -61,11 +61,18 @@ describe('resolveSessionListDensityViewState', () => {
         expect(resolveSessionListDensityViewState('narrow', {
             isTablet: false,
             platform: 'web',
+            windowWidth: 390,
         })).toEqual({
             compact: true,
             compactMinimal: true,
-            rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL,
+            rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
         });
+
+        expect(resolveSessionListDensityViewState('narrow', {
+            isTablet: false,
+            platform: 'web',
+            windowWidth: 800,
+        }).rowHeight).toBe(SESSION_LIST_ROW_HEIGHT_MINIMAL);
 
         expect(resolveSessionListDensityViewState('narrow', {
             isTablet: true,

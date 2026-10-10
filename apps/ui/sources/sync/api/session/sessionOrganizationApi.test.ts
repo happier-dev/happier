@@ -44,6 +44,42 @@ describe('sessionOrganizationApi', () => {
         mocks.runtimeFetchWithServerReachability.mockReset();
     });
 
+    it('requires current pin memberships in an HTTP snapshot rather than adapting a predecessor server response', async () => {
+        const { fetchSessionOrganizationSnapshot } = await import('./sessionOrganizationApi');
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ snapshot: {
+            ...organizationSnapshotResponse().snapshot,
+            pins: [{ sessionId: 'retained', sortKey: 'a', pinnedAt: 1 }],
+        } }));
+        await expect(fetchSessionOrganizationSnapshot({ credentials })).rejects.toBeInstanceOf(
+            (await import('@/utils/errors/errors')).HappyError,
+        );
+    });
+
+    it('writes pin membership through the captured Account endpoint rather than the active Home transport', async () => {
+        const { setSessionPin } = await import('./sessionOrganizationApi');
+        const pin = { sessionId: 'pinned', sortKey: null, pinnedAt: 1, listPinned: false, railPinned: true };
+        const dispatched: unknown[] = [];
+        const requestAtEndpoint = async (path: string, init?: RequestInit) => {
+            expect(path).toBe('/v2/session-organization/pins/pinned');
+            dispatched.push(JSON.parse(String(init?.body)));
+            return jsonResponse({ pin });
+        };
+        await expect(setSessionPin({ credentials, sessionId: 'pinned', requestAtEndpoint,
+            request: { pinned: true, surface: 'rail' } })).resolves.toEqual({ pin });
+        expect(dispatched).toEqual([{ pinned: true, surface: 'rail' }]);
+        expect(mocks.serverFetch).not.toHaveBeenCalled();
+        expect(mocks.runtimeFetchWithServerReachability).not.toHaveBeenCalled();
+    });
+
+    it('refuses unknown pin mutation fields before dispatching any write', async () => {
+        const { setSessionPin } = await import('./sessionOrganizationApi');
+        mocks.serverFetch.mockResolvedValueOnce(jsonResponse({ pin: null }));
+        const request = { pinned: true, surface: 'rail' as const, wholeMetadata: { bot: { kind: 'bot' } } };
+        await expect(setSessionPin({ credentials, sessionId: 'pinned', request })).rejects.toMatchObject({ name: 'ZodError' });
+        expect(mocks.serverFetch).not.toHaveBeenCalled();
+        expect(mocks.runtimeFetchWithServerReachability).not.toHaveBeenCalled();
+    });
+
     it('fetches a scoped organization snapshot through the canonical route', async () => {
         const { fetchSessionOrganizationSnapshot } = await import('./sessionOrganizationApi');
         mocks.serverFetch.mockResolvedValueOnce(jsonResponse(organizationSnapshotResponse()));

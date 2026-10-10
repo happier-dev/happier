@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { View, Platform, Pressable } from 'react-native';
 import { useNavigation } from '@/components/appShell/workspace/destinationRoute';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -28,6 +29,8 @@ interface ChatHeaderViewProps {
     avatarId?: string;
     /** Canonical machine-scoped Agent identity mark, shown in place of the avatar on request. */
     agentIdentity?: React.ReactNode;
+    /** The leads above a reporting Session, over the title (a leaf that draws nothing for a root). */
+    lineage?: React.ReactNode;
     rightElement?: React.ReactNode;
     backgroundColor?: string;
     tintColor?: string;
@@ -57,6 +60,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     onBackPress,
     avatarId,
     agentIdentity,
+    lineage,
     rightElement,
     isConnected = true,
     flavor,
@@ -65,6 +69,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     showBackButton = true,
     onPullAllTabs,
 }: ChatHeaderViewProps): React.ReactElement {
+    const materialColor = useHappierMaterialColorResolver();
     const { theme } = useUnistyles();
     const navigation = useNavigation();
     const insets = useChromeSafeAreaInsets();
@@ -98,7 +103,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
     };
 
     return (
-        <View style={[styles.container, { paddingTop: includeTopInset ? insets.top : 0, backgroundColor: theme.colors.surface.base }]}>
+        <View style={[styles.container, { paddingTop: includeTopInset ? insets.top : 0, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
             <View style={[styles.contentWrapper, constrainWidth ? null : { alignItems: 'stretch' }]}>
                 <HeaderBand
                     onPullAllTabs={onPullAllTabs}
@@ -135,6 +140,7 @@ export const ChatHeaderView = React.memo(function ChatHeaderView({
                 ) : null}
 
                 <View style={styles.titleContainer}>
+                    {lineage}
                     <View style={styles.titleRow}>
                         <Text
                             numberOfLines={1}

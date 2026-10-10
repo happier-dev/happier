@@ -64,6 +64,7 @@ describe('apiSocket reachability supervision', () => {
 
         expect(startParams).toEqual([{
             serverUrl: 'https://a.example.test',
+            runtimeOrigin: 'https://a.example.test',
             token: 'token-a',
             homeCarrier: null,
         }]);
@@ -273,9 +274,7 @@ describe('apiSocket reachability supervision', () => {
         expect(reportServerUnreachableSpy).not.toHaveBeenCalled();
     });
 
-    it('gates apiSocket.request when server reachability cannot be established', async () => {
-        process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
-
+    it('keeps apiSocket.request pending until caller cancellation while Home is offline', async () => {
         vi.doMock('@/sync/domains/server/serverRuntime', async (importOriginal) => ({
             ...await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>(),
             getActiveServerSnapshot: () => ({
@@ -315,12 +314,19 @@ describe('apiSocket reachability supervision', () => {
         }));
 
         const { apiSocket } = await import('./apiSocket');
+        vi.useFakeTimers();
         const encryption = { getSessionEncryption: () => null } as unknown as Encryption;
         apiSocket.initialize({ endpoint: 'https://api.example.test', token: 'token-a' }, encryption);
 
-        await expect(apiSocket.request('/v1/account/profile', { method: 'GET' })).rejects.toMatchObject({
-            name: 'ServerFetchConnectivityTimeoutError',
-        });
+        const cancellation = new AbortController();
+        let settled = false;
+        const request = apiSocket.request('/v1/account/profile', { method: 'GET', signal: cancellation.signal })
+            .finally(() => { settled = true; });
+        const assertion = expect(request).rejects.toMatchObject({ name: 'AbortError' });
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(settled).toBe(false);
+        cancellation.abort();
+        await assertion;
 
         expect(runtimeFetchMock.mock.calls.some(([input]) => String(input).includes('/v1/account/profile'))).toBe(false);
     });

@@ -8,6 +8,8 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import type { StorageState } from '@/sync/store/types';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readRollbackEligibleTurnStarts } from '@/sync/domains/session/rollback/rollbackEligibleTurnStarts';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { buildSessionFromListRenderable } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 type ShellVisibleAgentStateRequestSignature = ReadonlyArray<readonly [
     string,
@@ -130,6 +132,7 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         pendingPermissionRequestCount: session.pendingPermissionRequestCount ?? null,
         pendingUserActionRequestCount: session.pendingUserActionRequestCount ?? null,
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
+        pendingActivationAuthorization: session.pendingActivationAuthorization ?? null,
         rollbackEligibleTurnStarts: buildShellVisibleSequenceSetSignatureValue(
             session.rollbackEligibleTurnStarts,
         ),
@@ -146,9 +149,15 @@ export function selectSessionViewShellSessionForRouteState(
     expectedServerId?: string | null,
 ): Session | null {
     const session = state.sessions[sessionId] ?? null;
-    if (!session) return null;
-
     const normalizedExpectedServerId = normalizeServerId(expectedServerId);
+    if (!session) {
+        // An unopened report already has a qualified summary. The mounted Session owns its
+        // ordinary detail/transcript hydration; Work must not fetch every report to name it.
+        const row = normalizedExpectedServerId
+            ? readSessionListRowForServerId(state.sessionListRowsByServerId, normalizedExpectedServerId, sessionId)
+            : null;
+        return row ? buildSessionFromListRenderable(row, { serverId: normalizedExpectedServerId }) : null;
+    }
     let resolvedServerScopeId = normalizeServerId((session as { serverId?: unknown }).serverId);
     if (normalizedExpectedServerId) {
         const cachedServerId = resolvedServerScopeId ?? normalizeServerId(resolveServerIdForSessionIdFromLocalState({

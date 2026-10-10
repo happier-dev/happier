@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -247,7 +248,7 @@ describe('Companion glance consumed owners', () => {
             familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [entry.id]: entry } } } }));
         const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{
             pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
-            machineId: 'machine-1', serverId: 'home-a', platform: 'web', clientExecutableActivation: { status: 'ready' },
+            machineId: 'machine-1', serverId: 'home-a', platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
             reloadConnectedAccountProjection() {}, reloadClientExecutables() {},
         }}><SessionCompanionGlance entry={{ kind: 'instance', ref: { kind: 'instance', instance: { v: 1, id: 'personal-status', definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'status' } }, bindings: { session: { kind: 'context', slot: 'session' } } } } }} sessionId={session.id} session={session} serverId="home-a" frameStyle="plain" headerAccessory={null} measurementOnly={false} testID="plugin" /></AppShellPluginUiProjectionValueProvider>);
         await flushHookEffects({ cycles: 8 });

@@ -14,7 +14,8 @@ import {
     readTerminalComposerDraftBlockedStateAtMs,
 } from '@/components/sessions/terminalComposer/terminalComposerDraftBlockedEvent';
 import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
-import { useSettingsSelector } from '@/sync/store/hooks';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
@@ -293,9 +294,10 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     createdAt?: number;
 }) {
     const { theme } = useUnistyles();
-    const settings = useSettingsSelector((settings) => ({
-        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
-    }));
+    const needsConnectedLabel = props.event.type === 'connected-service-account-switch';
+    const { binding } = useServerCredentialAccountScopeBinding(needsConnectedLabel ? props.serverId : null);
+    const labelsByKey = useConnectedMetadataCatalog(needsConnectedLabel
+        ? props.serverId ? binding?.scope ?? null : undefined : null, selectConnectedMetadataLabels);
     const deemphasized = props.emphasis === 'deemphasized';
     const eventColor = deemphasized ? theme.colors.text.tertiary : theme.colors.text.secondary;
     let iconName: IconName = 'info';
@@ -403,7 +405,7 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
         iconName = 'arrows-left-right';
         text = buildConnectedServiceAccountSwitchMessage({
             event: props.event,
-            labelsByKey: settings.connectedServicesProfileLabelByKey,
+            labelsByKey,
         });
     } else if (props.event.type === 'agent-quota-wait') {
         testID = 'transcript-event-agent-quota-wait';

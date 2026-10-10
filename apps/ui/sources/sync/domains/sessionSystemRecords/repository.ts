@@ -10,6 +10,8 @@ import {
 } from './transport';
 import { readLegacyWorkflowSystemRecord, type LegacyWorkflowRecordProjection } from './compatibility/legacyHostTransport';
 import type { SessionSystemRecordCompatibilityOpenInput } from './codec';
+import { openSessionSurfaceItemRecord } from './codec';
+import type { SessionStoredContentContext } from '@happier-dev/sync-client';
 
 export type SessionSystemRecordQuery =
     | Readonly<{ type: 'read'; address: HostSessionSystemRecordAddress }>
@@ -58,6 +60,12 @@ function retainValue(previous: RecordValue | null, next: RecordValue): RecordVal
 export function createSessionSystemRecordRepository(options: SessionSystemRecordTransportOptions) {
     const transport = createSessionSystemRecordTransport(options);
     const sessions = new Map<string, Map<string, Entry>>();
+    // Opening follows retained record identity, never a separate content store.
+    // Weak keys release decoded bytes with the last observed repository entry.
+    const surfaceItemOpenings = new WeakMap<SessionSystemRecordStored, Readonly<{
+        context: SessionStoredContentContext | null;
+        result: ReturnType<typeof openSessionSurfaceItemRecord>;
+    }>>();
     let retired = false;
     // A surface may address an identity-bearing Home by its device-local profile id
     // while this scope names it by its published identity; both are the same Home.
@@ -100,6 +108,23 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
             }
         }
     }
+    function retainObservedValue(entry: Entry, next: RecordValue): RecordValue {
+        if ('source' in next) return retainValue(entry.snapshot.data, next);
+        // A list placement and an addressed reply can receive the same revision
+        // through different HTTP responses. Give both the existing record object
+        // so their opening is shared without another inventory or record cache.
+        const retained = new Map<string, SessionSystemRecordStored>();
+        const key = (record: SessionSystemRecordStored) => JSON.stringify([record.id, record.revision]);
+        for (const observed of sessions.get(entry.session.sessionId)?.values() ?? []) {
+            const value = observed.snapshot.data;
+            if (!value || 'source' in value) continue;
+            for (const record of 'records' in value ? value.records : [value]) retained.set(key(record), record);
+        }
+        const retain = (record: SessionSystemRecordStored) => retained.get(key(record)) ?? record;
+        return retainValue(entry.snapshot.data, 'records' in next
+            ? { ...next, records: next.records.map(retain) }
+            : retain(next));
+    }
     function refresh(session: SessionAddress, query: SessionSystemRecordQuery): Promise<void> {
         const entry = lookup(session, query, true);
         if (!entry) return Promise.resolve();
@@ -111,7 +136,7 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
         entry.pending = operation.then((result) => {
             if (retired) return;
             if (result.status === 'ok') {
-                publish(entry, { data: retainValue(entry.snapshot.data, result.value), loading: 'idle', freshness: entry.invalidatedWhileLoading ? 'stale' : 'fresh', reachability: 'reachable', lastError: null });
+                publish(entry, { data: retainObservedValue(entry, result.value), loading: 'idle', freshness: entry.invalidatedWhileLoading ? 'stale' : 'fresh', reachability: 'reachable', lastError: null });
             } else {
                 publish(entry, { ...entry.snapshot, data: result.status === 'forbidden' || result.status === 'not_found' ? null : entry.snapshot.data, loading: 'idle', freshness: 'stale', reachability: result.status === 'offline' ? 'offline' : 'reachable', lastError: result });
             }
@@ -126,6 +151,15 @@ export function createSessionSystemRecordRepository(options: SessionSystemRecord
     }
     return {
         scope: options.scope,
+        openSurfaceItem(record: SessionSystemRecordStored, context: SessionStoredContentContext | null) {
+            const opening = surfaceItemOpenings.get(record);
+            const sameContext = opening && (opening.context === context || (opening.context?.mode === context?.mode
+                && (context?.mode !== 'e2ee' || (opening.context?.mode === 'e2ee' && opening.context.encryption === context.encryption))));
+            if (sameContext) return opening.result;
+            const result = openSessionSurfaceItemRecord(record, context);
+            surfaceItemOpenings.set(record, { context, result });
+            return result;
+        },
         /** Credential/reset owners retire this exact qualified projection. */
         isCurrent(): boolean {
             return !retired;

@@ -44,14 +44,17 @@ describe('outgoing user message projection', () => {
             ownerMetadataView: null,
             composerOptionsInput: selection ? { modelSelectionIntentV1: { v: 1, updatedAt: 20, selection } } : {},
         });
+        const foreign = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'claude-model' };
         const send = (selection: typeof m1 | null) => buildOutgoingUserTextRecord({
             text: 'hello', agentId: 'codex', permissionMode: 'default', settings: {},
-            session: sessionOn(selection), allowedModels: [m1, m2],
+            session: sessionOn(selection), allowedModels: [foreign, m1, m2],
         });
 
         expect(send(null).meta).toEqual(expect.objectContaining({ modelSelectionV1: expect.objectContaining({ ref: m1 }) }));
         expect(send(refused).meta).toEqual(expect.objectContaining({ modelSelectionV1: expect.objectContaining({ ref: m1 }) }));
         expect(send(m2).meta).toEqual(expect.objectContaining({ modelSelectionV1: { v: 1, updatedAt: 20, ref: m2 } }));
+        expect(buildOutgoingUserTextRecord({ text: 'hello', agentId: 'codex', permissionMode: 'default', settings: {},
+            session: null, allowedModels: [foreign, m1] }).meta).toMatchObject({ modelSelectionV1: { ref: m1 } });
         // Unrestricted: the Session's own choice, Automatic included, is untouched.
         expect(buildOutgoingUserTextRecord({ text: 'hello', agentId: 'codex', permissionMode: 'default', settings: {},
             session: sessionOn(null), allowedModels: null }).meta).not.toHaveProperty('modelSelectionV1');

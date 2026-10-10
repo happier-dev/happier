@@ -117,6 +117,8 @@ export type AgentActivityEntry = Readonly<{
     id: string;
     kind: AgentActivityEntryKind;
     status: AgentActivityStatusV1;
+    /** False means an available retained handle has no current work. */
+    isActive?: boolean;
     title: string;
     /** The single extra fact a row may show. Local sources own it; the headline carries none. */
     metaDetail: string | null;
@@ -159,6 +161,8 @@ export type AgentActivityLocalEntry = Readonly<{
     /** Provider tool-use id, or `null` when this entry cannot be joined to a headline entry. */
     handle: string | null;
     status: AgentActivityStatusV1;
+    /** False means an available retained handle has no current work. */
+    isActive?: boolean;
     title: string;
     metaDetail: string | null;
     startedAtMs: number | null;

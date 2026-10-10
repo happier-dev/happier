@@ -9,17 +9,13 @@ import { getAgentCore } from '@/agents/catalog/catalog';
 import { buildSessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';
 import { resolveSessionAgentActivityPresentation } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
 import { t } from '@/text';
-import { useSessionListRelativeNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useSessionAgentActivity } from '@/hooks/session/useSessionAgentActivity';
-import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { EMPTY_SESSION_LIST_SERVER_KEY } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
-import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     useOpenApprovalArtifactsForSession,
-    useSession,
     useSessionProjectScmSnapshot,
     useSessionUsage,
 } from '@/sync/domains/state/storage';
@@ -36,6 +32,7 @@ import { listSessionPendingPermissions, type SessionPendingPermission } from '@/
 import { listPendingRequestListsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import type { SessionPendingRequestLists } from '@happier-dev/session-core/pending';
+import { useSessionSummaryAwareness } from './useSessionSummaryAwareness';
 
 type SessionUsageLike = Readonly<{
     contextSize?: number;
@@ -67,15 +64,6 @@ const NO_PENDING_REQUESTS: SessionPendingRequestLists = Object.freeze({
     userActionRequests: Object.freeze([]),
 });
 
-/** The running turn's observed start, the same fact the submit-mode owner reads. */
-function readTurnStartedAtMs(session: Session): number | null {
-    return session.latestTurnStatus === 'in_progress'
-        && typeof session.latestTurnStatusObservedAt === 'number'
-        && Number.isFinite(session.latestTurnStatusObservedAt)
-        ? session.latestTurnStatusObservedAt
-        : null;
-}
-
 function readUsageFacts(usage: SessionUsageLike): SessionSummaryUsageFacts | null {
     if (!usage) return null;
     const snapshot = usage.contextSnapshot ?? null;
@@ -103,22 +91,16 @@ function readAgentLabel(session: Session): string | null {
  * memoized Session shell, so a usage tick re-renders the summary subtree and not
  * `SessionView` or the composer.
  *
- * Awareness is projected on every render rather than memoized on the Session
- * object: memoizing a `Date.now()` projection by object identity freezes
- * freshness, which would make this card a competing status owner. The projection
- * is a cheap pure function of facts Lane 09A already decided, and this module adds
- * no timer, poll, cache or store of its own.
+ * Awareness comes from the shared live-Session binding and canonical clock;
+ * the stable shell cannot freeze freshness. This model adds no timer, poll,
+ * cache or store of its own.
  */
 export function useSessionSummaryModel(input: Readonly<{
     session: Session;
     serverId?: string | null;
 }>): SessionSummaryCardModel {
     const { session } = input;
-    const candidateAddress = normalizeSessionAddress(input.serverId ?? session.serverId, session.id);
-    const address = candidateAddress && (
-        !session.serverId
-        || areServerProfileIdentifiersEquivalent(candidateAddress.serverId, session.serverId)
-    ) ? candidateAddress : null;
+    const { address, awarenessSource, awareness, turnStartedAtMs } = useSessionSummaryAwareness(input);
     const approvals = useOpenApprovalArtifactsForSession(address);
     const activity = useSessionAgentActivity({
         sessionId: session.id,
@@ -134,18 +116,6 @@ export function useSessionSummaryModel(input: Readonly<{
         { serverId: address?.serverId ?? EMPTY_SESSION_LIST_SERVER_KEY, session },
     ) as SessionUsageLike;
 
-    // Lane 09 awareness consumers share one subscribed instant. This keeps
-    // freshness moving even when the normalized Session object is referentially
-    // stable, without adding a Summary-owned timer or clock.
-    const awarenessNowMs = useSessionListRelativeNowMs(true);
-    // The Session shell hands every child a deliberately stabilised Session whose signature
-    // omits `activeAt`, `thinkingAt` and `runtimeActivity*` —
-    // exactly the facts the awareness adapter consumes. Projecting from that object makes the
-    // Summary age while heartbeats keep arriving, so this surface subscribes to the live row
-    // itself. That is below the memoized shell, so the shell's own subscription locality and
-    // its narrow rerender signature are unchanged.
-    const liveSession = useSession(address?.sessionId ?? '', address?.serverId ?? null);
-    const awarenessSource = liveSession ?? session;
     const transcriptSource = useOptionalSessionTranscriptSource();
     const transcriptPendingRequests = transcriptSource?.usePendingRequests();
     const pendingRequests = React.useMemo(() => {
@@ -162,10 +132,6 @@ export function useSessionSummaryModel(input: Readonly<{
         // transcript storage keyed only by a same-id Session from another Home.
         return listPendingRequestListsFromSession(awarenessSource, []);
     }, [address, awarenessSource, transcriptPendingRequests, transcriptSource]);
-    const awareness = React.useMemo(
-        () => projectUiSessionAwareness(awarenessSource, awarenessNowMs),
-        [awarenessNowMs, awarenessSource],
-    );
     const recap = useSessionRecap(address);
     const accountScopeResolution = useServerCredentialAccountScopeResolution(address?.serverId);
     const accountScope = accountScopeResolution.kind === 'bound' ? accountScopeResolution.scope : null;
@@ -206,6 +172,6 @@ export function useSessionSummaryModel(input: Readonly<{
         pendingPermissions,
         pendingUserActions: pendingRequests.userActionRequests,
         plan,
-        turnStartedAtMs: readTurnStartedAtMs(awarenessSource),
+        turnStartedAtMs,
     });
 }
